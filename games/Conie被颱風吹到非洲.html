@@ -1,0 +1,424 @@
+<title>Conie 被颱風吹到非洲</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden;
+    background: #0b1020; font-family: "Microsoft JhengHei", "PingFang TC", sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { position: relative; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+  #hud {
+    position: absolute; top: 12px; left: 12px; right: 12px;
+    display: flex; justify-content: space-between; align-items: center;
+    color: #fff; font-size: 14px; pointer-events: none; text-shadow: 0 1px 3px rgba(0,0,0,.6);
+  }
+  #bar { flex: 1; height: 10px; background: rgba(255,255,255,.25); border-radius: 6px; margin: 0 12px; overflow: hidden; }
+  #barFill { height: 100%; width: 0%; background: linear-gradient(90deg,#7fd1ff,#ffd27f,#ff9f7f); transition: width .15s; }
+  #overlay {
+    position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    color: #fff; background: rgba(5,8,20,.72); gap: 14px; padding: 20px;
+  }
+  #overlay h1 { margin: 0; font-size: clamp(22px, 5vw, 40px); }
+  #overlay p { margin: 0; font-size: clamp(13px, 2.6vw, 17px); opacity: .9; max-width: 480px; line-height: 1.6; }
+  button {
+    font-size: 16px; padding: 10px 22px; border-radius: 999px; border: none;
+    background: #ffce54; color: #3a2a00; font-weight: bold; cursor: pointer;
+  }
+  button:active { transform: scale(.96); }
+  .hidden { display: none !important; }
+</style>
+<div id="wrap">
+  <canvas id="c"></canvas>
+  <div id="hud">
+    <div>❤️ <span id="lives">3</span> &nbsp; 🪙 <span id="coinCount">0</span></div>
+    <div id="bar"><div id="barFill"></div></div>
+    <div>台灣 → 非洲 🌍</div>
+  </div>
+  <div id="overlay">
+    <h1>🌀 Conie 被巴威颱風吹走了！</h1>
+    <p>
+      鍋蓋頭 Conie 被巴威颱風從台灣一路吹向非洲——<br>
+      上下移動閃避烏雲與碎片、順路撿金幣 🪙，撐到最後會被吹到「非洲」變身！<br>
+      操作：↑ / ↓ 或 W / S，或觸控拖曳。
+    </p>
+    <button id="startBtn">開始被吹飛 🚀</button>
+  </div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('c');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const startBtn = document.getElementById('startBtn');
+  const livesEl = document.getElementById('lives');
+  const coinCountEl = document.getElementById('coinCount');
+  const barFill = document.getElementById('barFill');
+
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = canvas.clientWidth; H = canvas.clientHeight;
+    canvas.width = W * DPR; canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+
+  const GOAL_DIST = 12000; // px scrolled to reach Africa
+  let state = 'menu'; // menu | playing | won | dead
+  let scrollSpeed = 3.2;
+  let dist = 0;
+  let lives = 3;
+  let invuln = 0;
+  let t = 0;
+
+  const player = { x: 0, y: 0, vy: 0, r: 22 };
+  let obstacles = [];
+  let clouds = [];
+  let coinsList = [];
+  let coins = 0;
+  let spawnTimer = 0;
+  let coinSpawnTimer = 0;
+
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (state !== 'playing') return;
+  });
+  window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  let touchY = null;
+  canvas.addEventListener('pointerdown', e => touchY = e.clientY);
+  canvas.addEventListener('pointermove', e => { if (touchY !== null) touchY = e.clientY; });
+  window.addEventListener('pointerup', () => touchY = null);
+
+  function resetGame() {
+    dist = 0; lives = 3; invuln = 90; t = 0; coins = 0;
+    scrollSpeed = 3.2;
+    obstacles = []; clouds = []; coinsList = [];
+    spawnTimer = 0; coinSpawnTimer = 40;
+    player.x = W * 0.22; player.y = H / 2; player.vy = 0;
+    for (let i = 0; i < 14; i++) spawnCloudDecor(true);
+    livesEl.textContent = lives;
+    coinCountEl.textContent = coins;
+    barFill.style.width = '0%';
+  }
+
+  function spawnCloudDecor(initial) {
+    clouds.push({
+      x: initial ? Math.random() * W * 1.4 : W + Math.random() * 200,
+      y: Math.random() * H,
+      s: 30 + Math.random() * 60,
+      speed: 0.3 + Math.random() * 0.5,
+      alpha: 0.15 + Math.random() * 0.25
+    });
+  }
+
+  function spawnObstacle() {
+    const kind = Math.random() < 0.55 ? 'darkcloud' : 'debris';
+    obstacles.push({
+      kind,
+      x: W + 40,
+      y: 40 + Math.random() * (H - 80),
+      r: kind === 'darkcloud' ? 26 + Math.random() * 18 : 14 + Math.random() * 10,
+      wob: Math.random() * Math.PI * 2,
+      spin: (Math.random() - 0.5) * 0.15
+    });
+  }
+
+  function spawnCoin() {
+    coinsList.push({
+      x: W + 40,
+      y: 40 + Math.random() * (H - 80),
+      r: 11,
+      wob: Math.random() * Math.PI * 2,
+      spin: 0
+    });
+  }
+
+  function progressRatio() { return Math.min(1, dist / GOAL_DIST); }
+
+  function bgColors() {
+    const r = progressRatio();
+    // Taiwan stormy blue -> desert orange (Africa/Sahara)
+    const skyTop = lerpColor([28, 42, 90], [255, 176, 90], r);
+    const skyBot = lerpColor([70, 110, 170], [255, 222, 150], r);
+    const ground = lerpColor([40, 130, 120], [214, 160, 80], r);
+    return { skyTop, skyBot, ground };
+  }
+  function lerpColor(a, b, t) {
+    return a.map((v, i) => Math.round(v + (b[i] - v) * t));
+  }
+  function rgb(c) { return `rgb(${c[0]},${c[1]},${c[2]})`; }
+
+  function update() {
+    t++;
+    if (state !== 'playing') return;
+
+    dist += scrollSpeed;
+    scrollSpeed = 3.2 + progressRatio() * 2.6;
+    barFill.style.width = (progressRatio() * 100).toFixed(1) + '%';
+
+    if (invuln > 0) invuln--;
+
+    // control
+    const up = keys['arrowup'] || keys['w'];
+    const down = keys['arrowdown'] || keys['s'];
+    if (touchY !== null) {
+      const rect = canvas.getBoundingClientRect();
+      const targetY = touchY - rect.top;
+      player.vy += (targetY - player.y) * 0.02;
+    } else {
+      if (up) player.vy -= 0.9;
+      if (down) player.vy += 0.9;
+    }
+    player.vy *= 0.9;
+    player.vy = Math.max(-14, Math.min(14, player.vy));
+    player.y += player.vy;
+    // wind sway
+    player.x = W * 0.22 + Math.sin(t * 0.02) * 6;
+
+    if (player.y < player.r + 10) { player.y = player.r + 10; player.vy = 0; }
+    if (player.y > H - player.r - 10) { player.y = H - player.r - 10; player.vy = 0; }
+
+    // clouds decor
+    clouds.forEach(c => c.x -= c.speed * scrollSpeed);
+    clouds = clouds.filter(c => c.x > -100);
+    while (clouds.length < 14) spawnCloudDecor(false);
+
+    // obstacles
+    spawnTimer -= 1;
+    if (spawnTimer <= 0) {
+      spawnObstacle();
+      spawnTimer = Math.max(28, 62 - progressRatio() * 34) + Math.random() * 20;
+    }
+    obstacles.forEach(o => { o.x -= scrollSpeed * 1.6; o.wob += 0.05; });
+    obstacles = obstacles.filter(o => o.x > -60);
+
+    // coins
+    coinSpawnTimer -= 1;
+    if (coinSpawnTimer <= 0) {
+      spawnCoin();
+      coinSpawnTimer = 55 + Math.random() * 45;
+    }
+    coinsList.forEach(c => { c.x -= scrollSpeed * 1.6; c.wob += 0.08; });
+    coinsList = coinsList.filter(c => c.x > -40);
+
+    if (invuln <= 0) {
+      for (const o of obstacles) {
+        const dx = o.x - player.x, dy = (o.y + Math.sin(o.wob) * 6) - player.y;
+        const dd = Math.hypot(dx, dy);
+        if (dd < o.r + player.r * 0.75) {
+          hitPlayer();
+          break;
+        }
+      }
+    }
+
+    for (const c of coinsList) {
+      const dx = c.x - player.x, dy = (c.y + Math.sin(c.wob) * 4) - player.y;
+      if (Math.hypot(dx, dy) < c.r + player.r * 0.75) {
+        c.collected = true;
+        coins++;
+        coinCountEl.textContent = coins;
+      }
+    }
+    coinsList = coinsList.filter(c => !c.collected);
+
+    if (dist >= GOAL_DIST) {
+      state = 'won';
+      showEnd(true);
+    }
+  }
+
+  function hitPlayer() {
+    lives--;
+    livesEl.textContent = lives;
+    invuln = 100;
+    obstacles = obstacles.filter(o => Math.hypot(o.x - player.x, o.y - player.y) > 90);
+    if (lives <= 0) {
+      state = 'dead';
+      showEnd(false);
+    }
+  }
+
+  function drawBackground() {
+    const { skyTop, skyBot, ground } = bgColors();
+    const g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, rgb(skyTop));
+    g.addColorStop(1, rgb(skyBot));
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    // ground strip (sea -> desert)
+    ctx.fillStyle = rgb(ground);
+    ctx.fillRect(0, H - 26, W, 26);
+
+    // decorative clouds
+    clouds.forEach(c => {
+      ctx.beginPath();
+      ctx.fillStyle = `rgba(255,255,255,${c.alpha})`;
+      ctx.ellipse(c.x, c.y, c.s, c.s * 0.55, 0, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // milestone labels
+    const r = progressRatio();
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.textAlign = 'left';
+    ctx.fillText('🇹🇼 台灣', 10, H - 34);
+    ctx.textAlign = 'right';
+    ctx.fillText('🌍 非洲', W - 10, H - 34);
+  }
+
+  function drawPlayer() {
+    ctx.save();
+    ctx.translate(player.x, player.y);
+    const flicker = invuln > 0 && Math.floor(t / 4) % 2 === 0;
+    ctx.globalAlpha = flicker ? 0.4 : 1;
+
+    // wind streak
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-30 - i * 10, -10 + i * 10);
+      ctx.lineTo(-55 - i * 14, -10 + i * 10);
+      ctx.stroke();
+    }
+
+    // body
+    ctx.fillStyle = '#ffd8b0';
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.fill();
+
+    // pot-lid hair (鍋蓋頭) - a bowl/dome shape over the head
+    ctx.fillStyle = '#3a2a1e';
+    ctx.beginPath();
+    ctx.arc(0, -4, 21, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+    // pot-lid knob on top
+    ctx.beginPath();
+    ctx.arc(0, -25, 4, 0, Math.PI * 2);
+    ctx.fill();
+    // straight fringe line (經典鍋蓋瀏海)
+    ctx.strokeStyle = '#3a2a1e';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-20, -3);
+    ctx.lineTo(20, -3);
+    ctx.stroke();
+
+    // eyes
+    ctx.fillStyle = '#3a2a1e';
+    ctx.beginPath();
+    ctx.arc(-7, 2, 2.2, 0, Math.PI * 2);
+    ctx.arc(7, 2, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    // blush
+    ctx.fillStyle = 'rgba(255,120,120,0.5)';
+    ctx.beginPath();
+    ctx.arc(-13, 8, 3, 0, Math.PI * 2);
+    ctx.arc(13, 8, 3, 0, Math.PI * 2);
+    ctx.fill();
+    // mouth
+    ctx.strokeStyle = '#7a4a2a';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.arc(0, 8, 5, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function drawObstacles() {
+    obstacles.forEach(o => {
+      const y = o.y + Math.sin(o.wob) * 6;
+      if (o.kind === 'darkcloud') {
+        ctx.fillStyle = 'rgba(60,60,80,0.85)';
+        ctx.beginPath();
+        ctx.arc(o.x, y, o.r, 0, Math.PI * 2);
+        ctx.arc(o.x - o.r * 0.6, y + 6, o.r * 0.7, 0, Math.PI * 2);
+        ctx.arc(o.x + o.r * 0.6, y + 6, o.r * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        ctx.save();
+        ctx.translate(o.x, y);
+        ctx.rotate(o.wob);
+        ctx.fillStyle = '#8a6a4a';
+        ctx.fillRect(-o.r, -o.r * 0.35, o.r * 2, o.r * 0.7);
+        ctx.restore();
+      }
+    });
+  }
+
+  function drawCoins() {
+    coinsList.forEach(c => {
+      const y = c.y + Math.sin(c.wob) * 4;
+      const squash = Math.max(0.35, Math.abs(Math.cos(c.wob * 1.3)));
+      ctx.save();
+      ctx.translate(c.x, y);
+      ctx.scale(squash, 1);
+      ctx.fillStyle = '#ffd23f';
+      ctx.strokeStyle = '#b8860b';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(0, 0, c.r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.restore();
+    });
+  }
+
+  function drawWon() {
+    // flag-ish coloring hint drawn under overlay text via CSS; canvas just shows scene
+  }
+
+  function loop() {
+    update();
+    drawBackground();
+    drawCoins();
+    drawObstacles();
+    drawPlayer();
+    requestAnimationFrame(loop);
+  }
+
+  function showEnd(won) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = '';
+    const h1 = document.createElement('h1');
+    const p = document.createElement('p');
+    const btn = document.createElement('button');
+    btn.textContent = '再吹一次 🔁';
+    btn.onclick = () => {
+      overlay.classList.add('hidden');
+      state = 'playing';
+      resetGame();
+    };
+    if (won) {
+      h1.textContent = '🌍 咚！Conie 被吹到了非洲！';
+      p.innerHTML = '巴威颱風把 Conie 一路從台灣吹過印度洋、吹過撒哈拉，<br>最後「咻——」一聲降落在非洲大陸，鍋蓋頭都吹歪了 🥢💨<br><br>恭喜完成「Conie 世界巡迴（被迫版）」！<br>本次共撿到 <b>' + coins + '</b> 枚金幣 🪙';
+    } else {
+      h1.textContent = '💥 Conie 被颱風吹散了…';
+      p.innerHTML = '看來風力太強，Conie 還沒撐到非洲就先暈頭轉向了。<br>再試一次，閃過烏雲跟碎片，順路撿金幣，把她安全吹到非洲吧！<br>本次共撿到 <b>' + coins + '</b> 枚金幣 🪙';
+    }
+    overlay.appendChild(h1);
+    overlay.appendChild(p);
+    overlay.appendChild(btn);
+  }
+
+  startBtn.onclick = () => {
+    overlay.classList.add('hidden');
+    state = 'playing';
+    resize();
+    resetGame();
+  };
+
+  resize();
+  requestAnimationFrame(loop);
+})();
+</script>
