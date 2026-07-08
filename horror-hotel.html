@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>詭異飯店 - 雙人恐怖逃脫遊戲</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: radial-gradient(ellipse at center, #1a0505 0%, #050202 70%, #000 100%);
+    color: #d8c9b8;
+    font-family: "Noto Serif TC", "PMingLiU", serif;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  #app { max-width: 720px; width: 100%; }
+  .panel {
+    background: linear-gradient(180deg, #120808 0%, #0a0404 100%);
+    border: 1px solid #4a1f1f;
+    box-shadow: 0 0 40px rgba(120,0,0,0.35), inset 0 0 60px rgba(0,0,0,0.6);
+    border-radius: 6px;
+    padding: 28px;
+    position: relative;
+    overflow: hidden;
+  }
+  .panel::before {
+    content: "";
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(0deg, rgba(255,255,255,0.015) 0px, transparent 2px, transparent 4px);
+    pointer-events: none;
+  }
+  h1 {
+    text-align: center;
+    color: #a11;
+    letter-spacing: 6px;
+    text-shadow: 0 0 12px #700, 0 0 2px #000;
+    font-size: 1.6em;
+    margin: 0 0 6px;
+  }
+  .sub { text-align: center; color: #7a6a5a; font-size: 0.85em; margin-bottom: 20px; letter-spacing: 2px;}
+  .row { display: flex; gap: 10px; margin-bottom: 10px; }
+  input[type=text] {
+    flex: 1;
+    background: #1a0e0e;
+    border: 1px solid #5a2a2a;
+    color: #e8dcc8;
+    padding: 10px 12px;
+    font-family: inherit;
+    font-size: 1em;
+    border-radius: 3px;
+  }
+  button {
+    background: #3a0e0e;
+    border: 1px solid #7a1f1f;
+    color: #e8c8b8;
+    padding: 10px 16px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.95em;
+    letter-spacing: 2px;
+    border-radius: 3px;
+    transition: background 0.2s, transform 0.1s;
+  }
+  button:hover:not(:disabled) { background: #5a1414; box-shadow: 0 0 10px rgba(200,0,0,0.5); }
+  button:active:not(:disabled) { transform: scale(0.97); }
+  button:disabled { opacity: 0.3; cursor: not-allowed; }
+  .full { width: 100%; }
+  .status-bar {
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+    margin-bottom: 18px; padding: 10px; background: rgba(0,0,0,0.4);
+    border: 1px solid #331414; border-radius: 4px; font-size: 0.85em;
+  }
+  .player-stat { flex: 1; min-width: 140px; }
+  .player-stat b { color: #c86; }
+  .bar-bg { background: #200; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 3px; border: 1px solid #400; }
+  .bar-fill { height: 100%; background: linear-gradient(90deg, #700, #c33); transition: width 0.4s; }
+  .bar-fill.sanity { background: linear-gradient(90deg, #135, #37c); }
+  #log {
+    background: #0a0505;
+    border: 1px solid #2a1414;
+    border-radius: 4px;
+    padding: 16px;
+    min-height: 160px;
+    max-height: 260px;
+    overflow-y: auto;
+    line-height: 1.7;
+    font-size: 0.95em;
+    margin-bottom: 16px;
+    white-space: pre-wrap;
+  }
+  #log .turn-tag { color: #c86; font-weight: bold; }
+  #log .danger { color: #d33; }
+  #log .clue { color: #6ac; }
+  #log .system { color: #776; font-style: italic; }
+  .choices { display: flex; flex-direction: column; gap: 8px; }
+  .choices button { text-align: left; }
+  .hidden { display: none !important; }
+  .flash {
+    animation: flash 0.4s ease-out;
+  }
+  @keyframes flash {
+    0% { background: #a00; }
+    100% { background: inherit; }
+  }
+  .center { text-align: center; }
+  .small { font-size: 0.8em; color: #776; }
+  .item-list span {
+    display: inline-block; background: #201010; border: 1px solid #4a2222;
+    padding: 3px 8px; border-radius: 3px; margin: 2px; font-size: 0.8em; color: #c8a;
+  }
+  #jumpscare {
+    position: fixed; inset: 0; background: #000; z-index: 999;
+    display: flex; align-items: center; justify-content: center;
+    color: #f00; font-size: 4em; font-weight: bold; letter-spacing: 10px;
+    text-shadow: 0 0 30px red;
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="panel" id="panel">
+
+    <div id="screen-intro">
+      <h1>詭 異 飯 店</h1>
+      <div class="sub">雙人恐怖逃脫遊戲 · 進去容易，出來難</div>
+      <p style="color:#a89;">你們兩人為了避雨走進了這間廢棄已久的飯店。櫃檯無人，大廳昏天暗地。
+      當你們走到各自的房間時，卻在門縫下發現了滲出的血跡……
+      現在，你們必須合作找到出口，趁「它」還沒發現你們之前逃出去。</p>
+      <div class="row">
+        <input type="text" id="p1name" placeholder="玩家一 名字" maxlength="10">
+      </div>
+      <div class="row">
+        <input type="text" id="p2name" placeholder="玩家二 名字" maxlength="10">
+      </div>
+      <button class="full" id="startBtn">推 門 而 入</button>
+    </div>
+
+    <div id="screen-game" class="hidden">
+      <h1 id="gameTitle">詭 異 飯 店</h1>
+      <div class="status-bar">
+        <div class="player-stat">
+          <b id="p1label">玩家一</b> HP
+          <div class="bar-bg"><div class="bar-fill" id="p1hp" style="width:100%"></div></div>
+          理智
+          <div class="bar-bg"><div class="bar-fill sanity" id="p1san" style="width:100%"></div></div>
+        </div>
+        <div class="player-stat">
+          <b id="p2label">玩家二</b> HP
+          <div class="bar-bg"><div class="bar-fill" id="p2hp" style="width:100%"></div></div>
+          理智
+          <div class="bar-bg"><div class="bar-fill sanity" id="p2san" style="width:100%"></div></div>
+        </div>
+      </div>
+      <div class="small center" id="dangerMeter">詭異氣息：0 / 10</div>
+      <div id="log"></div>
+      <div class="item-list" id="items"></div>
+      <div class="choices" id="choices"></div>
+    </div>
+
+    <div id="screen-end" class="hidden center">
+      <h1 id="endTitle">結局</h1>
+      <p id="endText" style="color:#c8a;"></p>
+      <button class="full" id="restartBtn">重 新 開 始</button>
+    </div>
+
+  </div>
+</div>
+<div id="jumpscare" class="hidden">它 就 在 你 身 後</div>
+
+<script>
+(function(){
+  const S = {
+    p1: {name:'玩家一', hp:100, san:100},
+    p2: {name:'玩家二', hp:100, san:100},
+    danger: 0,
+    turn: 1,
+    clues: 0,
+    keys: 0,
+    inventory: [],
+    stage: 'lobby',
+    activePlayer: 1
+  };
+
+  const $ = id => document.getElementById(id);
+  const logEl = $('log');
+
+  function log(html, cls) {
+    const line = document.createElement('div');
+    if (cls) line.className = cls;
+    line.innerHTML = html;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function clamp(v){ return Math.max(0, Math.min(100, v)); }
+
+  function updateStatus() {
+    $('p1label').textContent = S.p1.name;
+    $('p2label').textContent = S.p2.name;
+    $('p1hp').style.width = S.p1.hp + '%';
+    $('p2hp').style.width = S.p2.hp + '%';
+    $('p1san').style.width = S.p1.san + '%';
+    $('p2san').style.width = S.p2.san + '%';
+    $('dangerMeter').textContent = `詭異氣息：${S.danger} / 10`;
+    $('items').innerHTML = S.inventory.map(i => `<span>${i}</span>`).join('');
+    checkGameOver();
+  }
+
+  function currentPlayer() { return S.activePlayer === 1 ? S.p1 : S.p2; }
+
+  function damage(playerNum, hp, san) {
+    const p = playerNum === 1 ? S.p1 : S.p2;
+    if (hp) p.hp = clamp(p.hp - hp);
+    if (san) p.san = clamp(p.san - san);
+  }
+
+  function raiseDanger(n) {
+    S.danger = Math.min(10, S.danger + n);
+    if (S.danger >= 10) jumpscare();
+  }
+
+  function jumpscare() {
+    const js = $('jumpscare');
+    js.classList.remove('hidden');
+    setTimeout(() => {
+      js.classList.add('hidden');
+      S.danger = 4;
+      damage(1, 15, 20);
+      damage(2, 15, 20);
+      log('<span class="danger">走廊的燈全部熄滅，你們聽見身後傳來拖行的腳步聲……它靠得太近了。兩人狂奔逃離，驚魂未定。</span>', 'danger');
+      updateStatus();
+      nextScene();
+    }, 1600);
+  }
+
+  function checkGameOver() {
+    if (S.p1.hp <= 0 || S.p2.hp <= 0) {
+      endGame(false, `${S.p1.hp<=0 ? S.p1.name : S.p2.name} 倒在了冰冷的地板上，再也沒有起來。飯店，又多了一位「房客」。`);
+    } else if (S.p1.san <= 0 || S.p2.san <= 0) {
+      endGame(false, `${S.p1.san<=0 ? S.p1.name : S.p2.name} 的理智徹底崩潰，開始對著空氣尖叫、傻笑……最終消失在無盡的走廊深處。`);
+    }
+  }
+
+  function setChoices(list) {
+    const c = $('choices');
+    c.innerHTML = '';
+    list.forEach(opt => {
+      const b = document.createElement('button');
+      b.textContent = opt.label;
+      b.onclick = () => { c.innerHTML=''; opt.action(); };
+      c.appendChild(b);
+    });
+  }
+
+  function switchPlayer() {
+    S.activePlayer = S.activePlayer === 1 ? 2 : 1;
+  }
+
+  function roll(chance) { return Math.random() < chance; }
+
+  // ---------- Scenes ----------
+  const scenes = {};
+
+  scenes.lobby = function() {
+    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
+    log('大廳裡積滿灰塵，時鐘停在 3:33。櫃檯後方有一道走廊通往客房，牆上掛著一幅褪色的老照片，畫中人的眼睛似乎在動。');
+    setChoices([
+      { label: '走向客房走廊', action: () => goto('corridor') },
+      { label: '仔細查看老照片', action: () => {
+          if (roll(0.5)) {
+            log('<span class="clue">照片背後貼著一張泛黃的房卡，寫著「203」。</span>', 'clue');
+            S.inventory.push('203號房卡'); S.clues++;
+          } else {
+            log('<span class="danger">照片中人的眼睛猛地轉向你，你感到一陣寒意直竄背脊。</span>', 'danger');
+            damage(S.activePlayer, 0, 10);
+            raiseDanger(1);
+          }
+          updateStatus();
+          scenes.lobby();
+      }},
+      { label: '搜索櫃檯', action: () => {
+          if (roll(0.6)) {
+            log('<span class="clue">你在櫃檯抽屜裡找到了一把生鏽的萬能鑰匙。</span>', 'clue');
+            S.inventory.push('生鏽萬能鑰匙'); S.clues++;
+          } else {
+            log('抽屜裡只有灰塵與蟲蛀的登記簿，上面最後一筆入住紀錄是十年前。');
+          }
+          updateStatus();
+          switchPlayer(); S.turn++;
+          scenes.lobby();
+      }}
+    ]);
+  };
+
+  function goto(stage) { S.stage = stage; switchPlayer(); S.turn++; scenes[stage](); }
+
+  scenes.corridor = function() {
+    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
+    log('走廊昏暗，地毯上一路延伸著暗紅色的血跡，通往幾扇緊閉的房門。');
+    raiseDanger(1);
+    setChoices([
+      { label: '跟隨血跡走進 203 號房', action: () => goto('room203') },
+      { label: '檢查地上的血跡', action: () => {
+          if (roll(0.5)) {
+            log('<span class="clue">血跡旁散落著幾片碎玻璃與一枚鈕扣，似乎屬於某種制服。</span>', 'clue');
+            S.inventory.push('神秘鈕扣'); S.clues++;
+          } else {
+            log('<span class="danger">你彎腰查看時，感覺有什麼東西從身後的房門縫隙盯著你。</span>', 'danger');
+            damage(S.activePlayer, 5, 10);
+          }
+          updateStatus();
+          switchPlayer(); S.turn++;
+          scenes.corridor();
+      }},
+      { label: '兩人一起壯膽前進', action: () => {
+          log('<span class="system">你們牽起彼此的手，理智稍微恢復了一些。</span>', 'system');
+          damage(1, 0, -8); damage(2, 0, -8);
+          updateStatus();
+          goto('room203');
+      }}
+    ]);
+  };
+
+  scenes.room203 = function() {
+    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
+    log('203 號房門虛掩著，房內一片狼藉，床單上是一大片已經乾涸的血跡，衣櫃的門微微晃動著。');
+    setChoices([
+      { label: '打開衣櫃', action: () => {
+          if (roll(0.4)) {
+            log('<span class="danger">衣櫃裡猛地竄出一隻蒼白的手，緊緊抓住了你的手腕！</span>', 'danger');
+            damage(S.activePlayer, 20, 15);
+            raiseDanger(2);
+          } else {
+            log('<span class="clue">衣櫃裡只掛著幾件飯店制服，口袋中有一張寫著密碼「7-1-9」的紙條。</span>', 'clue');
+            S.inventory.push('密碼紙條(719)'); S.clues++;
+          }
+          updateStatus();
+          switchPlayer(); S.turn++;
+          scenes.room203();
+      }},
+      { label: '檢查床底', action: () => {
+          if (roll(0.55)) {
+            log('<span class="clue">床底藏著一本日記，記錄著飯店員工失蹤前的恐懼與求救。日記最後一頁夾著逃生通道的鑰匙。</span>', 'clue');
+            S.inventory.push('逃生通道鑰匙'); S.keys++;
+          } else {
+            log('<span class="danger">你的手碰到一團濕黏的東西，一陣噁心感湧上心頭。</span>', 'danger');
+            damage(S.activePlayer, 5, 15);
+          }
+          updateStatus();
+          switchPlayer(); S.turn++;
+          scenes.room203();
+      }},
+      { label: '離開房間，前往地下室', action: () => {
+          if (S.clues < 2) {
+            log('<span class="system">感覺線索還不夠……或許該再找找看。</span>', 'system');
+            scenes.room203();
+          } else {
+            goto('basement');
+          }
+      }}
+    ]);
+  };
+
+  scenes.basement = function() {
+    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
+    log('沿著血跡走下昏暗的地下室樓梯，空氣中瀰漫著鐵鏽與腐朽的氣味。盡頭是一扇鎖著的鐵門，門上有一個密碼鎖與一個鑰匙孔。');
+    raiseDanger(1);
+    const opts = [];
+    if (S.inventory.includes('密碼紙條(719)')) {
+      opts.push({ label: '用密碼紙條輸入「719」', action: () => {
+          log('<span class="clue">鎖發出「喀」的一聲，密碼正確！</span>', 'clue');
+          S.keys++;
+          updateStatus();
+          tryEscape();
+      }});
+    } else {
+      opts.push({ label: '嘗試隨意猜測密碼', action: () => {
+          if (roll(0.15)) {
+            log('<span class="clue">竟然瞎猜中了！鎖應聲而開。</span>', 'clue');
+            S.keys++;
+          } else {
+            log('<span class="danger">密碼錯誤，警報聲大作，你們聽見遠處傳來奔跑的腳步聲！</span>', 'danger');
+            raiseDanger(2);
+            damage(1, 5, 10); damage(2, 5, 10);
+          }
+          updateStatus();
+          tryEscape();
+      }});
+    }
+    if (S.inventory.includes('生鏽萬能鑰匙') || S.inventory.includes('逃生通道鑰匙')) {
+      opts.push({ label: '用手中的鑰匙開鎖', action: () => {
+          log('<span class="clue">鑰匙插入鎖孔，輕輕一轉，鐵門應聲而開。</span>', 'clue');
+          S.keys++;
+          updateStatus();
+          tryEscape();
+      }});
+    }
+    opts.push({ label: '合力硬撞開鐵門', action: () => {
+        damage(1, 10, 5); damage(2, 10, 5);
+        if (roll(0.5)) {
+          log('<span class="clue">兩人用盡全力，鐵門終於被撞開！</span>', 'clue');
+          S.keys++;
+        } else {
+          log('<span class="danger">鐵門紋絲不動，你們卻因此吸引了「它」的注意。</span>', 'danger');
+          raiseDanger(3);
+        }
+        updateStatus();
+        tryEscape();
+    }});
+    setChoices(opts);
+  };
+
+  function tryEscape() {
+    if (S.keys >= 1 && S.p1.hp > 0 && S.p2.hp > 0) {
+      setTimeout(() => {
+        log('<span class="clue">鐵門後是一條通往室外的逃生通道，微弱的月光灑落進來……</span>', 'clue');
+        setChoices([
+          { label: '衝出鐵門，逃離飯店', action: () => endGame(true) }
+        ]);
+      }, 300);
+    } else {
+      switchPlayer(); S.turn++;
+      scenes.basement();
+    }
+  }
+
+  function nextScene() {
+    scenes[S.stage] ? scenes[S.stage]() : scenes.lobby();
+  }
+
+  function endGame(win, customText) {
+    $('screen-game').classList.add('hidden');
+    $('screen-end').classList.remove('hidden');
+    if (win) {
+      $('endTitle').textContent = '生 還';
+      $('endText').textContent = `${S.p1.name} 與 ${S.p2.name} 跌跌撞撞地衝出飯店大門，回頭望去，那棟建築彷彿從未存在過一般靜靜矗立在雨夜中。你們活著逃了出來——但飯店裡的「它」，似乎已經記住了你們的臉。`;
+    } else {
+      $('endTitle').textContent = '死 亡 結 局';
+      $('endText').textContent = customText || '你們沒能活著離開這間飯店。';
+    }
+  }
+
+  // ---------- Init ----------
+  $('startBtn').onclick = () => {
+    const n1 = $('p1name').value.trim();
+    const n2 = $('p2name').value.trim();
+    if (n1) S.p1.name = n1;
+    if (n2) S.p2.name = n2;
+    $('screen-intro').classList.add('hidden');
+    $('screen-game').classList.remove('hidden');
+    updateStatus();
+    log(`<span class="system">${S.p1.name} 與 ${S.p2.name} 推開了飯店厚重的大門……</span>`, 'system');
+    scenes.lobby();
+  };
+
+  $('restartBtn').onclick = () => location.reload();
+
+})();
+</script>
+</body>
+</html>
