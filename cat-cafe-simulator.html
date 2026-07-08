@@ -256,6 +256,38 @@
   }
   .hidden{display:none !important;}
   .small{font-size:0.72rem;color:#8a6f5a;}
+  .rushBanner{
+    position:absolute;
+    top:6px;left:50%;
+    transform:translateX(-50%);
+    background:var(--red);
+    color:#fff;
+    padding:4px 14px;
+    border-radius:20px;
+    font-size:0.8rem;
+    font-weight:bold;
+    box-shadow:0 3px 0 rgba(0,0,0,0.2);
+    z-index:5;
+    animation:pulse 1s infinite alternate;
+  }
+  @keyframes pulse{from{transform:translateX(-50%) scale(1);} to{transform:translateX(-50%) scale(1.06);}}
+  .custTag{
+    position:absolute;
+    top:-24px;left:50%;
+    transform:translateX(-50%);
+    font-size:15px;
+    white-space:nowrap;
+  }
+  .staffTile{
+    position:absolute;
+    font-size:26px;
+    transition:left 1s ease, top 1s ease;
+  }
+  .decoTile{
+    position:absolute;
+    font-size:24px;
+    pointer-events:none;
+  }
 </style>
 </head>
 <body>
@@ -300,6 +332,16 @@
         <h2>🛠 升級與裝潢</h2>
         <div class="shopGrid" id="upgradeShop"></div>
       </div>
+
+      <div class="panel">
+        <h2>👩‍🍳 員工雇用</h2>
+        <div class="shopGrid" id="staffShop"></div>
+      </div>
+
+      <div class="panel">
+        <h2>🎀 擺飾收藏 (<span id="decoCount">0</span>)</h2>
+        <div class="shopGrid" id="decoShop"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -331,6 +373,31 @@
     {key:'toy', name:'貓咪玩具', icon:'🧶', costBase:80, level:0, max:5, desc:'貓咪心情上限與恢復速度提升'},
   ];
 
+  // 顧客類型：不同客群有不同耐心、小費倍率、離開時的聲望損失、出現機率權重
+  const CUSTOMER_TYPES = [
+    {key:'student', name:'學生', icon:'🧑‍🎓', weight:35, patienceMult:0.9, tipMult:0.9, repLoss:1, orderCountRange:[1,1]},
+    {key:'office', name:'上班族', icon:'🧑‍💼', weight:28, patienceMult:0.75, tipMult:1.1, repLoss:2, orderCountRange:[1,2]},
+    {key:'family', name:'親子家庭', icon:'👨‍👩‍👧', weight:16, patienceMult:1.3, tipMult:1.2, repLoss:2, orderCountRange:[2,3]},
+    {key:'elder', name:'長輩', icon:'👵', weight:10, patienceMult:1.5, tipMult:1.0, repLoss:1, orderCountRange:[1,1]},
+    {key:'tourist', name:'觀光客', icon:'🧑‍🦱', weight:8, patienceMult:1.0, tipMult:1.5, repLoss:2, orderCountRange:[1,2]},
+    {key:'vip', name:'VIP名人', icon:'🧑‍🎤', weight:3, patienceMult:0.6, tipMult:2.5, repLoss:5, orderCountRange:[1,1]},
+  ];
+
+  const STAFF_TYPES = [
+    {key:'barista', name:'咖啡師', icon:'👩‍🍳', cost:200, desc:'定期自動幫忙上餐一桌'},
+    {key:'greeter', name:'迎賓員', icon:'🙋', cost:180, desc:'提升顧客上門機率'},
+    {key:'groomer', name:'貓咪美容師', icon:'🧑‍🔧', cost:220, desc:'持續恢復所有貓咪心情'},
+  ];
+
+  const DECO_TYPES = [
+    {key:'plant', name:'盆栽', icon:'🪴', cost:40, rep:1},
+    {key:'lamp', name:'吊燈', icon:'💡', cost:60, rep:2},
+    {key:'painting', name:'掛畫', icon:'🖼️', cost:80, rep:2},
+    {key:'fishtank', name:'魚缸', icon:'🐠', cost:120, rep:3},
+    {key:'piano', name:'鋼琴', icon:'🎹', cost:220, rep:5},
+    {key:'fireplace', name:'壁爐', icon:'🔥', cost:300, rep:6},
+  ];
+
   let state = {
     money: 150,
     rep: 0,
@@ -341,9 +408,14 @@
     tables: [], // {id,x,y, occupied:false, customer:null}
     customers: [],
     upgrades: {table:1, menu:0, deco:0, toy:0}, // table level 1 = 3 seats base
+    staff: [], // {key, id, x, y}
+    decos: [], // {key, id, x, y}
     catIdSeq: 1,
+    staffIdSeq: 1,
+    decoIdSeq: 1,
     logs: [],
     running: true,
+    rushUntil: 0, // game-minutes timestamp when rush hour ends
   };
 
   const cafeArea = document.getElementById('cafeArea');
@@ -384,11 +456,11 @@
       div.dataset.tid = t.id;
       div.innerHTML = `
         <div class="table ${t.occupied?'':'empty'}">
-          ${t.occupied ? '🧑‍🦱' : '🪑'}
+          ${t.occupied ? t.customer.icon : '🪑'}
           ${t.occupied ? `<div class="badge">${t.customer.orderIcon}</div>` : ''}
           ${t.occupied ? `<div class="patience-bar"><div class="patience-fill" id="pf${t.id}"></div></div>` : ''}
         </div>
-        <div class="label">桌${t.id+1}</div>
+        <div class="label">桌${t.id+1}${t.occupied?' · '+t.customer.typeName:''}</div>
       `;
       div.onclick = ()=>serveTable(t.id);
       cafeArea.appendChild(div);
@@ -503,21 +575,43 @@
     {icon:'🍰', name:'蛋糕', base:25},
     {icon:'🥤', name:'飲料', base:12},
     {icon:'🍪', name:'餅乾', base:10},
+    {icon:'🥪', name:'三明治', base:22},
+    {icon:'🍮', name:'布丁', base:18},
+    {icon:'🍦', name:'冰淇淋', base:20},
+    {icon:'🥐', name:'可頌', base:16},
   ];
+
+  function pickCustomerType(){
+    const total = CUSTOMER_TYPES.reduce((a,c)=>a+c.weight,0);
+    let r = Math.random()*total;
+    for(const ct of CUSTOMER_TYPES){
+      if(r < ct.weight) return ct;
+      r -= ct.weight;
+    }
+    return CUSTOMER_TYPES[0];
+  }
 
   function trySpawnCustomer(){
     const freeTables = state.tables.filter(t=>!t.occupied);
     if(freeTables.length===0) return;
     if(Math.random() > spawnChance()) return;
     const table = freeTables[Math.floor(Math.random()*freeTables.length)];
-    const order = ORDER_TYPES[Math.floor(Math.random()*ORDER_TYPES.length)];
+    const ctype = pickCustomerType();
+    const orderCount = ctype.orderCountRange[0] + Math.floor(Math.random()*(ctype.orderCountRange[1]-ctype.orderCountRange[0]+1));
+    const orders = Array.from({length:orderCount}, ()=>ORDER_TYPES[Math.floor(Math.random()*ORDER_TYPES.length)]);
+    const orderBase = orders.reduce((a,o)=>a+o.base,0);
     const avgCuteness = state.cats.length ? state.cats.reduce((a,c)=>a+c.cuteness,0)/state.cats.length : 1;
-    const patienceMax = 18 + state.upgrades.deco*2;
+    const patienceMax = Math.round((18 + state.upgrades.deco*2) * ctype.patienceMult);
     table.occupied = true;
     table.customer = {
-      orderIcon: order.icon,
-      orderName: order.name,
-      base: order.base,
+      typeKey: ctype.key,
+      typeName: ctype.name,
+      icon: ctype.icon,
+      tipMult: ctype.tipMult,
+      repLoss: ctype.repLoss,
+      orderIcon: orders.map(o=>o.icon).join(''),
+      orderName: orders.map(o=>o.name).join('、'),
+      base: orderBase,
       patience: patienceMax,
       maxPatience: patienceMax,
       cutenessBonus: avgCuteness,
@@ -528,7 +622,41 @@
 
   function spawnChance(){
     // more reputation => higher spawn chance, capped
-    return Math.min(0.08 + state.rep*0.002 + state.upgrades.deco*0.01, 0.5);
+    let chance = 0.08 + state.rep*0.002 + state.upgrades.deco*0.01;
+    chance += state.decos.length * 0.004;
+    if(state.staff.some(s=>s.key==='greeter')) chance += 0.08;
+    if(isRushHour()) chance *= 2;
+    return Math.min(chance, 0.7);
+  }
+
+  function isRushHour(){
+    return (state.hour*60+state.minute) < state.rushUntil;
+  }
+
+  function maybeTriggerRushHour(){
+    if(isRushHour()) return;
+    if(Math.random() < 0.02){
+      const durMin = 40 + Math.floor(Math.random()*40);
+      state.rushUntil = state.hour*60 + state.minute + durMin;
+      log(`🔥 尖峰時段開始！顧客流量大增（持續約${durMin}分鐘）`);
+      showRushBanner(true);
+      setTimeout(()=>{}, 0);
+    }
+  }
+
+  let rushBannerEl = null;
+  function showRushBanner(show){
+    if(show){
+      if(!rushBannerEl){
+        rushBannerEl = document.createElement('div');
+        rushBannerEl.className='rushBanner';
+        rushBannerEl.textContent='🔥 尖峰時段！顧客湧入中';
+        cafeArea.appendChild(rushBannerEl);
+      }
+    } else if(rushBannerEl){
+      rushBannerEl.remove();
+      rushBannerEl = null;
+    }
   }
 
   function serveTable(id){
@@ -537,11 +665,11 @@
     const c = t.customer;
     const menuBonus = 1 + state.upgrades.menu*0.15;
     const catMoodAvg = state.cats.length ? state.cats.reduce((a,ct)=>a+ct.mood,0)/state.cats.length/100 : 0.5;
-    const tipMultiplier = 1 + (c.cutenessBonus*0.05) + (catMoodAvg*0.4);
+    const tipMultiplier = (1 + (c.cutenessBonus*0.05) + (catMoodAvg*0.4)) * c.tipMult;
     const revenue = Math.round(c.base * menuBonus * tipMultiplier);
     state.money += revenue;
     state.rep += 1;
-    log(`✅ 桌${id+1} 點了 ${c.orderIcon}${c.orderName}，收入 💰${revenue}`);
+    log(`✅ ${c.icon}${c.typeName} 在桌${id+1} 點了 ${c.orderIcon}${c.orderName}，收入 💰${revenue}`);
     const tileEl = cafeArea.querySelector(`.tableTile[data-tid="${id}"] .table`);
     if(tileEl){
       const rect = tileEl.getBoundingClientRect();
@@ -553,21 +681,33 @@
     updateStats();
   }
 
+  function autoServeByStaff(){
+    if(!state.staff.some(s=>s.key==='barista')) return;
+    const occupied = state.tables.filter(t=>t.occupied);
+    if(occupied.length===0) return;
+    if(Math.random() < 0.35){
+      const t = occupied[Math.floor(Math.random()*occupied.length)];
+      log(`👩‍🍳 咖啡師自動幫忙服務了桌${t.id+1}`);
+      serveTable(t.id);
+    }
+  }
+
   function tickCustomerPatience(){
     let leftCount = 0;
     state.tables.forEach(t=>{
       if(t.occupied){
         t.customer.patience -= 1;
         if(t.customer.patience<=0){
+          const loss = t.customer.repLoss;
           t.occupied=false;
           t.customer=null;
-          state.rep = Math.max(0, state.rep-2);
+          state.rep = Math.max(0, state.rep-loss);
           leftCount++;
         }
       }
     });
     if(leftCount>0){
-      log(`😠 有 ${leftCount} 位顧客等太久離開了，聲望-2`);
+      log(`😠 有 ${leftCount} 位顧客等太久離開了`);
       renderTables();
       updateStats();
     } else {
@@ -626,6 +766,114 @@
     updateStats();
   }
 
+  // ---------- 員工 ----------
+  function renderStaffShop(){
+    const shop = document.getElementById('staffShop');
+    shop.innerHTML='';
+    STAFF_TYPES.forEach(s=>{
+      const hired = state.staff.some(x=>x.key===s.key);
+      const div = document.createElement('div');
+      div.className='shopItem';
+      div.innerHTML = `
+        <div class="icon">${s.icon}</div>
+        <div><b>${s.name}</b></div>
+        <div class="small">${s.desc}</div>
+        <button ${hired?'disabled':''}>${hired?'已雇用':'💰'+s.cost}</button>
+      `;
+      div.querySelector('button').onclick = ()=>hireStaff(s);
+      shop.appendChild(div);
+    });
+  }
+
+  function hireStaff(s){
+    if(state.staff.some(x=>x.key===s.key)) return;
+    if(state.money < s.cost){ log(`💸 金錢不足，無法雇用 ${s.name}`); return; }
+    state.money -= s.cost;
+    state.staff.push({
+      key:s.key, id:state.staffIdSeq++, icon:s.icon,
+      x: 20+Math.random()*(cafeArea.clientWidth-80),
+      y: 40+Math.random()*100,
+    });
+    log(`👋 雇用了新員工：${s.icon} ${s.name}！`);
+    renderStaffShop();
+    renderStaffOnFloor();
+    updateStats();
+  }
+
+  function renderStaffOnFloor(){
+    cafeArea.querySelectorAll('.staffTile').forEach(e=>e.remove());
+    state.staff.forEach(s=>{
+      const div = document.createElement('div');
+      div.className='staffTile';
+      div.style.left=s.x+'px';
+      div.style.top=s.y+'px';
+      div.textContent=s.icon;
+      cafeArea.appendChild(div);
+    });
+  }
+
+  function moveStaffRandomly(){
+    state.staff.forEach(s=>{
+      if(Math.random()<0.3){
+        s.x = Math.max(10, Math.min(cafeArea.clientWidth-40, s.x + (Math.random()-0.5)*140));
+        s.y = Math.max(10, Math.min(160, s.y + (Math.random()-0.5)*80));
+      }
+    });
+    renderStaffOnFloor();
+  }
+
+  function groomerEffect(){
+    if(!state.staff.some(s=>s.key==='groomer')) return;
+    state.cats.forEach(c=>{
+      c.mood = Math.min(100 + state.upgrades.toy*5, c.mood + 0.8);
+    });
+  }
+
+  // ---------- 擺飾 ----------
+  function renderDecoShop(){
+    const shop = document.getElementById('decoShop');
+    shop.innerHTML='';
+    DECO_TYPES.forEach(d=>{
+      const div = document.createElement('div');
+      div.className='shopItem';
+      div.innerHTML = `
+        <div class="icon">${d.icon}</div>
+        <div><b>${d.name}</b></div>
+        <div class="small">聲望+${d.rep}・提升來客率</div>
+        <button>💰${d.cost}</button>
+      `;
+      div.querySelector('button').onclick = ()=>buyDeco(d);
+      shop.appendChild(div);
+    });
+  }
+
+  function buyDeco(d){
+    if(state.money < d.cost){ log(`💸 金錢不足，無法購買 ${d.name}`); return; }
+    state.money -= d.cost;
+    state.rep += d.rep;
+    state.decos.push({
+      key:d.key, id:state.decoIdSeq++, icon:d.icon,
+      x: 10+Math.random()*(cafeArea.clientWidth-40),
+      y: 10+Math.random()*(cafeArea.clientHeight-40),
+    });
+    log(`🎀 添購了擺飾：${d.icon} ${d.name}，聲望+${d.rep}`);
+    document.getElementById('decoCount').textContent = state.decos.length;
+    renderDecoOnFloor();
+    updateStats();
+  }
+
+  function renderDecoOnFloor(){
+    cafeArea.querySelectorAll('.decoTile').forEach(e=>e.remove());
+    state.decos.forEach(d=>{
+      const div = document.createElement('div');
+      div.className='decoTile';
+      div.style.left=d.x+'px';
+      div.style.top=d.y+'px';
+      div.textContent=d.icon;
+      cafeArea.appendChild(div);
+    });
+  }
+
   // ---------- 時間 / 主循環 ----------
   function updateStats(){
     document.getElementById('statMoney').textContent = state.money;
@@ -645,9 +893,14 @@
     state.cats.forEach(c=>{
       c.mood = Math.max(0, c.mood - (0.6 - state.upgrades.toy*0.05));
     });
+    groomerEffect();
     tickCustomerPatience();
+    maybeTriggerRushHour();
+    if(!isRushHour()) showRushBanner(false);
     trySpawnCustomer();
+    autoServeByStaff();
     moveCatsRandomly();
+    moveStaffRandomly();
     updateStats();
 
     if(state.hour >= 22){
@@ -671,6 +924,8 @@
     state.hour = 8;
     state.minute = 0;
     state.tables.forEach(t=>{t.occupied=false; t.customer=null;});
+    state.rushUntil = 0;
+    showRushBanner(false);
     state.running = true;
     renderTables();
     updateStats();
@@ -682,6 +937,8 @@
     initTables();
     renderCatShop();
     renderUpgradeShop();
+    renderStaffShop();
+    renderDecoShop();
     renderCatList();
     updateStats();
     log('🏪 咖啡廳開張了！招募貓咪並開始經營吧～');
