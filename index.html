@@ -112,8 +112,11 @@
     width: 52px; height: 52px; border-radius: 50%; background: rgba(255,255,255,.92); color: #0b1120;
     display: flex; align-items: center; justify-content: center; font-size: 19px; padding-left: 4px;
   }
-  .meta { padding: 12px 14px 13px; display: flex; align-items: center; gap: 10px; }
-  .meta .name { flex: 1; font-size: 14.5px; font-weight: 500; line-height: 1.4; word-break: break-word; }
+  .meta { padding: 12px 14px 13px; display: flex; align-items: flex-start; gap: 10px; }
+  .meta .info { flex: 1; min-width: 0; }
+  .meta .name { font-size: 14.5px; font-weight: 500; line-height: 1.4; word-break: break-word; }
+  .meta .byline { margin-top: 3px; font-size: 12px; color: var(--muted); }
+  .meta .nums { margin-top: 4px; font-size: 11.5px; color: var(--muted); letter-spacing: .5px; min-height: 1em; }
   .meta .tag { flex: none; font-size: 11px; letter-spacing: 1px; border-radius: 999px; padding: 3px 10px; background: var(--chip); color: var(--chip-text); }
   .card.vid .meta .tag { background: var(--chip2); color: var(--chip2-text); }
   .empty { color: var(--muted); padding: 28px; text-align: center; background: var(--card); border: 1px dashed var(--card-border); border-radius: 16px; font-size: 14.5px; grid-column: 1/-1; }
@@ -215,7 +218,10 @@ function render(filter) {
     }
     for (const item of list) {
       const title = item.title || item.file.replace(/\.html?$/i, '');
-      const thumbSrc = 'thumbs/' + c.dir + '/' + item.file.replace(/\.html?$/i, '.png');
+      const thumbSrc = item.thumb
+        ? 'thumbs/' + c.dir + '/' + item.thumb
+        : 'thumbs/' + c.dir + '/' + item.file.replace(/\.html?$/i, '.png');
+      const key = (item.thumb || (c.dir + '-' + title)).replace(/\.png$/i, '');
       const card = document.createElement('div');
       card.className = 'card ' + c.cls;
       card.innerHTML =
@@ -224,15 +230,21 @@ function render(filter) {
           '<img loading="lazy" alt="">' +
           '<div class="playbtn"><span>▶</span></div>' +
         '</div>' +
-        '<div class="meta"><div class="name"></div><span class="tag">' + c.tag + '</span></div>';
+        '<div class="meta"><div class="info">' +
+          '<div class="name"></div>' +
+          (item.author ? '<div class="byline"></div>' : '') +
+          '<div class="nums" data-key="' + key + '"></div>' +
+        '</div><span class="tag">' + c.tag + '</span></div>';
       card.querySelector('.name').textContent = title;
       card.querySelector('.fallback').textContent = title.charAt(0);
+      if (item.author) card.querySelector('.byline').textContent = '作者：' + item.author;
       const img = card.querySelector('img');
       img.onerror = () => { img.remove(); };
       img.src = encodeURI(thumbSrc);
       img.alt = title;
-      card.onclick = () => openPlayer(title, c.dir + '/' + item.file);
+      card.onclick = () => openPlayer(title, c.dir + '/' + item.file, key, c.id === 'games');
       grid.appendChild(card);
+      countObserver.observe(card.querySelector('.nums'));
     }
   }
   const g = DATA.games || [], v = DATA.videos || [];
@@ -243,6 +255,48 @@ function render(filter) {
 }
 
 document.getElementById('search').addEventListener('input', e => render(e.target.value));
+
+/* ===== 瀏覽 / 遊玩次數（CounterAPI 免費服務；連不上就安靜隱藏） ===== */
+const COUNTER_NS = 'ai-future-camp';
+const countCache = {};
+
+async function readCount(name) {
+  if (name in countCache) return countCache[name];
+  try {
+    const r = await fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + name, { signal: AbortSignal.timeout(6000) });
+    if (r.ok) {
+      const j = await r.json();
+      const n = j.count ?? j.value ?? 0;
+      countCache[name] = n;
+      return n;
+    }
+  } catch (e) {}
+  countCache[name] = null;
+  return null;
+}
+
+function bumpCount(name) {
+  try { fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + name + '/up').catch(() => {}); } catch (e) {}
+}
+
+async function fillNums(el) {
+  const key = el.dataset.key;
+  if (!key || el.dataset.done) return;
+  el.dataset.done = '1';
+  const [views, plays] = await Promise.all([readCount(key + '-v'), readCount(key + '-p')]);
+  if (views === null && plays === null) return; // 服務連不上就不顯示
+  const parts = [];
+  if (views !== null) parts.push('瀏覽 ' + views);
+  if (plays !== null && plays > 0) parts.push('遊玩 ' + plays);
+  el.textContent = parts.join(' · ');
+}
+
+// 卡片捲進畫面才查詢次數，避免一次發幾十個請求
+const countObserver = new IntersectionObserver(entries => {
+  for (const en of entries) {
+    if (en.isIntersecting) { fillNums(en.target); countObserver.unobserve(en.target); }
+  }
+}, { rootMargin: '120px' });
 
 /* ===== 播放器（含自動縮放） ===== */
 function resetFrame() { document.getElementById('pframe').style.cssText = ''; }
@@ -275,14 +329,30 @@ function scheduleFit() {
   fitTimers = [200, 700, 1500].map(ms => setTimeout(fitFrame, ms));
 }
 
-function openPlayer(title, src) {
+function openPlayer(title, src, key, isGame) {
   document.getElementById('ptitle').textContent = title;
   resetFrame();
   const f = document.getElementById('pframe');
-  f.onload = scheduleFit;
+  f.onload = () => {
+    scheduleFit();
+    // 遊玩次數：玩家在作品中第一次操作（點擊/按鍵）才計一次
+    if (key && isGame) {
+      try {
+        const doc = f.contentDocument;
+        const once = () => {
+          bumpCount(key + '-p');
+          doc.removeEventListener('pointerdown', once);
+          doc.removeEventListener('keydown', once);
+        };
+        doc.addEventListener('pointerdown', once);
+        doc.addEventListener('keydown', once);
+      } catch (e) {}
+    }
+  };
   f.src = src;
   document.getElementById('popen').href = src;
   document.getElementById('player').classList.add('open');
+  if (key) bumpCount(key + '-v'); // 瀏覽次數：打開作品就計一次
 }
 function closePlayer() {
   document.getElementById('player').classList.remove('open');

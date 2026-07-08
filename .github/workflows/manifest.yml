@@ -6,6 +6,7 @@ on:
     paths:
       - 'games/**'
       - 'videos/**'
+      - 'authors.json'
 
 permissions:
   contents: write
@@ -15,49 +16,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  manifest:
+  build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: main
 
-      - name: Generate manifest.json
-        run: |
-          python3 - <<'EOF'
-          import json, os
-          manifest = {}
-          for cat in ('games', 'videos'):
-              files = []
-              if os.path.isdir(cat):
-                  files = sorted(f for f in os.listdir(cat) if f.lower().endswith(('.html', '.htm')))
-              manifest[cat] = [{'file': f, 'title': os.path.splitext(f)[0]} for f in files]
-          with open('manifest.json', 'w', encoding='utf-8') as fh:
-              json.dump(manifest, fh, ensure_ascii=False, indent=1)
-          EOF
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
 
-      - name: Generate missing thumbnails
-        run: |
-          mkdir -p thumbs/games thumbs/videos
-          shopt -s nullglob
-          for f in games/*.html videos/*.html; do
-            dir=$(dirname "$f")
-            base=$(basename "$f")
-            base="${base%.*}"
-            out="thumbs/$dir/$base.png"
-            if [ ! -f "$out" ]; then
-              echo "截圖: $f"
-              google-chrome --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
-                --window-size=800,500 --virtual-time-budget=6000 \
-                --screenshot="$out" "file://$PWD/$f" || echo "截圖失敗: $f"
-            fi
-          done
-          # 清掉已刪除作品的縮圖
-          for t in thumbs/games/*.png thumbs/videos/*.png; do
-            dir=$(basename "$(dirname "$t")")
-            base=$(basename "$t" .png)
-            [ -f "$dir/$base.html" ] || rm -f "$t"
-          done
+      - name: Install script dependencies
+        run: npm install --prefix scripts --no-fund --no-audit
+
+      - name: Generate missing thumbnails (skips existing)
+        run: node scripts/thumb.js "$(which google-chrome)"
+
+      - name: Build manifest.json
+        run: node scripts/build-manifest.js
 
       - name: Commit updates
         run: |
