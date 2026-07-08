@@ -1,0 +1,831 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>方塊生存 - Voxel Survival</title>
+<style>
+  html, body { margin: 0; padding: 0; overflow: hidden; background:#000; font-family: 'Microsoft JhengHei', Arial, sans-serif; }
+  #canvas-container { position: fixed; top:0; left:0; width:100%; height:100%; }
+  canvas { display:block; }
+
+  #crosshair {
+    position: fixed; top:50%; left:50%; width:20px; height:20px;
+    transform: translate(-50%,-50%); pointer-events:none; z-index:10;
+  }
+  #crosshair::before, #crosshair::after {
+    content:''; position:absolute; background:rgba(255,255,255,0.8);
+  }
+  #crosshair::before { top:9px; left:0; width:20px; height:2px; }
+  #crosshair::after { top:0; left:9px; width:2px; height:20px; }
+
+  #hud {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    display:flex; flex-direction: column; align-items:center; gap:6px; z-index:10;
+    user-select:none;
+  }
+  .bar-row { display:flex; gap:3px; }
+  .bar-icon { width:26px; height:26px; position:relative; }
+  .heart { color:#ff4747; font-size:24px; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .heart.empty { color:#4a1414; }
+  .food { color:#d9a441; font-size:24px; text-shadow: 0 0 3px #000, 0 0 3px #000; }
+  .food.empty { color:#4a3a14; }
+
+  #hotbar {
+    position: fixed; bottom: 90px; left:50%; transform: translateX(-50%);
+    display:flex; gap:4px; z-index: 10; user-select:none;
+  }
+  .slot {
+    width:52px; height:52px; background: rgba(20,20,20,0.65);
+    border: 2px solid #555; border-radius:4px; position:relative;
+    display:flex; align-items:center; justify-content:center; flex-direction:column;
+  }
+  .slot.active { border-color: #fff; box-shadow:0 0 6px #fff; }
+  .slot .swatch { width:28px; height:28px; border-radius:2px; border:1px solid rgba(0,0,0,0.4); }
+  .slot .count { position:absolute; bottom:2px; right:4px; font-size:11px; color:#fff; text-shadow:1px 1px 1px #000; }
+
+  #info-panel {
+    position: fixed; top: 16px; left:16px; color:#fff; z-index:10;
+    background: rgba(0,0,0,0.4); padding:10px 14px; border-radius:6px;
+    font-size:13px; line-height:1.6; user-select:none;
+  }
+  #daynight {
+    position: fixed; top:16px; right:16px; color:#fff; z-index:10;
+    background: rgba(0,0,0,0.4); padding:10px 14px; border-radius:6px;
+    font-size:14px; text-align:center; user-select:none;
+  }
+
+  #start-screen {
+    position: fixed; inset:0; background: linear-gradient(#1a2b4a, #0a0f1c);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    z-index: 100; color:#fff; text-align:center;
+  }
+  #start-screen h1 { font-size: 48px; margin-bottom: 6px; text-shadow: 3px 3px 0 #000; }
+  #start-screen p { max-width: 520px; opacity:0.85; line-height:1.7; margin: 6px 0 24px; }
+  #start-btn {
+    padding: 16px 48px; font-size:20px; font-weight:bold; cursor:pointer;
+    background: #4caf50; color:#fff; border:none; border-radius:8px;
+    box-shadow: 0 4px 0 #2e7d32;
+  }
+  #start-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #2e7d32; }
+
+  #death-screen {
+    position: fixed; inset:0; background: rgba(80,0,0,0.85);
+    display:none; flex-direction:column; align-items:center; justify-content:center;
+    z-index: 100; color:#fff; text-align:center;
+  }
+  #death-screen h1 { font-size: 56px; margin-bottom: 10px; }
+  #respawn-btn {
+    padding: 14px 40px; font-size:18px; cursor:pointer; background:#c62828;
+    color:#fff; border:none; border-radius:8px; margin-top:20px;
+  }
+
+  #msg-log {
+    position: fixed; top: 100px; left: 16px; z-index: 10; color:#fff;
+    font-size:13px; display:flex; flex-direction:column; gap:3px; pointer-events:none;
+  }
+  #msg-log div { background: rgba(0,0,0,0.45); padding:4px 8px; border-radius:4px; animation: fadeout 4s forwards; }
+  @keyframes fadeout { 0%{opacity:1;} 75%{opacity:1;} 100%{opacity:0;} }
+
+  #controls-hint {
+    position: fixed; bottom: 16px; right:16px; color:#fff; z-index:10;
+    background: rgba(0,0,0,0.4); padding:8px 12px; border-radius:6px;
+    font-size:11px; line-height:1.5; user-select:none;
+  }
+</style>
+</head>
+<body>
+
+<div id="canvas-container"></div>
+<div id="crosshair"></div>
+
+<div id="hud" style="display:none;">
+  <div class="bar-row" id="hunger-row"></div>
+  <div class="bar-row" id="health-row"></div>
+  <div id="hotbar"></div>
+</div>
+
+<div id="info-panel" style="display:none;">
+  <div>座標: <span id="pos">0, 0, 0</span></div>
+  <div>選中: <span id="selected-block">木頭</span></div>
+</div>
+
+<div id="daynight" style="display:none;">
+  <div id="dn-icon">☀️</div>
+  <div id="dn-label">白天</div>
+</div>
+
+<div id="msg-log"></div>
+
+<div id="controls-hint" style="display:none;">
+  WASD 移動 ・ 空白 跳躍<br>
+  滑鼠 視角 ・ 左鍵 挖掘 ・ 右鍵 放置<br>
+  1-8 選擇物品欄 ・ Shift 疾跑
+</div>
+
+<div id="start-screen">
+  <h1>⛏️ 方塊生存世界</h1>
+  <p>歡迎來到麥塊風格的生存世界！挖礦、砍樹、蓋房子，撐過黑夜，小心殭屍出沒。點擊下方按鈕開始遊戲，並點擊畫面以鎖定滑鼠視角。</p>
+  <button id="start-btn">開始遊戲</button>
+</div>
+
+<div id="death-screen">
+  <h1>💀 你死了</h1>
+  <p id="death-reason">你在生存世界中倒下了...</p>
+  <button id="respawn-btn">重生</button>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+(function(){
+"use strict";
+
+/* ============================== 基本設定 ============================== */
+const CHUNK_SIZE = 16;
+const WORLD_RADIUS = 3; // chunks around origin
+const WORLD_SIZE = CHUNK_SIZE * (WORLD_RADIUS*2+1);
+const WORLD_HEIGHT = 40;
+const BLOCK = {
+  AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, WOOD: 4, LEAVES: 5,
+  SAND: 6, WATER: 7, COAL_ORE: 8, IRON_ORE: 9, PLANK: 10, BEDROCK: 11
+};
+const BLOCK_COLOR = {
+  [BLOCK.GRASS]: 0x4caf50,
+  [BLOCK.DIRT]: 0x8b5a2b,
+  [BLOCK.STONE]: 0x8a8a8a,
+  [BLOCK.WOOD]: 0x6b4423,
+  [BLOCK.LEAVES]: 0x2e7d32,
+  [BLOCK.SAND]: 0xdcd08a,
+  [BLOCK.WATER]: 0x2e86de,
+  [BLOCK.COAL_ORE]: 0x36454f,
+  [BLOCK.IRON_ORE]: 0xd0a878,
+  [BLOCK.PLANK]: 0xa9713a,
+  [BLOCK.BEDROCK]: 0x2b2b2b
+};
+const BLOCK_NAME = {
+  [BLOCK.GRASS]: '草地', [BLOCK.DIRT]: '泥土', [BLOCK.STONE]: '石頭',
+  [BLOCK.WOOD]: '木頭', [BLOCK.LEAVES]: '樹葉', [BLOCK.SAND]: '沙子',
+  [BLOCK.COAL_ORE]: '煤礦', [BLOCK.IRON_ORE]: '鐵礦', [BLOCK.PLANK]: '木板'
+};
+
+/* ============================== Three.js 場景 ============================== */
+const container = document.getElementById('canvas-container');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87ceeb);
+scene.fog = new THREE.Fog(0x87ceeb, 40, 130);
+
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = false;
+container.appendChild(renderer.domElement);
+
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(50, 100, 30);
+scene.add(sun);
+const ambient = new THREE.AmbientLight(0xffffff, 0.55);
+scene.add(ambient);
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth/window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+
+/* ============================== 世界資料 ============================== */
+// world[x][z][y] = blockId ; world coords offset so array index 0 = -WORLD_SIZE/2
+const OFFSET = Math.floor(WORLD_SIZE/2);
+let world = [];
+
+function idx(x){ return x + OFFSET; }
+function inBounds(x,y,z){
+  return x > -OFFSET && x < OFFSET && z > -OFFSET && z < OFFSET && y >= 0 && y < WORLD_HEIGHT;
+}
+function getBlock(x,y,z){
+  x = Math.floor(x); y = Math.floor(y); z = Math.floor(z);
+  if (!inBounds(x,y,z)) return BLOCK.AIR;
+  const col = world[idx(x)] && world[idx(x)][idx(z)];
+  if (!col) return BLOCK.AIR;
+  return col[y] || BLOCK.AIR;
+}
+function setBlock(x,y,z,id){
+  x = Math.floor(x); y = Math.floor(y); z = Math.floor(z);
+  if (!inBounds(x,y,z)) return;
+  if (!world[idx(x)]) world[idx(x)] = [];
+  if (!world[idx(x)][idx(z)]) world[idx(x)][idx(z)] = new Uint8Array(WORLD_HEIGHT);
+  world[idx(x)][idx(z)][y] = id;
+}
+
+/* simple pseudo-random noise (value noise) */
+function hashNoise(x, z, seed){
+  let n = Math.sin(x*127.1 + z*311.7 + seed*74.7) * 43758.5453;
+  return n - Math.floor(n);
+}
+function smoothNoise(x, z, seed){
+  const xi = Math.floor(x), zi = Math.floor(z);
+  const xf = x - xi, zf = z - zi;
+  const v00 = hashNoise(xi, zi, seed), v10 = hashNoise(xi+1, zi, seed);
+  const v01 = hashNoise(xi, zi+1, seed), v11 = hashNoise(xi+1, zi+1, seed);
+  const u = xf*xf*(3-2*xf), v = zf*zf*(3-2*zf);
+  return (v00*(1-u)+v10*u)*(1-v) + (v01*(1-u)+v11*u)*v;
+}
+function terrainHeight(x, z){
+  let h = 0, amp = 1, freq = 0.04, total = 0;
+  for (let o=0;o<4;o++){
+    h += smoothNoise(x*freq, z*freq, o*13) * amp;
+    total += amp;
+    amp *= 0.5; freq *= 2;
+  }
+  h /= total;
+  return Math.floor(10 + h*12);
+}
+
+function generateWorld(){
+  for (let x=-OFFSET; x<OFFSET; x++){
+    world[idx(x)] = [];
+    for (let z=-OFFSET; z<OFFSET; z++){
+      const col = new Uint8Array(WORLD_HEIGHT);
+      const h = terrainHeight(x,z);
+      for (let y=0; y<WORLD_HEIGHT; y++){
+        if (y === 0) col[y] = BLOCK.BEDROCK;
+        else if (y < h-4) {
+          const oreRoll = hashNoise(x*3.1+y, z*5.7+y, 99);
+          if (oreRoll > 0.965) col[y] = BLOCK.IRON_ORE;
+          else if (oreRoll > 0.90) col[y] = BLOCK.COAL_ORE;
+          else col[y] = BLOCK.STONE;
+        }
+        else if (y < h-1) col[y] = BLOCK.DIRT;
+        else if (y === h-1) col[y] = (h <= 11) ? BLOCK.SAND : BLOCK.GRASS;
+        else if (y < 10 && y >= h) col[y] = BLOCK.WATER;
+        else col[y] = BLOCK.AIR;
+      }
+      world[idx(x)][idx(z)] = col;
+
+      // trees
+      if (h > 11 && hashNoise(x*0.5, z*0.5, 55) > 0.965){
+        const treeH = 4 + Math.floor(hashNoise(x,z,7)*2);
+        for (let ty=0; ty<treeH; ty++) col[h+ty] = BLOCK.WOOD;
+        for (let lx=-2; lx<=2; lx++){
+          for (let lz=-2; lz<=2; lz++){
+            for (let ly=treeH-2; ly<=treeH+1; ly++){
+              if (Math.abs(lx)+Math.abs(lz)+Math.abs(ly-treeH) > 3) continue;
+              const bx = x+lx, bz = z+lz, by = h+ly;
+              if (bx===x && bz===z) continue;
+              if (!inBounds(bx,by,bz)) continue;
+              if (getBlock(bx,by,bz) === BLOCK.AIR) setBlock(bx,by,bz,BLOCK.LEAVES);
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/* ============================== Chunk 渲染 (合併 mesh) ============================== */
+const materialCache = {};
+function getMaterial(colorHex){
+  if (!materialCache[colorHex]) {
+    materialCache[colorHex] = new THREE.MeshLambertMaterial({ color: colorHex });
+  }
+  return materialCache[colorHex];
+}
+
+const chunkGroup = new THREE.Group();
+scene.add(chunkGroup);
+let chunkMeshes = {}; // key -> mesh array
+
+const FACE_DIRS = [
+  {n:[1,0,0], v:[[1,0,0],[1,1,0],[1,1,1],[1,0,1]]},
+  {n:[-1,0,0], v:[[0,0,1],[0,1,1],[0,1,0],[0,0,0]]},
+  {n:[0,1,0], v:[[0,1,0],[0,1,1],[1,1,1],[1,1,0]]},
+  {n:[0,-1,0], v:[[0,0,1],[0,0,0],[1,0,0],[1,0,1]]},
+  {n:[0,0,1], v:[[1,0,1],[1,1,1],[0,1,1],[0,0,1]]},
+  {n:[0,0,-1], v:[[0,0,0],[0,1,0],[1,1,0],[1,0,0]]},
+];
+
+function buildChunkMesh(cx, cz){
+  const key = cx+'_'+cz;
+  if (chunkMeshes[key]) {
+    chunkMeshes[key].forEach(m => { chunkGroup.remove(m); m.geometry.dispose(); });
+  }
+  const geomByColor = {}; // color -> {positions:[], normals:[]}
+  const x0 = cx*CHUNK_SIZE, z0 = cz*CHUNK_SIZE;
+
+  for (let lx=0; lx<CHUNK_SIZE; lx++){
+    for (let lz=0; lz<CHUNK_SIZE; lz++){
+      const wx = x0+lx-OFFSET, wz = z0+lz-OFFSET;
+      for (let y=0; y<WORLD_HEIGHT; y++){
+        const b = getBlock(wx,y,wz);
+        if (b === BLOCK.AIR || b === BLOCK.WATER) continue;
+        const color = BLOCK_COLOR[b];
+        if (!geomByColor[color]) geomByColor[color] = { pos: [], norm: [] };
+        const g = geomByColor[color];
+        for (const face of FACE_DIRS){
+          const nx = wx+face.n[0], ny = y+face.n[1], nz = wz+face.n[2];
+          const neighbor = getBlock(nx,ny,nz);
+          if (neighbor !== BLOCK.AIR && neighbor !== BLOCK.WATER) continue;
+          const verts = face.v.map(v => [wx+v[0], y+v[1], wz+v[2]]);
+          // two triangles
+          g.pos.push(...verts[0], ...verts[1], ...verts[2]);
+          g.pos.push(...verts[0], ...verts[2], ...verts[3]);
+          for (let i=0;i<6;i++) g.norm.push(...face.n);
+        }
+      }
+    }
+  }
+
+  const meshes = [];
+  for (const color in geomByColor){
+    const g = geomByColor[color];
+    if (g.pos.length === 0) continue;
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(g.pos, 3));
+    geometry.setAttribute('normal', new THREE.Float32BufferAttribute(g.norm, 3));
+    const mesh = new THREE.Mesh(geometry, getMaterial(parseInt(color)));
+    chunkGroup.add(mesh);
+    meshes.push(mesh);
+  }
+  chunkMeshes[key] = meshes;
+}
+
+function rebuildAllChunks(){
+  const n = WORLD_RADIUS*2+1;
+  for (let cx=0; cx<n; cx++){
+    for (let cz=0; cz<n; cz++){
+      buildChunkMesh(cx, cz);
+    }
+  }
+}
+
+// water plane (simple)
+const waterGeo = new THREE.PlaneGeometry(WORLD_SIZE, WORLD_SIZE);
+const waterMat = new THREE.MeshLambertMaterial({ color: 0x2e86de, transparent:true, opacity:0.55 });
+const waterMesh = new THREE.Mesh(waterGeo, waterMat);
+waterMesh.rotation.x = -Math.PI/2;
+waterMesh.position.y = 9.5;
+scene.add(waterMesh);
+
+/* ============================== 玩家 ============================== */
+const player = {
+  pos: new THREE.Vector3(0, 20, 0),
+  vel: new THREE.Vector3(0,0,0),
+  yaw: 0, pitch: 0,
+  onGround: false,
+  height: 1.7,
+  width: 0.6,
+  health: 20, maxHealth: 20,
+  hunger: 20, maxHunger: 20,
+  speed: 5.0, sprintMult: 1.6,
+  alive: true
+};
+
+function findSpawnHeight(x,z){
+  for (let y=WORLD_HEIGHT-1; y>0; y--){
+    if (getBlock(x,y,z) !== BLOCK.AIR) return y+2;
+  }
+  return 20;
+}
+
+/* ============================== 輸入處理 ============================== */
+const keys = {};
+let mouseLocked = false;
+document.addEventListener('keydown', e => { keys[e.code] = true; handleHotbarKey(e.code); });
+document.addEventListener('keyup', e => { keys[e.code] = false; });
+
+renderer.domElement.addEventListener('click', () => {
+  if (!gameStarted) return;
+  renderer.domElement.requestPointerLock();
+});
+document.addEventListener('pointerlockchange', () => {
+  mouseLocked = document.pointerLockElement === renderer.domElement;
+});
+document.addEventListener('mousemove', e => {
+  if (!mouseLocked) return;
+  player.yaw -= e.movementX * 0.0022;
+  player.pitch -= e.movementY * 0.0022;
+  player.pitch = Math.max(-Math.PI/2+0.05, Math.min(Math.PI/2-0.05, player.pitch));
+});
+
+let leftMouseDown = false, rightMouseHeld = false;
+renderer.domElement.addEventListener('mousedown', e => {
+  if (!mouseLocked) return;
+  if (e.button === 0) leftMouseDown = true;
+  if (e.button === 2) placeBlock();
+});
+renderer.domElement.addEventListener('mouseup', e => {
+  if (e.button === 0) leftMouseDown = false;
+});
+renderer.domElement.addEventListener('contextmenu', e => e.preventDefault());
+
+/* ============================== 物品欄 / 挖礦系統 ============================== */
+const hotbar = [
+  { block: null, name: '手', count: Infinity, isTool:true },
+  { block: BLOCK.WOOD, name: '木頭', count: 0 },
+  { block: BLOCK.PLANK, name: '木板', count: 0 },
+  { block: BLOCK.STONE, name: '石頭', count: 0 },
+  { block: BLOCK.DIRT, name: '泥土', count: 0 },
+  { block: BLOCK.SAND, name: '沙子', count: 0 },
+  { block: BLOCK.COAL_ORE, name: '煤礦', count: 0 },
+  { block: BLOCK.IRON_ORE, name: '鐵礦', count: 0 },
+];
+let activeSlot = 1;
+
+function handleHotbarKey(code){
+  const map = { Digit1:0, Digit2:1, Digit3:2, Digit4:3, Digit5:4, Digit6:5, Digit7:6, Digit8:7 };
+  if (code in map){ activeSlot = map[code]; renderHotbar(); }
+}
+
+function renderHotbar(){
+  const el = document.getElementById('hotbar');
+  el.innerHTML = '';
+  hotbar.forEach((slot, i) => {
+    const div = document.createElement('div');
+    div.className = 'slot' + (i===activeSlot ? ' active' : '');
+    if (slot.block !== null){
+      const sw = document.createElement('div');
+      sw.className = 'swatch';
+      sw.style.background = '#' + BLOCK_COLOR[slot.block].toString(16).padStart(6,'0');
+      div.appendChild(sw);
+      const cnt = document.createElement('div');
+      cnt.className = 'count';
+      cnt.textContent = slot.count;
+      div.appendChild(cnt);
+    } else {
+      div.textContent = '✋';
+      div.style.fontSize = '22px';
+    }
+    el.appendChild(div);
+  });
+  document.getElementById('selected-block').textContent = hotbar[activeSlot].name;
+}
+
+function addToInventory(blockId){
+  const slot = hotbar.find(s => s.block === blockId);
+  if (slot) { slot.count++; renderHotbar(); }
+}
+function consumeFromActive(){
+  const slot = hotbar[activeSlot];
+  if (slot.block === null) return false;
+  if (slot.count <= 0) return false;
+  slot.count--;
+  renderHotbar();
+  return true;
+}
+
+/* Raycasting for block interaction using DDA against voxel grid */
+function raycastVoxel(maxDist){
+  const dir = new THREE.Vector3();
+  camera.getWorldDirection(dir);
+  const origin = camera.position.clone();
+
+  let x = Math.floor(origin.x), y = Math.floor(origin.y), z = Math.floor(origin.z);
+  const stepX = dir.x > 0 ? 1 : -1, stepY = dir.y > 0 ? 1 : -1, stepZ = dir.z > 0 ? 1 : -1;
+
+  function tDelta(d){ return d === 0 ? Infinity : Math.abs(1/d); }
+  const tDeltaX = tDelta(dir.x), tDeltaY = tDelta(dir.y), tDeltaZ = tDelta(dir.z);
+
+  function tMaxInit(pos, d, step){
+    if (d === 0) return Infinity;
+    const boundary = step > 0 ? Math.floor(pos)+1 : Math.ceil(pos)-1;
+    return Math.abs((boundary - pos) / d);
+  }
+  let tMaxX = tMaxInit(origin.x, dir.x, stepX);
+  let tMaxY = tMaxInit(origin.y, dir.y, stepY);
+  let tMaxZ = tMaxInit(origin.z, dir.z, stepZ);
+
+  let dist = 0;
+  let lastNormal = [0,1,0];
+  for (let i=0; i<200 && dist < maxDist; i++){
+    const b = getBlock(x,y,z);
+    if (b !== BLOCK.AIR && b !== BLOCK.WATER){
+      return { x, y, z, normal: lastNormal, block: b };
+    }
+    if (tMaxX < tMaxY && tMaxX < tMaxZ){
+      x += stepX; dist = tMaxX; tMaxX += tDeltaX; lastNormal = [-stepX,0,0];
+    } else if (tMaxY < tMaxZ){
+      y += stepY; dist = tMaxY; tMaxY += tDeltaY; lastNormal = [0,-stepY,0];
+    } else {
+      z += stepZ; dist = tMaxZ; tMaxZ += tDeltaZ; lastNormal = [0,0,-stepZ];
+    }
+  }
+  return null;
+}
+
+let miningTarget = null, miningProgress = 0;
+const MINE_TIME = { [BLOCK.LEAVES]: 0.3, [BLOCK.WOOD]: 0.8, [BLOCK.GRASS]: 0.5, [BLOCK.DIRT]: 0.5, [BLOCK.SAND]: 0.4, [BLOCK.STONE]: 1.2, [BLOCK.COAL_ORE]: 1.4, [BLOCK.IRON_ORE]: 1.8, [BLOCK.PLANK]: 0.6 };
+
+function updateMining(dt){
+  if (!leftMouseDown || !mouseLocked || !player.alive){ miningTarget = null; miningProgress = 0; return; }
+  const hit = raycastVoxel(6);
+  if (!hit || hit.block === BLOCK.BEDROCK){ miningTarget = null; miningProgress = 0; return; }
+  const key = hit.x+','+hit.y+','+hit.z;
+  if (miningTarget !== key){ miningTarget = key; miningProgress = 0; }
+  miningProgress += dt;
+  const need = MINE_TIME[hit.block] || 1.0;
+  if (miningProgress >= need){
+    const dropId = hit.block === BLOCK.GRASS ? BLOCK.DIRT : hit.block;
+    addToInventory(dropId === BLOCK.GRASS ? BLOCK.DIRT : hit.block);
+    setBlock(hit.x, hit.y, hit.z, BLOCK.AIR);
+    buildChunkMesh(Math.floor((hit.x+OFFSET)/CHUNK_SIZE), Math.floor((hit.z+OFFSET)/CHUNK_SIZE));
+    miningTarget = null; miningProgress = 0;
+    logMsg('挖到了 ' + (BLOCK_NAME[hit.block] || '方塊'));
+  }
+}
+
+function placeBlock(){
+  if (!player.alive) return;
+  const slot = hotbar[activeSlot];
+  if (slot.block === null || slot.count <= 0) return;
+  const hit = raycastVoxel(6);
+  if (!hit) return;
+  const px = hit.x + hit.normal[0], py = hit.y + hit.normal[1], pz = hit.z + hit.normal[2];
+  // don't place inside player
+  const dx = Math.abs(px+0.5 - player.pos.x), dz = Math.abs(pz+0.5 - player.pos.z);
+  const dy = py - player.pos.y;
+  if (dx < 0.6 && dz < 0.6 && dy > -1.8 && dy < 1) return;
+  if (getBlock(px,py,pz) !== BLOCK.AIR) return;
+  if (!consumeFromActive()) return;
+  setBlock(px,py,pz, slot.block);
+  buildChunkMesh(Math.floor((px+OFFSET)/CHUNK_SIZE), Math.floor((pz+OFFSET)/CHUNK_SIZE));
+}
+
+/* ============================== 碰撞與移動 ============================== */
+function collides(px, py, pz){
+  const half = player.width/2;
+  for (const dx of [-half, half]){
+    for (const dz of [-half, half]){
+      for (const dy of [0, player.height*0.5, player.height-0.1]){
+        const b = getBlock(px+dx, py+dy, pz+dz);
+        if (b !== BLOCK.AIR && b !== BLOCK.WATER) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function updatePlayer(dt){
+  if (!player.alive) return;
+  const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+  const right = new THREE.Vector3(Math.sin(player.yaw+Math.PI/2), 0, Math.cos(player.yaw+Math.PI/2));
+
+  let move = new THREE.Vector3();
+  if (keys['KeyW']) move.add(forward);
+  if (keys['KeyS']) move.sub(forward);
+  if (keys['KeyD']) move.add(right);
+  if (keys['KeyA']) move.sub(right);
+  if (move.lengthSq() > 0) move.normalize();
+
+  const sprint = keys['ShiftLeft'] && player.hunger > 1;
+  const spd = player.speed * (sprint ? player.sprintMult : 1);
+
+  player.vel.x = move.x * spd;
+  player.vel.z = move.z * spd;
+
+  // gravity
+  player.vel.y -= 18 * dt;
+  if (player.vel.y < -30) player.vel.y = -30;
+
+  if (keys['Space'] && player.onGround){
+    player.vel.y = 7.2;
+    player.onGround = false;
+  }
+
+  // move with simple axis-separated collision
+  const nx = player.pos.x + player.vel.x*dt;
+  if (!collides(nx, player.pos.y, player.pos.z)) player.pos.x = nx;
+  const nz = player.pos.z + player.vel.z*dt;
+  if (!collides(player.pos.x, player.pos.y, nz)) player.pos.z = nz;
+
+  const ny = player.pos.y + player.vel.y*dt;
+  if (!collides(player.pos.x, ny, player.pos.z)){
+    player.pos.y = ny;
+    player.onGround = false;
+  } else {
+    if (player.vel.y < 0) player.onGround = true;
+    player.vel.y = 0;
+  }
+
+  if (player.pos.y < -5){
+    damagePlayer(20, '掉出世界');
+  }
+
+  camera.position.set(player.pos.x, player.pos.y + player.height, player.pos.z);
+  camera.rotation.order = 'YXZ';
+  camera.rotation.y = player.yaw;
+  camera.rotation.x = player.pitch;
+
+  document.getElementById('pos').textContent =
+    Math.round(player.pos.x) + ', ' + Math.round(player.pos.y) + ', ' + Math.round(player.pos.z);
+}
+
+/* ============================== 生存數值 ============================== */
+let hungerTimer = 0;
+function updateSurvival(dt){
+  if (!player.alive) return;
+  hungerTimer += dt;
+  if (hungerTimer > 8){
+    hungerTimer = 0;
+    if (player.hunger > 0) player.hunger--;
+    else if (player.health > 0) damagePlayer(1, '飢餓');
+  }
+  if (player.hunger > 14 && player.health < player.maxHealth && Math.random() < dt*0.1){
+    player.health = Math.min(player.maxHealth, player.health+1);
+  }
+  renderBars();
+}
+
+function damagePlayer(amount, cause){
+  if (!player.alive) return;
+  player.health -= amount;
+  renderBars();
+  if (player.health <= 0){
+    player.health = 0;
+    player.alive = false;
+    document.getElementById('death-reason').textContent = '死因：' + cause;
+    document.getElementById('death-screen').style.display = 'flex';
+    document.exitPointerLock();
+  }
+}
+
+function renderBars(){
+  const hr = document.getElementById('health-row');
+  hr.innerHTML = '';
+  for (let i=0;i<10;i++){
+    const filled = player.health >= (i+1)*2;
+    const half = !filled && player.health > i*2;
+    const span = document.createElement('span');
+    span.className = 'heart' + (filled || half ? '' : ' empty');
+    span.textContent = filled ? '❤' : (half ? '❤' : '🖤');
+    hr.appendChild(span);
+  }
+  const fr = document.getElementById('hunger-row');
+  fr.innerHTML = '';
+  for (let i=0;i<10;i++){
+    const filled = player.hunger >= (i+1)*2;
+    const span = document.createElement('span');
+    span.className = 'food' + (filled ? '' : ' empty');
+    span.textContent = filled ? '🍖' : '🦴';
+    fr.appendChild(span);
+  }
+}
+
+/* ============================== 晝夜循環 ============================== */
+let worldTime = 0; // 0..1 full day
+const DAY_LENGTH = 180; // seconds per full day
+function updateDayNight(dt){
+  worldTime += dt / DAY_LENGTH;
+  if (worldTime >= 1) worldTime -= 1;
+  const angle = worldTime * Math.PI * 2;
+  sun.position.set(Math.cos(angle)*80, Math.sin(angle)*80, 40);
+  const isNight = Math.sin(angle) < -0.05;
+  const brightness = Math.max(0.15, Math.sin(angle)*0.85 + 0.55);
+  sun.intensity = Math.max(0.05, brightness);
+  ambient.intensity = Math.max(0.15, brightness*0.6);
+
+  const skyDay = new THREE.Color(0x87ceeb);
+  const skyNight = new THREE.Color(0x0a1030);
+  const t = Math.max(0, Math.min(1, (brightness-0.2)/0.8));
+  const sky = skyDay.clone().lerp(skyNight, 1-t);
+  scene.background = sky;
+  scene.fog.color = sky;
+
+  document.getElementById('dn-icon').textContent = isNight ? '🌙' : '☀️';
+  document.getElementById('dn-label').textContent = isNight ? '夜晚 - 小心殭屍！' : '白天';
+  return isNight;
+}
+
+/* ============================== 敵人 (殭屍) ============================== */
+const zombies = [];
+const zombieGeo = new THREE.BoxGeometry(0.7, 1.8, 0.7);
+const zombieMat = new THREE.MeshLambertMaterial({ color: 0x2e6b2e });
+
+function spawnZombie(){
+  if (zombies.length >= 8) return;
+  const angle = Math.random()*Math.PI*2;
+  const dist = 14 + Math.random()*8;
+  const x = player.pos.x + Math.cos(angle)*dist;
+  const z = player.pos.z + Math.sin(angle)*dist;
+  const y = findSpawnHeight(Math.floor(x), Math.floor(z));
+  const mesh = new THREE.Mesh(zombieGeo, zombieMat);
+  mesh.position.set(x, y, z);
+  scene.add(mesh);
+  zombies.push({ mesh, health: 8, cooldown: 0 });
+}
+
+let zombieSpawnTimer = 0;
+function updateZombies(dt, isNight){
+  if (isNight){
+    zombieSpawnTimer += dt;
+    if (zombieSpawnTimer > 6){ zombieSpawnTimer = 0; spawnZombie(); }
+  } else {
+    // despawn during day gradually
+    if (Math.random() < dt*0.05 && zombies.length > 0){
+      const z = zombies.pop();
+      scene.remove(z.mesh);
+    }
+  }
+
+  for (let i = zombies.length-1; i>=0; i--){
+    const z = zombies[i];
+    const dir = new THREE.Vector3(player.pos.x - z.mesh.position.x, 0, player.pos.z - z.mesh.position.z);
+    const dist = dir.length();
+    if (dist > 0.1) dir.normalize();
+    if (dist > 1.4 && dist < 25){
+      z.mesh.position.x += dir.x * 1.8 * dt;
+      z.mesh.position.z += dir.z * 1.8 * dt;
+      z.mesh.lookAt(player.pos.x, z.mesh.position.y, player.pos.z);
+    }
+    // simple gravity/ground snap
+    const groundY = findSpawnHeight(Math.floor(z.mesh.position.x), Math.floor(z.mesh.position.z));
+    z.mesh.position.y += (groundY - z.mesh.position.y) * Math.min(1, dt*5);
+
+    z.cooldown -= dt;
+    if (dist < 1.4 && z.cooldown <= 0 && player.alive){
+      damagePlayer(2, '殭屍攻擊');
+      z.cooldown = 1.0;
+    }
+
+    // player attacking zombie with left click while close & no block targeted closer
+    if (leftMouseDown && mouseLocked && dist < 3.2){
+      const camDir = new THREE.Vector3();
+      camera.getWorldDirection(camDir);
+      const toZombie = new THREE.Vector3().subVectors(z.mesh.position, camera.position).normalize();
+      if (camDir.dot(toZombie) > 0.85){
+        z.health -= dt*10;
+        if (z.health <= 0){
+          scene.remove(z.mesh);
+          zombies.splice(i,1);
+          logMsg('擊敗了一隻殭屍！');
+        }
+      }
+    }
+  }
+}
+
+/* ============================== 訊息紀錄 ============================== */
+function logMsg(text){
+  const log = document.getElementById('msg-log');
+  const div = document.createElement('div');
+  div.textContent = text;
+  log.appendChild(div);
+  setTimeout(() => div.remove(), 4000);
+  while (log.children.length > 5) log.removeChild(log.firstChild);
+}
+
+/* ============================== 遊戲流程 ============================== */
+let gameStarted = false;
+let lastTime = performance.now();
+
+function respawnPlayer(){
+  player.health = player.maxHealth;
+  player.hunger = player.maxHunger;
+  player.alive = true;
+  player.pos.set(0, findSpawnHeight(0,0), 0);
+  player.vel.set(0,0,0);
+  document.getElementById('death-screen').style.display = 'none';
+  renderBars();
+}
+
+document.getElementById('start-btn').addEventListener('click', () => {
+  document.getElementById('start-screen').style.display = 'none';
+  ['hud','info-panel','daynight','controls-hint'].forEach(id => document.getElementById(id).style.display = '');
+  gameStarted = true;
+  renderHotbar();
+  renderBars();
+  logMsg('歡迎來到方塊生存世界！點擊畫面以鎖定滑鼠。');
+  renderer.domElement.requestPointerLock();
+});
+
+document.getElementById('respawn-btn').addEventListener('click', () => {
+  respawnPlayer();
+  renderer.domElement.requestPointerLock();
+});
+
+function animate(){
+  requestAnimationFrame(animate);
+  const now = performance.now();
+  let dt = (now - lastTime) / 1000;
+  dt = Math.min(dt, 0.1);
+  lastTime = now;
+
+  if (gameStarted){
+    updatePlayer(dt);
+    updateMining(dt);
+    const isNight = updateDayNight(dt);
+    updateZombies(dt, isNight);
+    updateSurvival(dt);
+  }
+
+  renderer.render(scene, camera);
+}
+
+/* ============================== 初始化 ============================== */
+generateWorld();
+rebuildAllChunks();
+player.pos.set(0, findSpawnHeight(0,0), 0);
+animate();
+
+})();
+</script>
+</body>
+</html>
