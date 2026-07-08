@@ -24,14 +24,35 @@
   }
   #overlay button:hover { background: #b30000; color: #fff; box-shadow: 0 0 20px #b30000; }
   #hud {
-    position: fixed; top: 10px; left: 10px; color: #900; font-size: 14px; z-index: 5;
+    position: fixed; top: 10px; left: 10px; color: #ccc; font-size: 14px; z-index: 5;
     text-shadow: 0 0 4px #000;
   }
+  #hud .row { margin-bottom: 6px; }
+  #fearBarWrap { width: 160px; height: 10px; background: #200; border: 1px solid #500; }
+  #fearBar { height: 100%; width: 0%; background: linear-gradient(90deg,#900,#f30); transition: width .3s; }
+  #interactHint {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    color: #ddd; font-size: 15px; background: rgba(0,0,0,.5); padding: 6px 14px;
+    border: 1px solid #555; display: none; z-index: 6;
+  }
   #jumpscare {
-    position: fixed; top:0; left:0; width:100%; height:100%; z-index: 20;
+    position: fixed; top:0; left:0; width:100%; height:100%; z-index: 30;
     background: #000; display: none; align-items: center; justify-content: center;
   }
   #jumpscare span { font-size: 15vw; color: #ff0000; text-shadow: 0 0 40px red; }
+  #storyBox {
+    position: fixed; bottom: 0; left: 0; width: 100%; z-index: 25;
+    background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.75));
+    color: #ddd; padding: 24px 10%; box-sizing: border-box; display: none;
+    border-top: 1px solid #500;
+  }
+  #storyText { font-size: 1.1em; line-height: 1.7; margin-bottom: 16px; min-height: 2.4em; white-space: pre-wrap; }
+  #storyChoices { display: flex; flex-direction: column; gap: 8px; }
+  #storyChoices button {
+    text-align: left; background: rgba(80,0,0,0.15); border: 1px solid #700; color: #eee;
+    padding: 10px 16px; font-size: 1em; cursor: pointer; transition: all .2s;
+  }
+  #storyChoices button:hover { background: rgba(140,0,0,0.4); border-color: #b30000; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -40,14 +61,27 @@
 <div id="overlay">
   <h1>暗&nbsp;途</h1>
   <p>你在一栋废弃的疗养院中醒来。手电筒是你唯一的光源，也是唯一暴露你的东西。<br>
-  找到 <b style="color:#eee">3 把钥匙</b> 逃出这里——但你不是一个人。<br><br>
-  WASD / 方向键 移动　　鼠标 控制视角(手电筒方向)</p>
+  黑暗中似乎有什么东西在盯着你——只有当光照到它们时，你才能看见。<br>
+  找到 <b style="color:#eee">3 把钥匙</b> 逃出这里，你的选择将决定你的命运。<br><br>
+  WASD / 方向键 移动　　鼠标 控制手电筒方向　　E 互动/继续对话</p>
   <button id="startBtn">开始游戏</button>
 </div>
 
 <canvas id="gameCanvas"></canvas>
-<div id="hud" class="hidden">钥匙: <span id="keyCount">0</span> / 3</div>
+
+<div id="hud" class="hidden">
+  <div class="row">钥匙: <span id="keyCount">0</span> / 3</div>
+  <div class="row">理智
+    <div id="fearBarWrap"><div id="fearBar"></div></div>
+  </div>
+</div>
+<div id="interactHint">按 E 互动</div>
 <div id="jumpscare"><span>!!</span></div>
+
+<div id="storyBox">
+  <div id="storyText"></div>
+  <div id="storyChoices"></div>
+</div>
 
 <script>
 (() => {
@@ -56,7 +90,12 @@
   const overlay = document.getElementById('overlay');
   const hud = document.getElementById('hud');
   const keyCountEl = document.getElementById('keyCount');
+  const fearBar = document.getElementById('fearBar');
   const jumpscareEl = document.getElementById('jumpscare');
+  const interactHint = document.getElementById('interactHint');
+  const storyBox = document.getElementById('storyBox');
+  const storyText = document.getElementById('storyText');
+  const storyChoices = document.getElementById('storyChoices');
 
   function resize() {
     canvas.width = window.innerWidth;
@@ -68,7 +107,6 @@
   // ----- World -----
   const TILE = 48;
   const MAP_W = 25, MAP_H = 18;
-  // 1 = wall, 0 = floor
   let map = [];
   function generateMap() {
     map = [];
@@ -83,23 +121,29 @@
       }
       map.push(row);
     }
-    map[1][1] = 0; map[1][2] = 0; map[2][1] = 0; // ensure start open
+    map[1][1] = 0; map[1][2] = 0; map[2][1] = 0;
   }
-  generateMap();
 
   function isWall(tx, ty) {
     if (tx < 0 || ty < 0 || ty >= map.length || tx >= map[0].length) return true;
     return map[ty][tx] === 1;
   }
+  function tileWalkable(tx, ty) { return !isWall(tx, ty); }
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
 
-  // ----- Player -----
-  const player = {
-    x: TILE * 1.5, y: TILE * 1.5, r: 12,
-    speed: 2.6, angle: 0,
-  };
+  // ----- Player / Fear -----
+  const player = { x: TILE * 1.5, y: TILE * 1.5, r: 12, speed: 2.6, angle: 0 };
+  let fear = 0; // 0-100
+  function addFear(n) {
+    fear = Math.max(0, Math.min(100, fear + n));
+    fearBar.style.width = fear + '%';
+  }
 
   const keys = {};
-  window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key.toLowerCase() === 'e') tryInteract();
+  });
   window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
   let mouseX = 0, mouseY = 0;
@@ -119,18 +163,85 @@
       }
     }
   }
-  placeItems();
   let keysCollected = 0;
 
-  // ----- Monster -----
-  const monster = {
-    x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2),
-    speed: 1.5, active: false, chaseTimer: 0,
-  };
+  // ----- Story nodes (fixed narrative triggers) -----
+  // Each node has a world position, a flag so it only fires once, and dialogue/choices.
+  let storyNodes = [];
+  let storyFlags = {}; // remembers player choices
+  let storyActive = false;
+  let pendingNode = null;
+  let nearNode = null;
 
-  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+  function placeStoryNodes() {
+    storyNodes = [
+      {
+        id: 'note1', done: false,
+        tx: 4, ty: 4,
+        text: '墙上贴着一张泛黑的字条：\n"不要相信手电筒照到的东西——它们会学你的样子。"\n你可以选择相信，也可以一笑置之。',
+        choices: [
+          { label: '把这句话记在心里（保持警惕）', flag: 'cautious', fear: 0 },
+          { label: '这只是疯子的涂鸦（无视警告）', flag: 'reckless', fear: 5 },
+        ],
+      },
+      {
+        id: 'fork1', done: false,
+        tx: MAP_W - 5, ty: 4,
+        text: '前方走廊分成两条路：左边传来滴水声，右边一片死寂。',
+        choices: [
+          { label: '走左边（滴水声的方向）', flag: 'path_left', fear: 0 },
+          { label: '走右边（死寂的方向）', flag: 'path_right', fear: 5 },
+        ],
+      },
+      {
+        id: 'mirror', done: false,
+        tx: 12, ty: 9,
+        text: '一面破碎的镜子立在房间中央。镜子里的你，动作似乎慢了半拍……',
+        choices: [
+          { label: '打碎镜子', flag: 'broke_mirror', fear: 10 },
+          { label: '转身离开', flag: 'left_mirror', fear: -5 },
+        ],
+      },
+    ];
+  }
 
-  function tileWalkable(tx, ty) { return !isWall(tx, ty); }
+  function nodeWorldPos(n) { return { x: n.tx * TILE + TILE/2, y: n.ty * TILE + TILE/2 }; }
+
+  function tryInteract() {
+    if (storyActive) { advanceStoryDialogueClick(); return; }
+    if (nearNode && !nearNode.done) {
+      openStoryNode(nearNode);
+    }
+  }
+
+  function openStoryNode(node) {
+    storyActive = true;
+    pendingNode = node;
+    storyText.textContent = node.text;
+    storyChoices.innerHTML = '';
+    node.choices.forEach(choice => {
+      const btn = document.createElement('button');
+      btn.textContent = choice.label;
+      btn.addEventListener('click', () => resolveChoice(node, choice));
+      storyChoices.appendChild(btn);
+    });
+    storyBox.style.display = 'block';
+    interactHint.style.display = 'none';
+  }
+
+  function resolveChoice(node, choice) {
+    storyFlags[choice.flag] = true;
+    if (choice.fear) addFear(choice.fear);
+    node.done = true;
+    storyBox.style.display = 'none';
+    storyActive = false;
+    pendingNode = null;
+  }
+
+  function advanceStoryDialogueClick() { /* choices are click-driven; nothing to advance via E */ }
+
+  // ----- Monster (main chaser) -----
+  const monster = { x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2), speed: 1.5, active: false };
 
   function moveEntityTowards(ent, tx, ty, spd) {
     const dx = tx - ent.x, dy = ty - ent.y;
@@ -138,37 +249,81 @@
     if (d < 1) return;
     const nx = ent.x + (dx / d) * spd;
     const ny = ent.y + (dy / d) * spd;
-    const ctx_ = Math.floor(nx / TILE), cty_ = Math.floor(ent.y / TILE);
-    const cty2 = Math.floor(ny / TILE), ctx2 = Math.floor(ent.x / TILE);
-    if (tileWalkable(ctx_, cty_)) ent.x = nx;
-    if (tileWalkable(ctx2, cty2)) ent.y = ny;
+    if (tileWalkable(Math.floor(nx / TILE), Math.floor(ent.y / TILE))) ent.x = nx;
+    if (tileWalkable(Math.floor(ent.x / TILE), Math.floor(ny / TILE))) ent.y = ny;
+  }
+
+  // ----- Flashlight creatures (glimpses) -----
+  // Short-lived apparitions that appear at the edge of the flashlight cone, then vanish.
+  let glimpses = [];
+  let glimpseTimer = 0;
+
+  function spawnGlimpse() {
+    // Spawn somewhere ahead of the player, within flashlight range, not too close.
+    const spawnDist = 140 + Math.random() * 100;
+    const spread = (Math.random() - 0.5) * 1.1; // angle offset from view direction
+    const a = player.angle + spread;
+    const gx = player.x + Math.cos(a) * spawnDist;
+    const gy = player.y + Math.sin(a) * spawnDist;
+    glimpses.push({
+      x: gx, y: gy,
+      life: 900 + Math.random() * 500, // ms visible
+      born: performance.now(),
+      seen: false,
+    });
+  }
+
+  function updateGlimpses(dt) {
+    glimpseTimer -= dt;
+    if (glimpseTimer <= 0 && !storyActive) {
+      glimpseTimer = 4000 + Math.random() * 5000;
+      if (glimpses.length < 1 && Math.random() < 0.8) spawnGlimpse();
+    }
+    const now = performance.now();
+    glimpses = glimpses.filter(g => {
+      const age = now - g.born;
+      if (age > g.life) {
+        // if the player was staring at it when it despawns, it's extra unsettling
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function inFlashlightCone(gx, gy) {
+    const d = dist(player.x, player.y, gx, gy);
+    if (d > 260) return false;
+    const ang = Math.atan2(gy - player.y, gx - player.x);
+    let diff = Math.abs(ang - player.angle);
+    if (diff > Math.PI) diff = Math.PI * 2 - diff;
+    return diff < 0.55;
   }
 
   let gameOver = false;
   let win = false;
-  let startTime = 0;
+  let lastTime = performance.now();
 
-  function updatePlayer() {
+  function updatePlayer(dt) {
+    if (storyActive) return;
     let dx = 0, dy = 0;
     if (keys['w'] || keys['arrowup']) dy -= 1;
     if (keys['s'] || keys['arrowdown']) dy += 1;
     if (keys['a'] || keys['arrowleft']) dx -= 1;
     if (keys['d'] || keys['arrowright']) dx += 1;
     const len = Math.hypot(dx, dy) || 1;
-    dx = (dx / len) * player.speed;
-    dy = (dy / len) * player.speed;
+    const spd = player.speed * (fear > 70 ? 0.7 : 1); // fear slows you down
+    dx = (dx / len) * spd;
+    dy = (dy / len) * spd;
 
     const nx = player.x + dx, ny = player.y + dy;
     if (!isWall(Math.floor(nx / TILE), Math.floor(player.y / TILE))) player.x = nx;
     if (!isWall(Math.floor(player.x / TILE), Math.floor(ny / TILE))) player.y = ny;
 
-    const rect = canvas.getBoundingClientRect();
-    const camX = player.x - canvas.width / 2;
-    const camY = player.y - canvas.height / 2;
-    player.angle = Math.atan2((mouseY - (canvas.height/2)), (mouseX - (canvas.width/2)));
+    player.angle = Math.atan2((mouseY - canvas.height/2), (mouseX - canvas.width/2));
   }
 
   function updateItems() {
+    if (storyActive) return;
     for (const it of items) {
       if (!it.taken && dist(player.x, player.y, it.x, it.y) < 24) {
         it.taken = true;
@@ -179,34 +334,79 @@
     }
   }
 
-  function updateMonster() {
-    const d = dist(player.x, player.y, monster.x, monster.y);
-    if (d < 320) monster.active = true;
-    if (monster.active) {
-      moveEntityTowards(monster, player.x, player.y, monster.speed);
-    } else {
-      // wander slowly
-      monster.x += Math.sin(Date.now() / 900) * 0.2;
+  function updateStoryProximity() {
+    nearNode = null;
+    if (storyActive) { interactHint.style.display = 'none'; return; }
+    for (const n of storyNodes) {
+      if (n.done) continue;
+      const p = nodeWorldPos(n);
+      if (dist(player.x, player.y, p.x, p.y) < 40) { nearNode = n; break; }
     }
-    if (d < 22 && !gameOver) {
-      triggerJumpscare();
-    }
+    interactHint.style.display = nearNode ? 'block' : 'none';
   }
 
-  function triggerJumpscare() {
+  function updateMonster() {
+    if (storyActive) return;
+    const d = dist(player.x, player.y, monster.x, monster.y);
+    const alertRange = fear > 50 ? 420 : 320; // more fear = monster senses you further
+    if (d < alertRange) monster.active = true;
+    if (monster.active) {
+      moveEntityTowards(monster, player.x, player.y, monster.speed * (1 + fear / 200));
+    } else {
+      monster.x += Math.sin(performance.now() / 900) * 0.2;
+    }
+    if (d < 22 && !gameOver) triggerJumpscare('monster');
+  }
+
+  function updateFearFromGlimpses(dt) {
+    if (storyActive) return;
+    for (const g of glimpses) {
+      if (inFlashlightCone(g.x, g.y)) {
+        if (!g.seen) { g.seen = true; addFear(8); }
+        addFear(dt * 0.004); // staring at it slowly raises fear
+      }
+    }
+    if (fear >= 100 && !gameOver) triggerJumpscare('fear');
+  }
+
+  function triggerJumpscare(cause) {
     gameOver = true;
     jumpscareEl.style.display = 'flex';
     setTimeout(() => {
       jumpscareEl.style.display = 'none';
-      showEndScreen(false);
+      showEndScreen('death', cause);
     }, 1200);
   }
 
-  function showEndScreen(didWin) {
+  function computeEndingText() {
+    if (storyFlags.broke_mirror && storyFlags.reckless) {
+      return { title: '你 迷 失 了', body: '你打碎了镜子，也打碎了自己的理智。你依然在走廊里游荡，但已经不再是"你"了。', color: '#b33' };
+    }
+    if (storyFlags.cautious && storyFlags.path_left && storyFlags.left_mirror) {
+      return { title: '你 逃 出 去 了', body: '你听从了那张字条的警告，谨慎地穿过黑暗，最终推开了大门。晨光刺眼，但你活了下来。', color: '#8f8' };
+    }
+    if (fear > 60) {
+      return { title: '你 活 着 逃 了 出 来 ， 但 …', body: '你逃出了疗养院，但那些在黑暗中窥视你的东西，从此也住进了你的脑海。', color: '#dd8' };
+    }
+    return { title: '你 逃 出 去 了', body: '疗养院的秘密将永远埋藏在黑暗中……你不会再回头看第二眼。', color: '#8f8' };
+  }
+
+  function showEndScreen(kind, cause) {
     overlay.classList.remove('hidden');
+    let title, body, color;
+    if (kind === 'death') {
+      if (cause === 'fear') {
+        title = '你 疯 了'; body = '理智耗尽的那一刻，黑暗中的脸终于露出了微笑。'; color = '#b30000';
+      } else {
+        title = '你 死 了'; body = '它抓住了你。黑暗中，没人能听到你的尖叫。'; color = '#b30000';
+      }
+    } else {
+      const e = computeEndingText();
+      title = e.title; body = e.body; color = e.color;
+    }
     overlay.innerHTML = `
-      <h1 style="color:${didWin ? '#8f8' : '#b30000'}">${didWin ? '你 逃 出 去 了' : '你 死 了'}</h1>
-      <p>${didWin ? '疗养院的秘密将永远埋藏在黑暗中……' : '它抓住了你。黑暗中，没人能听到你的尖叫。'}</p>
+      <h1 style="color:${color}">${title}</h1>
+      <p>${body}</p>
       <button id="restartBtn">重新开始</button>
     `;
     document.getElementById('restartBtn').addEventListener('click', resetGame);
@@ -215,19 +415,24 @@
   function resetGame() {
     generateMap();
     placeItems();
+    placeStoryNodes();
+    storyFlags = {};
     keysCollected = 0;
     keyCountEl.textContent = 0;
+    fear = 0; fearBar.style.width = '0%';
+    glimpses = []; glimpseTimer = 3000;
     player.x = TILE * 1.5; player.y = TILE * 1.5;
     monster.x = TILE * (MAP_W - 2); monster.y = TILE * (MAP_H - 2);
     monster.active = false;
-    gameOver = false; win = false;
+    gameOver = false; win = false; storyActive = false;
+    storyBox.style.display = 'none';
     overlay.classList.add('hidden');
     hud.classList.remove('hidden');
-    startTime = Date.now();
+    lastTime = performance.now();
     requestAnimationFrame(loop);
   }
 
-  // ----- Rendering with flashlight (radial gradient mask) -----
+  // ----- Rendering -----
   function render() {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -238,7 +443,6 @@
     ctx.save();
     ctx.translate(-camX, -camY);
 
-    // floor tiles
     for (let y = 0; y < MAP_H; y++) {
       for (let x = 0; x < MAP_W; x++) {
         ctx.fillStyle = map[y][x] === 1 ? '#1a1010' : '#141414';
@@ -248,7 +452,16 @@
       }
     }
 
-    // items
+    // story node markers (faint)
+    for (const n of storyNodes) {
+      if (n.done) continue;
+      const p = nodeWorldPos(n);
+      ctx.fillStyle = 'rgba(200,180,120,0.5)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
     for (const it of items) {
       if (it.taken) continue;
       ctx.fillStyle = '#e8c840';
@@ -257,6 +470,23 @@
       ctx.fill();
       ctx.strokeStyle = '#fff5c0';
       ctx.stroke();
+    }
+
+    // flashlight glimpse creatures - only draw if within cone (handled by mask anyway, but
+    // we also flicker/distort them for creepiness)
+    const now = performance.now();
+    for (const g of glimpses) {
+      const age = now - g.born;
+      const flicker = Math.random() < 0.15 ? 0.2 : 1;
+      ctx.save();
+      ctx.globalAlpha = flicker * Math.min(1, (g.life - age) / 300);
+      ctx.fillStyle = '#c9b8b8';
+      ctx.beginPath();
+      // gaunt humanoid silhouette
+      ctx.ellipse(g.x, g.y - 10, 6, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(g.x - 2, g.y + 2, 4, 16);
+      ctx.restore();
     }
 
     // monster
@@ -273,55 +503,69 @@
 
     ctx.restore();
 
-    // ---- flashlight / darkness overlay ----
+    // ---- flashlight cone mask ----
     ctx.save();
-    ctx.fillStyle = 'rgba(0,0,0,1)';
-    ctx.globalCompositeOperation = 'source-over';
-
     const px = canvas.width / 2, py = canvas.height / 2;
-    const grad = ctx.createRadialGradient(px, py, 20, px, py, 260);
-    grad.addColorStop(0, 'rgba(255,240,200,0.0)');
-    grad.addColorStop(0.5, 'rgba(0,0,0,0.55)');
-    grad.addColorStop(1, 'rgba(0,0,0,0.97)');
-
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.globalCompositeOperation = 'destination-out';
+
+    const grad = ctx.createRadialGradient(px, py, 20, px, py, 260);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.6, 'rgba(0,0,0,0.85)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
     ctx.fillStyle = grad;
     ctx.beginPath();
-    ctx.arc(px, py, 260, 0, Math.PI * 2);
+    ctx.moveTo(px, py);
+    ctx.arc(px, py, 260, player.angle - 0.6, player.angle + 0.6);
+    ctx.closePath();
+    ctx.fill();
+
+    // small radius always visible around player
+    const near = ctx.createRadialGradient(px, py, 0, px, py, 50);
+    near.addColorStop(0, 'rgba(0,0,0,0.9)');
+    near.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = near;
+    ctx.beginPath();
+    ctx.arc(px, py, 50, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
-    // subtle red vignette when monster active
-    if (monster.active) {
+    // fear red vignette
+    if (fear > 0) {
       ctx.save();
       ctx.globalCompositeOperation = 'source-over';
       const v = ctx.createRadialGradient(px, py, canvas.height/3, px, py, canvas.height);
       v.addColorStop(0, 'rgba(80,0,0,0)');
-      v.addColorStop(1, 'rgba(80,0,0,0.4)');
+      v.addColorStop(1, `rgba(80,0,0,${0.15 + (fear/100) * 0.45})`);
       ctx.fillStyle = v;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
     }
   }
 
-  function loop() {
-    if (gameOver || win) {
-      if (win) showEndScreen(true);
-      return;
-    }
-    updatePlayer();
+  function loop(now) {
+    if (gameOver) return;
+    if (win) { showEndScreen('win'); return; }
+    const dt = Math.min(50, now - lastTime);
+    lastTime = now;
+    updatePlayer(dt);
     updateItems();
+    updateStoryProximity();
     updateMonster();
+    updateGlimpses(dt);
+    updateFearFromGlimpses(dt);
     render();
     requestAnimationFrame(loop);
   }
 
   document.getElementById('startBtn').addEventListener('click', () => {
+    generateMap();
+    placeItems();
+    placeStoryNodes();
     overlay.classList.add('hidden');
     hud.classList.remove('hidden');
-    startTime = Date.now();
+    lastTime = performance.now();
     requestAnimationFrame(loop);
   });
 })();
