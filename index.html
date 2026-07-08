@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>暗途 - 恐怖游戏</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000; overflow: hidden;
+    height: 100%; font-family: "Microsoft YaHei", sans-serif;
+  }
+  #gameCanvas { display: block; background: #000; cursor: none; }
+  #overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #b30000; text-align: center; z-index: 10;
+    background: radial-gradient(ellipse at center, rgba(20,0,0,0.9) 0%, rgba(0,0,0,0.98) 100%);
+  }
+  #overlay h1 { font-size: 3em; letter-spacing: 8px; text-shadow: 0 0 20px #b30000; margin-bottom: 10px; }
+  #overlay p { color: #999; max-width: 500px; line-height: 1.6; }
+  #overlay button {
+    margin-top: 30px; padding: 14px 40px; font-size: 1.2em; letter-spacing: 4px;
+    background: transparent; border: 2px solid #b30000; color: #eee; cursor: pointer;
+    transition: all 0.3s;
+  }
+  #overlay button:hover { background: #b30000; color: #fff; box-shadow: 0 0 20px #b30000; }
+  #hud {
+    position: fixed; top: 10px; left: 10px; color: #900; font-size: 14px; z-index: 5;
+    text-shadow: 0 0 4px #000;
+  }
+  #jumpscare {
+    position: fixed; top:0; left:0; width:100%; height:100%; z-index: 20;
+    background: #000; display: none; align-items: center; justify-content: center;
+  }
+  #jumpscare span { font-size: 15vw; color: #ff0000; text-shadow: 0 0 40px red; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>暗&nbsp;途</h1>
+  <p>你在一栋废弃的疗养院中醒来。手电筒是你唯一的光源，也是唯一暴露你的东西。<br>
+  找到 <b style="color:#eee">3 把钥匙</b> 逃出这里——但你不是一个人。<br><br>
+  WASD / 方向键 移动　　鼠标 控制视角(手电筒方向)</p>
+  <button id="startBtn">开始游戏</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+<div id="hud" class="hidden">钥匙: <span id="keyCount">0</span> / 3</div>
+<div id="jumpscare"><span>!!</span></div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const hud = document.getElementById('hud');
+  const keyCountEl = document.getElementById('keyCount');
+  const jumpscareEl = document.getElementById('jumpscare');
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ----- World -----
+  const TILE = 48;
+  const MAP_W = 25, MAP_H = 18;
+  // 1 = wall, 0 = floor
+  let map = [];
+  function generateMap() {
+    map = [];
+    for (let y = 0; y < MAP_H; y++) {
+      const row = [];
+      for (let x = 0; x < MAP_W; x++) {
+        if (x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1) {
+          row.push(1);
+        } else {
+          row.push(Math.random() < 0.12 ? 1 : 0);
+        }
+      }
+      map.push(row);
+    }
+    map[1][1] = 0; map[1][2] = 0; map[2][1] = 0; // ensure start open
+  }
+  generateMap();
+
+  function isWall(tx, ty) {
+    if (tx < 0 || ty < 0 || ty >= map.length || tx >= map[0].length) return true;
+    return map[ty][tx] === 1;
+  }
+
+  // ----- Player -----
+  const player = {
+    x: TILE * 1.5, y: TILE * 1.5, r: 12,
+    speed: 2.6, angle: 0,
+  };
+
+  const keys = {};
+  window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+  window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  let mouseX = 0, mouseY = 0;
+  window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+
+  // ----- Items (keys) -----
+  let items = [];
+  function placeItems() {
+    items = [];
+    let placed = 0;
+    while (placed < 3) {
+      const tx = 1 + Math.floor(Math.random() * (MAP_W - 2));
+      const ty = 1 + Math.floor(Math.random() * (MAP_H - 2));
+      if (!isWall(tx, ty) && !(tx <= 2 && ty <= 2)) {
+        items.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, taken: false });
+        placed++;
+      }
+    }
+  }
+  placeItems();
+  let keysCollected = 0;
+
+  // ----- Monster -----
+  const monster = {
+    x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2),
+    speed: 1.5, active: false, chaseTimer: 0,
+  };
+
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+  function tileWalkable(tx, ty) { return !isWall(tx, ty); }
+
+  function moveEntityTowards(ent, tx, ty, spd) {
+    const dx = tx - ent.x, dy = ty - ent.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1) return;
+    const nx = ent.x + (dx / d) * spd;
+    const ny = ent.y + (dy / d) * spd;
+    const ctx_ = Math.floor(nx / TILE), cty_ = Math.floor(ent.y / TILE);
+    const cty2 = Math.floor(ny / TILE), ctx2 = Math.floor(ent.x / TILE);
+    if (tileWalkable(ctx_, cty_)) ent.x = nx;
+    if (tileWalkable(ctx2, cty2)) ent.y = ny;
+  }
+
+  let gameOver = false;
+  let win = false;
+  let startTime = 0;
+
+  function updatePlayer() {
+    let dx = 0, dy = 0;
+    if (keys['w'] || keys['arrowup']) dy -= 1;
+    if (keys['s'] || keys['arrowdown']) dy += 1;
+    if (keys['a'] || keys['arrowleft']) dx -= 1;
+    if (keys['d'] || keys['arrowright']) dx += 1;
+    const len = Math.hypot(dx, dy) || 1;
+    dx = (dx / len) * player.speed;
+    dy = (dy / len) * player.speed;
+
+    const nx = player.x + dx, ny = player.y + dy;
+    if (!isWall(Math.floor(nx / TILE), Math.floor(player.y / TILE))) player.x = nx;
+    if (!isWall(Math.floor(player.x / TILE), Math.floor(ny / TILE))) player.y = ny;
+
+    const rect = canvas.getBoundingClientRect();
+    const camX = player.x - canvas.width / 2;
+    const camY = player.y - canvas.height / 2;
+    player.angle = Math.atan2((mouseY - (canvas.height/2)), (mouseX - (canvas.width/2)));
+  }
+
+  function updateItems() {
+    for (const it of items) {
+      if (!it.taken && dist(player.x, player.y, it.x, it.y) < 24) {
+        it.taken = true;
+        keysCollected++;
+        keyCountEl.textContent = keysCollected;
+        if (keysCollected >= 3) { win = true; }
+      }
+    }
+  }
+
+  function updateMonster() {
+    const d = dist(player.x, player.y, monster.x, monster.y);
+    if (d < 320) monster.active = true;
+    if (monster.active) {
+      moveEntityTowards(monster, player.x, player.y, monster.speed);
+    } else {
+      // wander slowly
+      monster.x += Math.sin(Date.now() / 900) * 0.2;
+    }
+    if (d < 22 && !gameOver) {
+      triggerJumpscare();
+    }
+  }
+
+  function triggerJumpscare() {
+    gameOver = true;
+    jumpscareEl.style.display = 'flex';
+    setTimeout(() => {
+      jumpscareEl.style.display = 'none';
+      showEndScreen(false);
+    }, 1200);
+  }
+
+  function showEndScreen(didWin) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = `
+      <h1 style="color:${didWin ? '#8f8' : '#b30000'}">${didWin ? '你 逃 出 去 了' : '你 死 了'}</h1>
+      <p>${didWin ? '疗养院的秘密将永远埋藏在黑暗中……' : '它抓住了你。黑暗中，没人能听到你的尖叫。'}</p>
+      <button id="restartBtn">重新开始</button>
+    `;
+    document.getElementById('restartBtn').addEventListener('click', resetGame);
+  }
+
+  function resetGame() {
+    generateMap();
+    placeItems();
+    keysCollected = 0;
+    keyCountEl.textContent = 0;
+    player.x = TILE * 1.5; player.y = TILE * 1.5;
+    monster.x = TILE * (MAP_W - 2); monster.y = TILE * (MAP_H - 2);
+    monster.active = false;
+    gameOver = false; win = false;
+    overlay.classList.add('hidden');
+    hud.classList.remove('hidden');
+    startTime = Date.now();
+    requestAnimationFrame(loop);
+  }
+
+  // ----- Rendering with flashlight (radial gradient mask) -----
+  function render() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const camX = player.x - canvas.width / 2;
+    const camY = player.y - canvas.height / 2;
+
+    ctx.save();
+    ctx.translate(-camX, -camY);
+
+    // floor tiles
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        ctx.fillStyle = map[y][x] === 1 ? '#1a1010' : '#141414';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        ctx.strokeStyle = '#050505';
+        ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+
+    // items
+    for (const it of items) {
+      if (it.taken) continue;
+      ctx.fillStyle = '#e8c840';
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff5c0';
+      ctx.stroke();
+    }
+
+    // monster
+    ctx.fillStyle = monster.active ? '#8b0000' : '#440000';
+    ctx.beginPath();
+    ctx.arc(monster.x, monster.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+
+    // player
+    ctx.fillStyle = '#c8c8c8';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // ---- flashlight / darkness overlay ----
+    ctx.save();
+    ctx.fillStyle = 'rgba(0,0,0,1)';
+    ctx.globalCompositeOperation = 'source-over';
+
+    const px = canvas.width / 2, py = canvas.height / 2;
+    const grad = ctx.createRadialGradient(px, py, 20, px, py, 260);
+    grad.addColorStop(0, 'rgba(255,240,200,0.0)');
+    grad.addColorStop(0.5, 'rgba(0,0,0,0.55)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.97)');
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'destination-out';
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(px, py, 260, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // subtle red vignette when monster active
+    if (monster.active) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      const v = ctx.createRadialGradient(px, py, canvas.height/3, px, py, canvas.height);
+      v.addColorStop(0, 'rgba(80,0,0,0)');
+      v.addColorStop(1, 'rgba(80,0,0,0.4)');
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
+  function loop() {
+    if (gameOver || win) {
+      if (win) showEndScreen(true);
+      return;
+    }
+    updatePlayer();
+    updateItems();
+    updateMonster();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('startBtn').addEventListener('click', () => {
+    overlay.classList.add('hidden');
+    hud.classList.remove('hidden');
+    startTime = Date.now();
+    requestAnimationFrame(loop);
+  });
+})();
+</script>
+</body>
+</html>
