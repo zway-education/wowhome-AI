@@ -108,6 +108,8 @@
     let droneNodes = null;
     let heartbeatTimer = null;
     let footstepTimer = 0;
+    let musicTimer = null;
+    let musicDelay = null;
 
     function ensure() {
       if (actx) return;
@@ -154,6 +156,50 @@
       noiseSrc.start();
 
       droneNodes = { osc1, osc2, g, noiseSrc, noiseGain };
+      startMusic();
+    }
+
+    // sparse, unsettling piano-like phrases over a D-minor-ish scale, with a slow echo
+    const SCALE = [146.83, 155.56, 174.61, 196.00, 220.00, 233.08, 261.63]; // D3..approx, minor/phrygian flavor
+
+    function playMusicNote() {
+      const now = actx.currentTime;
+      const freq = SCALE[Math.floor(Math.random() * SCALE.length)] * (Math.random() < 0.3 ? 2 : 1);
+      const osc = actx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.09, now + 0.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 3.2);
+      osc.connect(g).connect(musicDelay ? musicDelay.input : master);
+      osc.start(now);
+      osc.stop(now + 3.3);
+    }
+
+    function startMusic() {
+      if (musicTimer) return;
+      const delayNode = actx.createDelay(2);
+      delayNode.delayTime.value = 0.65;
+      const feedback = actx.createGain();
+      feedback.gain.value = 0.35;
+      const delayFilter = actx.createBiquadFilter();
+      delayFilter.type = 'lowpass';
+      delayFilter.frequency.value = 1200;
+      delayNode.connect(feedback).connect(delayFilter).connect(delayNode);
+      delayNode.connect(master);
+      musicDelay = { input: delayNode };
+
+      const schedule = () => {
+        playMusicNote();
+        musicTimer = setTimeout(schedule, 2200 + Math.random() * 2600);
+      };
+      schedule();
+    }
+
+    function stopMusic() {
+      if (musicTimer) { clearTimeout(musicTimer); musicTimer = null; }
+      musicDelay = null;
     }
 
     function playFootstep() {
@@ -263,6 +309,7 @@
 
     function stopAll() {
       setHeartbeat(false);
+      stopMusic();
       if (droneNodes) {
         try {
           droneNodes.osc1.stop(); droneNodes.osc2.stop(); droneNodes.noiseSrc.stop();
