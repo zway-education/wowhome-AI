@@ -89,11 +89,13 @@
   #cafeArea{
     position:relative;
     background:
+      radial-gradient(ellipse at 50% 0%, rgba(255,235,210,0.9), rgba(0,0,0,0) 60%),
       repeating-linear-gradient(90deg, #e6c6a0 0 40px, #dab88f 40px 80px);
     border-radius:14px;
     height:420px;
     overflow:hidden;
     border:3px solid var(--wood-dark);
+    box-shadow: inset 0 10px 30px rgba(80,50,20,0.25), inset 0 -14px 24px rgba(80,50,20,0.18);
   }
   .tile{
     position:absolute;
@@ -106,13 +108,13 @@
   .tile:hover{transform:scale(1.06);}
   .table{
     width:70px;height:70px;
-    background:#b98a5e;
+    background:radial-gradient(circle at 35% 30%, #d1a578, #b98a5e 65%, #9c7048 100%);
     border-radius:10px;
     border:3px solid #8c6440;
     margin:0 auto;
     display:flex;align-items:center;justify-content:center;
     font-size:26px;
-    box-shadow:0 3px 0 rgba(0,0,0,0.15);
+    box-shadow:0 6px 0 rgba(0,0,0,0.18), 0 10px 14px rgba(0,0,0,0.2);
     position:relative;
   }
   .table.empty{opacity:0.55;}
@@ -147,9 +149,9 @@
     font-size:30px;
     cursor:pointer;
     transition: left 1.2s ease, top 1.2s ease, transform .2s;
-    filter:drop-shadow(0 2px 1px rgba(0,0,0,0.2));
+    filter:drop-shadow(0 6px 4px rgba(0,0,0,0.3));
   }
-  .cat:hover{transform:scale(1.15);}
+  .cat:hover{transform:scale(1.15) translateY(-2px);}
   .floatText{
     position:absolute;
     font-weight:bold;
@@ -302,6 +304,7 @@
     <div class="stat">⏰ <b id="statTime">08:00</b></div>
     <div class="stat">😻 貓咪數<b id="statCats">0</b></div>
     <div class="stat">🧑 顧客<b id="statCustomers">0</b></div>
+    <div class="stat" style="cursor:pointer;" id="musicToggle">🎵 音樂<b id="musicState">關閉</b></div>
   </div>
 
   <div class="layout">
@@ -938,6 +941,118 @@
     renderTables();
     updateStats();
     log(`☀️ 第 ${state.day} 天開始營業！`);
+  };
+
+  // ---------- 溫馨背景音樂 (Web Audio 即時合成，無需外部音檔) ----------
+  const Music = (function(){
+    let ctx = null, master, filter, delay, feedback, playing = false, chordTimer = null, sparkleTimer = null;
+    // 溫暖爵士風和弦進行 (Cmaj7 - Am7 - Fmaj7 - G7)，以 Hz 表示
+    const CHORDS = [
+      [261.63, 329.63, 392.00, 493.88], // Cmaj7
+      [220.00, 261.63, 329.63, 392.00], // Am7
+      [174.61, 220.00, 261.63, 349.23], // Fmaj7
+      [196.00, 246.94, 293.66, 349.23], // G7
+    ];
+    let chordIndex = 0;
+
+    function ensureCtx(){
+      if(ctx) return;
+      ctx = new (window.AudioContext||window.webkitAudioContext)();
+      master = ctx.createGain();
+      master.gain.value = 0.0001;
+      filter = ctx.createBiquadFilter();
+      filter.type='lowpass';
+      filter.frequency.value = 1400;
+      delay = ctx.createDelay();
+      delay.delayTime.value = 0.38;
+      feedback = ctx.createGain();
+      feedback.gain.value = 0.28;
+      delay.connect(feedback);
+      feedback.connect(delay);
+      master.connect(filter);
+      filter.connect(ctx.destination);
+      filter.connect(delay);
+      delay.connect(ctx.destination);
+    }
+
+    function playPad(freqs, duration){
+      const now = ctx.currentTime;
+      freqs.forEach((f,i)=>{
+        [0.997, 1.003].forEach(detune=>{
+          const osc = ctx.createOscillator();
+          osc.type = i===0 ? 'sine' : 'triangle';
+          osc.frequency.value = f*detune;
+          const g = ctx.createGain();
+          g.gain.setValueAtTime(0.0001, now);
+          g.gain.linearRampToValueAtTime(0.05/freqs.length, now+1.4);
+          g.gain.linearRampToValueAtTime(0.0001, now+duration-0.4);
+          osc.connect(g);
+          g.connect(master);
+          osc.start(now);
+          osc.stop(now+duration+0.1);
+        });
+      });
+    }
+
+    function playSparkle(){
+      if(!playing) return;
+      const chord = CHORDS[chordIndex];
+      const f = chord[Math.floor(Math.random()*chord.length)]*2;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type='sine';
+      osc.frequency.value = f;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.06, now+0.05);
+      g.gain.exponentialRampToValueAtTime(0.0001, now+1.1);
+      osc.connect(g);
+      g.connect(delay);
+      g.connect(master);
+      osc.start(now);
+      osc.stop(now+1.2);
+      sparkleTimer = setTimeout(playSparkle, 900+Math.random()*900);
+    }
+
+    function scheduleChord(){
+      if(!playing) return;
+      const duration = 4.2;
+      playPad(CHORDS[chordIndex], duration);
+      chordIndex = (chordIndex+1) % CHORDS.length;
+      chordTimer = setTimeout(scheduleChord, duration*1000);
+    }
+
+    function start(){
+      ensureCtx();
+      if(ctx.state==='suspended') ctx.resume();
+      playing = true;
+      master.gain.cancelScheduledValues(ctx.currentTime);
+      master.gain.linearRampToValueAtTime(1, ctx.currentTime+1.5);
+      scheduleChord();
+      playSparkle();
+    }
+
+    function stop(){
+      playing = false;
+      clearTimeout(chordTimer);
+      clearTimeout(sparkleTimer);
+      if(ctx){
+        master.gain.cancelScheduledValues(ctx.currentTime);
+        master.gain.linearRampToValueAtTime(0.0001, ctx.currentTime+1);
+      }
+    }
+
+    function toggle(){
+      if(playing){ stop(); return false; }
+      start(); return true;
+    }
+
+    return { toggle };
+  })();
+
+  document.getElementById('musicToggle').onclick = ()=>{
+    const on = Music.toggle();
+    document.getElementById('musicState').textContent = on ? '播放中' : '關閉';
   };
 
   // ---------- 初始化 ----------
