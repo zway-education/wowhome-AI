@@ -1,0 +1,403 @@
+<title>大谷翔平：全壘打瞬間</title>
+<style>
+  @font-face {
+    font-family: 'DispFace';
+    src: local('Arial Black');
+  }
+  :root{
+    --sky-top:#0d1b3e;
+    --sky-mid:#2a4a8f;
+    --sky-bottom:#e8963f;
+    --field:#2f7a3d;
+    --dirt:#b5793f;
+    --ink:#0e1b2b;
+    --paper:#f4efe2;
+    --accent:#1c4fa1;
+    --accent-2:#ffcb3d;
+    --ball-red:#c0392b;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --paper:#12151c; --ink:#eae4d4; }
+  }
+  :root[data-theme="dark"]{ --paper:#12151c; --ink:#eae4d4; }
+  :root[data-theme="light"]{ --paper:#f4efe2; --ink:#0e1b2b; }
+
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    min-height:100vh;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:18px;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    padding:32px 16px;
+  }
+  .masthead{ text-align:center; max-width:640px; }
+  h1{
+    font-family:'DispFace',Arial,sans-serif;
+    font-weight:900;
+    font-size:clamp(24px,4vw,38px);
+    letter-spacing:-0.01em;
+    margin:0 0 6px;
+    text-wrap:balance;
+    color:var(--ink);
+  }
+  .sub{ font-size:14px; letter-spacing:0.04em; opacity:0.65; margin:0; }
+  .stage-wrap{
+    width:min(1000px,94vw);
+    border-radius:14px;
+    overflow:hidden;
+    box-shadow:0 20px 50px -20px rgba(0,0,0,0.5);
+    border:1px solid rgba(128,128,128,0.25);
+    position:relative;
+    background:#e8963f;
+  }
+  canvas{ display:block; width:100%; height:auto; }
+  .controls{
+    display:flex; align-items:center; gap:14px;
+    width:min(1000px,94vw); justify-content:space-between;
+  }
+  .caption{ font-size:13px; opacity:0.7; font-variant-numeric:tabular-nums; }
+  button{
+    font:inherit; font-size:13px; font-weight:600; letter-spacing:0.02em;
+    padding:9px 18px; border-radius:999px;
+    border:1px solid var(--accent); background:transparent; color:var(--accent);
+    cursor:pointer; transition:background 0.15s,color 0.15s;
+  }
+  button:hover{ background:var(--accent); color:#fff; }
+  button:focus-visible{ outline:2px solid var(--accent-2); outline-offset:2px; }
+</style>
+
+<div class="masthead">
+  <h1>大谷翔平 — 一棒轟出全壘打牆</h1>
+  <p class="sub">Shohei Ohtani · Home Run · 一段小小的歡呼動畫</p>
+</div>
+
+<div class="stage-wrap">
+  <canvas id="stage" width="1000" height="560"></canvas>
+</div>
+
+<div class="controls">
+  <span class="caption" id="caption">播放中…</span>
+  <button id="replay">重播 ↻</button>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const captionEl = document.getElementById('caption');
+  const replayBtn = document.getElementById('replay');
+
+  const DURATION = 8000;
+  const PITCH_END = 0.18;
+  const SWING_T = 0.22;
+  const FLIGHT_END = 0.75;
+
+  let startTime = null;
+
+  function easeOutCubic(t){ return 1-Math.pow(1-t,3); }
+  function easeInQuad(t){ return t*t; }
+
+  const stars = Array.from({length:40},(_,i)=>({
+    x:(i*137)%W, y:(i*71)%150, s:0.5+(i%3)*0.4, tw:i*0.7
+  }));
+
+  const confetti = Array.from({length:60},(_,i)=>({
+    x:(i*53)%W, delay:0.62+ (i%20)*0.01,
+    color:['#ffcb3d','#1c4fa1','#e94f37','#f4efe2'][i%4],
+    speed:1+(i%4)*0.4, drift:((i%7)-3)*8
+  }));
+
+  function drawSky(t){
+    const g = ctx.createLinearGradient(0,0,0,300);
+    g.addColorStop(0,'#0d1b3e');
+    g.addColorStop(0.5,'#2a4a8f');
+    g.addColorStop(1,'#e8963f');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,0,W,300);
+
+    ctx.fillStyle='#fff';
+    stars.forEach(s=>{
+      const a = 0.4+0.5*Math.abs(Math.sin(t*2+s.tw));
+      ctx.globalAlpha = a*0.7;
+      ctx.beginPath();
+      ctx.arc(s.x,s.y,s.s,0,Math.PI*2);
+      ctx.fill();
+    });
+    ctx.globalAlpha=1;
+  }
+
+  function drawStadiumBowl(){
+    ctx.fillStyle = '#1a2f52';
+    ctx.beginPath();
+    ctx.moveTo(0,300);
+    ctx.quadraticCurveTo(W/2,230,W,300);
+    ctx.lineTo(W,180);
+    ctx.quadraticCurveTo(W/2,120,0,180);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle='rgba(255,255,255,0.08)';
+    ctx.lineWidth=1;
+    for(let r=0;r<6;r++){
+      ctx.beginPath();
+      ctx.moveTo(0,190+r*16);
+      ctx.quadraticCurveTo(W/2,140+r*15,W,190+r*16);
+      ctx.stroke();
+    }
+
+    for(let i=0;i<26;i++){
+      const x = 10+i*(W-20)/25;
+      const y = 185 + 40*Math.sin((i/25)*Math.PI);
+      ctx.fillStyle = i%2===0 ? 'rgba(255,255,255,0.5)':'rgba(255,203,61,0.5)';
+      ctx.fillRect(x-2, y-3, 4, 4);
+    }
+  }
+
+  function drawField(){
+    const g = ctx.createLinearGradient(0,300,0,H);
+    g.addColorStop(0,'#3a8a48');
+    g.addColorStop(1,'#276333');
+    ctx.fillStyle = g;
+    ctx.fillRect(0,300,W,H-300);
+
+    ctx.strokeStyle='rgba(255,255,255,0.12)';
+    ctx.lineWidth=18;
+    for(let i=0;i<7;i++){
+      ctx.beginPath();
+      ctx.moveTo(W/2 - 400 + i*130, H);
+      ctx.lineTo(W/2 - 200 + i*130, 300);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#c8935a';
+    ctx.beginPath();
+    ctx.moveTo(W/2, H-30);
+    ctx.lineTo(W/2-160, 340);
+    ctx.lineTo(W/2+160, 340);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle='#f4efe2';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    ctx.moveTo(W/2-150,346);
+    ctx.lineTo(W/2,300);
+    ctx.lineTo(W/2+150,346);
+    ctx.stroke();
+
+    ctx.fillStyle='#e9dfc4';
+    ctx.beginPath();
+    ctx.ellipse(W/2, H-40, 26,14,0,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawWall(){
+    ctx.fillStyle='#0f3d2e';
+    ctx.fillRect(0,296,W,26);
+    ctx.fillStyle='#ffcb3d';
+    ctx.font='700 13px -apple-system, sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText('日本ハム・エンゼルス STADIUM', W/2, 313);
+  }
+
+  function drawBatter(x,y,phase){
+    ctx.save();
+    ctx.translate(x,y);
+    const rot = phase==='swing' ? -0.6 : (phase==='follow' ? 0.9 : -0.15);
+    ctx.rotate(rot);
+    ctx.strokeStyle = var_ink();
+    ctx.lineWidth=4;
+    ctx.lineCap='round';
+
+    ctx.fillStyle='#1c4fa1';
+    ctx.beginPath();
+    ctx.ellipse(0,-34,10,12,0,0,Math.PI*2);
+    ctx.fill();
+
+    ctx.strokeStyle='#f4efe2';
+    ctx.beginPath();
+    ctx.moveTo(0,-24);
+    ctx.lineTo(0,10);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0,10);
+    ctx.lineTo(-10,40);
+    ctx.moveTo(0,10);
+    ctx.lineTo(10,40);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(0,-14);
+    ctx.lineTo(phase==='swing'? 30:-14, phase==='swing'? -6:-6);
+    ctx.stroke();
+
+    ctx.strokeStyle='#8a5a2b';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    const bx = phase==='swing'? 30:-14, by = phase==='swing'?-6:-6;
+    ctx.moveTo(bx,by);
+    ctx.lineTo(bx + (phase==='swing'?22:-4), by + (phase==='swing'?-14:-24));
+    ctx.stroke();
+
+    ctx.restore();
+  }
+  function var_ink(){ return getComputedStyle(document.documentElement).getPropertyValue('--ink') || '#0e1b2b'; }
+
+  function drawBaseball(x,y,rot,scale){
+    ctx.save();
+    ctx.translate(x,y);
+    ctx.rotate(rot);
+    ctx.scale(scale,scale);
+    ctx.fillStyle='#f4efe2';
+    ctx.strokeStyle='#0e1b2b';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.arc(0,0,7,0,Math.PI*2);
+    ctx.fill(); ctx.stroke();
+    ctx.strokeStyle='#c0392b';
+    ctx.lineWidth=1.2;
+    ctx.beginPath();
+    ctx.arc(0,0,7,0.4,1.6);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(0,0,7,Math.PI+0.4,Math.PI+1.6);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawTrail(pts){
+    ctx.save();
+    ctx.strokeStyle='rgba(255,203,61,0.55)';
+    ctx.lineWidth=3;
+    ctx.beginPath();
+    pts.forEach((p,i)=>{ i===0? ctx.moveTo(p.x,p.y) : ctx.lineTo(p.x,p.y); });
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawFirework(cx,cy,p,color){
+    const n=10;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0,1-p);
+    ctx.strokeStyle = color;
+    ctx.lineWidth=2;
+    for(let i=0;i<n;i++){
+      const a = (i/n)*Math.PI*2;
+      const r = 10+p*55;
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.lineTo(cx+Math.cos(a)*r, cy+Math.sin(a)*r);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  const ballTrail = [];
+
+  function frame(now){
+    if(!startTime) startTime = now;
+    const elapsed = now - startTime;
+    const loopT = (elapsed % DURATION)/DURATION;
+    if(loopT < 0.01) ballTrail.length = 0;
+
+    ctx.clearRect(0,0,W,H);
+    drawSky(elapsed/1000);
+    drawStadiumBowl();
+    drawField();
+    drawWall();
+
+    const batterX = W/2 - 30, batterY = 350;
+    const pitcherX = W/2, pitcherY = 300;
+
+    let phase = 'wait';
+    if(loopT < PITCH_END) phase='pitch';
+    else if(loopT < SWING_T) phase='swing';
+    else if(loopT < FLIGHT_END) phase='follow';
+    else phase='cheer';
+
+    // pitcher figure
+    ctx.save();
+    ctx.strokeStyle = '#f4efe2';
+    ctx.lineWidth=4;
+    ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(pitcherX,pitcherY-20);
+    ctx.lineTo(pitcherX,pitcherY+10);
+    ctx.moveTo(pitcherX,pitcherY+10);
+    ctx.lineTo(pitcherX-8,pitcherY+30);
+    ctx.moveTo(pitcherX,pitcherY+10);
+    ctx.lineTo(pitcherX+8,pitcherY+30);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(pitcherX,pitcherY-28,8,0,Math.PI*2);
+    ctx.fillStyle='#1c4fa1';
+    ctx.fill();
+    ctx.restore();
+
+    let ballX, ballY, ballScale=1, ballRot=elapsed/60;
+
+    if(phase==='pitch'){
+      const bt = loopT/PITCH_END;
+      const e = easeOutCubic(bt);
+      ballX = pitcherX - e*(pitcherX-batterX-15);
+      ballY = pitcherY-10 + Math.sin(bt*Math.PI)*(-6);
+      drawBatter(batterX,batterY,'wait');
+      drawBaseball(ballX,ballY,ballRot,1);
+    } else if(phase==='swing'){
+      const bt = (loopT-PITCH_END)/(SWING_T-PITCH_END);
+      ballX = batterX-15 + bt*10;
+      ballY = batterY-10;
+      drawBatter(batterX,batterY,'swing');
+      drawBaseball(ballX,ballY,ballRot,1);
+      captionEl.textContent = '🏏 揮棒！CRACK!';
+    } else if(phase==='follow'){
+      const bt = (loopT-SWING_T)/(FLIGHT_END-SWING_T);
+      const e = easeOutCubic(bt);
+      ballX = batterX-15 + e*(W*0.95-(batterX-15));
+      ballY = (batterY-10) - Math.sin(bt*Math.PI)*260;
+      ballScale = 1 - bt*0.5;
+      drawBatter(batterX,batterY,'follow');
+      ballTrail.push({x:ballX,y:ballY});
+      if(ballTrail.length>18) ballTrail.shift();
+      drawTrail(ballTrail);
+      drawBaseball(ballX,ballY,ballRot,Math.max(0.4,ballScale));
+      captionEl.textContent = '🚀 飛越全壘打牆！第 '+Math.round(bt*100)+'%';
+    } else {
+      drawBatter(batterX,batterY,'follow');
+      const ct = (loopT-FLIGHT_END)/(1-FLIGHT_END);
+      const fx1 = W*0.2, fy1=110, fx2=W*0.5, fy2=90, fx3=W*0.8, fy3=120;
+      drawFirework(fx1,fy1, (ct*2)%1, '#ffcb3d');
+      drawFirework(fx2,fy2, (ct*2+0.3)%1, '#e94f37');
+      drawFirework(fx3,fy3, (ct*2+0.6)%1, '#1c4fa1');
+
+      confetti.forEach(c=>{
+        if(ct < c.delay) return;
+        const cp = (ct - c.delay)/(1-c.delay+0.001);
+        const cy = -10 + cp*(H+20)*c.speed;
+        if(cy>H) return;
+        ctx.save();
+        ctx.fillStyle = c.color;
+        ctx.translate(c.x + Math.sin(cp*8)*c.drift, cy);
+        ctx.rotate(cp*10);
+        ctx.fillRect(-4,-4,8,8);
+        ctx.restore();
+      });
+
+      captionEl.textContent = '🎉 HOME RUN! 大谷翔平全壘打！';
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  replayBtn.addEventListener('click', ()=>{ startTime = null; ballTrail.length=0; });
+  requestAnimationFrame(frame);
+})();
+</script>
