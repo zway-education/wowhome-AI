@@ -2,7 +2,7 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<title>詭異飯店 - 雙人恐怖逃脫遊戲</title>
+<title>詭異飯店 - 雙人闖關逃脫遊戲</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   * { box-sizing: border-box; }
@@ -71,7 +71,7 @@
   .full { width: 100%; }
   .status-bar {
     display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px;
-    margin-bottom: 18px; padding: 10px; background: rgba(0,0,0,0.4);
+    margin-bottom: 10px; padding: 10px; background: rgba(0,0,0,0.4);
     border: 1px solid #331414; border-radius: 4px; font-size: 0.85em;
   }
   .player-stat { flex: 1; min-width: 140px; }
@@ -79,13 +79,25 @@
   .bar-bg { background: #200; height: 8px; border-radius: 4px; overflow: hidden; margin-top: 3px; border: 1px solid #400; }
   .bar-fill { height: 100%; background: linear-gradient(90deg, #700, #c33); transition: width 0.4s; }
   .bar-fill.sanity { background: linear-gradient(90deg, #135, #37c); }
+
+  .level-track {
+    display: flex; justify-content: center; gap: 6px; margin-bottom: 16px;
+  }
+  .level-dot {
+    width: 28px; height: 28px; border-radius: 50%;
+    border: 1px solid #5a2a2a; display: flex; align-items: center; justify-content: center;
+    font-size: 0.75em; color: #776; background: #150a0a;
+  }
+  .level-dot.done { background: #2a0e0e; color: #c86; border-color: #a33; }
+  .level-dot.active { background: #7a1414; color: #fff; border-color: #f55; box-shadow: 0 0 10px #a00; }
+
   #log {
     background: #0a0505;
     border: 1px solid #2a1414;
     border-radius: 4px;
     padding: 16px;
-    min-height: 160px;
-    max-height: 260px;
+    min-height: 130px;
+    max-height: 230px;
     overflow-y: auto;
     line-height: 1.7;
     font-size: 0.95em;
@@ -95,17 +107,12 @@
   #log .turn-tag { color: #c86; font-weight: bold; }
   #log .danger { color: #d33; }
   #log .clue { color: #6ac; }
+  #log .win { color: #6c6; }
   #log .system { color: #776; font-style: italic; }
   .choices { display: flex; flex-direction: column; gap: 8px; }
   .choices button { text-align: left; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
   .hidden { display: none !important; }
-  .flash {
-    animation: flash 0.4s ease-out;
-  }
-  @keyframes flash {
-    0% { background: #a00; }
-    100% { background: inherit; }
-  }
   .center { text-align: center; }
   .small { font-size: 0.8em; color: #776; }
   .item-list span {
@@ -115,9 +122,17 @@
   #jumpscare {
     position: fixed; inset: 0; background: #000; z-index: 999;
     display: flex; align-items: center; justify-content: center;
-    color: #f00; font-size: 4em; font-weight: bold; letter-spacing: 10px;
-    text-shadow: 0 0 30px red;
+    color: #f00; font-size: 3em; font-weight: bold; letter-spacing: 8px;
+    text-shadow: 0 0 30px red; text-align: center; padding: 20px;
   }
+  .symbol-box {
+    display: flex; justify-content: center; gap: 14px; font-size: 2.4em;
+    margin: 16px 0; min-height: 60px; align-items: center;
+  }
+  .symbol-box span { opacity: 0; transition: opacity 0.15s; }
+  .symbol-box span.show { opacity: 1; }
+  .timer-bar-bg { background: #200; height: 10px; border-radius: 4px; overflow: hidden; margin: 10px 0; border: 1px solid #400; }
+  .timer-bar-fill { height: 100%; background: linear-gradient(90deg,#c33,#700); width: 100%; }
 </style>
 </head>
 <body>
@@ -126,10 +141,10 @@
 
     <div id="screen-intro">
       <h1>詭 異 飯 店</h1>
-      <div class="sub">雙人恐怖逃脫遊戲 · 進去容易，出來難</div>
+      <div class="sub">雙人闖關逃脫遊戲 · 共 5 關 · 進去容易，出來難</div>
       <p style="color:#a89;">你們兩人為了避雨走進了這間廢棄已久的飯店。櫃檯無人，大廳昏天暗地。
       當你們走到各自的房間時，卻在門縫下發現了滲出的血跡……
-      現在，你們必須合作找到出口，趁「它」還沒發現你們之前逃出去。</p>
+      現在，你們必須合力闖過飯店裡的五道關卡，找到出口逃出生天。</p>
       <div class="row">
         <input type="text" id="p1name" placeholder="玩家一 名字" maxlength="10">
       </div>
@@ -141,6 +156,7 @@
 
     <div id="screen-game" class="hidden">
       <h1 id="gameTitle">詭 異 飯 店</h1>
+      <div class="level-track" id="levelTrack"></div>
       <div class="status-bar">
         <div class="player-stat">
           <b id="p1label">玩家一</b> HP
@@ -155,9 +171,9 @@
           <div class="bar-bg"><div class="bar-fill sanity" id="p2san" style="width:100%"></div></div>
         </div>
       </div>
-      <div class="small center" id="dangerMeter">詭異氣息：0 / 10</div>
       <div id="log"></div>
       <div class="item-list" id="items"></div>
+      <div id="puzzleArea"></div>
       <div class="choices" id="choices"></div>
     </div>
 
@@ -173,15 +189,13 @@
 
 <script>
 (function(){
+  const LEVEL_NAMES = ['大廳謎影','血色走廊','203號房','儲藏室記憶','地下逃生門'];
+
   const S = {
     p1: {name:'玩家一', hp:100, san:100},
     p2: {name:'玩家二', hp:100, san:100},
-    danger: 0,
-    turn: 1,
-    clues: 0,
-    keys: 0,
+    level: 0,
     inventory: [],
-    stage: 'lobby',
     activePlayer: 1
   };
 
@@ -198,6 +212,18 @@
 
   function clamp(v){ return Math.max(0, Math.min(100, v)); }
 
+  function renderLevelTrack() {
+    const t = $('levelTrack');
+    t.innerHTML = '';
+    LEVEL_NAMES.forEach((name, i) => {
+      const d = document.createElement('div');
+      d.className = 'level-dot' + (i < S.level ? ' done' : i === S.level ? ' active' : '');
+      d.textContent = i + 1;
+      d.title = name;
+      t.appendChild(d);
+    });
+  }
+
   function updateStatus() {
     $('p1label').textContent = S.p1.name;
     $('p2label').textContent = S.p2.name;
@@ -205,12 +231,13 @@
     $('p2hp').style.width = S.p2.hp + '%';
     $('p1san').style.width = S.p1.san + '%';
     $('p2san').style.width = S.p2.san + '%';
-    $('dangerMeter').textContent = `詭異氣息：${S.danger} / 10`;
     $('items').innerHTML = S.inventory.map(i => `<span>${i}</span>`).join('');
+    renderLevelTrack();
     checkGameOver();
   }
 
   function currentPlayer() { return S.activePlayer === 1 ? S.p1 : S.p2; }
+  function switchPlayer() { S.activePlayer = S.activePlayer === 1 ? 2 : 1; }
 
   function damage(playerNum, hp, san) {
     const p = playerNum === 1 ? S.p1 : S.p2;
@@ -218,29 +245,27 @@
     if (san) p.san = clamp(p.san - san);
   }
 
-  function raiseDanger(n) {
-    S.danger = Math.min(10, S.danger + n);
-    if (S.danger >= 10) jumpscare();
-  }
-
-  function jumpscare() {
+  function jumpscare(cb) {
     const js = $('jumpscare');
     js.classList.remove('hidden');
     setTimeout(() => {
       js.classList.add('hidden');
-      S.danger = 4;
-      damage(1, 15, 20);
-      damage(2, 15, 20);
-      log('<span class="danger">走廊的燈全部熄滅，你們聽見身後傳來拖行的腳步聲……它靠得太近了。兩人狂奔逃離，驚魂未定。</span>', 'danger');
+      damage(1, 12, 15);
+      damage(2, 12, 15);
+      log('<span class="danger">燈光瞬間熄滅，身後傳來拖行的腳步聲……你們嚇得倒退幾步。</span>', 'danger');
       updateStatus();
-      nextScene();
-    }, 1600);
+      if (cb) cb();
+    }, 1400);
   }
 
+  let gameOver = false;
   function checkGameOver() {
+    if (gameOver) return;
     if (S.p1.hp <= 0 || S.p2.hp <= 0) {
+      gameOver = true;
       endGame(false, `${S.p1.hp<=0 ? S.p1.name : S.p2.name} 倒在了冰冷的地板上，再也沒有起來。飯店，又多了一位「房客」。`);
     } else if (S.p1.san <= 0 || S.p2.san <= 0) {
+      gameOver = true;
       endGame(false, `${S.p1.san<=0 ? S.p1.name : S.p2.name} 的理智徹底崩潰，開始對著空氣尖叫、傻笑……最終消失在無盡的走廊深處。`);
     }
   }
@@ -251,195 +276,233 @@
     list.forEach(opt => {
       const b = document.createElement('button');
       b.textContent = opt.label;
-      b.onclick = () => { c.innerHTML=''; opt.action(); };
+      b.disabled = !!opt.disabled;
+      b.onclick = () => { c.innerHTML=''; $('puzzleArea').innerHTML=''; opt.action(); };
       c.appendChild(b);
     });
   }
 
-  function switchPlayer() {
-    S.activePlayer = S.activePlayer === 1 ? 2 : 1;
-  }
-
   function roll(chance) { return Math.random() < chance; }
 
-  // ---------- Scenes ----------
-  const scenes = {};
+  function levelHeader(desc) {
+    log(`<span class="turn-tag">— 第 ${S.level+1} 關：${LEVEL_NAMES[S.level]} · 由 ${currentPlayer().name} 挑戰 —</span>`);
+    log(desc);
+  }
 
-  scenes.lobby = function() {
-    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
-    log('大廳裡積滿灰塵，時鐘停在 3:33。櫃檯後方有一道走廊通往客房，牆上掛著一幅褪色的老照片，畫中人的眼睛似乎在動。');
-    setChoices([
-      { label: '走向客房走廊', action: () => goto('corridor') },
-      { label: '仔細查看老照片', action: () => {
-          if (roll(0.5)) {
-            log('<span class="clue">照片背後貼著一張泛黃的房卡，寫著「203」。</span>', 'clue');
-            S.inventory.push('203號房卡'); S.clues++;
-          } else {
-            log('<span class="danger">照片中人的眼睛猛地轉向你，你感到一陣寒意直竄背脊。</span>', 'danger');
-            damage(S.activePlayer, 0, 10);
-            raiseDanger(1);
-          }
-          updateStatus();
-          scenes.lobby();
-      }},
-      { label: '搜索櫃檯', action: () => {
-          if (roll(0.6)) {
-            log('<span class="clue">你在櫃檯抽屜裡找到了一把生鏽的萬能鑰匙。</span>', 'clue');
-            S.inventory.push('生鏽萬能鑰匙'); S.clues++;
-          } else {
-            log('抽屜裡只有灰塵與蟲蛀的登記簿，上面最後一筆入住紀錄是十年前。');
-          }
-          updateStatus();
-          switchPlayer(); S.turn++;
-          scenes.lobby();
-      }}
-    ]);
-  };
+  function clearPuzzle() { $('puzzleArea').innerHTML = ''; $('choices').innerHTML = ''; }
 
-  function goto(stage) { S.stage = stage; switchPlayer(); S.turn++; scenes[stage](); }
-
-  scenes.corridor = function() {
-    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
-    log('走廊昏暗，地毯上一路延伸著暗紅色的血跡，通往幾扇緊閉的房門。');
-    raiseDanger(1);
-    setChoices([
-      { label: '跟隨血跡走進 203 號房', action: () => goto('room203') },
-      { label: '檢查地上的血跡', action: () => {
-          if (roll(0.5)) {
-            log('<span class="clue">血跡旁散落著幾片碎玻璃與一枚鈕扣，似乎屬於某種制服。</span>', 'clue');
-            S.inventory.push('神秘鈕扣'); S.clues++;
-          } else {
-            log('<span class="danger">你彎腰查看時，感覺有什麼東西從身後的房門縫隙盯著你。</span>', 'danger');
-            damage(S.activePlayer, 5, 10);
-          }
-          updateStatus();
-          switchPlayer(); S.turn++;
-          scenes.corridor();
-      }},
-      { label: '兩人一起壯膽前進', action: () => {
-          log('<span class="system">你們牽起彼此的手，理智稍微恢復了一些。</span>', 'system');
-          damage(1, 0, -8); damage(2, 0, -8);
-          updateStatus();
-          goto('room203');
-      }}
-    ]);
-  };
-
-  scenes.room203 = function() {
-    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
-    log('203 號房門虛掩著，房內一片狼藉，床單上是一大片已經乾涸的血跡，衣櫃的門微微晃動著。');
-    setChoices([
-      { label: '打開衣櫃', action: () => {
-          if (roll(0.4)) {
-            log('<span class="danger">衣櫃裡猛地竄出一隻蒼白的手，緊緊抓住了你的手腕！</span>', 'danger');
-            damage(S.activePlayer, 20, 15);
-            raiseDanger(2);
-          } else {
-            log('<span class="clue">衣櫃裡只掛著幾件飯店制服，口袋中有一張寫著密碼「7-1-9」的紙條。</span>', 'clue');
-            S.inventory.push('密碼紙條(719)'); S.clues++;
-          }
-          updateStatus();
-          switchPlayer(); S.turn++;
-          scenes.room203();
-      }},
-      { label: '檢查床底', action: () => {
-          if (roll(0.55)) {
-            log('<span class="clue">床底藏著一本日記，記錄著飯店員工失蹤前的恐懼與求救。日記最後一頁夾著逃生通道的鑰匙。</span>', 'clue');
-            S.inventory.push('逃生通道鑰匙'); S.keys++;
-          } else {
-            log('<span class="danger">你的手碰到一團濕黏的東西，一陣噁心感湧上心頭。</span>', 'danger');
-            damage(S.activePlayer, 5, 15);
-          }
-          updateStatus();
-          switchPlayer(); S.turn++;
-          scenes.room203();
-      }},
-      { label: '離開房間，前往地下室', action: () => {
-          if (S.clues < 2) {
-            log('<span class="system">感覺線索還不夠……或許該再找找看。</span>', 'system');
-            scenes.room203();
-          } else {
-            goto('basement');
-          }
-      }}
-    ]);
-  };
-
-  scenes.basement = function() {
-    log(`<span class="turn-tag">— 第 ${S.turn} 輪 · ${currentPlayer().name} 的行動 —</span>`);
-    log('沿著血跡走下昏暗的地下室樓梯，空氣中瀰漫著鐵鏽與腐朽的氣味。盡頭是一扇鎖著的鐵門，門上有一個密碼鎖與一個鑰匙孔。');
-    raiseDanger(1);
-    const opts = [];
-    if (S.inventory.includes('密碼紙條(719)')) {
-      opts.push({ label: '用密碼紙條輸入「719」', action: () => {
-          log('<span class="clue">鎖發出「喀」的一聲，密碼正確！</span>', 'clue');
-          S.keys++;
-          updateStatus();
-          tryEscape();
-      }});
+  function nextLevel() {
+    S.level++;
+    switchPlayer();
+    updateStatus();
+    if (S.level >= LEVEL_NAMES.length) {
+      winGame();
     } else {
-      opts.push({ label: '嘗試隨意猜測密碼', action: () => {
-          if (roll(0.15)) {
-            log('<span class="clue">竟然瞎猜中了！鎖應聲而開。</span>', 'clue');
-            S.keys++;
+      clearPuzzle();
+      levels[S.level]();
+    }
+  }
+
+  function failLevel(msg, hp, san) {
+    log(`<span class="danger">${msg}</span>`, 'danger');
+    damage(S.activePlayer, hp, san);
+    updateStatus();
+  }
+
+  // ---------- Levels ----------
+  const levels = [];
+
+  // Level 1: riddle input
+  levels[0] = function() {
+    levelHeader('大廳的老時鐘停在 3:33，牆上的褪色照片旁刻著一行字謎：「我沒有嘴巴，卻能發出聲音；沒有身體，卻能被風吹動。我是什麼？」輸入答案（提示：一個字）。');
+    const box = document.createElement('div');
+    box.innerHTML = `<input type="text" id="ans0" placeholder="輸入答案" style="width:100%;margin-bottom:10px;">`;
+    $('puzzleArea').appendChild(box);
+    setChoices([
+      { label: '確認答案', action: () => {
+          const v = $('ans0') ? $('ans0').value.trim() : '';
+          if (['回音','回聲','echo','迴音'].includes(v)) {
+            log('<span class="clue">牆面發出低鳴，照片後方彈出一張房卡，寫著「203」。</span>', 'clue');
+            S.inventory.push('203號房卡');
+            updateStatus();
+            nextLevel();
           } else {
-            log('<span class="danger">密碼錯誤，警報聲大作，你們聽見遠處傳來奔跑的腳步聲！</span>', 'danger');
-            raiseDanger(2);
-            damage(1, 5, 10); damage(2, 5, 10);
+            failLevel('答案錯誤，照片中人的眼睛猛地轉向你，一陣寒意直竄背脊。', 0, 12);
+            levels[0]();
+          }
+      }},
+      { label: '直接放棄，硬闖走廊（扣血）', action: () => {
+          failLevel('你們決定不猜謎，硬著頭皮往前走，但心裡的恐懼揮之不去。', 8, 8);
+          nextLevel();
+      }}
+    ]);
+    // re-run puzzle rendering after choice list set (since setChoices clears puzzleArea via clearPuzzle only on button click)
+  };
+  // fix: setChoices clears puzzleArea on click only; need puzzle box to persist across re-render. Redefine safely below.
+
+  // Level 2: pick correct path (blood trail direction) with multiple choice + risk
+  levels[1] = function() {
+    levelHeader('走廊昏暗，地毯上有兩道血跡分岔，一道通往「儲藏室」，一道通往「203號房」。你們必須合力判斷正確方向。');
+    const hint = S.inventory.includes('203號房卡');
+    setChoices([
+      { label: '跟隨血跡前往 203 號房' + (hint ? '（手中房卡似乎在發燙）' : ''), action: () => {
+          log('<span class="clue">你們循著血跡走進了 203 號房，房卡在鎖孔中發出微光。</span>', 'clue');
+          updateStatus();
+          nextLevel();
+      }},
+      { label: '前往儲藏室查看', action: () => {
+          if (roll(0.3)) {
+            log('<span class="clue">儲藏室裡意外找到一把生鏽鑰匙，可惜方向錯了，只好折返。</span>', 'clue');
+            S.inventory.push('生鏽鑰匙');
+          } else {
+            log('<span class="danger">儲藏室門一開，一股腐臭撲面而來，你們被嚇得倒退，撞翻了架子。</span>', 'danger');
+            damage(S.activePlayer, 10, 12);
           }
           updateStatus();
-          tryEscape();
-      }});
+          levels[1]();
+      }}
+    ]);
+  };
+
+  // Level 3: sequence memory game
+  levels[2] = function() {
+    levelHeader('203 號房的衣櫃上有一組會發光的符號鎖，你必須記住符號出現的順序，並依序點擊重現。');
+    const symbols = ['👁','🕯','🩸','☠'];
+    const seqLen = 4;
+    const seq = Array.from({length: seqLen}, () => symbols[Math.floor(Math.random()*symbols.length)]);
+    const box = document.createElement('div');
+    box.className = 'symbol-box';
+    box.id = 'symBox';
+    $('puzzleArea').appendChild(box);
+    const status = document.createElement('div');
+    status.className = 'small center';
+    status.id = 'symStatus';
+    status.textContent = '請仔細觀察順序……';
+    $('puzzleArea').appendChild(status);
+
+    let i = 0;
+    box.innerHTML = seq.map(s => `<span>${s}</span>`).join('');
+    const spans = box.querySelectorAll('span');
+    const showNext = () => {
+      if (i > 0) spans[i-1].classList.remove('show');
+      if (i < seq.length) { spans[i].classList.add('show'); i++; setTimeout(showNext, 700); }
+      else { spans[i-1] && spans[i-1].classList.remove('show'); setTimeout(startInput, 500); }
+    };
+    setTimeout(showNext, 500);
+
+    function startInput() {
+      status.textContent = `${currentPlayer().name}，請依序點擊剛剛出現的符號！`;
+      box.innerHTML = symbols.map(s => `<span class="show" style="cursor:pointer;">${s}</span>`).join('');
+      let picked = [];
+      box.querySelectorAll('span').forEach((el, idx) => {
+        el.onclick = () => {
+          picked.push(symbols[idx]);
+          el.style.outline = '2px solid #a33';
+          if (picked.length === seq.length) {
+            if (JSON.stringify(picked) === JSON.stringify(seq)) {
+              log('<span class="clue">符號鎖發出「喀」的一聲，衣櫃門緩緩打開，裡面藏著一張寫著密碼「719」的紙條。</span>', 'clue');
+              S.inventory.push('密碼紙條(719)');
+              updateStatus();
+              nextLevel();
+            } else {
+              failLevel('順序錯誤！衣櫃猛地震動，一隻蒼白的手從縫隙中伸出想抓住你！', 15, 12);
+              clearPuzzle();
+              levels[2]();
+            }
+          }
+        };
+      });
     }
-    if (S.inventory.includes('生鏽萬能鑰匙') || S.inventory.includes('逃生通道鑰匙')) {
-      opts.push({ label: '用手中的鑰匙開鎖', action: () => {
-          log('<span class="clue">鑰匙插入鎖孔，輕輕一轉，鐵門應聲而開。</span>', 'clue');
-          S.keys++;
-          updateStatus();
-          tryEscape();
-      }});
-    }
-    opts.push({ label: '合力硬撞開鐵門', action: () => {
-        damage(1, 10, 5); damage(2, 10, 5);
-        if (roll(0.5)) {
-          log('<span class="clue">兩人用盡全力，鐵門終於被撞開！</span>', 'clue');
-          S.keys++;
-        } else {
-          log('<span class="danger">鐵門紋絲不動，你們卻因此吸引了「它」的注意。</span>', 'danger');
-          raiseDanger(3);
-        }
+  };
+
+  // Level 4: timed reaction challenge
+  levels[3] = function() {
+    levelHeader('你們躲進儲藏室，聽見腳步聲逐漸靠近……必須在時間耗盡前，快速點擊「屏住呼吸」按鈕 5 次，且不能被腳步聲打斷！');
+    const status = document.createElement('div');
+    status.className = 'center';
+    status.id = 'reactStatus';
+    status.textContent = '倒數開始！';
+    $('puzzleArea').appendChild(status);
+    const barBg = document.createElement('div');
+    barBg.className = 'timer-bar-bg';
+    const barFill = document.createElement('div');
+    barFill.className = 'timer-bar-fill';
+    barBg.appendChild(barFill);
+    $('puzzleArea').appendChild(barBg);
+
+    let clicks = 0, timeLeft = 100, finished = false;
+    const timer = setInterval(() => {
+      timeLeft -= 2.2;
+      barFill.style.width = Math.max(0, timeLeft) + '%';
+      if (timeLeft <= 0 && !finished) {
+        finished = true;
+        clearInterval(timer);
+        clearPuzzle();
+        failLevel('時間到！腳步聲停在門外，接著猛地撞開儲藏室的門！', 18, 15);
+        jumpscare(() => levels[3]());
+      }
+    }, 150);
+
+    setChoices([
+      { label: `屏住呼吸 (${clicks}/5)`, action: () => {} }
+    ]);
+    // Override the button click handler manually since setChoices rebinds
+    const btn = $('choices').querySelector('button');
+    btn.onclick = () => {
+      if (finished) return;
+      clicks++;
+      btn.textContent = `屏住呼吸 (${clicks}/5)`;
+      if (clicks >= 5) {
+        finished = true;
+        clearInterval(timer);
+        log('<span class="clue">腳步聲漸漸遠去，你們成功屏息躲過了一劫，並在角落發現一把逃生通道鑰匙。</span>', 'clue');
+        S.inventory.push('逃生通道鑰匙');
         updateStatus();
-        tryEscape();
-    }});
+        nextLevel();
+      }
+    };
+  };
+
+  // Level 5: final code combining clues
+  levels[4] = function() {
+    levelHeader('地下室盡頭是一扇鐵門，門上有密碼鎖與鑰匙孔。結合你們找到的線索，輸入正確的三位數密碼開門逃生！');
+    const box = document.createElement('div');
+    box.innerHTML = `<input type="text" id="ans4" placeholder="輸入三位數密碼" style="width:100%;margin-bottom:10px;">`;
+    $('puzzleArea').appendChild(box);
+    const opts = [
+      { label: '確認密碼', action: () => {
+          const v = $('ans4') ? $('ans4').value.trim() : '';
+          if (v === '719') {
+            log('<span class="win">鎖發出清脆的「喀」聲，鐵門緩緩開啟，微弱的月光灑落進來！</span>', 'win');
+            updateStatus();
+            setChoices([{ label: '衝出鐵門，逃離飯店', action: () => winGame() }]);
+          } else {
+            failLevel('密碼錯誤，警報大作，遠處傳來狂奔的腳步聲！', 12, 15);
+            clearPuzzle();
+            levels[4]();
+          }
+      }}
+    ];
+    if (S.inventory.includes('逃生通道鑰匙')) {
+      opts.push({ label: '直接用逃生通道鑰匙開門', action: () => {
+          log('<span class="win">鑰匙插入鎖孔，輕輕一轉，鐵門應聲而開！</span>', 'win');
+          updateStatus();
+          setChoices([{ label: '衝出鐵門，逃離飯店', action: () => winGame() }]);
+      }});
+    }
     setChoices(opts);
   };
 
-  function tryEscape() {
-    if (S.keys >= 1 && S.p1.hp > 0 && S.p2.hp > 0) {
-      setTimeout(() => {
-        log('<span class="clue">鐵門後是一條通往室外的逃生通道，微弱的月光灑落進來……</span>', 'clue');
-        setChoices([
-          { label: '衝出鐵門，逃離飯店', action: () => endGame(true) }
-        ]);
-      }, 300);
-    } else {
-      switchPlayer(); S.turn++;
-      scenes.basement();
-    }
-  }
-
-  function nextScene() {
-    scenes[S.stage] ? scenes[S.stage]() : scenes.lobby();
-  }
+  function winGame() { endGame(true); }
 
   function endGame(win, customText) {
     $('screen-game').classList.add('hidden');
     $('screen-end').classList.remove('hidden');
     if (win) {
-      $('endTitle').textContent = '生 還';
-      $('endText').textContent = `${S.p1.name} 與 ${S.p2.name} 跌跌撞撞地衝出飯店大門，回頭望去，那棟建築彷彿從未存在過一般靜靜矗立在雨夜中。你們活著逃了出來——但飯店裡的「它」，似乎已經記住了你們的臉。`;
+      $('endTitle').textContent = '全 部 通 關 · 生 還';
+      $('endText').textContent = `${S.p1.name} 與 ${S.p2.name} 闖過了飯店裡的五道關卡，跌跌撞撞地衝出大門。回頭望去，那棟建築彷彿從未存在過一般靜靜矗立在雨夜中。你們活著逃了出來——但飯店裡的「它」，似乎已經記住了你們的臉。`;
     } else {
-      $('endTitle').textContent = '死 亡 結 局';
+      $('endTitle').textContent = '闖 關 失 敗';
       $('endText').textContent = customText || '你們沒能活著離開這間飯店。';
     }
   }
@@ -453,8 +516,8 @@
     $('screen-intro').classList.add('hidden');
     $('screen-game').classList.remove('hidden');
     updateStatus();
-    log(`<span class="system">${S.p1.name} 與 ${S.p2.name} 推開了飯店厚重的大門……</span>`, 'system');
-    scenes.lobby();
+    log(`<span class="system">${S.p1.name} 與 ${S.p2.name} 推開了飯店厚重的大門，五道生死關卡就此展開……</span>`, 'system');
+    levels[0]();
   };
 
   $('restartBtn').onclick = () => location.reload();
