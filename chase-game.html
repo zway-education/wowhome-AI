@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>追人遊戲</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    background: #1e1e2f;
+    font-family: sans-serif;
+    color: #fff;
+  }
+  #hud {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    font-size: 20px;
+    z-index: 10;
+  }
+  #gameOver {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 40px;
+    display: none;
+    text-align: center;
+    z-index: 20;
+  }
+  #restartBtn {
+    display: block;
+    margin: 20px auto 0;
+    padding: 10px 20px;
+    font-size: 18px;
+    cursor: pointer;
+  }
+  canvas {
+    display: block;
+  }
+</style>
+</head>
+<body>
+<div id="hud">存活時間: <span id="timer">0.0</span> 秒</div>
+<div id="gameOver">
+  <div id="gameOverText"></div>
+  <button id="restartBtn">重新開始</button>
+</div>
+<canvas id="game"></canvas>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const timerEl = document.getElementById('timer');
+const gameOverEl = document.getElementById('gameOver');
+const gameOverText = document.getElementById('gameOverText');
+const restartBtn = document.getElementById('restartBtn');
+
+function resize() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resize);
+resize();
+
+const player = { x: 0, y: 0, r: 15, speed: 4, color: '#4fc3f7' };
+const chaser = { x: 0, y: 0, r: 18, speed: 2.4, color: '#ff5252' };
+
+const keys = {};
+window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+let mouse = null;
+canvas.addEventListener('mousemove', e => {
+  const rect = canvas.getBoundingClientRect();
+  mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+});
+canvas.addEventListener('mouseleave', () => mouse = null);
+
+let running = true;
+let startTime = null;
+let elapsed = 0;
+
+function reset() {
+  player.x = canvas.width / 2;
+  player.y = canvas.height / 2;
+  chaser.x = Math.random() * canvas.width;
+  chaser.y = Math.random() * canvas.height;
+  running = true;
+  startTime = performance.now();
+  elapsed = 0;
+  gameOverEl.style.display = 'none';
+  mouse = null;
+  requestAnimationFrame(loop);
+}
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function update() {
+  if (!running) return;
+
+  let dx = 0, dy = 0;
+  if (keys['arrowup'] || keys['w']) dy -= 1;
+  if (keys['arrowdown'] || keys['s']) dy += 1;
+  if (keys['arrowleft'] || keys['a']) dx -= 1;
+  if (keys['arrowright'] || keys['d']) dx += 1;
+
+  if (dx !== 0 || dy !== 0) {
+    const len = Math.hypot(dx, dy);
+    player.x += (dx / len) * player.speed;
+    player.y += (dy / len) * player.speed;
+  } else if (mouse) {
+    const mdx = mouse.x - player.x;
+    const mdy = mouse.y - player.y;
+    const dist = Math.hypot(mdx, mdy);
+    if (dist > 2) {
+      player.x += (mdx / dist) * Math.min(player.speed, dist);
+      player.y += (mdy / dist) * Math.min(player.speed, dist);
+    }
+  }
+
+  player.x = clamp(player.x, player.r, canvas.width - player.r);
+  player.y = clamp(player.y, player.r, canvas.height - player.r);
+
+  const cdx = player.x - chaser.x;
+  const cdy = player.y - chaser.y;
+  const cdist = Math.hypot(cdx, cdy);
+  if (cdist > 0) {
+    chaser.x += (cdx / cdist) * chaser.speed;
+    chaser.y += (cdy / cdist) * chaser.speed;
+  }
+
+  const now = performance.now();
+  elapsed = (now - startTime) / 1000;
+  timerEl.textContent = elapsed.toFixed(1);
+
+  chaser.speed = 2.4 + elapsed * 0.05;
+
+  if (cdist < player.r + chaser.r) {
+    running = false;
+    gameOverText.textContent = `被抓到了！你存活了 ${elapsed.toFixed(1)} 秒`;
+    gameOverEl.style.display = 'block';
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = chaser.color;
+  ctx.beginPath();
+  ctx.arc(chaser.x, chaser.y, chaser.r, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = player.color;
+  ctx.beginPath();
+  ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function loop() {
+  update();
+  draw();
+  if (running) requestAnimationFrame(loop);
+}
+
+restartBtn.addEventListener('click', reset);
+
+reset();
+</script>
+</body>
+</html>
