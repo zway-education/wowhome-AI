@@ -232,7 +232,20 @@
   function advanceStoryDialogueClick() { /* choices are click-driven; nothing to advance via E */ }
 
   // ----- Monster (main chaser) -----
-  const monster = { x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2), speed: 1.5, active: false };
+  const monster = {
+    x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2),
+    speed: 1.5, wanderSpeed: 1, active: false,
+    waypoint: null,
+  };
+
+  function pickWanderWaypoint() {
+    for (let tries = 0; tries < 20; tries++) {
+      const tx = 1 + Math.floor(Math.random() * (MAP_W - 2));
+      const ty = 1 + Math.floor(Math.random() * (MAP_H - 2));
+      if (tileWalkable(tx, ty)) return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+    }
+    return null;
+  }
 
   function moveEntityTowards(ent, tx, ty, spd) {
     const dx = tx - ent.x, dy = ty - ent.y;
@@ -330,10 +343,16 @@
     if (storyActive) return;
     const d = dist(player.x, player.y, monster.x, monster.y);
     if (d < 320) monster.active = true;
+    else if (d > 480) monster.active = false; // loses the scent once you're far enough away
+
     if (monster.active) {
       moveEntityTowards(monster, player.x, player.y, monster.speed);
+      monster.waypoint = null;
     } else {
-      monster.x += Math.sin(performance.now() / 900) * 0.2;
+      if (!monster.waypoint || dist(monster.x, monster.y, monster.waypoint.x, monster.waypoint.y) < 10) {
+        monster.waypoint = pickWanderWaypoint();
+      }
+      if (monster.waypoint) moveEntityTowards(monster, monster.waypoint.x, monster.waypoint.y, monster.wanderSpeed);
     }
     if (d < 22 && !gameOver) triggerJumpscare('monster');
   }
@@ -385,6 +404,7 @@
     player.x = TILE * 1.5; player.y = TILE * 1.5;
     monster.x = TILE * (MAP_W - 2); monster.y = TILE * (MAP_H - 2);
     monster.active = false;
+    monster.waypoint = null;
     gameOver = false; win = false; storyActive = false;
     storyBox.style.display = 'none';
     overlay.classList.add('hidden');
