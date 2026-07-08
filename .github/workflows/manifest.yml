@@ -1,0 +1,50 @@
+name: Update gallery manifest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'games/**'
+      - 'videos/**'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: manifest
+  cancel-in-progress: false
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Generate manifest.json
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          manifest = {}
+          for cat in ('games', 'videos'):
+              files = []
+              if os.path.isdir(cat):
+                  files = sorted(f for f in os.listdir(cat) if f.lower().endswith(('.html', '.htm')))
+              manifest[cat] = [{'file': f, 'title': os.path.splitext(f)[0]} for f in files]
+          with open('manifest.json', 'w', encoding='utf-8') as fh:
+              json.dump(manifest, fh, ensure_ascii=False, indent=1)
+          EOF
+
+      - name: Commit manifest
+        run: |
+          git config user.name "gallery-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add manifest.json
+          if ! git diff --cached --quiet; then
+            git commit -m "更新作品清單 manifest.json [skip ci]"
+            for i in 1 2 3 4; do
+              git push && break
+              git pull --rebase origin main
+            done
+          fi
