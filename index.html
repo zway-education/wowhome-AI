@@ -97,6 +97,9 @@
   const storyText = document.getElementById('storyText');
   const storyChoices = document.getElementById('storyChoices');
 
+  const maskCanvas = document.createElement('canvas');
+  const maskCtx = maskCanvas.getContext('2d');
+
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -146,7 +149,7 @@
   });
   window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
-  let mouseX = 0, mouseY = 0;
+  let mouseX = window.innerWidth / 2 + 200, mouseY = window.innerHeight / 2;
   window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 
   // ----- Items (keys) -----
@@ -503,32 +506,41 @@
 
     ctx.restore();
 
-    // ---- flashlight cone mask ----
-    ctx.save();
+    // ---- flashlight cone mask (built on an offscreen canvas so destination-out
+    // only punches holes in the mask itself, not in the already-rendered scene) ----
     const px = canvas.width / 2, py = canvas.height / 2;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.globalCompositeOperation = 'destination-out';
+    if (maskCanvas.width !== canvas.width || maskCanvas.height !== canvas.height) {
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+    }
+    maskCtx.globalCompositeOperation = 'source-over';
+    maskCtx.fillStyle = '#000';
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
 
-    const grad = ctx.createRadialGradient(px, py, 20, px, py, 260);
+    maskCtx.globalCompositeOperation = 'destination-out';
+    const grad = maskCtx.createRadialGradient(px, py, 20, px, py, 260);
     grad.addColorStop(0, 'rgba(0,0,0,1)');
     grad.addColorStop(0.6, 'rgba(0,0,0,0.85)');
     grad.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.moveTo(px, py);
-    ctx.arc(px, py, 260, player.angle - 0.6, player.angle + 0.6);
-    ctx.closePath();
-    ctx.fill();
+    maskCtx.fillStyle = grad;
+    maskCtx.beginPath();
+    maskCtx.moveTo(px, py);
+    maskCtx.arc(px, py, 260, player.angle - 0.6, player.angle + 0.6);
+    maskCtx.closePath();
+    maskCtx.fill();
 
     // small radius always visible around player
-    const near = ctx.createRadialGradient(px, py, 0, px, py, 50);
+    const near = maskCtx.createRadialGradient(px, py, 0, px, py, 50);
     near.addColorStop(0, 'rgba(0,0,0,0.9)');
     near.addColorStop(1, 'rgba(0,0,0,0)');
-    ctx.fillStyle = near;
-    ctx.beginPath();
-    ctx.arc(px, py, 50, 0, Math.PI * 2);
-    ctx.fill();
+    maskCtx.fillStyle = near;
+    maskCtx.beginPath();
+    maskCtx.arc(px, py, 50, 0, Math.PI * 2);
+    maskCtx.fill();
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(maskCanvas, 0, 0);
     ctx.restore();
 
     // fear red vignette
