@@ -77,7 +77,8 @@
     background: var(--badge); color: var(--text); border: 0; border-radius: 10px;
     padding: 8px 16px; font-size: 14px; cursor: pointer; text-decoration: none;
   }
-  #player iframe { flex: 1; border: 0; background: #fff; border-radius: 14px 14px 0 0; margin: 0 8px; }
+  #player .stage { flex: 1; position: relative; overflow: hidden; margin: 0 8px; border-radius: 14px 14px 0 0; background: #fff; }
+  #player iframe { border: 0; width: 100%; height: 100%; display: block; }
   @media (max-width: 520px) { .grid { grid-template-columns: repeat(2, 1fr); } }
 </style>
 </head>
@@ -108,7 +109,9 @@
     <a id="popen" href="#" target="_blank" rel="noopener">另開視窗</a>
     <button onclick="closePlayer()">✕ 關閉</button>
   </div>
-  <iframe id="pframe" allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-pointer-lock"></iframe>
+  <div class="stage" id="pstage">
+    <iframe id="pframe" allow="autoplay; fullscreen" sandbox="allow-scripts allow-same-origin allow-pointer-lock"></iframe>
+  </div>
 </div>
 
 <script>
@@ -139,16 +142,59 @@ function render(id, list, dir, emojiPool) {
   }
 }
 
+function resetFrame() {
+  const f = document.getElementById('pframe');
+  f.style.cssText = '';
+}
+
+// 量測作品實際尺寸，太大就等比縮小到剛好塞進畫面
+function fitFrame() {
+  const wrap = document.getElementById('pstage');
+  const f = document.getElementById('pframe');
+  let doc;
+  try { doc = f.contentDocument; } catch (e) { return; } // 跨網域時放棄（正常情況同網域）
+  if (!doc || !doc.documentElement) return;
+  const de = doc.documentElement, b = doc.body || de;
+  const w = Math.max(de.scrollWidth, b.scrollWidth);
+  const h = Math.max(de.scrollHeight, b.scrollHeight);
+  const cw = wrap.clientWidth, ch = wrap.clientHeight;
+  if (!w || !h || !cw || !ch) return;
+  if (w <= cw + 4 && h <= ch + 4) { resetFrame(); return; } // 塞得下就不縮放
+  const s = Math.min(cw / w, ch / h, 1);
+  f.style.width = w + 'px';
+  f.style.height = h + 'px';
+  f.style.transform = 'scale(' + s + ')';
+  f.style.transformOrigin = 'top left';
+  f.style.position = 'absolute';
+  f.style.left = Math.max(0, (cw - w * s) / 2) + 'px';
+  f.style.top = Math.max(0, (ch - h * s) / 2) + 'px';
+}
+
+let fitTimers = [];
+function scheduleFit() {
+  fitTimers.forEach(clearTimeout);
+  // 作品載入後版面可能還在變，多量幾次
+  fitTimers = [200, 700, 1500].map(ms => setTimeout(fitFrame, ms));
+}
+
 function openPlayer(title, src) {
   document.getElementById('ptitle').textContent = title;
-  document.getElementById('pframe').src = src;
+  resetFrame();
+  const f = document.getElementById('pframe');
+  f.onload = scheduleFit;
+  f.src = src;
   document.getElementById('popen').href = src;
   document.getElementById('player').classList.add('open');
 }
 function closePlayer() {
   document.getElementById('player').classList.remove('open');
+  fitTimers.forEach(clearTimeout);
+  resetFrame();
   document.getElementById('pframe').src = 'about:blank';
 }
+window.addEventListener('resize', () => {
+  if (document.getElementById('player').classList.contains('open')) fitFrame();
+});
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closePlayer(); });
 
 async function loadManifest() {
