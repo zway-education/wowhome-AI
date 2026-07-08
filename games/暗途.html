@@ -1,0 +1,1013 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>暗途 - 恐怖游戏</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000; overflow: hidden;
+    height: 100%; font-family: "Microsoft YaHei", sans-serif;
+  }
+  #gameCanvas { display: block; background: #000; cursor: none; }
+  #overlay {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #b30000; text-align: center; z-index: 10;
+    background: radial-gradient(ellipse at center, rgba(20,0,0,0.9) 0%, rgba(0,0,0,0.98) 100%);
+  }
+  #overlay h1 { font-size: 3em; letter-spacing: 8px; text-shadow: 0 0 20px #b30000; margin-bottom: 10px; }
+  #overlay p { color: #999; max-width: 500px; line-height: 1.6; }
+  #overlay button {
+    margin-top: 30px; padding: 14px 40px; font-size: 1.2em; letter-spacing: 4px;
+    background: transparent; border: 2px solid #b30000; color: #eee; cursor: pointer;
+    transition: all 0.3s;
+  }
+  #overlay button:hover { background: #b30000; color: #fff; box-shadow: 0 0 20px #b30000; }
+  #hud {
+    position: fixed; top: 10px; left: 10px; color: #ccc; font-size: 14px; z-index: 5;
+    text-shadow: 0 0 4px #000;
+  }
+  #hud .row { margin-bottom: 6px; }
+  #interactHint {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%);
+    color: #ddd; font-size: 15px; background: rgba(0,0,0,.5); padding: 6px 14px;
+    border: 1px solid #555; display: none; z-index: 6;
+  }
+  #exitHint {
+    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+    color: #e8c840; font-size: 15px; background: rgba(0,0,0,.5); padding: 6px 14px;
+    border: 1px solid #e8c840; display: none; z-index: 6;
+  }
+  #jumpscare {
+    position: fixed; top:0; left:0; width:100%; height:100%; z-index: 30;
+    background: #000; display: none; align-items: center; justify-content: center;
+  }
+  #jumpscare span { font-size: 15vw; color: #ff0000; text-shadow: 0 0 40px red; }
+  #storyBox {
+    position: fixed; bottom: 0; left: 0; width: 100%; z-index: 25;
+    background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.75));
+    color: #ddd; padding: 24px 10%; box-sizing: border-box; display: none;
+    border-top: 1px solid #500;
+  }
+  #storyText { font-size: 1.1em; line-height: 1.7; margin-bottom: 16px; min-height: 2.4em; white-space: pre-wrap; }
+  #storyChoices { display: flex; flex-direction: column; gap: 8px; }
+  #storyChoices button {
+    text-align: left; background: rgba(80,0,0,0.15); border: 1px solid #700; color: #eee;
+    padding: 10px 16px; font-size: 1em; cursor: pointer; transition: all .2s;
+  }
+  #storyChoices button:hover { background: rgba(140,0,0,0.4); border-color: #b30000; }
+  .hidden { display: none !important; }
+
+  #touchControls { display: none; }
+  body.touch-mode #gameCanvas { cursor: default; }
+  body.touch-mode #touchControls { display: block; }
+  #joystickZone {
+    position: fixed; left: 0; bottom: 0; width: 50%; height: 55%; z-index: 7;
+    touch-action: none;
+  }
+  #joystickBase {
+    position: fixed; width: 130px; height: 130px; border-radius: 50%;
+    left: 30px; bottom: 30px;
+    background: rgba(255,255,255,0.1); border: 2px solid rgba(255,255,255,0.4);
+    z-index: 8; touch-action: none;
+  }
+  #joystickKnob {
+    position: absolute; width: 54px; height: 54px; border-radius: 50%;
+    background: rgba(200,50,50,0.6); border: 2px solid rgba(255,255,255,0.6);
+    left: 38px; top: 38px; pointer-events: none;
+    transition: left 0.06s linear, top 0.06s linear;
+  }
+  #lookZone {
+    position: fixed; right: 0; top: 0; width: 50%; height: 100%; z-index: 6;
+    touch-action: none;
+  }
+  #interactBtn {
+    position: fixed; right: 24px; bottom: 24px; z-index: 9;
+    width: 84px; height: 84px; border-radius: 50%;
+    background: rgba(179,0,0,0.35); border: 2px solid rgba(255,255,255,0.5);
+    color: #fff; font-size: 14px; letter-spacing: 2px;
+    display: none; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.touch-mode #interactBtn { display: flex; }
+</style>
+</head>
+<body>
+
+<div id="overlay">
+  <h1>暗&nbsp;途</h1>
+  <p>你在一栋废弃的疗养院中醒来。手电筒是你唯一的光源，也是唯一暴露你的东西。<br>
+  黑暗中似乎有什么东西在盯着你——只有当光照到它们时，你才能看见。<br>
+  找到 <b style="color:#eee">3 把钥匙</b>，再抵达绿色的出口逃出这里。它能听见你的脚步，也能在黑暗中看见你——你的选择将决定你的命运。<br><br>
+  电脑：WASD / 方向键 移动　　鼠标 控制手电筒方向　　E 互动<br>
+  平板/手机：左下摇杆移动　　右侧拖动瞄准手电筒　　右下按钮互动</p>
+  <button id="startBtn">开始游戏</button>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<div id="hud" class="hidden">
+  <div class="row">钥匙: <span id="keyCount">0</span> / 3</div>
+</div>
+<div id="interactHint">按 E 互动</div>
+<div id="exitHint">钥匙已集齐——找到出口逃离这里</div>
+<div id="jumpscare"><span>!!</span></div>
+
+<div id="touchControls">
+  <div id="joystickZone"></div>
+  <div id="joystickBase"><div id="joystickKnob"></div></div>
+  <div id="lookZone"></div>
+  <button id="interactBtn">互动</button>
+</div>
+
+<div id="storyBox">
+  <div id="storyText"></div>
+  <div id="storyChoices"></div>
+</div>
+
+<script>
+(() => {
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+  const overlay = document.getElementById('overlay');
+  const hud = document.getElementById('hud');
+  const keyCountEl = document.getElementById('keyCount');
+  const jumpscareEl = document.getElementById('jumpscare');
+  const interactHint = document.getElementById('interactHint');
+  const exitHintEl = document.getElementById('exitHint');
+  const storyBox = document.getElementById('storyBox');
+  const storyText = document.getElementById('storyText');
+  const storyChoices = document.getElementById('storyChoices');
+
+  const maskCanvas = document.createElement('canvas');
+  const maskCtx = maskCanvas.getContext('2d');
+
+  // ----- Audio (all synthesized via Web Audio API, no external files) -----
+  const Audio_ = (() => {
+    let actx = null;
+    let master = null;
+    let droneNodes = null;
+    let heartbeatTimer = null;
+    let footstepTimer = 0;
+    let musicTimer = null;
+    let musicDelay = null;
+
+    function ensure() {
+      if (actx) return;
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      master = actx.createGain();
+      master.gain.value = 0.6;
+      master.connect(actx.destination);
+    }
+
+    function noiseBuffer(duration) {
+      const n = actx.sampleRate * duration;
+      const buf = actx.createBuffer(1, n, actx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+      return buf;
+    }
+
+    function startAmbience() {
+      ensure();
+      if (droneNodes) return;
+      const g = actx.createGain();
+      g.gain.value = 0.05;
+      g.connect(master);
+
+      const osc1 = actx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.value = 55;
+      const osc2 = actx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.value = 58;
+      osc1.connect(g); osc2.connect(g);
+      osc1.start(); osc2.start();
+
+      // slow-moving noise bed for texture
+      const noiseSrc = actx.createBufferSource();
+      noiseSrc.buffer = noiseBuffer(4);
+      noiseSrc.loop = true;
+      const noiseFilter = actx.createBiquadFilter();
+      noiseFilter.type = 'lowpass';
+      noiseFilter.frequency.value = 200;
+      const noiseGain = actx.createGain();
+      noiseGain.gain.value = 0.02;
+      noiseSrc.connect(noiseFilter).connect(noiseGain).connect(master);
+      noiseSrc.start();
+
+      droneNodes = { osc1, osc2, g, noiseSrc, noiseGain };
+      startMusic();
+    }
+
+    // sparse, unsettling piano-like phrases over a D-minor-ish scale, with a slow echo
+    const SCALE = [146.83, 155.56, 174.61, 196.00, 220.00, 233.08, 261.63]; // D3..approx, minor/phrygian flavor
+
+    function playMusicNote() {
+      const now = actx.currentTime;
+      const freq = SCALE[Math.floor(Math.random() * SCALE.length)] * (Math.random() < 0.3 ? 2 : 1);
+      const osc = actx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.linearRampToValueAtTime(0.09, now + 0.6);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + 3.2);
+      osc.connect(g).connect(musicDelay ? musicDelay.input : master);
+      osc.start(now);
+      osc.stop(now + 3.3);
+    }
+
+    function startMusic() {
+      if (musicTimer) return;
+      const delayNode = actx.createDelay(2);
+      delayNode.delayTime.value = 0.65;
+      const feedback = actx.createGain();
+      feedback.gain.value = 0.35;
+      const delayFilter = actx.createBiquadFilter();
+      delayFilter.type = 'lowpass';
+      delayFilter.frequency.value = 1200;
+      delayNode.connect(feedback).connect(delayFilter).connect(delayNode);
+      delayNode.connect(master);
+      musicDelay = { input: delayNode };
+
+      const schedule = () => {
+        playMusicNote();
+        musicTimer = setTimeout(schedule, 2200 + Math.random() * 2600);
+      };
+      schedule();
+    }
+
+    function stopMusic() {
+      if (musicTimer) { clearTimeout(musicTimer); musicTimer = null; }
+      musicDelay = null;
+    }
+
+    function playFootstep() {
+      ensure();
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(0.08);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 500 + Math.random() * 200;
+      const g = actx.createGain();
+      g.gain.value = 0.12;
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.15);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+    }
+
+    function playKeyPickup() {
+      ensure();
+      const now = actx.currentTime;
+      [880, 1320, 1760].forEach((freq, i) => {
+        const osc = actx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const g = actx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, now + i * 0.08);
+        g.gain.linearRampToValueAtTime(0.15, now + i * 0.08 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.3);
+        osc.connect(g).connect(master);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.32);
+      });
+    }
+
+    function playGlimpseWhisper() {
+      ensure();
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(0.6);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1200;
+      filter.Q.value = 0.6;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.0001, actx.currentTime);
+      g.gain.linearRampToValueAtTime(0.08, actx.currentTime + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.6);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+    }
+
+    function playHeartbeatPulse(intensity) {
+      ensure();
+      const now = actx.currentTime;
+      [0, 0.13].forEach(offset => {
+        const osc = actx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(70, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(35, now + offset + 0.12);
+        const g = actx.createGain();
+        g.gain.setValueAtTime(0.0001, now + offset);
+        g.gain.linearRampToValueAtTime(0.25 * intensity, now + offset + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.15);
+        osc.connect(g).connect(master);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.16);
+      });
+    }
+
+    function setHeartbeat(active) {
+      ensure();
+      if (active && !heartbeatTimer) {
+        playHeartbeatPulse(1);
+        heartbeatTimer = setInterval(() => playHeartbeatPulse(1), 550);
+      } else if (!active && heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }
+
+    function playJumpscare() {
+      ensure();
+      const now = actx.currentTime;
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(1.2);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 400;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.5, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+
+      const osc = actx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.9);
+      const og = actx.createGain();
+      og.gain.setValueAtTime(0.4, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+      osc.connect(og).connect(master);
+      osc.start(now);
+      osc.stop(now + 0.95);
+
+      setHeartbeat(false);
+    }
+
+    function stopAll() {
+      setHeartbeat(false);
+      stopMusic();
+      if (droneNodes) {
+        try {
+          droneNodes.osc1.stop(); droneNodes.osc2.stop(); droneNodes.noiseSrc.stop();
+        } catch (e) {}
+        droneNodes = null;
+      }
+    }
+
+    function tickFootsteps(dt, isMoving) {
+      if (!isMoving) { footstepTimer = 0; return; }
+      footstepTimer -= dt;
+      if (footstepTimer <= 0) {
+        footstepTimer = 320;
+        playFootstep();
+      }
+    }
+
+    return { startAmbience, playKeyPickup, playGlimpseWhisper, setHeartbeat, playJumpscare, stopAll, tickFootsteps };
+  })();
+
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ----- World -----
+  const TILE = 48;
+  const MAP_W = 34, MAP_H = 24;
+  let map = [];
+  function generateMap() {
+    map = [];
+    for (let y = 0; y < MAP_H; y++) {
+      const row = [];
+      for (let x = 0; x < MAP_W; x++) {
+        if (x === 0 || y === 0 || x === MAP_W - 1 || y === MAP_H - 1) {
+          row.push(1);
+        } else {
+          row.push(Math.random() < 0.12 ? 1 : 0);
+        }
+      }
+      map.push(row);
+    }
+    map[1][1] = 0; map[1][2] = 0; map[2][1] = 0;
+    map[MAP_H - 2][MAP_W - 2] = 0; // exit door tile, always reachable
+  }
+
+  function isWall(tx, ty) {
+    if (tx < 0 || ty < 0 || ty >= map.length || tx >= map[0].length) return true;
+    return map[ty][tx] === 1;
+  }
+  function tileWalkable(tx, ty) { return !isWall(tx, ty); }
+  function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+  function hasLineOfSight(x1, y1, x2, y2) {
+    const d = dist(x1, y1, x2, y2);
+    const steps = Math.max(1, Math.ceil(d / 16));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t;
+      if (isWall(Math.floor(x / TILE), Math.floor(y / TILE))) return false;
+    }
+    return true;
+  }
+
+  // ----- Exit (reachable only once all keys are collected) -----
+  const exitTile = { tx: MAP_W - 2, ty: MAP_H - 2 };
+  function exitWorldPos() { return { x: exitTile.tx * TILE + TILE / 2, y: exitTile.ty * TILE + TILE / 2 }; }
+
+  // ----- Player -----
+  const player = { x: TILE * 1.5, y: TILE * 1.5, r: 12, speed: 2.6, angle: 0 };
+
+  const keys = {};
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if (e.key.toLowerCase() === 'e') tryInteract();
+  });
+  window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+  let mouseX = window.innerWidth / 2 + 200, mouseY = window.innerHeight / 2;
+  window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
+
+  // ----- Touch controls (virtual joystick + drag-to-aim) for tablets/phones -----
+  const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  let touchDX = 0, touchDY = 0; // normalized joystick vector, added to keyboard movement
+
+  if (isTouchDevice) {
+    document.body.classList.add('touch-mode');
+
+    const joystickZone = document.getElementById('joystickZone');
+    const joystickBase = document.getElementById('joystickBase');
+    const joystickKnob = document.getElementById('joystickKnob');
+    const lookZone = document.getElementById('lookZone');
+    const interactBtn = document.getElementById('interactBtn');
+
+    let joyId = null;
+    const JOY_RADIUS = 55; // matches (130 - 54*wiggle)/2 in CSS, knob travel range
+    const KNOB_CENTER = 38; // (130 - 54) / 2, resting position of the knob inside the base
+
+    function joyCenterPoint() {
+      const r = joystickBase.getBoundingClientRect();
+      return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    }
+
+    function joyStart(e) {
+      const t = e.changedTouches[0];
+      joyId = t.identifier;
+      joyMove(e);
+      e.preventDefault();
+    }
+    function joyMove(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        const center = joyCenterPoint();
+        let dx = t.clientX - center.x, dy = t.clientY - center.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const clamped = Math.min(d, JOY_RADIUS);
+        dx = (dx / d) * clamped; dy = (dy / d) * clamped;
+        joystickKnob.style.left = (KNOB_CENTER + dx) + 'px';
+        joystickKnob.style.top = (KNOB_CENTER + dy) + 'px';
+        touchDX = dx / JOY_RADIUS; touchDY = dy / JOY_RADIUS;
+        e.preventDefault();
+      }
+    }
+    function joyEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        joyId = null;
+        touchDX = 0; touchDY = 0;
+        joystickKnob.style.left = KNOB_CENTER + 'px';
+        joystickKnob.style.top = KNOB_CENTER + 'px';
+      }
+    }
+    joystickZone.addEventListener('touchstart', joyStart, { passive: false });
+    window.addEventListener('touchmove', joyMove, { passive: false });
+    window.addEventListener('touchend', joyEnd);
+    window.addEventListener('touchcancel', joyEnd);
+
+    let lookId = null;
+    function lookStart(e) {
+      const t = e.changedTouches[0];
+      lookId = t.identifier;
+      mouseX = t.clientX; mouseY = t.clientY;
+      e.preventDefault();
+    }
+    function lookMove(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== lookId) continue;
+        mouseX = t.clientX; mouseY = t.clientY;
+        e.preventDefault();
+      }
+    }
+    function lookEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === lookId) lookId = null;
+      }
+    }
+    lookZone.addEventListener('touchstart', lookStart, { passive: false });
+    window.addEventListener('touchmove', lookMove, { passive: false });
+    window.addEventListener('touchend', lookEnd);
+    window.addEventListener('touchcancel', lookEnd);
+
+    interactBtn.addEventListener('touchstart', e => { e.preventDefault(); tryInteract(); });
+  }
+
+  // ----- Items (keys) -----
+  let items = [];
+  function placeItems() {
+    items = [];
+    let placed = 0;
+    while (placed < 3) {
+      const tx = 1 + Math.floor(Math.random() * (MAP_W - 2));
+      const ty = 1 + Math.floor(Math.random() * (MAP_H - 2));
+      if (!isWall(tx, ty) && !(tx <= 2 && ty <= 2)) {
+        items.push({ x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2, taken: false });
+        placed++;
+      }
+    }
+  }
+  let keysCollected = 0;
+
+  // ----- Story nodes (fixed narrative triggers) -----
+  // Each node has a world position, a flag so it only fires once, and dialogue/choices.
+  let storyNodes = [];
+  let storyFlags = {}; // remembers player choices
+  let storyActive = false;
+  let pendingNode = null;
+  let nearNode = null;
+
+  function placeStoryNodes() {
+    storyNodes = [
+      {
+        id: 'note1', done: false,
+        tx: 4, ty: 4,
+        text: '墙上贴着一张泛黑的字条：\n"不要相信手电筒照到的东西——它们会学你的样子。"\n你可以选择相信，也可以一笑置之。',
+        choices: [
+          { label: '把这句话记在心里（保持警惕）', flag: 'cautious' },
+          { label: '这只是疯子的涂鸦（无视警告）', flag: 'reckless' },
+        ],
+      },
+      {
+        id: 'fork1', done: false,
+        tx: MAP_W - 5, ty: 4,
+        text: '前方走廊分成两条路：左边传来滴水声，右边一片死寂。',
+        choices: [
+          { label: '走左边（滴水声的方向）', flag: 'path_left' },
+          { label: '走右边（死寂的方向）', flag: 'path_right' },
+        ],
+      },
+      {
+        id: 'mirror', done: false,
+        tx: 12, ty: 9,
+        text: '一面破碎的镜子立在房间中央。镜子里的你，动作似乎慢了半拍……',
+        choices: [
+          { label: '打碎镜子', flag: 'broke_mirror' },
+          { label: '转身离开', flag: 'left_mirror' },
+        ],
+      },
+      {
+        id: 'diary', done: false,
+        tx: MAP_W - 8, ty: MAP_H - 6,
+        text: '一本沾着暗红污渍的日记摊开在地上，最后一页写着："它曾经也是这里的病人。手电筒的光，就是它唯一记得的东西。"',
+        choices: [
+          { label: '带走日记，留作证据', flag: 'kept_diary' },
+          { label: '把日记烧掉，假装什么都没看到', flag: 'burned_diary' },
+        ],
+      },
+    ];
+  }
+
+  function nodeWorldPos(n) { return { x: n.tx * TILE + TILE/2, y: n.ty * TILE + TILE/2 }; }
+
+  function tryInteract() {
+    if (storyActive) { advanceStoryDialogueClick(); return; }
+    if (nearNode && !nearNode.done) {
+      openStoryNode(nearNode);
+    }
+  }
+
+  function openStoryNode(node) {
+    storyActive = true;
+    pendingNode = node;
+    storyText.textContent = node.text;
+    storyChoices.innerHTML = '';
+    node.choices.forEach(choice => {
+      const btn = document.createElement('button');
+      btn.textContent = choice.label;
+      btn.addEventListener('click', () => resolveChoice(node, choice));
+      storyChoices.appendChild(btn);
+    });
+    storyBox.style.display = 'block';
+    interactHint.style.display = 'none';
+  }
+
+  function resolveChoice(node, choice) {
+    storyFlags[choice.flag] = true;
+    node.done = true;
+    storyBox.style.display = 'none';
+    storyActive = false;
+    pendingNode = null;
+  }
+
+  function advanceStoryDialogueClick() { /* choices are click-driven; nothing to advance via E */ }
+
+  // ----- Monster (main chaser) -----
+  const monster = {
+    x: TILE * Math.floor(MAP_W / 2), y: TILE * Math.floor(MAP_H / 2),
+    speed: 1.5, wanderSpeed: 1, active: false,
+    waypoint: null, facing: 0,
+  };
+
+  function pickWanderWaypoint() {
+    for (let tries = 0; tries < 20; tries++) {
+      const tx = 1 + Math.floor(Math.random() * (MAP_W - 2));
+      const ty = 1 + Math.floor(Math.random() * (MAP_H - 2));
+      if (tileWalkable(tx, ty)) return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 };
+    }
+    return null;
+  }
+
+  function moveEntityTowards(ent, tx, ty, spd) {
+    const dx = tx - ent.x, dy = ty - ent.y;
+    const d = Math.hypot(dx, dy);
+    if (d < 1) return;
+    const nx = ent.x + (dx / d) * spd;
+    const ny = ent.y + (dy / d) * spd;
+    if (tileWalkable(Math.floor(nx / TILE), Math.floor(ent.y / TILE))) ent.x = nx;
+    if (tileWalkable(Math.floor(ent.x / TILE), Math.floor(ny / TILE))) ent.y = ny;
+  }
+
+  // ----- Flashlight creatures (glimpses) -----
+  // Short-lived apparitions that appear at the edge of the flashlight cone, then vanish.
+  let glimpses = [];
+  let glimpseTimer = 0;
+
+  function spawnGlimpse() {
+    // Spawn somewhere ahead of the player, within flashlight range, not too close.
+    const spawnDist = 140 + Math.random() * 100;
+    const spread = (Math.random() - 0.5) * 1.1; // angle offset from view direction
+    const a = player.angle + spread;
+    const gx = player.x + Math.cos(a) * spawnDist;
+    const gy = player.y + Math.sin(a) * spawnDist;
+    glimpses.push({
+      x: gx, y: gy,
+      life: 900 + Math.random() * 500, // ms visible
+      born: performance.now(),
+      seen: false,
+    });
+    Audio_.playGlimpseWhisper();
+  }
+
+  function updateGlimpses(dt) {
+    glimpseTimer -= dt;
+    if (glimpseTimer <= 0 && !storyActive) {
+      glimpseTimer = 4000 + Math.random() * 5000;
+      if (glimpses.length < 1 && Math.random() < 0.8) spawnGlimpse();
+    }
+    const now = performance.now();
+    glimpses = glimpses.filter(g => {
+      const age = now - g.born;
+      if (age > g.life) {
+        // if the player was staring at it when it despawns, it's extra unsettling
+        return false;
+      }
+      return true;
+    });
+  }
+
+  let gameOver = false;
+  let win = false;
+  let exitReached = false;
+  let keysCompleteAnnounced = false;
+  let lastTime = performance.now();
+  let playerIsMoving = false;
+
+  function updatePlayer(dt) {
+    if (storyActive) { Audio_.tickFootsteps(dt, false); playerIsMoving = false; return; }
+    let dx = 0, dy = 0;
+    if (keys['w'] || keys['arrowup']) dy -= 1;
+    if (keys['s'] || keys['arrowdown']) dy += 1;
+    if (keys['a'] || keys['arrowleft']) dx -= 1;
+    if (keys['d'] || keys['arrowright']) dx += 1;
+    dx += touchDX; dy += touchDY;
+    playerIsMoving = Math.hypot(dx, dy) > 0.1;
+    const len = Math.max(1, Math.hypot(dx, dy));
+    dx = (dx / len) * player.speed;
+    dy = (dy / len) * player.speed;
+
+    const nx = player.x + dx, ny = player.y + dy;
+    if (!isWall(Math.floor(nx / TILE), Math.floor(player.y / TILE))) player.x = nx;
+    if (!isWall(Math.floor(player.x / TILE), Math.floor(ny / TILE))) player.y = ny;
+
+    player.angle = Math.atan2((mouseY - canvas.height/2), (mouseX - canvas.width/2));
+    Audio_.tickFootsteps(dt, playerIsMoving);
+  }
+
+  function updateItems() {
+    if (storyActive) return;
+    for (const it of items) {
+      if (!it.taken && dist(player.x, player.y, it.x, it.y) < 24) {
+        it.taken = true;
+        keysCollected++;
+        keyCountEl.textContent = keysCollected;
+        Audio_.playKeyPickup();
+        if (keysCollected >= 3 && !keysCompleteAnnounced) {
+          keysCompleteAnnounced = true;
+          exitHintEl.style.display = 'block';
+        }
+      }
+    }
+  }
+
+  function updateExit() {
+    if (storyActive || win) return;
+    if (keysCollected < 3) return;
+    const p = exitWorldPos();
+    if (dist(player.x, player.y, p.x, p.y) < 28) {
+      exitReached = true;
+      win = true;
+    }
+  }
+
+  function updateStoryProximity() {
+    nearNode = null;
+    if (storyActive) { interactHint.style.display = 'none'; return; }
+    for (const n of storyNodes) {
+      if (n.done) continue;
+      const p = nodeWorldPos(n);
+      if (dist(player.x, player.y, p.x, p.y) < 40) { nearNode = n; break; }
+    }
+    interactHint.style.display = nearNode ? 'block' : 'none';
+  }
+
+  function updateMonster() {
+    if (storyActive) return;
+    const d = dist(player.x, player.y, monster.x, monster.y);
+    const los = hasLineOfSight(monster.x, monster.y, player.x, player.y);
+
+    if (los) {
+      // hearing: footsteps carry further than silence
+      const hearingRadius = playerIsMoving ? 260 : 120;
+      if (d < hearingRadius) {
+        monster.active = true;
+      } else if (d < 420) {
+        // vision cone: only spots the player if facing roughly their way
+        const angToPlayer = Math.atan2(player.y - monster.y, player.x - monster.x);
+        let diff = Math.abs(angToPlayer - monster.facing);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        if (diff < 0.7) monster.active = true;
+      }
+    }
+    if (d > 550) monster.active = false; // loses the scent once you're far enough away
+
+    const prevX = monster.x, prevY = monster.y;
+    if (monster.active) {
+      moveEntityTowards(monster, player.x, player.y, monster.speed);
+      monster.waypoint = null;
+    } else {
+      if (!monster.waypoint || dist(monster.x, monster.y, monster.waypoint.x, monster.waypoint.y) < 10) {
+        monster.waypoint = pickWanderWaypoint();
+      }
+      if (monster.waypoint) moveEntityTowards(monster, monster.waypoint.x, monster.waypoint.y, monster.wanderSpeed);
+    }
+    if (monster.x !== prevX || monster.y !== prevY) {
+      monster.facing = Math.atan2(monster.y - prevY, monster.x - prevX);
+    }
+    Audio_.setHeartbeat(monster.active);
+    if (d < 22 && !gameOver) triggerJumpscare('monster');
+  }
+
+  function triggerJumpscare(cause) {
+    gameOver = true;
+    jumpscareEl.style.display = 'flex';
+    Audio_.playJumpscare();
+    setTimeout(() => {
+      jumpscareEl.style.display = 'none';
+      showEndScreen('death', cause);
+    }, 1200);
+  }
+
+  function computeEndingText() {
+    if (storyFlags.broke_mirror && storyFlags.reckless) {
+      return { title: '你 迷 失 了', body: '你打碎了镜子，也打碎了自己的理智。你依然在走廊里游荡，但已经不再是"你"了。', color: '#b33' };
+    }
+    if (storyFlags.kept_diary && storyFlags.cautious && storyFlags.left_mirror) {
+      return { title: '真 相 大 白', body: '你带着日记逃了出去，把疗养院的秘密公之于众。它的名字，终于被人记住了——不是作为怪物，而是作为受害者。', color: '#8ff' };
+    }
+    if (storyFlags.burned_diary && storyFlags.reckless) {
+      return { title: '你 活 着 逃 了 出 来 ， 但 …', body: '你烧掉了证据，也烧掉了真相。你活了下来，但那张脸会在你每次开灯的瞬间出现。', color: '#dd8' };
+    }
+    if (storyFlags.cautious && storyFlags.path_left && storyFlags.left_mirror) {
+      return { title: '你 逃 出 去 了', body: '你听从了那张字条的警告，谨慎地穿过黑暗，最终推开了大门。晨光刺眼，但你活了下来。', color: '#8f8' };
+    }
+    return { title: '你 逃 出 去 了', body: '疗养院的秘密将永远埋藏在黑暗中……你不会再回头看第二眼。', color: '#8f8' };
+  }
+
+  function showEndScreen(kind, cause) {
+    Audio_.stopAll();
+    overlay.classList.remove('hidden');
+    let title, body, color;
+    if (kind === 'death') {
+      title = '你 死 了'; body = '它抓住了你。黑暗中，没人能听到你的尖叫。'; color = '#b30000';
+    } else {
+      const e = computeEndingText();
+      title = e.title; body = e.body; color = e.color;
+    }
+    overlay.innerHTML = `
+      <h1 style="color:${color}">${title}</h1>
+      <p>${body}</p>
+      <button id="restartBtn">重新开始</button>
+    `;
+    document.getElementById('restartBtn').addEventListener('click', resetGame);
+  }
+
+  function resetGame() {
+    generateMap();
+    placeItems();
+    placeStoryNodes();
+    storyFlags = {};
+    keysCollected = 0;
+    keyCountEl.textContent = 0;
+    glimpses = []; glimpseTimer = 3000;
+    player.x = TILE * 1.5; player.y = TILE * 1.5;
+    monster.x = TILE * Math.floor(MAP_W / 2); monster.y = TILE * Math.floor(MAP_H / 2);
+    monster.active = false;
+    monster.waypoint = null;
+    monster.facing = 0;
+    exitReached = false;
+    keysCompleteAnnounced = false;
+    exitHintEl.style.display = 'none';
+    gameOver = false; win = false; storyActive = false;
+    storyBox.style.display = 'none';
+    overlay.classList.add('hidden');
+    hud.classList.remove('hidden');
+    lastTime = performance.now();
+    Audio_.startAmbience();
+    requestAnimationFrame(loop);
+  }
+
+  // ----- Rendering -----
+  function render() {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    const camX = player.x - canvas.width / 2;
+    const camY = player.y - canvas.height / 2;
+
+    ctx.save();
+    ctx.translate(-camX, -camY);
+
+    for (let y = 0; y < MAP_H; y++) {
+      for (let x = 0; x < MAP_W; x++) {
+        ctx.fillStyle = map[y][x] === 1 ? '#1a1010' : '#141414';
+        ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        ctx.strokeStyle = '#050505';
+        ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
+      }
+    }
+
+    // exit door
+    {
+      const ep = exitWorldPos();
+      ctx.fillStyle = keysCollected >= 3 ? '#3fae3f' : '#3a2a1a';
+      ctx.fillRect(ep.x - TILE/2, ep.y - TILE/2, TILE, TILE);
+      ctx.strokeStyle = keysCollected >= 3 ? '#9fff9f' : '#5a4a3a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ep.x - TILE/2, ep.y - TILE/2, TILE, TILE);
+    }
+
+    // story node markers (faint)
+    for (const n of storyNodes) {
+      if (n.done) continue;
+      const p = nodeWorldPos(n);
+      ctx.fillStyle = 'rgba(200,180,120,0.5)';
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (const it of items) {
+      if (it.taken) continue;
+      ctx.fillStyle = '#e8c840';
+      ctx.beginPath();
+      ctx.arc(it.x, it.y, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fff5c0';
+      ctx.stroke();
+    }
+
+    // flashlight glimpse creatures - only draw if within cone (handled by mask anyway, but
+    // we also flicker/distort them for creepiness)
+    const now = performance.now();
+    for (const g of glimpses) {
+      const age = now - g.born;
+      const flicker = Math.random() < 0.15 ? 0.2 : 1;
+      ctx.save();
+      ctx.globalAlpha = flicker * Math.min(1, (g.life - age) / 300);
+      ctx.fillStyle = '#c9b8b8';
+      ctx.beginPath();
+      // gaunt humanoid silhouette
+      ctx.ellipse(g.x, g.y - 10, 6, 14, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(g.x - 2, g.y + 2, 4, 16);
+      ctx.restore();
+    }
+
+    // monster
+    ctx.fillStyle = monster.active ? '#8b0000' : '#440000';
+    ctx.beginPath();
+    ctx.arc(monster.x, monster.y, 16, 0, Math.PI * 2);
+    ctx.fill();
+
+    // player
+    ctx.fillStyle = '#c8c8c8';
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, player.r, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // ---- flashlight cone mask (built on an offscreen canvas so destination-out
+    // only punches holes in the mask itself, not in the already-rendered scene) ----
+    const px = canvas.width / 2, py = canvas.height / 2;
+    if (maskCanvas.width !== canvas.width || maskCanvas.height !== canvas.height) {
+      maskCanvas.width = canvas.width;
+      maskCanvas.height = canvas.height;
+    }
+    maskCtx.globalCompositeOperation = 'source-over';
+    maskCtx.fillStyle = '#000';
+    maskCtx.fillRect(0, 0, maskCanvas.width, maskCanvas.height);
+
+    maskCtx.globalCompositeOperation = 'destination-out';
+    const grad = maskCtx.createRadialGradient(px, py, 20, px, py, 260);
+    grad.addColorStop(0, 'rgba(0,0,0,1)');
+    grad.addColorStop(0.6, 'rgba(0,0,0,0.85)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    maskCtx.fillStyle = grad;
+    maskCtx.beginPath();
+    maskCtx.moveTo(px, py);
+    maskCtx.arc(px, py, 260, player.angle - 0.6, player.angle + 0.6);
+    maskCtx.closePath();
+    maskCtx.fill();
+
+    // small radius always visible around player
+    const near = maskCtx.createRadialGradient(px, py, 0, px, py, 50);
+    near.addColorStop(0, 'rgba(0,0,0,0.9)');
+    near.addColorStop(1, 'rgba(0,0,0,0)');
+    maskCtx.fillStyle = near;
+    maskCtx.beginPath();
+    maskCtx.arc(px, py, 50, 0, Math.PI * 2);
+    maskCtx.fill();
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.drawImage(maskCanvas, 0, 0);
+    ctx.restore();
+
+    // red vignette when the monster is actively chasing
+    if (monster.active) {
+      ctx.save();
+      ctx.globalCompositeOperation = 'source-over';
+      const v = ctx.createRadialGradient(px, py, canvas.height/3, px, py, canvas.height);
+      v.addColorStop(0, 'rgba(80,0,0,0)');
+      v.addColorStop(1, 'rgba(80,0,0,0.4)');
+      ctx.fillStyle = v;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+
+  function loop(now) {
+    if (gameOver) return;
+    if (win) { showEndScreen('win'); return; }
+    const dt = Math.min(50, now - lastTime);
+    lastTime = now;
+    updatePlayer(dt);
+    updateItems();
+    updateExit();
+    updateStoryProximity();
+    updateMonster();
+    updateGlimpses(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  document.getElementById('startBtn').addEventListener('click', () => {
+    generateMap();
+    placeItems();
+    placeStoryNodes();
+    overlay.classList.add('hidden');
+    hud.classList.remove('hidden');
+    lastTime = performance.now();
+    Audio_.startAmbience();
+    requestAnimationFrame(loop);
+  });
+})();
+</script>
+</body>
+</html>
