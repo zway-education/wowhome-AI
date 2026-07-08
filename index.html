@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>筆電丟垃圾桶</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    overflow: hidden;
+    background: linear-gradient(#87ceeb, #cfeffd);
+    font-family: "Microsoft JhengHei", "PingFang TC", sans-serif;
+    touch-action: none;
+  }
+  #ui {
+    position: fixed;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    pointer-events: none;
+    z-index: 10;
+  }
+  #score, #tries {
+    background: rgba(0,0,0,0.55);
+    color: #fff;
+    padding: 8px 14px;
+    border-radius: 10px;
+    font-size: 18px;
+    font-weight: bold;
+  }
+  #message {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 40px;
+    font-weight: bold;
+    color: #fff;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s;
+    z-index: 20;
+    text-align: center;
+  }
+  #message.show {
+    opacity: 1;
+    transform: translate(-50%, -60%);
+  }
+  #hint {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: rgba(0,0,0,0.55);
+    font-size: 14px;
+    z-index: 10;
+    text-align: center;
+    width: 90%;
+  }
+  #restartBtn {
+    position: fixed;
+    top: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 16px;
+    border-radius: 10px;
+    border: none;
+    background: #ff5252;
+    color: #fff;
+    font-weight: bold;
+    font-size: 15px;
+    z-index: 11;
+    cursor: pointer;
+  }
+  canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+  }
+</style>
+</head>
+<body>
+<div id="ui">
+  <div id="score">得分：0</div>
+  <div id="tries">次數：0</div>
+</div>
+<button id="restartBtn">重新開始</button>
+<div id="message"></div>
+<div id="hint">拖曳筆電，放開手指丟進垃圾桶！</div>
+<canvas id="game"></canvas>
+<script>
+(function () {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const scoreEl = document.getElementById('score');
+  const triesEl = document.getElementById('tries');
+  const messageEl = document.getElementById('message');
+  const restartBtn = document.getElementById('restartBtn');
+
+  let W, H, DPR;
+  function resize() {
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    layoutBin();
+  }
+
+  // ---- Game state ----
+  let score = 0;
+  let tries = 0;
+  const GRAVITY = 1400; // px/s^2
+
+  const bin = { x: 0, y: 0, w: 90, h: 110, openW: 90 };
+  function layoutBin() {
+    bin.w = Math.min(110, W * 0.18);
+    bin.h = bin.w * 1.25;
+    bin.x = W - bin.w - Math.max(30, W * 0.08);
+    bin.y = H - bin.h - 20;
+  }
+
+  function makeLaptop() {
+    const size = Math.min(90, W * 0.16);
+    return {
+      x: Math.max(60, W * 0.16),
+      y: H - size - 30,
+      startX: Math.max(60, W * 0.16),
+      startY: H - size - 30,
+      w: size,
+      h: size * 0.65,
+      vx: 0,
+      vy: 0,
+      rot: 0,
+      vrot: 0,
+      thrown: false,
+      settled: false,
+      scored: false,
+    };
+  }
+  let laptop = null;
+
+  // Drag tracking
+  let dragging = false;
+  let dragStart = null;
+  let dragPoints = [];
+  const trail = [];
+
+  function resetLaptop() {
+    laptop = makeLaptop();
+    dragging = false;
+    dragStart = null;
+    dragPoints = [];
+    trail.length = 0;
+  }
+
+  function pointerPos(e) {
+    const rect = canvas.getBoundingClientRect();
+    if (e.touches && e.touches.length) {
+      return { x: e.touches[0].clientX - rect.left, y: e.touches[0].clientY - rect.top };
+    }
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+
+  function onDown(e) {
+    if (laptop.thrown) return;
+    const p = pointerPos(e);
+    const cx = laptop.x + laptop.w / 2;
+    const cy = laptop.y + laptop.h / 2;
+    const dist = Math.hypot(p.x - cx, p.y - cy);
+    if (dist < Math.max(laptop.w, laptop.h)) {
+      dragging = true;
+      dragStart = p;
+      dragPoints = [{ x: p.x, y: p.y, t: performance.now() }];
+      e.preventDefault();
+    }
+  }
+
+  function onMove(e) {
+    if (!dragging) return;
+    const p = pointerPos(e);
+    laptop.x = p.x - laptop.w / 2 + (dragStart ? 0 : 0);
+    laptop.y = p.y - laptop.h / 2;
+    // offset so grab point stays natural
+    dragPoints.push({ x: p.x, y: p.y, t: performance.now() });
+    if (dragPoints.length > 6) dragPoints.shift();
+    e.preventDefault();
+  }
+
+  function onUp(e) {
+    if (!dragging) return;
+    dragging = false;
+    let vx = 0, vy = 0;
+    if (dragPoints.length >= 2) {
+      const first = dragPoints[0];
+      const last = dragPoints[dragPoints.length - 1];
+      const dt = Math.max(16, last.t - first.t) / 1000;
+      vx = (last.x - first.x) / dt;
+      vy = (last.y - first.y) / dt;
+    }
+    laptop.vx = vx;
+    laptop.vy = vy;
+    laptop.vrot = vx * 0.01;
+    laptop.thrown = true;
+    tries++;
+    triesEl.textContent = '次數：' + tries;
+    e && e.preventDefault && e.preventDefault();
+  }
+
+  canvas.addEventListener('mousedown', onDown);
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+  canvas.addEventListener('touchstart', onDown, { passive: false });
+  window.addEventListener('touchmove', onMove, { passive: false });
+  window.addEventListener('touchend', onUp, { passive: false });
+
+  function showMessage(text, color) {
+    messageEl.textContent = text;
+    messageEl.style.color = color || '#fff';
+    messageEl.classList.add('show');
+    setTimeout(() => messageEl.classList.remove('show'), 700);
+  }
+
+  function checkScore() {
+    if (laptop.scored) return;
+    const cx = laptop.x + laptop.w / 2;
+    const cy = laptop.y + laptop.h / 2;
+    const binCX = bin.x + bin.w / 2;
+    const inX = cx > bin.x + bin.w * 0.15 && cx < bin.x + bin.w * 0.85;
+    const inY = cy > bin.y - 10 && cy < bin.y + bin.h * 0.6;
+    if (inX && inY && laptop.vy > 0) {
+      laptop.scored = true;
+      score++;
+      scoreEl.textContent = '得分：' + score;
+      showMessage('中！ +1', '#4caf50');
+      laptop.vx *= 0.2;
+      laptop.vy = 200;
+    }
+  }
+
+  function update(dt) {
+    if (!laptop.thrown) return;
+    laptop.vy += GRAVITY * dt;
+    laptop.x += laptop.vx * dt;
+    laptop.y += laptop.vy * dt;
+    laptop.rot += laptop.vrot * dt;
+
+    checkScore();
+
+    // walls
+    if (laptop.x < 0) { laptop.x = 0; laptop.vx *= -0.4; }
+    if (laptop.x + laptop.w > W) { laptop.x = W - laptop.w; laptop.vx *= -0.4; }
+
+    // floor
+    const floorY = H - 20 - laptop.h;
+    if (laptop.y > floorY) {
+      laptop.y = floorY;
+      if (Math.abs(laptop.vy) > 60) {
+        laptop.vy *= -0.35;
+        laptop.vx *= 0.6;
+      } else {
+        laptop.vy = 0;
+        laptop.vx *= 0.8;
+        laptop.vrot *= 0.8;
+        if (Math.abs(laptop.vx) < 5 && !laptop.settled) {
+          laptop.settled = true;
+          if (!laptop.scored) showMessage('沒中，再試一次！', '#ff7043');
+          setTimeout(resetLaptop, 650);
+        }
+      }
+    }
+  }
+
+  function drawBackground() {
+    ctx.clearRect(0, 0, W, H);
+    // floor
+    ctx.fillStyle = '#dcd3c3';
+    ctx.fillRect(0, H - 20, W, 20);
+    ctx.fillStyle = 'rgba(0,0,0,0.08)';
+    ctx.fillRect(0, H - 20, W, 4);
+  }
+
+  function drawBin() {
+    const { x, y, w, h } = bin;
+    // shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.15)';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h + 6, w * 0.55, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // body (trapezoid)
+    ctx.fillStyle = '#4a90d9';
+    ctx.beginPath();
+    ctx.moveTo(x + w * 0.08, y + h * 0.15);
+    ctx.lineTo(x + w * 0.92, y + h * 0.15);
+    ctx.lineTo(x + w * 0.8, y + h);
+    ctx.lineTo(x + w * 0.2, y + h);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#2c5f96';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+
+    // stripes
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
+    ctx.lineWidth = 2;
+    for (let i = 1; i < 4; i++) {
+      const yy = y + h * 0.15 + (h * 0.85) * (i / 4);
+      ctx.beginPath();
+      ctx.moveTo(x + w * (0.1 + i * 0.02), yy);
+      ctx.lineTo(x + w * (0.9 - i * 0.02), yy);
+      ctx.stroke();
+    }
+
+    // rim
+    ctx.fillStyle = '#2c5f96';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h * 0.15, w * 0.46, h * 0.06, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1a3b5c';
+    ctx.beginPath();
+    ctx.ellipse(x + w / 2, y + h * 0.15, w * 0.4, h * 0.045, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawLaptop(l) {
+    ctx.save();
+    const cx = l.x + l.w / 2;
+    const cy = l.y + l.h / 2;
+    ctx.translate(cx, cy);
+    ctx.rotate(l.rot);
+    ctx.translate(-l.w / 2, -l.h / 2);
+
+    // base
+    ctx.fillStyle = '#9aa0a6';
+    roundRect(ctx, 0, l.h * 0.55, l.w, l.h * 0.45, 4);
+    ctx.fill();
+    ctx.strokeStyle = '#5f6368';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // screen back
+    ctx.fillStyle = '#5f6368';
+    roundRect(ctx, l.w * 0.04, 0, l.w * 0.92, l.h * 0.55, 5);
+    ctx.fill();
+
+    // screen
+    ctx.fillStyle = '#2b6cb0';
+    roundRect(ctx, l.w * 0.1, l.h * 0.06, l.w * 0.8, l.h * 0.4, 3);
+    ctx.fill();
+
+    // logo dot
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.beginPath();
+    ctx.arc(l.w / 2, l.h * 0.15, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function roundRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawAimLine() {
+    if (!dragging || dragPoints.length < 2) return;
+    const first = dragPoints[0];
+    const last = dragPoints[dragPoints.length - 1];
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(last.x, last.y);
+    ctx.lineTo(last.x + (last.x - first.x) * 2, last.y + (last.y - first.y) * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  let lastT = performance.now();
+  function loop(t) {
+    const dt = Math.min(0.032, (t - lastT) / 1000);
+    lastT = t;
+    update(dt);
+    drawBackground();
+    drawBin();
+    drawAimLine();
+    drawLaptop(laptop);
+    requestAnimationFrame(loop);
+  }
+
+  restartBtn.addEventListener('click', () => {
+    score = 0;
+    tries = 0;
+    scoreEl.textContent = '得分：0';
+    triesEl.textContent = '次數：0';
+    resetLaptop();
+  });
+
+  window.addEventListener('resize', resize);
+  resize();
+  resetLaptop();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
