@@ -68,6 +68,16 @@
     box-shadow: 0 4px 0 #2e7d32;
   }
   #start-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #2e7d32; }
+  #mode-select { display:flex; gap:20px; }
+  .mode-btn {
+    padding: 18px 36px; font-size:18px; font-weight:bold; cursor:pointer;
+    color:#fff; border:none; border-radius:8px; min-width:180px;
+  }
+  .mode-btn small { display:block; font-weight:normal; font-size:12px; opacity:0.85; margin-top:6px; }
+  #mode-survival { background:#4caf50; box-shadow: 0 4px 0 #2e7d32; }
+  #mode-survival:active { transform: translateY(2px); box-shadow: 0 2px 0 #2e7d32; }
+  #mode-creative { background:#2196f3; box-shadow: 0 4px 0 #1565c0; }
+  #mode-creative:active { transform: translateY(2px); box-shadow: 0 2px 0 #1565c0; }
 
   #death-screen {
     position: fixed; inset:0; background: rgba(80,0,0,0.85);
@@ -118,16 +128,19 @@
 <div id="msg-log"></div>
 
 <div id="controls-hint" style="display:none;">
-  WASD 移動 ・ 空白 跳躍<br>
+  WASD 移動 ・ 空白 跳躍/飛升<br>
   滑鼠 視角 ・ 左鍵 挖掘 ・ 右鍵 放置<br>
-  1-8 選擇物品欄 ・ Shift 疾跑<br>
+  1-8 選擇物品欄 ・ Shift 疾跑/下降<br>
   E 上車/下車 ・ 遠離龍捲風！🌪️
 </div>
 
 <div id="start-screen">
   <h1>⛏️ 方塊生存世界</h1>
-  <p>歡迎來到麥塊風格的生存世界！挖礦、砍樹、蓋房子，撐過黑夜，小心殭屍出沒。點擊下方按鈕開始遊戲，並點擊畫面以鎖定滑鼠視角。</p>
-  <button id="start-btn">開始遊戲</button>
+  <p>歡迎來到麥塊風格的生存世界！挖礦、砍樹、蓋房子，開跑車兜風，小心殭屍與龍捲風。選擇模式後點擊按鈕開始，並點擊畫面以鎖定滑鼠視角。</p>
+  <div id="mode-select">
+    <button id="mode-survival" class="mode-btn">⚔️ 生存模式<small>血量/飢餓・需要採集資源</small></button>
+    <button id="mode-creative" class="mode-btn">🛠️ 創造模式<small>飛行・無限方塊・無傷害</small></button>
+  </div>
 </div>
 
 <div id="death-screen">
@@ -386,8 +399,10 @@ const player = {
   health: 20, maxHealth: 20,
   hunger: 20, maxHunger: 20,
   speed: 5.0, sprintMult: 1.6,
-  alive: true
+  alive: true,
+  creative: false
 };
+let gameMode = 'survival';
 
 function findSpawnHeight(x,z){
   for (let y=WORLD_HEIGHT-1; y>0; y--){
@@ -466,7 +481,7 @@ function renderHotbar(){
       div.appendChild(sw);
       const cnt = document.createElement('div');
       cnt.className = 'count';
-      cnt.textContent = slot.count;
+      cnt.textContent = player.creative ? '∞' : slot.count;
       div.appendChild(cnt);
     } else {
       div.textContent = '✋';
@@ -484,6 +499,7 @@ function addToInventory(blockId){
 function consumeFromActive(){
   const slot = hotbar[activeSlot];
   if (slot.block === null) return false;
+  if (player.creative) return true;
   if (slot.count <= 0) return false;
   slot.count--;
   renderHotbar();
@@ -539,7 +555,7 @@ function updateMining(dt){
   const key = hit.x+','+hit.y+','+hit.z;
   if (miningTarget !== key){ miningTarget = key; miningProgress = 0; }
   miningProgress += dt;
-  const need = MINE_TIME[hit.block] || 1.0;
+  const need = player.creative ? 0 : (MINE_TIME[hit.block] || 1.0);
   if (miningProgress >= need){
     const dropId = hit.block === BLOCK.GRASS ? BLOCK.DIRT : hit.block;
     addToInventory(dropId === BLOCK.GRASS ? BLOCK.DIRT : hit.block);
@@ -553,7 +569,7 @@ function updateMining(dt){
 function placeBlock(){
   if (!player.alive || car.mode === 'player') return;
   const slot = hotbar[activeSlot];
-  if (slot.block === null || slot.count <= 0) return;
+  if (slot.block === null || (!player.creative && slot.count <= 0)) return;
   const hit = raycastVoxel(6);
   if (!hit) return;
   const px = hit.x + hit.normal[0], py = hit.y + hit.normal[1], pz = hit.z + hit.normal[2];
@@ -594,19 +610,28 @@ function updatePlayer(dt){
   if (keys['KeyA']) move.sub(right);
   if (move.lengthSq() > 0) move.normalize();
 
-  const sprint = keys['ShiftLeft'] && player.hunger > 1;
-  const spd = player.speed * (sprint ? player.sprintMult : 1);
+  const sprint = keys['ShiftLeft'] && (player.creative || player.hunger > 1);
+  const spd = player.speed * (sprint ? player.sprintMult : 1) * (player.creative ? 1.8 : 1);
 
   player.vel.x = move.x * spd;
   player.vel.z = move.z * spd;
 
-  // gravity
-  player.vel.y -= 18 * dt;
-  if (player.vel.y < -30) player.vel.y = -30;
-
-  if (keys['Space'] && player.onGround){
-    player.vel.y = 7.2;
+  if (player.creative){
+    // 創造模式：自由飛行，空白上升、Shift 下降
+    let vy = 0;
+    if (keys['Space']) vy += 9;
+    if (keys['ShiftLeft']) vy -= 9;
+    player.vel.y = vy;
     player.onGround = false;
+  } else {
+    // gravity
+    player.vel.y -= 18 * dt;
+    if (player.vel.y < -30) player.vel.y = -30;
+
+    if (keys['Space'] && player.onGround){
+      player.vel.y = 7.2;
+      player.onGround = false;
+    }
   }
 
   // move with simple axis-separated collision
@@ -640,7 +665,7 @@ function updatePlayer(dt){
 /* ============================== 生存數值 ============================== */
 let hungerTimer = 0;
 function updateSurvival(dt){
-  if (!player.alive) return;
+  if (!player.alive || player.creative) { renderBars(); return; }
   hungerTimer += dt;
   if (hungerTimer > 8){
     hungerTimer = 0;
@@ -654,7 +679,7 @@ function updateSurvival(dt){
 }
 
 function damagePlayer(amount, cause){
-  if (!player.alive) return;
+  if (!player.alive || player.creative) return;
   player.health -= amount;
   renderBars();
   if (player.health <= 0){
@@ -1075,15 +1100,23 @@ function respawnPlayer(){
   renderBars();
 }
 
-document.getElementById('start-btn').addEventListener('click', () => {
+function startGame(mode){
+  gameMode = mode;
+  player.creative = (mode === 'creative');
+  if (player.creative){
+    hotbar.forEach(s => { if (s.block !== null) s.count = 64; });
+  }
   document.getElementById('start-screen').style.display = 'none';
   ['hud','info-panel','daynight','controls-hint'].forEach(id => document.getElementById(id).style.display = '');
+  document.getElementById('hunger-row').style.display = player.creative ? 'none' : '';
   gameStarted = true;
   renderHotbar();
   renderBars();
-  logMsg('歡迎來到方塊生存世界！點擊畫面以鎖定滑鼠。');
+  logMsg(player.creative ? '創造模式啟動！空白飛升、Shift 下降，方塊無限。' : '歡迎來到方塊生存世界！點擊畫面以鎖定滑鼠。');
   renderer.domElement.requestPointerLock();
-});
+}
+document.getElementById('mode-survival').addEventListener('click', () => startGame('survival'));
+document.getElementById('mode-creative').addEventListener('click', () => startGame('creative'));
 
 document.getElementById('respawn-btn').addEventListener('click', () => {
   respawnPlayer();
