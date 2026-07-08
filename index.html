@@ -57,6 +57,37 @@
   }
   #storyChoices button:hover { background: rgba(140,0,0,0.4); border-color: #b30000; }
   .hidden { display: none !important; }
+
+  #touchControls { display: none; }
+  body.touch-mode #gameCanvas { cursor: default; }
+  body.touch-mode #touchControls { display: block; }
+  #joystickZone {
+    position: fixed; left: 0; bottom: 0; width: 45%; height: 45%; z-index: 7;
+    touch-action: none;
+  }
+  #joystickBase {
+    position: absolute; width: 110px; height: 110px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.25);
+    display: none; z-index: 8; touch-action: none;
+  }
+  #joystickKnob {
+    position: absolute; width: 46px; height: 46px; border-radius: 50%;
+    background: rgba(200,50,50,0.5); border: 2px solid rgba(255,255,255,0.4);
+    left: 32px; top: 32px; pointer-events: none;
+  }
+  #lookZone {
+    position: fixed; right: 0; bottom: 0; width: 55%; height: 100%; z-index: 6;
+    touch-action: none;
+  }
+  #interactBtn {
+    position: fixed; right: 24px; bottom: 24px; z-index: 9;
+    width: 84px; height: 84px; border-radius: 50%;
+    background: rgba(179,0,0,0.35); border: 2px solid rgba(255,255,255,0.5);
+    color: #fff; font-size: 14px; letter-spacing: 2px;
+    display: none; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.touch-mode #interactBtn { display: flex; }
 </style>
 </head>
 <body>
@@ -66,7 +97,8 @@
   <p>你在一栋废弃的疗养院中醒来。手电筒是你唯一的光源，也是唯一暴露你的东西。<br>
   黑暗中似乎有什么东西在盯着你——只有当光照到它们时，你才能看见。<br>
   找到 <b style="color:#eee">3 把钥匙</b>，再抵达绿色的出口逃出这里。它能听见你的脚步，也能在黑暗中看见你——你的选择将决定你的命运。<br><br>
-  WASD / 方向键 移动　　鼠标 控制手电筒方向　　E 互动/继续对话</p>
+  电脑：WASD / 方向键 移动　　鼠标 控制手电筒方向　　E 互动<br>
+  平板/手机：左下摇杆移动　　右侧拖动瞄准手电筒　　右下按钮互动</p>
   <button id="startBtn">开始游戏</button>
 </div>
 
@@ -78,6 +110,13 @@
 <div id="interactHint">按 E 互动</div>
 <div id="exitHint">钥匙已集齐——找到出口逃离这里</div>
 <div id="jumpscare"><span>!!</span></div>
+
+<div id="touchControls">
+  <div id="joystickZone"></div>
+  <div id="joystickBase"><div id="joystickKnob"></div></div>
+  <div id="lookZone"></div>
+  <button id="interactBtn">互动</button>
+</div>
 
 <div id="storyBox">
   <div id="storyText"></div>
@@ -393,6 +432,86 @@
   let mouseX = window.innerWidth / 2 + 200, mouseY = window.innerHeight / 2;
   window.addEventListener('mousemove', e => { mouseX = e.clientX; mouseY = e.clientY; });
 
+  // ----- Touch controls (virtual joystick + drag-to-aim) for tablets/phones -----
+  const isTouchDevice = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+  let touchDX = 0, touchDY = 0; // normalized joystick vector, added to keyboard movement
+
+  if (isTouchDevice) {
+    document.body.classList.add('touch-mode');
+
+    const joystickZone = document.getElementById('joystickZone');
+    const joystickBase = document.getElementById('joystickBase');
+    const joystickKnob = document.getElementById('joystickKnob');
+    const lookZone = document.getElementById('lookZone');
+    const interactBtn = document.getElementById('interactBtn');
+
+    let joyId = null, joyCenter = { x: 0, y: 0 };
+    const JOY_RADIUS = 55;
+
+    function joyStart(e) {
+      const t = e.changedTouches[0];
+      joyId = t.identifier;
+      joyCenter = { x: t.clientX, y: t.clientY };
+      joystickBase.style.display = 'block';
+      joystickBase.style.left = (joyCenter.x - 55) + 'px';
+      joystickBase.style.top = (joyCenter.y - 55) + 'px';
+      joystickKnob.style.left = '32px';
+      joystickKnob.style.top = '32px';
+      e.preventDefault();
+    }
+    function joyMove(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        let dx = t.clientX - joyCenter.x, dy = t.clientY - joyCenter.y;
+        const d = Math.hypot(dx, dy) || 1;
+        const clamped = Math.min(d, JOY_RADIUS);
+        dx = (dx / d) * clamped; dy = (dy / d) * clamped;
+        joystickKnob.style.left = (32 + dx) + 'px';
+        joystickKnob.style.top = (32 + dy) + 'px';
+        touchDX = dx / JOY_RADIUS; touchDY = dy / JOY_RADIUS;
+        e.preventDefault();
+      }
+    }
+    function joyEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== joyId) continue;
+        joyId = null;
+        touchDX = 0; touchDY = 0;
+        joystickBase.style.display = 'none';
+      }
+    }
+    joystickZone.addEventListener('touchstart', joyStart, { passive: false });
+    window.addEventListener('touchmove', joyMove, { passive: false });
+    window.addEventListener('touchend', joyEnd);
+    window.addEventListener('touchcancel', joyEnd);
+
+    let lookId = null;
+    function lookStart(e) {
+      const t = e.changedTouches[0];
+      lookId = t.identifier;
+      mouseX = t.clientX; mouseY = t.clientY;
+      e.preventDefault();
+    }
+    function lookMove(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier !== lookId) continue;
+        mouseX = t.clientX; mouseY = t.clientY;
+        e.preventDefault();
+      }
+    }
+    function lookEnd(e) {
+      for (const t of e.changedTouches) {
+        if (t.identifier === lookId) lookId = null;
+      }
+    }
+    lookZone.addEventListener('touchstart', lookStart, { passive: false });
+    window.addEventListener('touchmove', lookMove, { passive: false });
+    window.addEventListener('touchend', lookEnd);
+    window.addEventListener('touchcancel', lookEnd);
+
+    interactBtn.addEventListener('touchstart', e => { e.preventDefault(); tryInteract(); });
+  }
+
   // ----- Items (keys) -----
   let items = [];
   function placeItems() {
@@ -570,8 +689,9 @@
     if (keys['s'] || keys['arrowdown']) dy += 1;
     if (keys['a'] || keys['arrowleft']) dx -= 1;
     if (keys['d'] || keys['arrowright']) dx += 1;
-    playerIsMoving = dx !== 0 || dy !== 0;
-    const len = Math.hypot(dx, dy) || 1;
+    dx += touchDX; dy += touchDY;
+    playerIsMoving = Math.hypot(dx, dy) > 0.1;
+    const len = Math.max(1, Math.hypot(dx, dy));
     dx = (dx / len) * player.speed;
     dy = (dy / len) * player.speed;
 
