@@ -57,15 +57,20 @@ const gameOverEl = document.getElementById('gameOver');
 const gameOverText = document.getElementById('gameOverText');
 const restartBtn = document.getElementById('restartBtn');
 
+const CELL = 50;
+let cols, rows, maze;
+
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  cols = Math.max(4, Math.floor(canvas.width / CELL));
+  rows = Math.max(4, Math.floor(canvas.height / CELL));
+  buildMaze();
 }
 window.addEventListener('resize', resize);
-resize();
 
 const player = { x: 0, y: 0, r: 15, speed: 4, color: '#4fc3f7' };
-const chaser = { x: 0, y: 0, r: 18, speed: 2.4, color: '#ff5252' };
+const chaser = { x: 0, y: 0, r: 18, speed: 2.2, color: '#ff5252' };
 
 const keys = {};
 window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
@@ -82,11 +87,125 @@ let running = true;
 let startTime = null;
 let elapsed = 0;
 
+function buildMaze() {
+  maze = [];
+  for (let r = 0; r < rows; r++) {
+    const row = [];
+    for (let c = 0; c < cols; c++) {
+      row.push({ N: true, E: true, S: true, W: true, visited: false });
+    }
+    maze.push(row);
+  }
+
+  const stack = [[0, 0]];
+  maze[0][0].visited = true;
+  while (stack.length) {
+    const [r, c] = stack[stack.length - 1];
+    const neighbors = [];
+    if (r > 0 && !maze[r - 1][c].visited) neighbors.push(['N', r - 1, c]);
+    if (r < rows - 1 && !maze[r + 1][c].visited) neighbors.push(['S', r + 1, c]);
+    if (c > 0 && !maze[r][c - 1].visited) neighbors.push(['W', r, c - 1]);
+    if (c < cols - 1 && !maze[r][c + 1].visited) neighbors.push(['E', r, c + 1]);
+
+    if (!neighbors.length) {
+      stack.pop();
+      continue;
+    }
+    const [dir, nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
+    const opposite = { N: 'S', S: 'N', E: 'W', W: 'E' };
+    maze[r][c][dir] = false;
+    maze[nr][nc][opposite[dir]] = false;
+    maze[nr][nc].visited = true;
+    stack.push([nr, nc]);
+  }
+
+  wallSegments = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
+      const cell = maze[r][c];
+      if (cell.N) wallSegments.push([x0, y0, x1, y0]);
+      if (cell.S) wallSegments.push([x0, y1, x1, y1]);
+      if (cell.W) wallSegments.push([x0, y0, x0, y1]);
+      if (cell.E) wallSegments.push([x1, y0, x1, y1]);
+    }
+  }
+}
+
+let wallSegments = [];
+
+function pointSegDist(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len2 = dx * dx + dy * dy;
+  let t = len2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / len2;
+  t = clamp(t, 0, 1);
+  const cx = x1 + t * dx, cy = y1 + t * dy;
+  return Math.hypot(px - cx, py - cy);
+}
+
+function hitsWall(x, y, r) {
+  for (const seg of wallSegments) {
+    if (pointSegDist(x, y, seg[0], seg[1], seg[2], seg[3]) < r) return true;
+  }
+  return false;
+}
+
+function moveWithCollision(entity, nx, ny) {
+  if (!hitsWall(nx, entity.y, entity.r)) entity.x = nx;
+  if (!hitsWall(entity.x, ny, entity.r)) entity.y = ny;
+}
+
+function cellOf(x, y) {
+  return {
+    c: clamp(Math.floor(x / CELL), 0, cols - 1),
+    r: clamp(Math.floor(y / CELL), 0, rows - 1),
+  };
+}
+
+function connected(r1, c1, r2, c2) {
+  if (r2 === r1 - 1 && c2 === c1) return !maze[r1][c1].N;
+  if (r2 === r1 + 1 && c2 === c1) return !maze[r1][c1].S;
+  if (c2 === c1 - 1 && r2 === r1) return !maze[r1][c1].W;
+  if (c2 === c1 + 1 && r2 === r1) return !maze[r1][c1].E;
+  return false;
+}
+
+function bfsPath(startR, startC, goalR, goalC) {
+  const visited = Array.from({ length: rows }, () => new Array(cols).fill(false));
+  const prev = Array.from({ length: rows }, () => new Array(cols).fill(null));
+  const queue = [[startR, startC]];
+  visited[startR][startC] = true;
+  while (queue.length) {
+    const [r, c] = queue.shift();
+    if (r === goalR && c === goalC) break;
+    const dirs = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
+    for (const [nr, nc] of dirs) {
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+      if (visited[nr][nc]) continue;
+      if (!connected(r, c, nr, nc)) continue;
+      visited[nr][nc] = true;
+      prev[nr][nc] = [r, c];
+      queue.push([nr, nc]);
+    }
+  }
+  if (!visited[goalR][goalC]) return null;
+  const path = [[goalR, goalC]];
+  let cur = [goalR, goalC];
+  while (!(cur[0] === startR && cur[1] === startC)) {
+    cur = prev[cur[0]][cur[1]];
+    path.push(cur);
+  }
+  path.reverse();
+  return path;
+}
+
 function reset() {
-  player.x = canvas.width / 2;
-  player.y = canvas.height / 2;
-  chaser.x = Math.random() * canvas.width;
-  chaser.y = Math.random() * canvas.height;
+  resize();
+  const startCell = cellOf(0, 0);
+  player.x = startCell.c * CELL + CELL / 2;
+  player.y = startCell.r * CELL + CELL / 2;
+  chaser.x = (cols - 1) * CELL + CELL / 2;
+  chaser.y = (rows - 1) * CELL + CELL / 2;
   running = true;
   startTime = performance.now();
   elapsed = 0;
@@ -110,34 +229,46 @@ function update() {
 
   if (dx !== 0 || dy !== 0) {
     const len = Math.hypot(dx, dy);
-    player.x += (dx / len) * player.speed;
-    player.y += (dy / len) * player.speed;
+    moveWithCollision(player, player.x + (dx / len) * player.speed, player.y + (dy / len) * player.speed);
   } else if (mouse) {
     const mdx = mouse.x - player.x;
     const mdy = mouse.y - player.y;
     const dist = Math.hypot(mdx, mdy);
     if (dist > 2) {
-      player.x += (mdx / dist) * Math.min(player.speed, dist);
-      player.y += (mdy / dist) * Math.min(player.speed, dist);
+      const step = Math.min(player.speed, dist);
+      moveWithCollision(player, player.x + (mdx / dist) * step, player.y + (mdy / dist) * step);
     }
   }
 
   player.x = clamp(player.x, player.r, canvas.width - player.r);
   player.y = clamp(player.y, player.r, canvas.height - player.r);
 
+  const pc = cellOf(player.x, player.y);
+  const cc = cellOf(chaser.x, chaser.y);
+  const path = bfsPath(cc.r, cc.c, pc.r, pc.c);
+  if (path && path.length > 1) {
+    const [nr, nc] = path[1];
+    const targetX = nc * CELL + CELL / 2;
+    const targetY = nr * CELL + CELL / 2;
+    const tdx = targetX - chaser.x;
+    const tdy = targetY - chaser.y;
+    const tdist = Math.hypot(tdx, tdy);
+    if (tdist > 0.5) {
+      const step = Math.min(chaser.speed, tdist);
+      chaser.x += (tdx / tdist) * step;
+      chaser.y += (tdy / tdist) * step;
+    }
+  }
+
   const cdx = player.x - chaser.x;
   const cdy = player.y - chaser.y;
   const cdist = Math.hypot(cdx, cdy);
-  if (cdist > 0) {
-    chaser.x += (cdx / cdist) * chaser.speed;
-    chaser.y += (cdy / cdist) * chaser.speed;
-  }
 
   const now = performance.now();
   elapsed = (now - startTime) / 1000;
   timerEl.textContent = elapsed.toFixed(1);
 
-  chaser.speed = 2.4 + elapsed * 0.05;
+  chaser.speed = 2.2 + elapsed * 0.04;
 
   if (cdist < player.r + chaser.r) {
     running = false;
@@ -192,8 +323,21 @@ function drawPerson(p, label) {
   }
 }
 
+function drawMaze() {
+  ctx.strokeStyle = '#7c8cff';
+  ctx.lineWidth = 3;
+  ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2] of wallSegments) {
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+  }
+  ctx.stroke();
+}
+
 function draw() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  drawMaze();
   drawPerson(chaser, 'GINO');
   drawPerson(player, null);
 }
