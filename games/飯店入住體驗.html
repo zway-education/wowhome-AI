@@ -1,0 +1,727 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>飯店入住體驗</title>
+<style>
+  :root {
+    --ink: #16332C;
+    --ground: #F2E8D5;
+    --ground-2: #e8dcc0;
+    --brass: #C9A15A;
+    --brass-dim: #a9895077;
+    --accent: #B5493D;
+    --card: #fffdf7;
+    --card-border: #d8c9a3;
+    --text: #1c2420;
+    --text-dim: #5a6b62;
+    --shadow: rgba(22, 51, 44, 0.18);
+  }
+  :root[data-theme="dark"] {
+    --ink: #0B1F1B;
+    --ground: #14211d;
+    --ground-2: #1a2c26;
+    --brass: #d8b876;
+    --brass-dim: #d8b87655;
+    --accent: #e0776a;
+    --card: #17251f;
+    --card-border: #2c4038;
+    --text: #ece4d3;
+    --text-dim: #93a89c;
+    --shadow: rgba(0, 0, 0, 0.45);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #0B1F1B;
+      --ground: #14211d;
+      --ground-2: #1a2c26;
+      --brass: #d8b876;
+      --brass-dim: #d8b87655;
+      --accent: #e0776a;
+      --card: #17251f;
+      --card-border: #2c4038;
+      --text: #ece4d3;
+      --text-dim: #93a89c;
+      --shadow: rgba(0, 0, 0, 0.45);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%; overflow: hidden; touch-action: none;
+    background: var(--ink);
+    font-family: -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    color: var(--text);
+  }
+  .display {
+    font-family: Georgia, "Iowan Old Style", "Noto Serif TC", serif;
+  }
+  #stage {
+    position: relative;
+    width: 100%; height: 100%;
+  }
+  canvas#game {
+    display: block;
+    width: 100%; height: 100%;
+    touch-action: none;
+  }
+
+  #hud {
+    position: absolute; top: 18px; left: 18px;
+    width: 236px;
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    box-shadow: 0 10px 28px var(--shadow);
+    padding: 16px 18px 14px;
+  }
+  #hud .eyebrow {
+    font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--brass); font-weight: 600;
+  }
+  #hud h1 {
+    font-size: 21px; margin: 2px 0 10px; text-wrap: balance;
+    color: var(--text);
+  }
+  #hud .hint {
+    font-size: 12.5px; color: var(--text-dim); margin-bottom: 12px; line-height: 1.5;
+  }
+  #hud .hint kbd {
+    font-family: inherit; font-size: 11px; background: var(--ground-2);
+    border: 1px solid var(--card-border); border-radius: 4px; padding: 1px 5px;
+  }
+  #tasks {
+    display: flex; flex-direction: column; gap: 7px;
+    border-top: 1px solid var(--card-border);
+    padding-top: 10px;
+  }
+  .task {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 13.5px; color: var(--text);
+  }
+  .task .dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 1.5px solid var(--brass);
+    flex-shrink: 0;
+  }
+  .task.done .dot { background: var(--brass); }
+  .task.done .label { color: var(--text-dim); text-decoration: line-through; }
+  .task .num {
+    font-variant-numeric: tabular-nums;
+    color: var(--brass); font-weight: 600; width: 1.1em;
+  }
+
+  #prompt {
+    position: absolute; bottom: 34px; left: 50%; transform: translateX(-50%);
+    background: var(--card); border: 1px solid var(--brass);
+    color: var(--text); padding: 9px 20px; border-radius: 999px;
+    font-size: 14.5px; box-shadow: 0 8px 20px var(--shadow);
+    display: none; white-space: nowrap;
+  }
+  #prompt kbd {
+    font-family: inherit; background: var(--brass); color: var(--card);
+    border-radius: 4px; padding: 1px 7px; margin-right: 6px; font-weight: 700;
+  }
+
+  #win {
+    position: absolute; inset: 0; display: none;
+    align-items: center; justify-content: center;
+    background: color-mix(in srgb, var(--ink) 88%, transparent);
+    backdrop-filter: blur(2px);
+  }
+  #win .card {
+    background: var(--card); border: 1px solid var(--card-border);
+    border-radius: 14px; padding: 40px 48px; text-align: center;
+    box-shadow: 0 24px 60px var(--shadow);
+    max-width: 380px;
+  }
+  #win .plaque {
+    font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--brass); margin-bottom: 6px;
+  }
+  #win h2 {
+    font-size: 26px; margin: 0 0 10px; text-wrap: balance;
+  }
+  #win p { color: var(--text-dim); font-size: 14px; margin: 0 0 22px; line-height: 1.6; }
+  #win button {
+    font: inherit; font-size: 14.5px; font-weight: 600;
+    background: var(--brass); color: var(--card); border: none;
+    padding: 11px 26px; border-radius: 999px; cursor: pointer;
+  }
+  #win button:focus-visible, #stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  #compass {
+    position: absolute; top: 18px; right: 18px;
+    width: 74px; height: 74px; border-radius: 50%;
+    background: var(--card); border: 1px solid var(--card-border);
+    box-shadow: 0 8px 20px var(--shadow);
+  }
+
+  /* touch controls: two virtual joysticks + interact buttons, shown on touch-capable screens */
+  #touchControls {
+    position: absolute; inset: 0; pointer-events: none;
+    display: none;
+  }
+  @media (pointer: coarse) {
+    #touchControls { display: block; }
+    #hud { width: 200px; padding: 12px 14px 10px; }
+    #hud h1 { font-size: 18px; }
+    #hud .hint { display: none; }
+  }
+  .stick-zone {
+    position: absolute; bottom: 26px; width: 128px; height: 128px;
+    border-radius: 50%; pointer-events: auto; touch-action: none;
+    background: color-mix(in srgb, var(--card) 55%, transparent);
+    border: 1px solid var(--card-border);
+  }
+  #stick1zone { left: 22px; }
+  #stick2zone { right: 22px; }
+  .stick-zone .knob {
+    position: absolute; width: 56px; height: 56px; border-radius: 50%;
+    left: 50%; top: 50%; transform: translate(-50%, -50%);
+    background: var(--brass); opacity: 0.9;
+    box-shadow: 0 4px 10px var(--shadow);
+  }
+  #stick2zone .knob { background: var(--accent); }
+  .stick-zone .tag {
+    position: absolute; top: -22px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; font-weight: 700; color: var(--text-dim);
+  }
+  .interact-btn {
+    position: absolute; bottom: 66px; width: 64px; height: 64px; border-radius: 50%;
+    pointer-events: auto; touch-action: none; border: none;
+    font: 600 13px inherit; color: var(--card);
+    box-shadow: 0 6px 16px var(--shadow);
+  }
+  #interact1 { left: 168px; background: var(--brass); }
+  #interact2 { right: 168px; background: var(--accent); }
+</style>
+</head>
+<body>
+<div id="stage" tabindex="0">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="eyebrow">入住體驗 · Key Card</div>
+    <h1 class="display">飯店導覽</h1>
+    <div class="hint">
+      <span style="color:var(--brass);font-weight:600;">●</span> <kbd>WASD</kbd> 移動　<kbd>E</kbd> 互動<br>
+      <span style="color:var(--accent);font-weight:600;">●</span> <kbd>方向鍵</kbd> 移動　<kbd>/</kbd> 互動
+    </div>
+    <div id="tasks">
+      <div class="task" data-key="checkin"><span class="num">1</span><span class="dot"></span><span class="label">到櫃檯辦理入住</span></div>
+      <div class="task" data-key="room"><span class="num">2</span><span class="dot"></span><span class="label">到房間放行李</span></div>
+      <div class="task" data-key="pool"><span class="num">3</span><span class="dot"></span><span class="label">到游泳池走走</span></div>
+      <div class="task" data-key="dining"><span class="num">4</span><span class="dot"></span><span class="label">到餐廳用餐</span></div>
+    </div>
+  </div>
+
+  <canvas id="compass" width="74" height="74"></canvas>
+
+  <div id="prompt"><kbd>E</kbd><span id="promptText"></span></div>
+
+  <div id="touchControls">
+    <div class="stick-zone" id="stick1zone"><span class="tag">①</span><div class="knob"></div></div>
+    <button class="interact-btn" id="interact1">互動</button>
+    <button class="interact-btn" id="interact2">互動</button>
+    <div class="stick-zone" id="stick2zone"><span class="tag">②</span><div class="knob"></div></div>
+  </div>
+
+  <div id="win">
+    <div class="card">
+      <div class="plaque">CHECK-IN COMPLETE</div>
+      <h2 class="display">入住體驗完成</h2>
+      <p>四個角落都走過了——櫃檯、房間、泳池、餐廳。祝您住宿愉快。</p>
+      <button id="replay">再玩一次</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  const stage = document.getElementById('stage');
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const compass = document.getElementById('compass');
+  const cctx = compass.getContext('2d');
+  const promptEl = document.getElementById('prompt');
+  const promptText = document.getElementById('promptText');
+  const winEl = document.getElementById('win');
+
+  // ---- world: simple top-down isometric-style floor plan ----
+  // Zones are axis-aligned rects in world units. World origin at lobby center.
+  const zones = {
+    lobby:   { x: -6, y: -6, w: 12, h: 12, color: '#e2d3ab', dcolor: '#26362f', label: '大廳' },
+    room:    { x: -22, y: -22, w: 12, h: 12, color: '#f4ecd8', dcolor: '#213330', label: '客房' },
+    pool:    { x: 12, y: -22, w: 13, h: 13, color: '#7fb3c9', dcolor: '#1c4a5c', label: '游泳池' },
+    dining:  { x: -22, y: 10, w: 12, h: 12, color: '#e6c9a0', dcolor: '#33291d', label: '餐廳' }
+  };
+  const corridorColor = { light: '#cfc19a', dark: '#1c2a25' };
+
+  const hotspots = [
+    { key: 'checkin', x: -6, y: -3, r: 3.2, label: '向櫃檯辦理入住', done: false },
+    { key: 'room', x: -16, y: -16, r: 3.4, label: '躺上床放好行李', done: false },
+    { key: 'pool', x: 18, y: -16, r: 3.8, label: '在泳池邊放鬆一下', done: false },
+    { key: 'dining', x: -16, y: 16, r: 3.4, label: '坐下來用餐', done: false }
+  ];
+
+  // NPCs: simplified blocky figures, not photoreal — palette-driven, no gendered styling implied
+  const npcs = [
+    { x: -7.5, y: -3, angle: -Math.PI/2, palette: { shirt: '#2f5d54', skin: '#caa07a', hair: '#3a2c22' }, lines: ['歡迎光臨，這是您的房卡。', '祝您住宿愉快！'] },
+    { x: 20, y: -13, angle: Math.PI*0.75, palette: { shirt: '#c9a15a', skin: '#8a5a3c', hair: '#1c1712' }, lines: ['泳池水溫剛剛好～', '記得先沖洗再下水喔。'] },
+    { x: -14, y: 15, angle: Math.PI/2, palette: { shirt: '#8a4a3a', skin: '#e0b48c', hair: '#5a3c28' }, lines: ['今天的主廚推薦是烤鮭魚。', '需要幫您安排靠窗的位子嗎？'] }
+  ];
+  let bobTime = 0;
+
+  const player1 = { x: -1, y: 4, angle: 0, speed: 9.5, palette: { shirt: '#B5493D', skin: '#e0b48c', hair: '#2a2118' }, target: null };
+  const player2 = { x: 1, y: 5, angle: 0, speed: 9.5, palette: { shirt: '#3d6ea5', skin: '#caa07a', hair: '#1c1712' }, target: null };
+  const players = [player1, player2];
+  const keys = {};
+  let allDone = false;
+
+  window.addEventListener('keydown', (e) => {
+    keys[e.code] = true;
+    if (e.code === 'KeyE') tryInteract(player1);
+    if (e.code === 'Slash') tryInteract(player2);
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Slash','Space'].includes(e.code)) e.preventDefault();
+  });
+  window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+  stage.addEventListener('click', () => stage.focus());
+
+  // touch joysticks — one per player, drag from the base to steer
+  const touchDir = { p1: { x: 0, y: 0 }, p2: { x: 0, y: 0 } };
+  function setupStick(zoneId, dirKey) {
+    const zone = document.getElementById(zoneId);
+    const knob = zone.querySelector('.knob');
+    let activeId = null;
+    const radius = 40;
+
+    function setKnob(dx, dy) {
+      const len = Math.hypot(dx, dy);
+      const clamped = len > radius ? radius / len : 1;
+      knob.style.transform = `translate(calc(-50% + ${dx * clamped}px), calc(-50% + ${dy * clamped}px))`;
+    }
+    function reset() {
+      activeId = null;
+      touchDir[dirKey].x = 0; touchDir[dirKey].y = 0;
+      knob.style.transform = 'translate(-50%, -50%)';
+    }
+    zone.addEventListener('pointerdown', (e) => {
+      activeId = e.pointerId;
+      zone.setPointerCapture(activeId);
+      updateFromEvent(e);
+    });
+    zone.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== activeId) return;
+      updateFromEvent(e);
+    });
+    function updateFromEvent(e) {
+      const rect = zone.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      let dx = e.clientX - cx, dy = e.clientY - cy;
+      setKnob(dx, dy);
+      const len = Math.hypot(dx, dy) || 1;
+      const norm = Math.min(len, radius) / radius;
+      touchDir[dirKey].x = (dx / len) * norm;
+      touchDir[dirKey].y = (dy / len) * norm;
+    }
+    zone.addEventListener('pointerup', reset);
+    zone.addEventListener('pointercancel', reset);
+    zone.addEventListener('pointerleave', (e) => { if (e.pointerId === activeId) reset(); });
+  }
+  setupStick('stick1zone', 'p1');
+  setupStick('stick2zone', 'p2');
+  document.getElementById('interact1').addEventListener('click', () => tryInteract(player1));
+  document.getElementById('interact2').addEventListener('click', () => tryInteract(player2));
+  document.getElementById('replay').addEventListener('click', () => {
+    hotspots.forEach(h => h.done = false);
+    document.querySelectorAll('.task').forEach(t => t.classList.remove('done'));
+    player1.x = -1; player1.y = 4; player1.angle = 0;
+    player2.x = 1; player2.y = 5; player2.angle = 0;
+    allDone = false;
+    winEl.style.display = 'none';
+  });
+
+  function tryInteract(p) {
+    if (p.target && !p.target.done) {
+      p.target.done = true;
+      const el = document.querySelector('.task[data-key="' + p.target.key + '"]');
+      if (el) el.classList.add('done');
+      checkWin();
+    }
+  }
+
+  function checkWin() {
+    if (hotspots.every(h => h.done)) {
+      allDone = true;
+      setTimeout(() => { winEl.style.display = 'flex'; }, 250);
+    }
+  }
+
+  function isDark() {
+    const t = document.documentElement.getAttribute('data-theme');
+    if (t === 'dark') return true;
+    if (t === 'light') return false;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches;
+  }
+
+  function resize() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = stage.clientWidth * dpr;
+    canvas.height = stage.clientHeight * dpr;
+    canvas.style.width = stage.clientWidth + 'px';
+    canvas.style.height = stage.clientHeight + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize);
+  resize();
+
+  // isometric projection — camera follows the midpoint of both players
+  const TILE = 26;
+  const camera = { x: 0, y: 4.5 };
+  function project(wx, wy) {
+    const cx = stage.clientWidth / 2;
+    const cy = stage.clientHeight * 0.5;
+    const rx = wx - camera.x, ry = wy - camera.y;
+    const sx = (rx - ry) * TILE * 0.86 + cx;
+    const sy = (rx + ry) * TILE * 0.5 + cy;
+    return [sx, sy];
+  }
+  function updateCamera(dt) {
+    const midX = (player1.x + player2.x) / 2;
+    const midY = (player1.y + player2.y) / 2;
+    const ease = 1 - Math.pow(0.001, dt);
+    camera.x += (midX - camera.x) * ease;
+    camera.y += (midY - camera.y) * ease;
+  }
+
+  function drawFloorRect(zone, dark) {
+    const { x, y, w, h } = zone;
+    const pts = [
+      project(x, y), project(x + w, y), project(x + w, y + h), project(x, y + h)
+    ];
+    ctx.beginPath();
+    ctx.moveTo(pts[0][0], pts[0][1]);
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i][0], pts[i][1]);
+    ctx.closePath();
+    ctx.fillStyle = dark ? zone.dcolor : zone.color;
+    ctx.fill();
+    ctx.strokeStyle = dark ? 'rgba(216,184,118,0.35)' : 'rgba(22,51,44,0.25)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+  }
+
+  function drawProp(wx, wy, w, h, elevation, color, dark) {
+    ctx.fillStyle = color;
+    // simple elevated block: draw top face as diamond, front faces as parallelograms
+    const p0 = project(wx - w/2, wy - h/2);
+    const p1 = project(wx + w/2, wy - h/2);
+    const p2 = project(wx + w/2, wy + h/2);
+    const p3 = project(wx - w/2, wy + h/2);
+    const topOffset = elevation * TILE * 0.5;
+    const top = [p0, p1, p2, p3].map(p => [p[0], p[1] - topOffset]);
+
+    // side faces (only two visible sides for iso look)
+    ctx.beginPath();
+    ctx.moveTo(p2[0], p2[1]);
+    ctx.lineTo(p3[0], p3[1]);
+    ctx.lineTo(top[3][0], top[3][1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.closePath();
+    ctx.fillStyle = shade(color, dark ? -14 : -22);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(p1[0], p1[1]);
+    ctx.lineTo(p2[0], p2[1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.lineTo(top[1][0], top[1][1]);
+    ctx.closePath();
+    ctx.fillStyle = shade(color, dark ? -6 : -10);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(top[0][0], top[0][1]);
+    ctx.lineTo(top[1][0], top[1][1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.lineTo(top[3][0], top[3][1]);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function shade(hex, amt) {
+    const c = hex.replace('#', '');
+    const num = parseInt(c.length === 3 ? c.split('').map(x=>x+x).join('') : c, 16);
+    let r = (num >> 16) + amt, g = ((num >> 8) & 0xff) + amt, b = (num & 0xff) + amt;
+    r = Math.max(0, Math.min(255, r)); g = Math.max(0, Math.min(255, g)); b = Math.max(0, Math.min(255, b));
+    return `rgb(${r},${g},${b})`;
+  }
+
+  // simplified blocky figure: two leg blocks, torso, head — deliberately abstract, not photoreal
+  function drawFigure(wx, wy, angle, palette, bob, dark) {
+    const legLift = Math.max(0, Math.sin(bob)) * 0.12;
+    ctx.save();
+    // ground shadow
+    const [bx, by] = project(wx, wy);
+    ctx.beginPath();
+    ctx.ellipse(bx, by + 5, 9, 3.4, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.22)';
+    ctx.fill();
+    ctx.restore();
+
+    const facing = Math.cos(angle) >= 0 ? 1 : -1;
+    const legOx = 0.28 * facing;
+
+    // legs (front leg lifts slightly to suggest a walk cycle)
+    drawProp(wx - legOx * 0.4, wy, 0.34, 0.34, 0.34 + legLift, dark ? '#3a4a52' : '#4a5c66', dark);
+    drawProp(wx + legOx * 0.4, wy, 0.34, 0.34, 0.34, dark ? '#33424a' : '#3f4f58', dark);
+
+    // torso
+    drawPropAt(wx, wy, 0.62, 0.5, 0.34, 0.62, palette.shirt, dark);
+    // head
+    drawPropAt(wx, wy, 0.4, 0.4, 0.96, 0.34, palette.skin, dark);
+    // hair cap
+    drawPropAt(wx, wy, 0.42, 0.42, 1.3, 0.12, palette.hair, dark);
+  }
+
+  // like drawProp but the elevation is a base offset (so shapes can stack)
+  function drawPropAt(wx, wy, w, h, baseElevation, height, color, dark) {
+    const p0 = project(wx - w/2, wy - h/2);
+    const p1 = project(wx + w/2, wy - h/2);
+    const p2 = project(wx + w/2, wy + h/2);
+    const p3 = project(wx - w/2, wy + h/2);
+    const baseOff = baseElevation * TILE * 0.5;
+    const topOff = (baseElevation + height) * TILE * 0.5;
+    const base = [p0, p1, p2, p3].map(p => [p[0], p[1] - baseOff]);
+    const top = [p0, p1, p2, p3].map(p => [p[0], p[1] - topOff]);
+
+    ctx.beginPath();
+    ctx.moveTo(base[2][0], base[2][1]);
+    ctx.lineTo(base[3][0], base[3][1]);
+    ctx.lineTo(top[3][0], top[3][1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.closePath();
+    ctx.fillStyle = shade(color, dark ? -14 : -22);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(base[1][0], base[1][1]);
+    ctx.lineTo(base[2][0], base[2][1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.lineTo(top[1][0], top[1][1]);
+    ctx.closePath();
+    ctx.fillStyle = shade(color, dark ? -6 : -10);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(top[0][0], top[0][1]);
+    ctx.lineTo(top[1][0], top[1][1]);
+    ctx.lineTo(top[2][0], top[2][1]);
+    ctx.lineTo(top[3][0], top[3][1]);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  function drawSpeechBubble(wx, wy, text, dark) {
+    const [sx, sy] = project(wx, wy);
+    const topY = sy - 68;
+    ctx.font = '13px -apple-system, "PingFang TC", sans-serif';
+    const metrics = ctx.measureText(text);
+    const padX = 12, padY = 8;
+    const w = metrics.width + padX * 2, h = 22 + padY;
+    const left = sx - w / 2;
+    const r = 9;
+    ctx.beginPath();
+    ctx.moveTo(left + r, topY);
+    ctx.arcTo(left + w, topY, left + w, topY + h, r);
+    ctx.arcTo(left + w, topY + h, left, topY + h, r);
+    ctx.arcTo(left, topY + h, left, topY, r);
+    ctx.arcTo(left, topY, left + w, topY, r);
+    ctx.closePath();
+    ctx.moveTo(sx - 6, topY + h);
+    ctx.lineTo(sx, topY + h + 8);
+    ctx.lineTo(sx + 6, topY + h);
+    ctx.closePath();
+    ctx.fillStyle = dark ? '#17251f' : '#fffdf7';
+    ctx.fill();
+    ctx.strokeStyle = dark ? '#d8b876' : '#C9A15A';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = dark ? '#ece4d3' : '#1c2420';
+    ctx.textAlign = 'center';
+    ctx.fillText(text, sx, topY + h / 2 + 5);
+  }
+
+  function drawLabel(wx, wy, text, dark) {
+    const [sx, sy] = project(wx, wy);
+    ctx.font = '600 13px Georgia, serif';
+    ctx.textAlign = 'center';
+    const metrics = ctx.measureText(text);
+    const pad = 8;
+    ctx.fillStyle = dark ? 'rgba(23,37,31,0.85)' : 'rgba(255,253,247,0.9)';
+    ctx.fillRect(sx - metrics.width/2 - pad, sy - 34, metrics.width + pad*2, 20);
+    ctx.strokeStyle = dark ? '#d8b876' : '#C9A15A';
+    ctx.lineWidth = 1;
+    ctx.strokeRect(sx - metrics.width/2 - pad, sy - 34, metrics.width + pad*2, 20);
+    ctx.fillStyle = dark ? '#ece4d3' : '#1c2420';
+    ctx.fillText(text, sx, sy - 19.5);
+  }
+
+  function moveOne(p, dx, dy, dt) {
+    if (dx || dy) {
+      const len = Math.hypot(dx, dy);
+      dx /= len; dy /= len;
+      p.x += dx * p.speed * dt;
+      p.y += dy * p.speed * dt;
+      p.angle = Math.atan2(dy, dx);
+      p.x = Math.max(-30, Math.min(27, p.x));
+      p.y = Math.max(-30, Math.min(24, p.y));
+      p.bob = (p.bob || 0) + dt * 9;
+    } else {
+      p.bob = 0;
+    }
+  }
+
+  function nearestHotspot(p) {
+    let best = Infinity, target = null;
+    for (const h of hotspots) {
+      if (h.done) continue;
+      const d = Math.hypot(p.x - h.x, p.y - h.y);
+      if (d < h.r && d < best) { target = h; best = d; }
+    }
+    return target;
+  }
+
+  function update(dt) {
+    if (allDone) return;
+
+    let dx1 = touchDir.p1.x, dy1 = touchDir.p1.y;
+    if (keys['KeyW']) dy1 -= 1;
+    if (keys['KeyS']) dy1 += 1;
+    if (keys['KeyA']) dx1 -= 1;
+    if (keys['KeyD']) dx1 += 1;
+    moveOne(player1, dx1, dy1, dt);
+
+    let dx2 = touchDir.p2.x, dy2 = touchDir.p2.y;
+    if (keys['ArrowUp']) dy2 -= 1;
+    if (keys['ArrowDown']) dy2 += 1;
+    if (keys['ArrowLeft']) dx2 -= 1;
+    if (keys['ArrowRight']) dx2 += 1;
+    moveOne(player2, dx2, dy2, dt);
+
+    player1.target = nearestHotspot(player1);
+    player2.target = nearestHotspot(player2);
+
+    const active = player1.target || player2.target;
+    if (active) {
+      promptEl.style.display = 'block';
+      const who = player1.target ? '① ' : '② ';
+      promptText.textContent = who + active.label;
+      promptEl.querySelector('kbd').textContent = player1.target ? 'E' : '/';
+    } else {
+      promptEl.style.display = 'none';
+    }
+  }
+
+  function drawCompass(dark) {
+    cctx.clearRect(0, 0, 74, 74);
+    cctx.save();
+    cctx.translate(37, 37);
+    cctx.strokeStyle = dark ? '#d8b876' : '#C9A15A';
+    cctx.fillStyle = dark ? '#ece4d3' : '#1c2420';
+    cctx.font = '600 11px sans-serif';
+    cctx.textAlign = 'center';
+    cctx.beginPath(); cctx.arc(0, 0, 26, 0, Math.PI*2); cctx.lineWidth = 1.2; cctx.stroke();
+    const dirs = [['N',0,-32],['S',0,32],['E',32,0],['W',-32,0]];
+    dirs.forEach(([t,x,y]) => cctx.fillText(t, x, y + 4));
+    cctx.rotate(-player1.angle - Math.PI/4);
+    cctx.beginPath();
+    cctx.moveTo(0, -18); cctx.lineTo(6, 8); cctx.lineTo(0, 3); cctx.lineTo(-6, 8);
+    cctx.closePath();
+    cctx.fillStyle = dark ? '#e0776a' : '#B5493D';
+    cctx.fill();
+    cctx.restore();
+  }
+
+  function render() {
+    const dark = isDark();
+    const w = stage.clientWidth, h = stage.clientHeight;
+    ctx.clearRect(0, 0, w, h);
+
+    // backdrop wash
+    const grad = ctx.createLinearGradient(0, 0, 0, h);
+    if (dark) { grad.addColorStop(0, '#0e1c18'); grad.addColorStop(1, '#0B1F1B'); }
+    else { grad.addColorStop(0, '#f7f0dd'); grad.addColorStop(1, '#efe3c8'); }
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+
+    // corridor floor (big diamond connecting zones)
+    drawFloorRect({ x: -24, y: -24, w: 48, h: 48, color: corridorColor.light, dcolor: corridorColor.dark }, dark);
+
+    Object.values(zones).forEach(z => drawFloorRect(z, dark));
+
+    // props per zone
+    drawProp(-6, -3, 4, 1.4, 1.1, '#6d4c41', dark); // reception desk
+    drawLabel(-6, -3, '櫃檯', dark);
+
+    drawProp(-16, -16.5, 3.6, 3, 0.9, dark ? '#8a97a8' : '#ffffff', dark); // bed base
+    drawProp(-16, -17.2, 3.2, 1.6, 1.25, dark ? '#a8586a' : '#ff8fa3', dark); // blanket
+    drawLabel(-16, -16, '雙人床', dark);
+    drawProp(-19.5, -16, 2, 1.5, 0.8, dark ? '#3a4a52' : '#ffffff', dark); // bathtub
+    drawLabel(-19.5, -16, '大浴缸', dark);
+
+    drawProp(18, -16, 6.5, 6.5, 0.15, dark ? '#215a70' : '#3f9cc4', dark); // pool water
+    drawLabel(18, -16, '泳池', dark);
+    drawProp(14, -12, 1.6, 0.7, 0.5, '#ffffff', dark);
+    drawProp(22, -12, 1.6, 0.7, 0.5, '#ffffff', dark);
+
+    drawProp(-16, 16, 2.4, 1.6, 0.9, '#5d4037', dark); // dining table
+    drawProp(-16, 16, 2.6, 1.8, 1.0, '#fffdf7', dark);
+    drawLabel(-16, 15, '餐廳', dark);
+
+    // NPCs and both players, sorted by depth (y) for correct overlap
+    const actors = npcs.map(n => ({ x: n.x, y: n.y, angle: n.angle, palette: n.palette, bob: Math.PI / 2 }))
+      .concat(players.map(p => ({ x: p.x, y: p.y, angle: p.angle, palette: p.palette, bob: p.bob || 0 })));
+    actors.sort((a, b) => a.y - b.y).forEach(a => {
+      drawFigure(a.x, a.y, a.angle, a.palette, a.bob, dark);
+    });
+
+    // speech bubbles for NPCs near either player
+    npcs.forEach(n => {
+      const near = players.some(p => Math.hypot(p.x - n.x, p.y - n.y) < 4);
+      if (near) drawSpeechBubble(n.x, n.y, n.lines[0], dark);
+    });
+
+    // active hotspot rings
+    players.forEach(p => {
+      if (p.target) {
+        const [hx, hy] = project(p.target.x, p.target.y);
+        ctx.beginPath();
+        ctx.arc(hx, hy, 6, 0, Math.PI*2);
+        ctx.strokeStyle = dark ? '#d8b876' : '#C9A15A';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    });
+
+    drawCompass(dark);
+  }
+
+  let last = performance.now();
+  function loop(now) {
+    const dt = Math.min((now - last) / 1000, 0.05);
+    last = now;
+    update(dt);
+    updateCamera(dt);
+    render();
+    requestAnimationFrame(loop);
+  }
+  stage.focus();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
