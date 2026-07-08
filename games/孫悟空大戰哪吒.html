@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>孫悟空大戰哪吒</title>
+<style>
+  html,body{margin:0;padding:0;background:#1b1233;overflow:hidden;font-family:"Microsoft JhengHei",sans-serif;}
+  #game{position:relative;width:900px;height:500px;margin:20px auto;background:linear-gradient(#3a2a6d,#7a5ea8 70%,#2e5c3e);border:4px solid #ffcf4d;border-radius:8px;overflow:hidden;box-shadow:0 0 30px #000;}
+  .cloud{position:absolute;width:120px;height:40px;background:rgba(255,255,255,.5);border-radius:50px;filter:blur(2px);}
+  #ground{position:absolute;bottom:0;left:0;width:100%;height:60px;background:#2e5c3e;border-top:4px solid #1e3d28;}
+  .fighter{position:absolute;bottom:60px;width:70px;height:130px;transition:transform .1s;}
+  .body{position:absolute;bottom:0;left:10px;width:50px;height:90px;border-radius:10px 10px 4px 4px;}
+  .head{position:absolute;top:-10px;left:20px;width:32px;height:32px;border-radius:50%;}
+  .weapon{position:absolute;top:20px;height:8px;background:#e0d090;border-radius:4px;}
+  #wukong .body{background:#c94c2c;}
+  #wukong .head{background:#e8a45c;}
+  #wukong .weapon{left:60px;width:70px;background:#ffe08a;box-shadow:0 0 8px #ffcf4d;}
+  #nezha .body{background:#2a7fbf;}
+  #nezha .head{background:#f4c9a1;}
+  #nezha .weapon{right:60px;width:70px;background:#ff5a5a;box-shadow:0 0 8px #ff9a9a;}
+  #nezha{transform:scaleX(-1);}
+  .hit{filter:brightness(2) drop-shadow(0 0 10px #fff);}
+  .hurt{animation:shake .3s;}
+  @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+  #ui{width:900px;margin:0 auto;display:flex;justify-content:space-between;color:#fff;font-size:14px;}
+  .barWrap{width:380px;}
+  .name{font-weight:bold;margin-bottom:2px;}
+  .bar{height:18px;background:#333;border:2px solid #fff;border-radius:4px;overflow:hidden;}
+  .fill{height:100%;transition:width .2s;}
+  #wukongFill{background:linear-gradient(#ffcf4d,#c94c2c);width:100%;}
+  #nezhaFill{background:linear-gradient(#7ad1ff,#2a7fbf);width:100%;margin-left:auto;}
+  #msg{text-align:center;color:#fff;font-size:28px;height:40px;}
+  #restart{display:block;margin:10px auto;padding:8px 20px;font-size:16px;cursor:pointer;border-radius:6px;border:none;background:#ffcf4d;visibility:hidden;}
+  #hint{text-align:center;color:#cfc0ff;font-size:13px;}
+  .fx{position:absolute;bottom:110px;width:40px;height:40px;border-radius:50%;background:radial-gradient(circle,#fff,#ffcf4d 60%,transparent 70%);pointer-events:none;animation:pop .3s forwards;}
+  @keyframes pop{0%{transform:scale(.3);opacity:1}100%{transform:scale(2);opacity:0}}
+</style>
+</head>
+<body>
+<div id="ui">
+  <div class="barWrap"><div class="name">🐵 孫悟空 (P1)</div><div class="bar"><div id="wukongFill" class="fill"></div></div></div>
+  <div class="barWrap"><div class="name" style="text-align:right;">哪吒 (P2) 🔥</div><div class="bar"><div id="nezhaFill" class="fill"></div></div></div>
+</div>
+<div id="msg"></div>
+<div id="game">
+  <div class="cloud" style="top:20px;left:40px;"></div>
+  <div class="cloud" style="top:60px;left:400px;width:160px;"></div>
+  <div class="cloud" style="top:30px;left:700px;"></div>
+  <div id="ground"></div>
+  <div class="fighter" id="wukong" style="left:120px;"><div class="head"></div><div class="body"></div><div class="weapon"></div></div>
+  <div class="fighter" id="nezha" style="left:710px;"><div class="head"></div><div class="body"></div><div class="weapon"></div></div>
+</div>
+<button id="restart">重新開始</button>
+<div id="hint">P1（孫悟空）：A/D 移動、W 跳、F 攻擊　|　P2（哪吒）：←/→ 移動、↑ 跳、K 攻擊</div>
+
+<script>
+const game = document.getElementById('game');
+const GAME_W = 900, FLOOR_LEFT = 0, FLOOR_RIGHT = 900 - 70;
+
+function makeFighter(el, opts){
+  return {
+    el, x: opts.x, vy:0, jumping:false, hp:100, attacking:false, facing:opts.facing,
+    fillEl: document.getElementById(opts.fillId),
+    attackRange: 90, attackCooldown:0
+  };
+}
+
+const wukong = makeFighter(document.getElementById('wukong'), {x:120, facing:1, fillId:'wukongFill'});
+const nezha  = makeFighter(document.getElementById('nezha'),  {x:710, facing:-1, fillId:'nezhaFill'});
+
+const keys = {};
+window.addEventListener('keydown', e=>{ keys[e.code]=true; });
+window.addEventListener('keyup', e=>{ keys[e.code]=false; });
+
+let gameOver = false;
+
+function spawnFx(x){
+  const fx = document.createElement('div');
+  fx.className='fx';
+  fx.style.left = x+'px';
+  game.appendChild(fx);
+  setTimeout(()=>fx.remove(), 300);
+}
+
+function tryAttack(attacker, defender){
+  if (attacker.attackCooldown > 0) return;
+  attacker.attackCooldown = 25;
+  attacker.attacking = true;
+  attacker.el.classList.add('hit');
+  setTimeout(()=>{ attacker.attacking=false; attacker.el.classList.remove('hit'); }, 150);
+
+  const dist = Math.abs((attacker.x+35) - (defender.x+35));
+  if (dist < attacker.attackRange){
+    defender.hp = Math.max(0, defender.hp - 8);
+    defender.el.classList.add('hurt');
+    setTimeout(()=>defender.el.classList.remove('hurt'), 300);
+    spawnFx((attacker.x+defender.x)/2 + 15);
+    updateBars();
+    checkEnd();
+  }
+}
+
+function updateBars(){
+  wukong.fillEl.style.width = wukong.hp+'%';
+  nezha.fillEl.style.width = nezha.hp+'%';
+}
+
+function checkEnd(){
+  if (gameOver) return;
+  if (wukong.hp <= 0 || nezha.hp <= 0){
+    gameOver = true;
+    const msg = document.getElementById('msg');
+    if (wukong.hp <= 0 && nezha.hp <= 0) msg.textContent = '平手！';
+    else if (wukong.hp <= 0) msg.textContent = '哪吒 獲勝！';
+    else msg.textContent = '孫悟空 獲勝！';
+    document.getElementById('restart').style.visibility = 'visible';
+  }
+}
+
+function resetGame(){
+  wukong.hp = 100; nezha.hp = 100;
+  wukong.x = 120; nezha.x = 710;
+  wukong.vy = 0; nezha.vy = 0;
+  gameOver = false;
+  document.getElementById('msg').textContent = '';
+  document.getElementById('restart').style.visibility = 'hidden';
+  updateBars();
+}
+document.getElementById('restart').addEventListener('click', resetGame);
+
+const GRAVITY = 1.2, JUMP_V = -16, SPEED = 5;
+
+function physics(f){
+  if (f.jumping){
+    f.vy += GRAVITY;
+    f.el.style.bottom = (60 - (f.groundY||0)) + 'px';
+  }
+}
+
+function update(){
+  if (!gameOver){
+    // Wukong controls: A/D/W/F
+    if (keys['KeyA']) wukong.x = Math.max(FLOOR_LEFT, wukong.x - SPEED);
+    if (keys['KeyD']) wukong.x = Math.min(FLOOR_RIGHT, wukong.x + SPEED);
+    if (keys['KeyW'] && !wukong.jumping){ wukong.jumping = true; wukong.jumpY = 0; wukong.vy = JUMP_V; }
+    if (keys['KeyF']) tryAttack(wukong, nezha);
+
+    // Nezha controls: arrows/K
+    if (keys['ArrowLeft']) nezha.x = Math.max(FLOOR_LEFT, nezha.x - SPEED);
+    if (keys['ArrowRight']) nezha.x = Math.min(FLOOR_RIGHT, nezha.x + SPEED);
+    if (keys['ArrowUp'] && !nezha.jumping){ nezha.jumping = true; nezha.jumpY = 0; nezha.vy = JUMP_V; }
+    if (keys['KeyK']) tryAttack(nezha, wukong);
+
+    [wukong, nezha].forEach(f=>{
+      if (f.attackCooldown > 0) f.attackCooldown--;
+      if (f.jumping){
+        f.jumpY += f.vy;
+        f.vy += GRAVITY;
+        if (f.jumpY >= 0){ f.jumpY = 0; f.jumping = false; f.vy = 0; }
+      }
+      f.el.style.left = f.x + 'px';
+      f.el.style.bottom = (60 - f.jumpY) + 'px';
+      f.el.style.transform = f.facing < 0 ? 'scaleX(-1)' : 'scaleX(1)';
+    });
+
+    // face each other
+    wukong.facing = wukong.x < nezha.x ? 1 : -1;
+    nezha.facing = nezha.x < wukong.x ? 1 : -1;
+  }
+  requestAnimationFrame(update);
+}
+
+updateBars();
+update();
+</script>
+</body>
+</html>
