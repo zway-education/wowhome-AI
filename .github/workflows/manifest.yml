@@ -1,4 +1,4 @@
-name: Update gallery manifest
+name: Update gallery manifest and thumbnails
 
 on:
   push:
@@ -36,13 +36,36 @@ jobs:
               json.dump(manifest, fh, ensure_ascii=False, indent=1)
           EOF
 
-      - name: Commit manifest
+      - name: Generate missing thumbnails
+        run: |
+          mkdir -p thumbs/games thumbs/videos
+          shopt -s nullglob
+          for f in games/*.html videos/*.html; do
+            dir=$(dirname "$f")
+            base=$(basename "$f")
+            base="${base%.*}"
+            out="thumbs/$dir/$base.png"
+            if [ ! -f "$out" ]; then
+              echo "截圖: $f"
+              google-chrome --headless=new --disable-gpu --no-sandbox --hide-scrollbars \
+                --window-size=800,500 --virtual-time-budget=6000 \
+                --screenshot="$out" "file://$PWD/$f" || echo "截圖失敗: $f"
+            fi
+          done
+          # 清掉已刪除作品的縮圖
+          for t in thumbs/games/*.png thumbs/videos/*.png; do
+            dir=$(basename "$(dirname "$t")")
+            base=$(basename "$t" .png)
+            [ -f "$dir/$base.html" ] || rm -f "$t"
+          done
+
+      - name: Commit updates
         run: |
           git config user.name "gallery-bot"
           git config user.email "actions@users.noreply.github.com"
-          git add manifest.json
+          git add manifest.json thumbs
           if ! git diff --cached --quiet; then
-            git commit -m "更新作品清單 manifest.json [skip ci]"
+            git commit -m "更新作品清單與縮圖 [skip ci]"
             for i in 1 2 3 4; do
               git push && break
               git pull --rebase origin main
