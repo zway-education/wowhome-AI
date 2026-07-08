@@ -33,6 +33,11 @@
     color: #ddd; font-size: 15px; background: rgba(0,0,0,.5); padding: 6px 14px;
     border: 1px solid #555; display: none; z-index: 6;
   }
+  #exitHint {
+    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+    color: #e8c840; font-size: 15px; background: rgba(0,0,0,.5); padding: 6px 14px;
+    border: 1px solid #e8c840; display: none; z-index: 6;
+  }
   #jumpscare {
     position: fixed; top:0; left:0; width:100%; height:100%; z-index: 30;
     background: #000; display: none; align-items: center; justify-content: center;
@@ -60,7 +65,7 @@
   <h1>暗&nbsp;途</h1>
   <p>你在一栋废弃的疗养院中醒来。手电筒是你唯一的光源，也是唯一暴露你的东西。<br>
   黑暗中似乎有什么东西在盯着你——只有当光照到它们时，你才能看见。<br>
-  找到 <b style="color:#eee">3 把钥匙</b> 逃出这里，你的选择将决定你的命运。<br><br>
+  找到 <b style="color:#eee">3 把钥匙</b>，再抵达绿色的出口逃出这里。它能听见你的脚步，也能在黑暗中看见你——你的选择将决定你的命运。<br><br>
   WASD / 方向键 移动　　鼠标 控制手电筒方向　　E 互动/继续对话</p>
   <button id="startBtn">开始游戏</button>
 </div>
@@ -71,6 +76,7 @@
   <div class="row">钥匙: <span id="keyCount">0</span> / 3</div>
 </div>
 <div id="interactHint">按 E 互动</div>
+<div id="exitHint">钥匙已集齐——找到出口逃离这里</div>
 <div id="jumpscare"><span>!!</span></div>
 
 <div id="storyBox">
@@ -87,6 +93,7 @@
   const keyCountEl = document.getElementById('keyCount');
   const jumpscareEl = document.getElementById('jumpscare');
   const interactHint = document.getElementById('interactHint');
+  const exitHintEl = document.getElementById('exitHint');
   const storyBox = document.getElementById('storyBox');
   const storyText = document.getElementById('storyText');
   const storyChoices = document.getElementById('storyChoices');
@@ -285,7 +292,7 @@
 
   // ----- World -----
   const TILE = 48;
-  const MAP_W = 25, MAP_H = 18;
+  const MAP_W = 34, MAP_H = 24;
   let map = [];
   function generateMap() {
     map = [];
@@ -301,6 +308,7 @@
       map.push(row);
     }
     map[1][1] = 0; map[1][2] = 0; map[2][1] = 0;
+    map[MAP_H - 2][MAP_W - 2] = 0; // exit door tile, always reachable
   }
 
   function isWall(tx, ty) {
@@ -309,6 +317,21 @@
   }
   function tileWalkable(tx, ty) { return !isWall(tx, ty); }
   function dist(ax, ay, bx, by) { return Math.hypot(ax - bx, ay - by); }
+
+  function hasLineOfSight(x1, y1, x2, y2) {
+    const d = dist(x1, y1, x2, y2);
+    const steps = Math.max(1, Math.ceil(d / 16));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      const x = x1 + (x2 - x1) * t, y = y1 + (y2 - y1) * t;
+      if (isWall(Math.floor(x / TILE), Math.floor(y / TILE))) return false;
+    }
+    return true;
+  }
+
+  // ----- Exit (reachable only once all keys are collected) -----
+  const exitTile = { tx: MAP_W - 2, ty: MAP_H - 2 };
+  function exitWorldPos() { return { x: exitTile.tx * TILE + TILE / 2, y: exitTile.ty * TILE + TILE / 2 }; }
 
   // ----- Player -----
   const player = { x: TILE * 1.5, y: TILE * 1.5, r: 12, speed: 2.6, angle: 0 };
@@ -376,6 +399,15 @@
           { label: '转身离开', flag: 'left_mirror' },
         ],
       },
+      {
+        id: 'diary', done: false,
+        tx: MAP_W - 8, ty: MAP_H - 6,
+        text: '一本沾着暗红污渍的日记摊开在地上，最后一页写着："它曾经也是这里的病人。手电筒的光，就是它唯一记得的东西。"',
+        choices: [
+          { label: '带走日记，留作证据', flag: 'kept_diary' },
+          { label: '把日记烧掉，假装什么都没看到', flag: 'burned_diary' },
+        ],
+      },
     ];
   }
 
@@ -415,9 +447,9 @@
 
   // ----- Monster (main chaser) -----
   const monster = {
-    x: TILE * (MAP_W - 2), y: TILE * (MAP_H - 2),
+    x: TILE * Math.floor(MAP_W / 2), y: TILE * Math.floor(MAP_H / 2),
     speed: 1.5, wanderSpeed: 1, active: false,
-    waypoint: null,
+    waypoint: null, facing: 0,
   };
 
   function pickWanderWaypoint() {
@@ -479,16 +511,19 @@
 
   let gameOver = false;
   let win = false;
+  let exitReached = false;
+  let keysCompleteAnnounced = false;
   let lastTime = performance.now();
+  let playerIsMoving = false;
 
   function updatePlayer(dt) {
-    if (storyActive) { Audio_.tickFootsteps(dt, false); return; }
+    if (storyActive) { Audio_.tickFootsteps(dt, false); playerIsMoving = false; return; }
     let dx = 0, dy = 0;
     if (keys['w'] || keys['arrowup']) dy -= 1;
     if (keys['s'] || keys['arrowdown']) dy += 1;
     if (keys['a'] || keys['arrowleft']) dx -= 1;
     if (keys['d'] || keys['arrowright']) dx += 1;
-    const isMoving = dx !== 0 || dy !== 0;
+    playerIsMoving = dx !== 0 || dy !== 0;
     const len = Math.hypot(dx, dy) || 1;
     dx = (dx / len) * player.speed;
     dy = (dy / len) * player.speed;
@@ -498,7 +533,7 @@
     if (!isWall(Math.floor(player.x / TILE), Math.floor(ny / TILE))) player.y = ny;
 
     player.angle = Math.atan2((mouseY - canvas.height/2), (mouseX - canvas.width/2));
-    Audio_.tickFootsteps(dt, isMoving);
+    Audio_.tickFootsteps(dt, playerIsMoving);
   }
 
   function updateItems() {
@@ -509,8 +544,21 @@
         keysCollected++;
         keyCountEl.textContent = keysCollected;
         Audio_.playKeyPickup();
-        if (keysCollected >= 3) { win = true; }
+        if (keysCollected >= 3 && !keysCompleteAnnounced) {
+          keysCompleteAnnounced = true;
+          exitHintEl.style.display = 'block';
+        }
       }
+    }
+  }
+
+  function updateExit() {
+    if (storyActive || win) return;
+    if (keysCollected < 3) return;
+    const p = exitWorldPos();
+    if (dist(player.x, player.y, p.x, p.y) < 28) {
+      exitReached = true;
+      win = true;
     }
   }
 
@@ -528,9 +576,24 @@
   function updateMonster() {
     if (storyActive) return;
     const d = dist(player.x, player.y, monster.x, monster.y);
-    if (d < 320) monster.active = true;
-    else if (d > 480) monster.active = false; // loses the scent once you're far enough away
+    const los = hasLineOfSight(monster.x, monster.y, player.x, player.y);
 
+    if (los) {
+      // hearing: footsteps carry further than silence
+      const hearingRadius = playerIsMoving ? 260 : 120;
+      if (d < hearingRadius) {
+        monster.active = true;
+      } else if (d < 420) {
+        // vision cone: only spots the player if facing roughly their way
+        const angToPlayer = Math.atan2(player.y - monster.y, player.x - monster.x);
+        let diff = Math.abs(angToPlayer - monster.facing);
+        if (diff > Math.PI) diff = Math.PI * 2 - diff;
+        if (diff < 0.7) monster.active = true;
+      }
+    }
+    if (d > 550) monster.active = false; // loses the scent once you're far enough away
+
+    const prevX = monster.x, prevY = monster.y;
     if (monster.active) {
       moveEntityTowards(monster, player.x, player.y, monster.speed);
       monster.waypoint = null;
@@ -539,6 +602,9 @@
         monster.waypoint = pickWanderWaypoint();
       }
       if (monster.waypoint) moveEntityTowards(monster, monster.waypoint.x, monster.waypoint.y, monster.wanderSpeed);
+    }
+    if (monster.x !== prevX || monster.y !== prevY) {
+      monster.facing = Math.atan2(monster.y - prevY, monster.x - prevX);
     }
     Audio_.setHeartbeat(monster.active);
     if (d < 22 && !gameOver) triggerJumpscare('monster');
@@ -557,6 +623,12 @@
   function computeEndingText() {
     if (storyFlags.broke_mirror && storyFlags.reckless) {
       return { title: '你 迷 失 了', body: '你打碎了镜子，也打碎了自己的理智。你依然在走廊里游荡，但已经不再是"你"了。', color: '#b33' };
+    }
+    if (storyFlags.kept_diary && storyFlags.cautious && storyFlags.left_mirror) {
+      return { title: '真 相 大 白', body: '你带着日记逃了出去，把疗养院的秘密公之于众。它的名字，终于被人记住了——不是作为怪物，而是作为受害者。', color: '#8ff' };
+    }
+    if (storyFlags.burned_diary && storyFlags.reckless) {
+      return { title: '你 活 着 逃 了 出 来 ， 但 …', body: '你烧掉了证据，也烧掉了真相。你活了下来，但那张脸会在你每次开灯的瞬间出现。', color: '#dd8' };
     }
     if (storyFlags.cautious && storyFlags.path_left && storyFlags.left_mirror) {
       return { title: '你 逃 出 去 了', body: '你听从了那张字条的警告，谨慎地穿过黑暗，最终推开了大门。晨光刺眼，但你活了下来。', color: '#8f8' };
@@ -591,9 +663,13 @@
     keyCountEl.textContent = 0;
     glimpses = []; glimpseTimer = 3000;
     player.x = TILE * 1.5; player.y = TILE * 1.5;
-    monster.x = TILE * (MAP_W - 2); monster.y = TILE * (MAP_H - 2);
+    monster.x = TILE * Math.floor(MAP_W / 2); monster.y = TILE * Math.floor(MAP_H / 2);
     monster.active = false;
     monster.waypoint = null;
+    monster.facing = 0;
+    exitReached = false;
+    keysCompleteAnnounced = false;
+    exitHintEl.style.display = 'none';
     gameOver = false; win = false; storyActive = false;
     storyBox.style.display = 'none';
     overlay.classList.add('hidden');
@@ -621,6 +697,16 @@
         ctx.strokeStyle = '#050505';
         ctx.strokeRect(x * TILE, y * TILE, TILE, TILE);
       }
+    }
+
+    // exit door
+    {
+      const ep = exitWorldPos();
+      ctx.fillStyle = keysCollected >= 3 ? '#3fae3f' : '#3a2a1a';
+      ctx.fillRect(ep.x - TILE/2, ep.y - TILE/2, TILE, TILE);
+      ctx.strokeStyle = keysCollected >= 3 ? '#9fff9f' : '#5a4a3a';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(ep.x - TILE/2, ep.y - TILE/2, TILE, TILE);
     }
 
     // story node markers (faint)
@@ -731,6 +817,7 @@
     lastTime = now;
     updatePlayer(dt);
     updateItems();
+    updateExit();
     updateStoryProximity();
     updateMonster();
     updateGlimpses(dt);
