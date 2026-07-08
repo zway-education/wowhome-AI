@@ -69,10 +69,42 @@
     0%, 40%, 100% { opacity: 0.85; }
     42%, 44% { opacity: 0.2; }
   }
+
+  #ghost-anim, #mummy-anim { cursor: pointer; }
+
+  .sound-toggle {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    z-index: 2;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.25);
+    background: rgba(20,14,36,0.6);
+    color: #f3e28a;
+    font-size: 13px;
+    cursor: pointer;
+    backdrop-filter: blur(4px);
+  }
+  .sound-toggle:hover {
+    background: rgba(20,14,36,0.85);
+  }
+  .hint {
+    position: absolute;
+    bottom: 12px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    color: rgba(255,255,255,0.55);
+    font-size: 12px;
+    pointer-events: none;
+  }
 </style>
 </head>
 <body>
 <div class="stage">
+<button class="sound-toggle" id="soundToggle">🔈 开启音效</button>
+<div class="hint">点击鬼或木乃伊听声音</div>
 <svg viewBox="0 0 800 500" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
@@ -163,5 +195,121 @@
   </g>
 </svg>
 </div>
+<script>
+(function () {
+  let ctx = null;
+  let ambientNodes = null;
+  let soundOn = false;
+  const toggleBtn = document.getElementById('soundToggle');
+
+  function ensureCtx() {
+    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+    return ctx;
+  }
+
+  // filtered noise loop for a spooky wind ambience
+  function startAmbientWind() {
+    const ac = ensureCtx();
+    const bufferSize = 2 * ac.sampleRate;
+    const buffer = ac.createBuffer(1, bufferSize, ac.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+    const noise = ac.createBufferSource();
+    noise.buffer = buffer;
+    noise.loop = true;
+
+    const filter = ac.createBiquadFilter();
+    filter.type = 'bandpass';
+    filter.frequency.value = 400;
+    filter.Q.value = 0.6;
+
+    const lfo = ac.createOscillator();
+    lfo.frequency.value = 0.07;
+    const lfoGain = ac.createGain();
+    lfoGain.gain.value = 250;
+    lfo.connect(lfoGain);
+    lfoGain.connect(filter.frequency);
+    lfo.start();
+
+    const gain = ac.createGain();
+    gain.gain.value = 0.05;
+
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ac.destination);
+    noise.start();
+
+    ambientNodes = { noise, lfo, gain };
+  }
+
+  function stopAmbientWind() {
+    if (!ambientNodes) return;
+    ambientNodes.noise.stop();
+    ambientNodes.lfo.stop();
+    ambientNodes = null;
+  }
+
+  // rising/falling sine "moan" for the ghost
+  function playGhostMoan() {
+    if (!soundOn) return;
+    const ac = ensureCtx();
+    const now = ac.currentTime;
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    const gain = ac.createGain();
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.linearRampToValueAtTime(340, now + 0.6);
+    osc.frequency.linearRampToValueAtTime(180, now + 1.4);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.22, now + 0.15);
+    gain.gain.linearRampToValueAtTime(0, now + 1.4);
+    osc.connect(gain);
+    gain.connect(ac.destination);
+    osc.start(now);
+    osc.stop(now + 1.4);
+  }
+
+  // low growling sawtooth "groan" for the mummy
+  function playMummyGroan() {
+    if (!soundOn) return;
+    const ac = ensureCtx();
+    const now = ac.currentTime;
+    const osc = ac.createOscillator();
+    osc.type = 'sawtooth';
+    const filter = ac.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(300, now);
+    filter.frequency.linearRampToValueAtTime(120, now + 0.9);
+    const gain = ac.createGain();
+    osc.frequency.setValueAtTime(90, now);
+    osc.frequency.linearRampToValueAtTime(70, now + 0.9);
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.2, now + 0.1);
+    gain.gain.linearRampToValueAtTime(0, now + 0.9);
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ac.destination);
+    osc.start(now);
+    osc.stop(now + 0.9);
+  }
+
+  toggleBtn.addEventListener('click', function () {
+    soundOn = !soundOn;
+    ensureCtx();
+    if (ctx.state === 'suspended') ctx.resume();
+    if (soundOn) {
+      startAmbientWind();
+      toggleBtn.textContent = '🔊 音效开启';
+    } else {
+      stopAmbientWind();
+      toggleBtn.textContent = '🔈 开启音效';
+    }
+  });
+
+  document.getElementById('ghost-anim').addEventListener('click', playGhostMoan);
+  document.getElementById('mummy-anim').addEventListener('click', playMummyGroan);
+})();
+</script>
 </body>
 </html>
