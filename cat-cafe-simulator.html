@@ -416,8 +416,10 @@
     logs: [],
     running: true,
     rushUntil: 0, // game-minutes timestamp when rush hour ends
+    spawnTimerMs: 20000,
   };
 
+  const TICK_MS = 1000;
   const cafeArea = document.getElementById('cafeArea');
   const logBox = document.getElementById('logBox');
 
@@ -591,10 +593,20 @@
     return CUSTOMER_TYPES[0];
   }
 
+  // 來客間隔：平常最長20秒一位，尖峰/高聲望/員工加成後最快2秒一位
+  function computeSpawnIntervalMs(){
+    let interval = 20000;
+    interval -= state.rep * 120;
+    interval -= state.upgrades.deco * 800;
+    interval -= state.decos.length * 500;
+    if(state.staff.some(s=>s.key==='greeter')) interval -= 3000;
+    if(isRushHour()) interval *= 0.25;
+    return Math.max(2000, Math.min(20000, interval));
+  }
+
   function trySpawnCustomer(){
     const freeTables = state.tables.filter(t=>!t.occupied);
     if(freeTables.length===0) return;
-    if(Math.random() > spawnChance()) return;
     const table = freeTables[Math.floor(Math.random()*freeTables.length)];
     const ctype = pickCustomerType();
     const orderCount = ctype.orderCountRange[0] + Math.floor(Math.random()*(ctype.orderCountRange[1]-ctype.orderCountRange[0]+1));
@@ -618,15 +630,6 @@
     };
     renderTables();
     updateStats();
-  }
-
-  function spawnChance(){
-    // more reputation => higher spawn chance, capped
-    let chance = 0.08 + state.rep*0.002 + state.upgrades.deco*0.01;
-    chance += state.decos.length * 0.004;
-    if(state.staff.some(s=>s.key==='greeter')) chance += 0.08;
-    if(isRushHour()) chance *= 2;
-    return Math.min(chance, 0.7);
   }
 
   function isRushHour(){
@@ -897,7 +900,11 @@
     tickCustomerPatience();
     maybeTriggerRushHour();
     if(!isRushHour()) showRushBanner(false);
-    trySpawnCustomer();
+    state.spawnTimerMs -= TICK_MS;
+    if(state.spawnTimerMs <= 0){
+      trySpawnCustomer();
+      state.spawnTimerMs = computeSpawnIntervalMs();
+    }
     autoServeByStaff();
     moveCatsRandomly();
     moveStaffRandomly();
@@ -925,6 +932,7 @@
     state.minute = 0;
     state.tables.forEach(t=>{t.occupied=false; t.customer=null;});
     state.rushUntil = 0;
+    state.spawnTimerMs = 20000;
     showRushBanner(false);
     state.running = true;
     renderTables();
@@ -942,7 +950,7 @@
     renderCatList();
     updateStats();
     log('🏪 咖啡廳開張了！招募貓咪並開始經營吧～');
-    setInterval(gameTick, 1500);
+    setInterval(gameTick, TICK_MS);
   }
 
   init();
