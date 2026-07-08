@@ -136,7 +136,7 @@
 
 <div id="start-screen">
   <h1>⛏️ 方塊生存世界</h1>
-  <p>歡迎來到麥塊風格的生存世界！挖礦、砍樹、蓋房子，開跑車兜風，小心殭屍與龍捲風。選擇模式後點擊按鈕開始，並點擊畫面以鎖定滑鼠視角。</p>
+  <p>歡迎來到麥塊風格的生存世界！挖礦、砍樹、蓋房子，開跑車兜風，探索有村民居住的城鎮，小心殭屍與龍捲風。選擇模式後點擊按鈕開始，並點擊畫面以鎖定滑鼠視角。</p>
   <div id="mode-select">
     <button id="mode-survival" class="mode-btn">⚔️ 生存模式<small>血量/飢餓・需要採集資源</small></button>
     <button id="mode-creative" class="mode-btn">🛠️ 創造模式<small>飛行・無限方塊・無傷害</small></button>
@@ -419,6 +419,16 @@ function surfaceY(x,z){
   return 10;
 }
 
+const WORLD_EDGE = OFFSET - 2;
+function isOutOfWorldBounds(x,y,z){
+  return Math.abs(x) > WORLD_EDGE || Math.abs(z) > WORLD_EDGE || y < -8 || y > WORLD_HEIGHT + 80;
+}
+function respawnAtSpawn(msg){
+  player.pos.set(0, findSpawnHeight(0,0), 0);
+  player.vel.set(0,0,0);
+  if (msg) logMsg(msg);
+}
+
 /* ============================== 輸入處理 ============================== */
 const keys = {};
 let mouseLocked = false;
@@ -678,8 +688,9 @@ function updatePlayer(dt){
     player.vel.y = 0;
   }
 
-  if (player.pos.y < -5){
-    damagePlayer(20, '掉出世界');
+  if (isOutOfWorldBounds(player.pos.x, player.pos.y, player.pos.z)){
+    respawnAtSpawn('超出世界範圍，已重生');
+    return;
   }
 
   camera.position.set(player.pos.x, player.pos.y + player.height, player.pos.z);
@@ -953,6 +964,15 @@ function updateCarPlayerControl(dt){
   car.group.position.y = surfaceY(car.group.position.x, car.group.position.z);
   car.group.rotation.y = car.angle;
 
+  if (isOutOfWorldBounds(car.group.position.x, car.group.position.y, car.group.position.z)){
+    car.mode = 'npc';
+    car.speed = 0;
+    car.group.position.set(carStart.x, surfaceY(carStart.x, carStart.z), carStart.z);
+    pickNewCarTarget();
+    respawnAtSpawn('超出世界範圍，已重生');
+    return;
+  }
+
   player.pos.copy(car.group.position);
 
   // 第三人稱跟隨鏡頭
@@ -1105,6 +1125,139 @@ function updateTornado(dt){
   }
 }
 
+/* ============================== 村民大城市 ============================== */
+const VILLAGE_CENTER = { x: 32, z: 32 };
+const VILLAGE_RADIUS = 20;
+
+function buildHouse(cx, cz, w, d, h){
+  const baseY = surfaceY(cx, cz);
+  const x0 = cx - Math.floor(w/2), z0 = cz - Math.floor(d/2);
+  // 地基整平
+  for (let x=x0-1; x<=x0+w; x++){
+    for (let z=z0-1; z<=z0+d; z++){
+      const gy = surfaceY(x,z);
+      for (let y=gy; y<baseY; y++) setBlock(x,y,z, BLOCK.DIRT);
+      for (let y=baseY; y<gy; y++) setBlock(x,y,z, BLOCK.AIR);
+    }
+  }
+  // 牆壁
+  for (let x=x0; x<x0+w; x++){
+    for (let z=z0; z<z0+d; z++){
+      const edge = (x===x0 || x===x0+w-1 || z===z0 || z===z0+d-1);
+      for (let y=baseY; y<baseY+h; y++){
+        if (edge) setBlock(x,y,z, BLOCK.PLANK);
+        else setBlock(x,y,z, BLOCK.AIR);
+      }
+    }
+  }
+  // 屋頂 (金字塔狀漸縮)
+  let rx0=x0-1, rz0=z0-1, rw=w+2, rd=d+2;
+  for (let layer=0; layer<Math.max(2, Math.floor(Math.min(w,d)/2)); layer++){
+    for (let x=rx0; x<rx0+rw; x++){
+      for (let z=rz0; z<rz0+rd; z++){
+        const edge = (x===rx0 || x===rx0+rw-1 || z===rz0 || z===rz0+rd-1);
+        if (edge) setBlock(x, baseY+h+layer, z, BLOCK.WOOD);
+      }
+    }
+    rx0++; rz0++; rw-=2; rd-=2;
+    if (rw < 1 || rd < 1) break;
+  }
+  // 門口 (面向 +z)
+  setBlock(cx, baseY, z0+d-1, BLOCK.AIR);
+  setBlock(cx, baseY+1, z0+d-1, BLOCK.AIR);
+  return { x: cx, y: baseY, z: cz };
+}
+
+const villageHouses = [];
+function generateVillage(){
+  const layout = [
+    [-16,-16,5,5,3],[0,-18,6,5,3],[16,-16,5,5,3],
+    [-18,0,5,6,4],[18,0,5,6,3],
+    [-16,16,5,5,3],[0,18,6,5,4],[16,16,5,5,3],
+  ];
+  layout.forEach(([dx,dz,w,d,h]) => {
+    const cx = VILLAGE_CENTER.x + dx, cz = VILLAGE_CENTER.z + dz;
+    villageHouses.push(buildHouse(cx, cz, w, d, h));
+  });
+  // 中央廣場鋪石
+  for (let x=VILLAGE_CENTER.x-6; x<=VILLAGE_CENTER.x+6; x++){
+    for (let z=VILLAGE_CENTER.z-6; z<=VILLAGE_CENTER.z+6; z++){
+      const gy = surfaceY(x,z);
+      setBlock(x, gy-1, z, BLOCK.STONE);
+    }
+  }
+}
+
+function createVillagerMesh(){
+  const group = new THREE.Group();
+  const robeColor = [0x8d6e63,0x6d4c41,0x795548,0xa1887f][Math.floor(Math.random()*4)];
+  const torso = new THREE.Mesh(
+    new THREE.BoxGeometry(0.45, 0.75, 0.3),
+    new THREE.MeshLambertMaterial({ color: robeColor })
+  );
+  torso.position.y = 1.05;
+  group.add(torso);
+  const head = new THREE.Mesh(
+    new THREE.BoxGeometry(0.32, 0.32, 0.32),
+    new THREE.MeshLambertMaterial({ color: 0xe0ac69 })
+  );
+  head.position.y = 1.6;
+  group.add(head);
+  const hat = new THREE.Mesh(
+    new THREE.BoxGeometry(0.36, 0.12, 0.36),
+    new THREE.MeshLambertMaterial({ color: 0x4e342e })
+  );
+  hat.position.y = 1.8;
+  group.add(hat);
+  return group;
+}
+
+const villagers = [];
+function spawnVillagers(count){
+  for (let i=0;i<count;i++){
+    const mesh = createVillagerMesh();
+    const ang = Math.random()*Math.PI*2, r = Math.random()*VILLAGE_RADIUS*0.7;
+    const x = VILLAGE_CENTER.x + Math.cos(ang)*r, z = VILLAGE_CENTER.z + Math.sin(ang)*r;
+    mesh.position.set(x, surfaceY(x,z), z);
+    scene.add(mesh);
+    villagers.push({
+      mesh,
+      angle: Math.random()*Math.PI*2,
+      target: new THREE.Vector3(x,0,z),
+      retarget: Math.random()*4,
+    });
+  }
+}
+
+function pickVillagerTarget(v){
+  const ang = Math.random()*Math.PI*2;
+  const r = Math.random()*VILLAGE_RADIUS*0.7;
+  v.target.set(VILLAGE_CENTER.x + Math.cos(ang)*r, 0, VILLAGE_CENTER.z + Math.sin(ang)*r);
+  v.retarget = 4 + Math.random()*5;
+}
+
+function updateVillagers(dt){
+  villagers.forEach(v => {
+    v.retarget -= dt;
+    if (v.retarget <= 0) pickVillagerTarget(v);
+    const dx = v.target.x - v.mesh.position.x, dz = v.target.z - v.mesh.position.z;
+    const dist = Math.hypot(dx, dz);
+    if (dist > 0.6){
+      const targetAngle = Math.atan2(dx, dz);
+      let diff = targetAngle - v.angle;
+      while (diff > Math.PI) diff -= Math.PI*2;
+      while (diff < -Math.PI) diff += Math.PI*2;
+      v.angle += Math.max(-1, Math.min(1, diff)) * dt * 1.2;
+      v.mesh.position.x += Math.sin(v.angle) * 1.1 * dt;
+      v.mesh.position.z += Math.cos(v.angle) * 1.1 * dt;
+      v.mesh.rotation.y = v.angle;
+    } else {
+      pickVillagerTarget(v);
+    }
+    v.mesh.position.y = surfaceY(v.mesh.position.x, v.mesh.position.z);
+  });
+}
+
 /* ============================== 訊息紀錄 ============================== */
 function logMsg(text){
   const log = document.getElementById('msg-log');
@@ -1169,6 +1322,7 @@ function animate(){
     const isNight = updateDayNight(dt);
     updateZombies(dt, isNight);
     updateTornado(dt);
+    updateVillagers(dt);
     updateSurvival(dt);
   }
 
@@ -1177,7 +1331,9 @@ function animate(){
 
 /* ============================== 初始化 ============================== */
 generateWorld();
+generateVillage();
 rebuildAllChunks();
+spawnVillagers(14);
 player.pos.set(0, findSpawnHeight(0,0), 0);
 animate();
 
