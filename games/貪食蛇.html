@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<title>貪食蛇</title>
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #1e1e2f;
+    color: #fff;
+    font-family: "Microsoft JhengHei", sans-serif;
+  }
+  h1 { margin: 10px 0; }
+  #score { margin-bottom: 10px; font-size: 20px; }
+  canvas {
+    background: #111;
+    border: 4px solid #4caf50;
+    border-radius: 6px;
+  }
+  #overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    text-align: center;
+  }
+  #overlay button {
+    margin-top: 16px;
+    padding: 10px 24px;
+    font-size: 18px;
+    border: none;
+    border-radius: 6px;
+    background: #4caf50;
+    color: #fff;
+    cursor: pointer;
+  }
+  #hint { margin-top: 10px; opacity: 0.7; font-size: 14px; }
+
+  #dpad {
+    margin-top: 18px;
+    display: grid;
+    grid-template-columns: repeat(3, 64px);
+    grid-template-rows: repeat(3, 64px);
+    gap: 6px;
+    user-select: none;
+  }
+  #dpad button {
+    font-size: 24px;
+    border: none;
+    border-radius: 8px;
+    background: #4caf50;
+    color: #fff;
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+  #dpad button:active { background: #388e3c; }
+  #btn-up { grid-column: 2; grid-row: 1; }
+  #btn-left { grid-column: 1; grid-row: 2; }
+  #btn-down { grid-column: 2; grid-row: 2; }
+  #btn-right { grid-column: 3; grid-row: 2; }
+
+  #colorPicker {
+    margin-bottom: 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+  }
+  #colorPicker span { font-size: 14px; opacity: 0.8; }
+  .color-swatch {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    border: 2px solid transparent;
+    cursor: pointer;
+  }
+  .color-swatch.selected {
+    border-color: #fff;
+  }
+</style>
+</head>
+<body>
+  <h1>🐍 貪食蛇</h1>
+  <div id="colorPicker">
+    <span>蛇的顏色:</span>
+  </div>
+  <div id="score">分數: 0</div>
+  <canvas id="game" width="440" height="440"></canvas>
+  <div id="hint">使用方向鍵或 W A S D 控制,按空白鍵暫停(平板可用下方按鈕)</div>
+
+  <div id="dpad">
+    <button id="btn-up">▲</button>
+    <button id="btn-left">◀</button>
+    <button id="btn-down">▼</button>
+    <button id="btn-right">▶</button>
+  </div>
+
+  <div id="overlay">
+    <div id="overlayText">遊戲結束</div>
+    <button id="restartBtn">重新開始</button>
+  </div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const grid = 20;
+const tileCount = canvas.width / grid;
+
+const BASE_SPEED = 150;
+const MIN_SPEED = 70;
+const SPEED_STEP = 2;
+
+const COLORS = [
+  { head: '#8bc34a', body: '#4caf50' },
+  { head: '#42a5f5', body: '#1e88e5' },
+  { head: '#ffca28', body: '#fb8c00' },
+  { head: '#ec407a', body: '#c2185b' },
+  { head: '#ab47bc', body: '#7b1fa2' },
+  { head: '#26c6da', body: '#00838f' }
+];
+
+let snake, velocity, food, score, gameOver, paused, loopId, speed;
+let snakeColor = COLORS[0];
+let tongueUntil = 0;
+const TONGUE_DURATION = 3;
+
+let audioCtx;
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+function playTone(freq, duration, type = 'sine') {
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.setValueAtTime(0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + duration);
+}
+
+function playEatSound() {
+  playTone(660, 0.1, 'square');
+}
+
+function playGameOverSound() {
+  playTone(200, 0.4, 'sawtooth');
+}
+
+function init() {
+  snake = [{ x: 10, y: 10 }];
+  velocity = { x: 0, y: 0 };
+  score = 0;
+  gameOver = false;
+  paused = false;
+  speed = BASE_SPEED;
+  placeFood();
+  document.getElementById('score').textContent = '分數: 0';
+  document.getElementById('overlay').style.display = 'none';
+  restartLoop();
+}
+
+function restartLoop() {
+  if (loopId) clearInterval(loopId);
+  loopId = setInterval(tick, speed);
+}
+
+function placeFood() {
+  food = {
+    x: Math.floor(Math.random() * tileCount),
+    y: Math.floor(Math.random() * tileCount)
+  };
+  if (snake.some(s => s.x === food.x && s.y === food.y)) placeFood();
+}
+
+function tick() {
+  if (gameOver || paused) return;
+
+  const head = { x: snake[0].x + velocity.x, y: snake[0].y + velocity.y };
+
+  if (velocity.x === 0 && velocity.y === 0) {
+    draw();
+    return;
+  }
+
+  if (head.x < 0 || head.x >= tileCount || head.y < 0 || head.y >= tileCount ||
+      snake.some(s => s.x === head.x && s.y === head.y)) {
+    endGame();
+    return;
+  }
+
+  snake.unshift(head);
+
+  if (head.x === food.x && head.y === food.y) {
+    score++;
+    document.getElementById('score').textContent = '分數: ' + score;
+    playEatSound();
+    placeFood();
+    tongueUntil = TONGUE_DURATION;
+    speed = Math.max(MIN_SPEED, BASE_SPEED - score * SPEED_STEP);
+    restartLoop();
+  } else {
+    snake.pop();
+  }
+
+  if (tongueUntil > 0) tongueUntil--;
+
+  draw();
+}
+
+function draw() {
+  ctx.fillStyle = '#111';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#ff5252';
+  ctx.fillRect(food.x * grid, food.y * grid, grid - 2, grid - 2);
+
+  snake.forEach((s, i) => {
+    ctx.fillStyle = i === 0 ? snakeColor.head : snakeColor.body;
+    ctx.fillRect(s.x * grid, s.y * grid, grid - 2, grid - 2);
+  });
+
+  drawFace();
+}
+
+function drawFace() {
+  const head = snake[0];
+  const cx = head.x * grid + grid / 2;
+  const cy = head.y * grid + grid / 2;
+  const dx = velocity.x, dy = velocity.y;
+
+  // eye offsets perpendicular to travel direction (default facing right if stopped)
+  const facing = (dx === 0 && dy === 0) ? { x: 1, y: 0 } : { x: dx, y: dy };
+  const perp = { x: -facing.y, y: facing.x };
+  const eyeForward = 3;
+  const eyeSide = 3;
+
+  ctx.fillStyle = '#111';
+  [1, -1].forEach(sign => {
+    const ex = cx + facing.x * eyeForward + perp.x * eyeSide * sign;
+    const ey = cy + facing.y * eyeForward + perp.y * eyeSide * sign;
+    ctx.beginPath();
+    ctx.arc(ex, ey, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  });
+
+  if (tongueUntil > 0) {
+    const tipX = cx + facing.x * (grid / 2 + 6);
+    const tipY = cy + facing.y * (grid / 2 + 6);
+    const midX = cx + facing.x * (grid / 2 + 2);
+    const midY = cy + facing.y * (grid / 2 + 2);
+    const forkSpread = 2.5;
+
+    ctx.strokeStyle = '#ff1744';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(midX, midY);
+    ctx.lineTo(tipX + perp.x * forkSpread, tipY + perp.y * forkSpread);
+    ctx.moveTo(midX, midY);
+    ctx.lineTo(tipX - perp.x * forkSpread, tipY - perp.y * forkSpread);
+    ctx.stroke();
+  }
+}
+
+function endGame() {
+  gameOver = true;
+  playGameOverSound();
+  document.getElementById('overlayText').textContent = `遊戲結束!最終分數: ${score}`;
+  document.getElementById('overlay').style.display = 'flex';
+}
+
+function setDirection(dir) {
+  if (dir === 'up' && velocity.y !== 1) velocity = { x: 0, y: -1 };
+  else if (dir === 'down' && velocity.y !== -1) velocity = { x: 0, y: 1 };
+  else if (dir === 'left' && velocity.x !== 1) velocity = { x: -1, y: 0 };
+  else if (dir === 'right' && velocity.x !== -1) velocity = { x: 1, y: 0 };
+}
+
+document.addEventListener('keydown', e => {
+  const key = e.key.toLowerCase();
+  if (key === ' ') {
+    paused = !paused;
+    return;
+  }
+  if (key === 'arrowup' || key === 'w') setDirection('up');
+  else if (key === 'arrowdown' || key === 's') setDirection('down');
+  else if (key === 'arrowleft' || key === 'a') setDirection('left');
+  else if (key === 'arrowright' || key === 'd') setDirection('right');
+});
+
+['up', 'down', 'left', 'right'].forEach(dir => {
+  const btn = document.getElementById('btn-' + dir);
+  btn.addEventListener('click', () => setDirection(dir));
+  btn.addEventListener('touchstart', e => {
+    e.preventDefault();
+    setDirection(dir);
+  }, { passive: false });
+});
+
+document.getElementById('restartBtn').addEventListener('click', init);
+
+const colorPicker = document.getElementById('colorPicker');
+COLORS.forEach((c, i) => {
+  const swatch = document.createElement('div');
+  swatch.className = 'color-swatch' + (i === 0 ? ' selected' : '');
+  swatch.style.background = c.head;
+  swatch.addEventListener('click', () => {
+    snakeColor = c;
+    colorPicker.querySelectorAll('.color-swatch').forEach(el => el.classList.remove('selected'));
+    swatch.classList.add('selected');
+    draw();
+  });
+  colorPicker.appendChild(swatch);
+});
+
+init();
+</script>
+</body>
+</html>
