@@ -94,6 +94,188 @@
   const maskCanvas = document.createElement('canvas');
   const maskCtx = maskCanvas.getContext('2d');
 
+  // ----- Audio (all synthesized via Web Audio API, no external files) -----
+  const Audio_ = (() => {
+    let actx = null;
+    let master = null;
+    let droneNodes = null;
+    let heartbeatTimer = null;
+    let footstepTimer = 0;
+
+    function ensure() {
+      if (actx) return;
+      actx = new (window.AudioContext || window.webkitAudioContext)();
+      master = actx.createGain();
+      master.gain.value = 0.6;
+      master.connect(actx.destination);
+    }
+
+    function noiseBuffer(duration) {
+      const n = actx.sampleRate * duration;
+      const buf = actx.createBuffer(1, n, actx.sampleRate);
+      const data = buf.getChannelData(0);
+      for (let i = 0; i < n; i++) data[i] = Math.random() * 2 - 1;
+      return buf;
+    }
+
+    function startAmbience() {
+      ensure();
+      if (droneNodes) return;
+      const g = actx.createGain();
+      g.gain.value = 0.05;
+      g.connect(master);
+
+      const osc1 = actx.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.value = 55;
+      const osc2 = actx.createOscillator();
+      osc2.type = 'sine';
+      osc2.frequency.value = 58;
+      osc1.connect(g); osc2.connect(g);
+      osc1.start(); osc2.start();
+
+      // slow-moving noise bed for texture
+      const noiseSrc = actx.createBufferSource();
+      noiseSrc.buffer = noiseBuffer(4);
+      noiseSrc.loop = true;
+      const noiseFilter = actx.createBiquadFilter();
+      noiseFilter.type = 'lowpass';
+      noiseFilter.frequency.value = 200;
+      const noiseGain = actx.createGain();
+      noiseGain.gain.value = 0.02;
+      noiseSrc.connect(noiseFilter).connect(noiseGain).connect(master);
+      noiseSrc.start();
+
+      droneNodes = { osc1, osc2, g, noiseSrc, noiseGain };
+    }
+
+    function playFootstep() {
+      ensure();
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(0.08);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.value = 500 + Math.random() * 200;
+      const g = actx.createGain();
+      g.gain.value = 0.12;
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.15);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+    }
+
+    function playKeyPickup() {
+      ensure();
+      const now = actx.currentTime;
+      [880, 1320, 1760].forEach((freq, i) => {
+        const osc = actx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.value = freq;
+        const g = actx.createGain();
+        g.gain.value = 0;
+        g.gain.setValueAtTime(0, now + i * 0.08);
+        g.gain.linearRampToValueAtTime(0.15, now + i * 0.08 + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, now + i * 0.08 + 0.3);
+        osc.connect(g).connect(master);
+        osc.start(now + i * 0.08);
+        osc.stop(now + i * 0.08 + 0.32);
+      });
+    }
+
+    function playGlimpseWhisper() {
+      ensure();
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(0.6);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.frequency.value = 1200;
+      filter.Q.value = 0.6;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.0001, actx.currentTime);
+      g.gain.linearRampToValueAtTime(0.08, actx.currentTime + 0.1);
+      g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.6);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+    }
+
+    function playHeartbeatPulse(intensity) {
+      ensure();
+      const now = actx.currentTime;
+      [0, 0.13].forEach(offset => {
+        const osc = actx.createOscillator();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(70, now + offset);
+        osc.frequency.exponentialRampToValueAtTime(35, now + offset + 0.12);
+        const g = actx.createGain();
+        g.gain.setValueAtTime(0.0001, now + offset);
+        g.gain.linearRampToValueAtTime(0.25 * intensity, now + offset + 0.02);
+        g.gain.exponentialRampToValueAtTime(0.001, now + offset + 0.15);
+        osc.connect(g).connect(master);
+        osc.start(now + offset);
+        osc.stop(now + offset + 0.16);
+      });
+    }
+
+    function setHeartbeat(active) {
+      ensure();
+      if (active && !heartbeatTimer) {
+        playHeartbeatPulse(1);
+        heartbeatTimer = setInterval(() => playHeartbeatPulse(1), 550);
+      } else if (!active && heartbeatTimer) {
+        clearInterval(heartbeatTimer);
+        heartbeatTimer = null;
+      }
+    }
+
+    function playJumpscare() {
+      ensure();
+      const now = actx.currentTime;
+      const src = actx.createBufferSource();
+      src.buffer = noiseBuffer(1.2);
+      const filter = actx.createBiquadFilter();
+      filter.type = 'highpass';
+      filter.frequency.value = 400;
+      const g = actx.createGain();
+      g.gain.setValueAtTime(0.5, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+      src.connect(filter).connect(g).connect(master);
+      src.start();
+
+      const osc = actx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(600, now);
+      osc.frequency.exponentialRampToValueAtTime(80, now + 0.9);
+      const og = actx.createGain();
+      og.gain.setValueAtTime(0.4, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+      osc.connect(og).connect(master);
+      osc.start(now);
+      osc.stop(now + 0.95);
+
+      setHeartbeat(false);
+    }
+
+    function stopAll() {
+      setHeartbeat(false);
+      if (droneNodes) {
+        try {
+          droneNodes.osc1.stop(); droneNodes.osc2.stop(); droneNodes.noiseSrc.stop();
+        } catch (e) {}
+        droneNodes = null;
+      }
+    }
+
+    function tickFootsteps(dt, isMoving) {
+      if (!isMoving) { footstepTimer = 0; return; }
+      footstepTimer -= dt;
+      if (footstepTimer <= 0) {
+        footstepTimer = 320;
+        playFootstep();
+      }
+    }
+
+    return { startAmbience, playKeyPickup, playGlimpseWhisper, setHeartbeat, playJumpscare, stopAll, tickFootsteps };
+  })();
+
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
@@ -275,6 +457,7 @@
       born: performance.now(),
       seen: false,
     });
+    Audio_.playGlimpseWhisper();
   }
 
   function updateGlimpses(dt) {
@@ -299,12 +482,13 @@
   let lastTime = performance.now();
 
   function updatePlayer(dt) {
-    if (storyActive) return;
+    if (storyActive) { Audio_.tickFootsteps(dt, false); return; }
     let dx = 0, dy = 0;
     if (keys['w'] || keys['arrowup']) dy -= 1;
     if (keys['s'] || keys['arrowdown']) dy += 1;
     if (keys['a'] || keys['arrowleft']) dx -= 1;
     if (keys['d'] || keys['arrowright']) dx += 1;
+    const isMoving = dx !== 0 || dy !== 0;
     const len = Math.hypot(dx, dy) || 1;
     dx = (dx / len) * player.speed;
     dy = (dy / len) * player.speed;
@@ -314,6 +498,7 @@
     if (!isWall(Math.floor(player.x / TILE), Math.floor(ny / TILE))) player.y = ny;
 
     player.angle = Math.atan2((mouseY - canvas.height/2), (mouseX - canvas.width/2));
+    Audio_.tickFootsteps(dt, isMoving);
   }
 
   function updateItems() {
@@ -323,6 +508,7 @@
         it.taken = true;
         keysCollected++;
         keyCountEl.textContent = keysCollected;
+        Audio_.playKeyPickup();
         if (keysCollected >= 3) { win = true; }
       }
     }
@@ -354,12 +540,14 @@
       }
       if (monster.waypoint) moveEntityTowards(monster, monster.waypoint.x, monster.waypoint.y, monster.wanderSpeed);
     }
+    Audio_.setHeartbeat(monster.active);
     if (d < 22 && !gameOver) triggerJumpscare('monster');
   }
 
   function triggerJumpscare(cause) {
     gameOver = true;
     jumpscareEl.style.display = 'flex';
+    Audio_.playJumpscare();
     setTimeout(() => {
       jumpscareEl.style.display = 'none';
       showEndScreen('death', cause);
@@ -377,6 +565,7 @@
   }
 
   function showEndScreen(kind, cause) {
+    Audio_.stopAll();
     overlay.classList.remove('hidden');
     let title, body, color;
     if (kind === 'death') {
@@ -410,6 +599,7 @@
     overlay.classList.add('hidden');
     hud.classList.remove('hidden');
     lastTime = performance.now();
+    Audio_.startAmbience();
     requestAnimationFrame(loop);
   }
 
@@ -555,6 +745,7 @@
     overlay.classList.add('hidden');
     hud.classList.remove('hidden');
     lastTime = performance.now();
+    Audio_.startAmbience();
     requestAnimationFrame(loop);
   });
 })();
