@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -40,9 +40,18 @@
     transition:transform .5s cubic-bezier(.22,1.6,.36,1), opacity .4s ease; }
   #replayBtn:hover{ transform:translate(-50%,0) scale(1.08); }
   #replayBtn:active{ transform:translate(-50%,0) scale(.94); transition-duration:.05s; }
-  #replayBtn:focus-visible, #sndBtn:focus-visible{ outline:3px solid #ffe9b0; outline-offset:2px; }
+  #replayBtn:focus-visible, #sndBtn:focus-visible, .chbtn:focus-visible{ outline:3px solid #ffe9b0; outline-offset:2px; }
+
+  /* ---------- 章節選單（v4 新增：隨時跳看任一幕） ---------- */
+  #chapters{ position:absolute; z-index:9; top:max(14px, env(safe-area-inset-top)); left:max(14px, env(safe-area-inset-left)); display:flex; gap:8px; }
+  .chbtn{ position:relative; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:5px 14px; font-size:17px; line-height:1.15; }
+  .chbtn small{ font-size:11px; font-weight:700; letter-spacing:1px; opacity:.85; }
+  .chbtn.cur{ background:linear-gradient(180deg,#ffb020,#e8582f); color:#2a1004; border-color:#ffe9b0;
+    box-shadow:0 0 16px rgba(255,176,32,.45); }
   @media (max-width:480px){
     #subtitle{ padding:8px 16px; letter-spacing:1px; max-width:94%; }
+    .chbtn{ padding:4px 10px; }
   }
 
   /* ---------- 開場提示：告知自動播放與音效開關 ---------- */
@@ -61,6 +70,11 @@
   <div id="subtitle"></div>
   <button id="sndBtn" class="uibtn"><svg id="sndIco" width="18" height="18" viewBox="0 0 24 24" style="vertical-align:-3px" aria-hidden="true"><path fill="currentColor" d="M4 9v6h4l5 4V5L8 9H4z"/><path id="sndX" fill="none" d="M16.5 9.5l5 5m0-5l-5 5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><g id="sndWave" style="display:none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"><path d="M16 9a4.4 4.4 0 0 1 0 6"/><path d="M18.6 7a8 8 0 0 1 0 10"/></g></svg> <span id="sndLbl">聲音：關</span></button>
   <button id="replayBtn" class="uibtn">▶ 重新播放</button>
+  <div id="chapters">
+    <button class="uibtn chbtn" data-act="0">Ⅰ<small>進場</small></button>
+    <button class="uibtn chbtn" data-act="1">Ⅱ<small>激戰</small></button>
+    <button class="uibtn chbtn" data-act="2">Ⅲ<small>對決</small></button>
+  </div>
   <div id="hint">自動播放中 ─ 點右上角「聲音」鈕開啟音效</div>
 </div>
 <script>
@@ -1157,6 +1171,12 @@ function drawEndCard(){
   ctx.font = '700 20px "Noto Sans TC",sans-serif';
   ctx.fillStyle = 'rgba(255,255,255,.7)';
   ctx.fillText('海牛 與 尼克星 ── 平手收場，友誼長存', W/2, ty+52);
+  // v4 新功能悄悄告示
+  const na = E.outCubic(ss(T, 33.4, 34.0));
+  ctx.globalAlpha = a * na * (0.75 + 0.25*Math.sin(WT*2.2));
+  ctx.font = '700 16px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = 'rgba(143,208,255,.9)';
+  ctx.fillText('新功能：左上角 Ⅰ・Ⅱ・Ⅲ 章節鈕，可跳看任一幕', W/2, ty+96);
   ctx.restore();
 }
 
@@ -1240,6 +1260,7 @@ function frame(now){
   // 音訊環境
   if(AC && crowdGain) crowdGain.gain.value = 0.02 + excite*0.08;
   updateSubtitle();
+  updateChapterUI();
   render();
 }
 buildEvents();
@@ -1258,17 +1279,36 @@ sndBtn.addEventListener('click', ()=>{
   document.getElementById('sndWave').style.display = audioOn ? '' : 'none';
   document.getElementById('hint').style.display = 'none';
 });
-replayBtn.addEventListener('click', ()=>{
-  T = 0; freeze = 0; shake = 0; flash = 0; excite = 0.15; ended = false;
+/* ---------- 時間軸跳轉（重播＝跳到 0；章節鈕＝跳到該幕起點） ---------- */
+function seekTo(t0){
+  T = t0; freeze = 0; shake = 0; flash = 0; ended = false;
+  excite = t0 >= 23 ? 0.7 : t0 >= 8 ? 0.5 : 0.15;
   parts = []; waves = []; comics = []; ilines = null; ropeFlexR = ropeFlexL = 0;
   for(const f of [cow, star]){
     f.dx=0; f.dy=0; f.rot=0; f.lean=0; f.ext=0; f.extUp=0; f.duck=0;
     f.sx=1; f.sy=1; f.kb=0; f.hurt=0; f.down=0; f.dizzy=0; f.expr='calm';
   }
-  cam.x=480; cam.y=308; cam.z=1.5;
+  const c0 = camAt(t0);
+  cam.x = c0.x; cam.y = c0.y; cam.z = c0.z; cam.sx = cam.sy = 0;
   curSub = null; subEl.classList.remove('show'); replayBtn.classList.remove('show');
   buildEvents();
-});
+  for(const e of events) if(e.t < t0 - 1e-6) e.done = true;  // 跳過的事件靜默略過
+}
+replayBtn.addEventListener('click', ()=> seekTo(0));
+
+/* ---------- 章節選單（v4）：Ⅰ 進場 / Ⅱ 激戰 / Ⅲ 對決 ---------- */
+const ACTS = [0, 8.72, 23.2];
+const chBtns = Array.from(document.querySelectorAll('.chbtn'));
+chBtns.forEach((b, i)=> b.addEventListener('click', ()=>{ seekTo(ACTS[i]); sfx.ding(); }));
+let curAct = -1;
+function updateChapterUI(){
+  let a = 0;
+  for(let i=0;i<ACTS.length;i++) if(T >= ACTS[i] - 0.01) a = i;
+  if(a !== curAct){
+    curAct = a;
+    for(let i=0;i<chBtns.length;i++) chBtns[i].classList.toggle('cur', i===a);
+  }
+}
 </script>
 </body>
 </html>

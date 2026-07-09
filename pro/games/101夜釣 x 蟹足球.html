@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -203,6 +203,7 @@ addEventListener('keydown', e=>{
   if(state && state.onKey) state.onKey(e.code);
 });
 addEventListener('keyup', e=>{ keys[e.code] = false; });
+addEventListener('blur', ()=>{ for(const k in keys) keys[k] = false; });  // v4：失焦清鍵，防按鍵卡住
 
 function toXY(e){
   const r = canvas.getBoundingClientRect();
@@ -447,21 +448,37 @@ const FISH_KINDS = [
 const GOLD_KIND = {r:13, color:'#ffd447', belly:'#fff5d6', pts:50, sp:195, dMin:430, dMax:505, gold:true};
 const BOSS_KIND = {r:33, color:'#ff9f1c', belly:'#ffe3b0', pts:150, sp:150, dMin:395, dMax:480, boss:true};
 const FISH_STARS = [300, 600, 950];   // v3：配合 75 秒場次調整門檻
+const FISH_STARS_HARD = [450, 850, 1300];   // v4：夜霧釣場門檻
+/* v4：困難模式解鎖旗標 */
+const unlk = { F: load('wow101v4_unlkF') === '1', C: load('wow101v4_unlkC') === '1' };
+const FOG_G = (function(){ const g = ctx.createLinearGradient(0, WATER_Y-70, 0, WATER_Y+90);
+  g.addColorStop(0,'rgba(143,160,201,0)'); g.addColorStop(0.5,'rgba(143,160,201,0.22)');
+  g.addColorStop(1,'rgba(143,160,201,0)'); return g; })();
+function drawFog(t){  // v4：夜霧（預計算漸層兩帶漂移，零 blur）
+  ctx.save();
+  ctx.translate(Math.sin(t*0.25)*70, 0);
+  ctx.fillStyle = FOG_G; ctx.fillRect(-90, WATER_Y-70, GAME_W+180, 160);
+  ctx.translate(Math.sin(t*0.4+3)*-110, 130);
+  ctx.globalAlpha = 0.7;
+  ctx.fillStyle = FOG_G; ctx.fillRect(-120, WATER_Y-70, GAME_W+240, 160);
+  ctx.restore(); ctx.globalAlpha = 1;
+}
 const IDLE_Y = 168, HOOK_MAX_Y = 512, AIM_MIN = 50, AIM_MAX = 655;
 
 const fishGame = {
-  buttons: [],
+  buttons: [], hard: false,
   enter(){
     this.score = 0; this.dispScore = 0; this.time = 75; this.elapsed = 0; this.prevCeil = 76;  // v3：60→75 秒
     this.combo = 0; this.comboPop = 0;
     this.fever = 0; this.bossCalled = false;   // v2：FEVER 狂熱＋魚王
+    this.starsArr = this.hard ? FISH_STARS_HARD : FISH_STARS;   // v4
     this.cast = 'idle';                 // idle → drop → reel
     this.aimX = GAME_W*0.35; this.hookX = this.aimX; this.hookY = IDLE_Y; this.prevHookY = IDLE_Y;
     this.carry = null; this.missed = false; this.rodBend = 0.2; this.mechaSq = 1;
     this.fishes = []; this.jellies = [];
     for(let i=0;i<6;i++) this.spawnFish(false, true);
     this.hint = 6; this.buttons = [];
-    floater(GAME_W/2, 240, '瞄準魚群，拋線！', '#ffd77a', 30);
+    floater(GAME_W/2, 240, this.hard ? '🌙 夜霧釣場：魚更快、水母成群！' : '瞄準魚群，拋線！', '#ffd77a', 30);
   },
   spawnFish(gold, anywhere){
     const k = gold ? GOLD_KIND : FISH_KINDS[(Math.random()*FISH_KINDS.length)|0];
@@ -530,7 +547,7 @@ const fishGame = {
     if(this.prevHookY > WATER_Y && this.hookY <= WATER_Y)
       burst(this.hookX, WATER_Y, '#a8e6e2', 6, 140, {size:3, g:480, life:0.35, arcFrom:-Math.PI*0.8, arcTo:-Math.PI*0.2});
     // 碰撞：魚 / 水母
-    const speedMul = 1 + Math.min(0.8, this.elapsed/70);   // 難度：魚速漸增
+    const speedMul = (this.hard ? 1.3 : 1) * (1 + Math.min(0.8, this.elapsed/70));   // 難度：魚速漸增（v4：夜霧 +30%）
     if(this.cast === 'drop' && !this.carry){
       for(let i=0;i<this.fishes.length;i++){
         const f = this.fishes[i];
@@ -562,8 +579,8 @@ const fishGame = {
     this.fever = Math.max(0, this.fever - dt);
     const cap = 6 + Math.min(4, Math.floor(this.elapsed/15)) + (this.fever > 0 ? 4 : 0);
     if(this.fishes.length < cap && Math.random() < (this.fever > 0 ? 0.09 : 0.02)){
-      const goldChance = Math.min(0.06 + this.elapsed*0.004, 0.25);
-      this.spawnFish(Math.random() < goldChance, false);
+      const goldChance = Math.min((this.hard ? 0.1 : 0.06) + this.elapsed*0.004, this.hard ? 0.32 : 0.25);
+      this.spawnFish(Math.random() < goldChance, false);   // v4：夜霧金魚更多＝高風險高報酬
     }
     // v3：最後 25 秒魚王登場（高潮時刻），逗留 16 秒
     if(!this.bossCalled && this.time <= 25){
@@ -576,8 +593,10 @@ const fishGame = {
       addShake(6); SFX.boss();
       floater(GAME_W/2, 230, '👑 魚王出現！150 分！', '#ff9f1c', 34);
     }
-    // 水母（15 秒後 1 隻、35 秒後 2 隻、v3：58 秒後 3 隻收尾張力）
-    const jellyCount = this.elapsed > 58 ? 3 : (this.elapsed > 35 ? 2 : (this.elapsed > 15 ? 1 : 0));
+    // 水母（15 秒後 1 隻、35 秒後 2 隻、v3：58 秒後 3 隻收尾張力；v4：夜霧最多 4 隻且更早）
+    const jellyCount = this.hard
+      ? (this.elapsed > 50 ? 4 : (this.elapsed > 28 ? 3 : (this.elapsed > 10 ? 2 : (this.elapsed > 3 ? 1 : 0))))
+      : (this.elapsed > 58 ? 3 : (this.elapsed > 35 ? 2 : (this.elapsed > 15 ? 1 : 0)));
     while(this.jellies.length < jellyCount){
       this.jellies.push({x: 150+Math.random()*450, baseY: 380+Math.random()*90, y:0, t:Math.random()*7, drift:(Math.random()<0.5?-1:1)*22, stun:0});
       floater(GAME_W/2, 200, '⚠ 小心水母！', '#c77dff', 24);
@@ -623,22 +642,26 @@ const fishGame = {
   },
   hitJelly(j){
     j.stun = 1.6;
-    this.score = Math.max(0, this.score - 15);
+    const pen = this.hard ? 30 : 15;   // v4：夜霧水母扣更多
+    this.score = Math.max(0, this.score - pen);
     if(this.combo > 0) floater(this.hookX, this.hookY - 40, '連擊中斷', '#8fa0c9', 18);
     this.combo = 0; this.cast = 'reel'; this.missed = false;
     hitStop(0.08); addShake(7); SFX.jelly();
     burst(j.x, j.y, ['#c77dff','#8b5cf6'], 16, 220, {size:5, g:200, life:0.5});
-    floater(j.x, j.y - 20, '-15 好麻！', '#c77dff', 26);
+    floater(j.x, j.y - 20, '-' + pen + ' 好麻！', '#c77dff', 26);
   },
   finish(){
-    const best = parseInt(load('wow101v2_fish_best') || '0', 10);
+    const key = this.hard ? 'wow101v4_fish_hbest' : 'wow101v2_fish_best';   // v4：困難獨立紀錄
+    const best = parseInt(load(key) || '0', 10);
     const newBest = this.score > best;
-    if(newBest) store('wow101v2_fish_best', String(this.score));
+    if(newBest) store(key, String(this.score));
     if(newBest && this.score > 0) SFX.win(); else SFX.whistle();
-    const stars = FISH_STARS.filter(s => this.score >= s).length;
-    showOver({ bg: this, replay: fishGame, title: '任務完成，鐵皮特工！',
-      lines: ['本次戰績', this.score + ' 分'], stars,
-      starHint: stars < 3 ? ('下一顆★：' + FISH_STARS[stars] + ' 分') : '全星制霸！',
+    const stars = this.starsArr.filter(s => this.score >= s).length;
+    let unlock = null;   // v4：一般模式拿 1★ 解鎖夜霧釣場
+    if(!this.hard && stars >= 1 && !unlk.F){ unlk.F = true; store('wow101v4_unlkF','1'); unlock = '🌙 解鎖「夜霧釣場」困難模式！回選單開啟'; }
+    showOver({ bg: this, replay: fishGame, title: (this.hard ? '🌙 夜霧任務完成！' : '任務完成，鐵皮特工！'),
+      lines: ['本次戰績', this.score + ' 分'], stars, unlock,
+      starHint: stars < 3 ? ('下一顆★：' + this.starsArr[stars] + ' 分') : '全星制霸！',
       best: Math.max(best, this.score), newBest: newBest && this.score > 0, win: stars >= 3, color: '#ffd77a' });
   },
   draw(){
@@ -654,6 +677,7 @@ const fishGame = {
     }
     for(const f of this.fishes) this.drawFish(f);
     for(const j of this.jellies) this.drawJelly(j);
+    if(this.hard) drawFog(tGlobal);   // v4：夜霧薄紗遮視線
     // 釣線 + 發光魚鉤
     const sag = this.cast === 'idle' ? 24 : 4;
     ctx.strokeStyle = 'rgba(223,228,242,0.9)'; ctx.lineWidth = 2;
@@ -678,10 +702,11 @@ const fishGame = {
     pill(14, 12, 190, 42);
     text('分數', 48, 33, 17, '#8fa0c9');
     text(String(Math.round(this.dispScore)), 130, 33, 26, '#ffd77a');
-    const gotStars = FISH_STARS.filter(s => this.score >= s).length;  // v2：三星目標
+    const gotStars = this.starsArr.filter(s => this.score >= s).length;  // v2：三星目標
     pill(14, 60, 190, 30);
     for(let i=0;i<3;i++) text('★', 48 + i*26, 76, 18, i < gotStars ? '#ffd447' : 'rgba(143,160,201,0.35)');
-    if(gotStars < 3) text(String(FISH_STARS[gotStars]), 160, 76, 15, '#8fa0c9');
+    if(gotStars < 3) text(String(this.starsArr[gotStars]), 160, 76, 15, '#8fa0c9');
+    if(this.hard){ pill(14, 96, 110, 28, 'rgba(154,107,255,0.6)'); text('🌙 夜霧', 69, 110, 15, '#c7a8ff'); }  // v4
     if(this.fever > 0){  // v2：FEVER 倒數膠囊
       const fs = 1 + 0.06*Math.sin(tGlobal*9);
       ctx.save(); ctx.translate(268, 85); ctx.scale(fs, fs);
@@ -788,8 +813,9 @@ const POW_TYPES = [
   {icon:'❄', name:'冰凍對手', color:'#7fd8ff'}
 ];
 const crabGame = {
-  buttons: [],
+  buttons: [], hard: false,
   enter(){
+    if(this.hard) floater(GAME_W/2, CY - 110, '🏆 冠軍盃：對手火力全開！', '#ffd447', 28);   // v4
     this.pScore = 0; this.cScore = 0; this.time = 75; this.elapsed = 0; this.prevCeil = 76;  // v3：60→75 秒
     this.player = makeCrab(FIELD.x + FIELD.w*0.28, '#ff6b5e', '#c94b3f');
     this.cpu    = makeCrab(FIELD.x + FIELD.w*0.72, '#2ec4b6', '#1a8a80');
@@ -892,9 +918,11 @@ const crabGame = {
         burst(B.x, B.y, fire ? ['#ff6b5e','#ffb627','#fff5d6'] : ['#fff5d6','#ffd77a'], fire ? 16 : 8, fire ? 280 : 200, {size:4, g:200, life:0.35});
       } else SFX.swing();
     }
-    // ---- CPU（終盤越拚；落後方加速 = 橡皮筋難度，失敗不挫折） ----
-    const learn = this.elapsed < 8 ? 0.55 : 1;   // v3：前 8 秒 CPU 放水 = 開場安全學習期
-    let cpuAcc = clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400) * learn;
+    // ---- CPU（終盤越拚；落後方加速 = 橡皮筋難度，失敗不挫折；v4：冠軍盃不放水） ----
+    const learn = this.hard ? 1 : (this.elapsed < 8 ? 0.55 : 1);   // v3：前 8 秒 CPU 放水 = 開場安全學習期
+    let cpuAcc = this.hard
+      ? clamp(980 + this.elapsed*9 + (this.pScore - this.cScore)*55, 800, 1750)
+      : clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400) * learn;
     if(C.spdT > 0) cpuAcc *= 1.35;
     let cdx = B.x + 30 - C.x, cdy = B.y - C.y;
     const cdm = Math.hypot(cdx, cdy) || 1;
@@ -906,12 +934,12 @@ const crabGame = {
     C.legT += dt * (2 + Math.hypot(C.vx, C.vy)/28);
     if(Math.abs(C.vx) > 30) C.face = C.vx > 0 ? 1 : -1;
     const cbd = dist(C.x, C.y, B.x, B.y);
-    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && C.frozT <= 0 && Math.random() < 0.5*learn){
-      C.kickCd = 0.6; C.clawT = 1; C.sx = 1.25; C.sy = 0.8;
-      const a = Math.atan2(CY + (Math.random()*2-1)*70 - B.y, FIELD.x - B.x);
+    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && C.frozT <= 0 && Math.random() < (this.hard ? 0.62 : 0.5*learn)){
+      C.kickCd = this.hard ? 0.45 : 0.6; C.clawT = 1; C.sx = 1.25; C.sy = 0.8;
+      const a = Math.atan2(CY + (Math.random()*2-1)*(this.hard ? 50 : 70) - B.y, FIELD.x - B.x);
       const cFire = C.fireN > 0;
       if(cFire) C.fireN--;
-      const pw = 470 + Math.random()*180 + this.elapsed*2 + (cFire ? 260 : 0);
+      const pw = (this.hard ? 590 : 470) + Math.random()*180 + this.elapsed*2 + (cFire ? 260 : 0);
       B.vx = Math.cos(a)*pw; B.vy = Math.sin(a)*pw;
       B.fireT = cFire ? 0.9 : 0;
       SFX.kick();
@@ -1017,17 +1045,21 @@ const crabGame = {
       SFX.whistle(); SFX.fever();
       return;
     }
-    const best = parseInt(load('wow101v2_crab_best') || '0', 10);
+    const key = this.hard ? 'wow101v4_crab_hbest' : 'wow101v2_crab_best';   // v4：困難獨立紀錄
+    const best = parseInt(load(key) || '0', 10);
     const newBest = this.pScore > best;
-    if(newBest) store('wow101v2_crab_best', String(this.pScore));
+    if(newBest) store(key, String(this.pScore));
+    const won = this.pScore > this.cScore;
+    let unlock = null;   // v4：一般模式首勝解鎖冠軍盃
+    if(!this.hard && won && !unlk.C){ unlk.C = true; store('wow101v4_unlkC','1'); unlock = '🏆 解鎖「冠軍盃」困難模式！回選單開啟'; }
     let title, color;
-    if(this.pScore > this.cScore){ title = this.golden ? '黃金進球奪冠！🏆' : '紅蟹奪冠！🏆'; color = '#ffd77a'; SFX.win(); }
+    if(won){ title = this.hard ? '冠軍盃制霸！傳奇紅蟹！' : (this.golden ? '黃金進球奪冠！🏆' : '紅蟹奪冠！🏆'); color = '#ffd77a'; SFX.win(); }
     else if(this.pScore < this.cScore){ title = '雖敗猶榮，再戰！'; color = '#a8e6e2'; SFX.lose(); }
     else { title = '激戰平手，握手言和！'; color = '#f3ecd9'; SFX.whistle(); }
-    showOver({ bg: this, replay: crabGame, title,
+    showOver({ bg: this, replay: crabGame, title, unlock,
       lines: ['最終比分', this.pScore + ' : ' + this.cScore],
       best: Math.max(best, this.pScore), bestLabel: '單場最多進球',
-      newBest: newBest && this.pScore > 0, color, win: this.pScore > this.cScore });
+      newBest: newBest && this.pScore > 0, color, win: won });
   },
   draw(){
     beginShake();

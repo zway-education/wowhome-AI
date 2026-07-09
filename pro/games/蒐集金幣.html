@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -32,6 +32,13 @@
     box-shadow:0 6px 0 #b35c00,0 10px 18px rgba(0,0,0,.3);letter-spacing:4px;transition:transform .1s}
   .mainBtn:active{transform:translateY(5px);box-shadow:0 1px 0 #b35c00}
   .hint{font-size:12px;color:#8a7340;margin-top:14px;line-height:1.7}
+  .hardBtn{background:linear-gradient(#ff8a5c,#e8590c);box-shadow:0 6px 0 #a63a00,0 10px 18px rgba(0,0,0,.3);
+    margin-left:10px;padding:15px 30px}
+  .hardBtn:active{box-shadow:0 1px 0 #a63a00}
+  .hardBtn.locked{filter:grayscale(.85);opacity:.6}
+  .hardHint{font-size:13px;color:#c2551c;font-weight:bold;margin-top:10px}
+  .homeBtn{margin-top:12px;padding:9px 26px;font-size:14px;color:#7a5a10;cursor:pointer;
+    background:transparent;border:2px solid #c99b3f;border-radius:10px;font-family:inherit}
 </style>
 </head>
 <body>
@@ -44,20 +51,24 @@
     連續快撿疊 <b style="color:#d9480f">COMBO</b>，疊到 8 進入 <b style="color:#e8590c">FEVER 金幣雨</b>！<br>
     ⏰ 撿時鐘加時間，小心 💣 炸彈會扣分。</p>
     <button id="startBtn" class="mainBtn">開始遊戲</button>
-    <div class="hint">💻 電腦：WASD / 方向鍵，或按住滑鼠移動<br>📱 平板：手指按住畫面，小藍會跟著跑
+    <button id="hardBtn" class="mainBtn hardBtn">🔥 狂熱模式</button>
+    <p id="hardHint" class="hardHint">完成一場經典模式，解鎖 🔥 狂熱模式（45 秒、炸彈更多、分數 ×1.5）！</p>
+    <div class="hint">💻 電腦：WASD / 方向鍵，或按住滑鼠移動；M 靜音<br>📱 平板：手指按住畫面，小藍會跟著跑<br>🔥 狂熱模式：時間更短、炸彈更兇，但每一枚金幣都值 1.5 倍分！
     <span id="rotHint"><br>📱 把平板轉成橫向，畫面更大更好玩！</span></div>
   </div>
 </div>
 <div id="overOvl" class="ovl hide">
   <div class="card">
-    <h1>⏰ 時間到！</h1>
+    <h1 id="overTitle">⏰ 時間到！</h1>
+    <p id="unlockMsg" style="display:none;color:#e8590c;font-weight:bold">🎉 解鎖 🔥 狂熱模式！回標題挑戰看看！</p>
     <p style="font-size:44px;margin:2px 0" id="medalIcon">🥉</p>
     <p style="font-weight:bold;color:#b8741a;margin:0" id="medalName">銅牌收藏家</p>
     <p class="big">分數 <span id="finalScore">0</span></p>
     <p id="medalNext" style="color:#d9480f"></p>
     <p>🪙 金幣 <span id="statCoins">0</span>　💎 寶石 <span id="statGems">0</span>　🔥 最高 COMBO <span id="statCombo">0</span></p>
     <p>🏆 最佳紀錄 <span id="statBest">0</span> <span id="newBest" style="color:#d9480f;display:none">✨ 新紀錄！</span></p>
-    <button id="restartBtn" class="mainBtn">再玩一次</button>
+    <button id="restartBtn" class="mainBtn">再玩一次</button><br>
+    <button id="homeBtn" class="homeBtn">回標題選模式</button>
   </div>
 </div>
 <script>
@@ -151,22 +162,44 @@ addEventListener('keydown',e=>{
 });
 addEventListener('keyup',e=>keys[e.code]=false);
 const ptr={x:GAME_W/2,y:GAME_H/2,down:false};
+/* 多指追蹤：跟隨最新落下的手指；該指離開就換成仍按著的另一指，全部離開才停 */
+const ptrIds=new Map();let activePtr=-1;
 function ptrPos(e){
   const r=cv.getBoundingClientRect();
   ptr.x=(e.clientX-r.left)/cv._scale;ptr.y=(e.clientY-r.top)/cv._scale;
 }
-cv.addEventListener('pointerdown',e=>{e.preventDefault();ptr.down=true;ptrPos(e);});
-cv.addEventListener('pointermove',e=>{if(ptr.down)ptrPos(e);});
-addEventListener('pointerup',()=>ptr.down=false);
-addEventListener('pointercancel',()=>ptr.down=false);
+cv.addEventListener('pointerdown',e=>{e.preventDefault();
+  ptrIds.set(e.pointerId,e);activePtr=e.pointerId;ptr.down=true;ptrPos(e);});
+cv.addEventListener('pointermove',e=>{
+  if(!ptrIds.has(e.pointerId))return;
+  ptrIds.set(e.pointerId,e);
+  if(e.pointerId===activePtr)ptrPos(e);});
+function liftPtr(e){
+  ptrIds.delete(e.pointerId);
+  if(e.pointerId!==activePtr)return;
+  const next=ptrIds.keys().next();
+  if(next.done){activePtr=-1;ptr.down=false;}
+  else{activePtr=next.value;ptrPos(ptrIds.get(activePtr));}
+}
+addEventListener('pointerup',liftPtr);
+addEventListener('pointercancel',liftPtr);
+function clearInputs(){for(const k in keys)keys[k]=false;ptrIds.clear();activePtr=-1;ptr.down=false;}
+addEventListener('blur',clearInputs);
+document.addEventListener('visibilitychange',()=>{if(document.hidden)clearInputs();});
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 /* ================= 遊戲狀態 ================= */
 let state='title';
-const COMBO_WIN=2.0,BASE_TIME=60,TIME_CAP=90;
+const BASE_TIME=60,HARD_TIME=45,TIME_CAP=90;
+let hard=false,COMBO_WIN=2.0,MODE_TIME=BASE_TIME,HMULT=1;
 let score=0,timeLeft=BASE_TIME,elapsed=0,combo=0,comboT=0,maxCombo=0,coinsGot=0,gemsGot=0;
 let shake=0,freeze=0,tGlobal=0,tickAcc=0,hintT=0,bombWarned=false;
 let feverT=0,feverRain=0,feverCount=0;
-let best=0;try{best=+localStorage.getItem('coincollect.best3')||0;}catch(e){}
+let best=0,bestH=0,unlocked=false;
+try{
+  best=+localStorage.getItem('coincollect.best3')||0;
+  bestH=+localStorage.getItem('coincollect.best3h')||0;
+  unlocked=localStorage.getItem('coincollect.unlock')==='1';
+}catch(e){}
 let dispScore=0,dispTime=BASE_TIME;
 const player={x:GAME_W/2,y:GAME_H/2,vx:0,vy:0,r:20,face:1,sx:1,sy:1,blink:rnd(1,3),
   bobT:0,magnetT:0,stunT:0,trailT:0,starT:0};
@@ -246,7 +279,8 @@ function spawnBomb(){
   const x=edge===0?-20:edge===1?GAME_W+20:rnd(0,GAME_W);
   const y=edge===2?-20:edge===3?GAME_H+20:rnd(70,GAME_H);
   const a=Math.atan2(rnd(100,GAME_H-100)-y,rnd(100,GAME_W-100)-x);
-  bombs.push({x,y,vx:Math.cos(a)*rnd(28,55),vy:Math.sin(a)*rnd(28,55),r:16,wob:rnd(0,6),fuse:0});
+  const bs=hard?rnd(45,80):rnd(28,55);
+  bombs.push({x,y,vx:Math.cos(a)*bs,vy:Math.sin(a)*bs,r:16,wob:rnd(0,6),fuse:0});
 }
 /* ================= 粒子 / 飄字 ================= */
 const partPool=[];
@@ -267,13 +301,21 @@ function floatTxt(x,y,txt,color,size){
 }
 /* ================= 更新 ================= */
 function resetGame(){
-  score=0;timeLeft=BASE_TIME;elapsed=0;combo=0;comboT=0;maxCombo=0;coinsGot=0;gemsGot=0;
-  dispScore=0;dispTime=BASE_TIME;hintT=4;feverT=0;feverRain=0;feverCount=0;bombWarned=false;
+  MODE_TIME=hard?HARD_TIME:BASE_TIME;COMBO_WIN=hard?1.6:2.0;HMULT=hard?1.5:1;
+  score=0;timeLeft=MODE_TIME;elapsed=0;combo=0;comboT=0;maxCombo=0;coinsGot=0;gemsGot=0;
+  dispScore=0;dispTime=MODE_TIME;hintT=4;feverT=0;feverRain=0;feverCount=0;bombWarned=false;
   player.x=GAME_W/2;player.y=GAME_H/2;player.vx=0;player.vy=0;
   player.magnetT=0;player.stunT=0;player.sx=1;player.sy=1;player.starT=0;
   items=[];bombs=[];parts=[];floats=[];sparkles=[];
-  bombT=10;clockT=12;magnetT2=16;goldT=8;starT2=14;tickAcc=0;
+  bombT=hard?4:10;clockT=12;magnetT2=16;goldT=8;starT2=14;tickAcc=0;
   for(let i=0;i<8;i++)spawnItem('coin');
+}
+function refreshTitle(){
+  const hb=document.getElementById('hardBtn'),hh=document.getElementById('hardHint');
+  hb.classList.toggle('locked',!unlocked);
+  hh.textContent=unlocked
+    ?'🔥 狂熱模式已解鎖：45 秒、炸彈更多更快、全部分數 ×1.5！狂熱最佳 '+bestH+' 分'
+    :'完成一場經典模式，解鎖 🔥 狂熱模式（45 秒、炸彈更多、分數 ×1.5）！';
 }
 function startPlay(){
   resetGame();state='play';sfx.start();
@@ -282,9 +324,17 @@ function startPlay(){
 }
 function gameOver(){
   state='over';sfx.end();
-  const isNew=score>best;
-  if(isNew){best=score;try{localStorage.setItem('coincollect.best3',best);}catch(e){}
-    setTimeout(()=>sfx.best(),600);}
+  const isNew=hard?score>bestH:score>best;
+  if(isNew){
+    if(hard){bestH=score;try{localStorage.setItem('coincollect.best3h',bestH);}catch(e){}}
+    else{best=score;try{localStorage.setItem('coincollect.best3',best);}catch(e){}}
+    setTimeout(()=>sfx.best(),600);
+  }
+  let justUnlocked=false;
+  if(!hard&&!unlocked){unlocked=true;justUnlocked=true;
+    try{localStorage.setItem('coincollect.unlock','1');}catch(e){}}
+  document.getElementById('unlockMsg').style.display=justUnlocked?'block':'none';
+  document.getElementById('overTitle').textContent=hard?'🔥 狂熱結束！':'⏰ 時間到！';
   const medals=[[1000,'🏆','傳說金幣王'],[700,'🥇','金牌收藏家'],[450,'🥈','銀牌收藏家'],[200,'🥉','銅牌收藏家'],[0,'🌱','見習撿幣員']];
   let mi=medals.findIndex(m=>score>=m[0]);
   document.getElementById('medalIcon').textContent=medals[mi][1];
@@ -295,7 +345,7 @@ function gameOver(){
   document.getElementById('statCoins').textContent=coinsGot;
   document.getElementById('statGems').textContent=gemsGot;
   document.getElementById('statCombo').textContent=maxCombo;
-  document.getElementById('statBest').textContent=best;
+  document.getElementById('statBest').textContent=hard?bestH:best;
   document.getElementById('newBest').style.display=isNew?'inline':'none';
   document.getElementById('overOvl').classList.remove('hide');
 }
@@ -384,7 +434,7 @@ function update(dt){
       const mult=feverT>0?2:1;
       if(it.kind==='coin'){
         combo++;comboT=COMBO_WIN;maxCombo=Math.max(maxCombo,combo);
-        const gain=(10+Math.min(combo,15)*2)*mult;
+        const gain=Math.round((10+Math.min(combo,15)*2)*mult*HMULT);
         score+=gain;coinsGot++;
         sfx.coin(combo);burst(it.x,it.y,'#ffd700',10,150);
         floatTxt(it.x,it.y-16,'+'+gain,mult>1?'#ffab00':combo>=5?'#ff8f1f':'#ffd700',mult>1?24:combo>=5?22:18);
@@ -402,15 +452,17 @@ function update(dt){
         }
       }else if(it.kind==='gem'){
         combo++;comboT=COMBO_WIN;maxCombo=Math.max(maxCombo,combo);
-        score+=50*mult;gemsGot++;freeze=.08;shake=Math.max(shake,4);
+        const gGain=Math.round(50*mult*HMULT);
+        score+=gGain;gemsGot++;freeze=.08;shake=Math.max(shake,4);
         sfx.gem();burst(it.x,it.y,'#7fd0ff',18,220);burst(it.x,it.y,'#fff',8,120);
-        floatTxt(it.x,it.y-18,'+'+(50*mult)+' 寶石！','#4fc3f7',24);
+        floatTxt(it.x,it.y-18,'+'+gGain+' 寶石！','#4fc3f7',24);
         p.sx=1.35;p.sy=.7;
       }else if(it.kind==='gold'){
         combo++;comboT=COMBO_WIN;maxCombo=Math.max(maxCombo,combo);
-        score+=40*mult;coinsGot++;freeze=.09;shake=Math.max(shake,5);
+        const auGain=Math.round(40*mult*HMULT);
+        score+=auGain;coinsGot++;freeze=.09;shake=Math.max(shake,5);
         sfx.gold();burst(it.x,it.y,'#ffab00',22,240);burst(it.x,it.y,'#fff',10,140);
-        floatTxt(it.x,it.y-20,'+'+(40*mult)+' 抓到黃金幣！','#ffab00',26);
+        floatTxt(it.x,it.y-20,'+'+auGain+' 抓到黃金幣！','#ffab00',26);
         p.sx=1.4;p.sy=.65;
       }else if(it.kind==='star'){
         p.starT=5;
@@ -428,12 +480,13 @@ function update(dt){
       }
     }
   }
-  /* --- 炸彈（開場10秒安全學習期，之後隨時間增多） --- */
-  if(!bombWarned&&elapsed>8.5){bombWarned=true;
-    floatTxt(GAME_W/2,130,'💣 小心！炸彈要來了','#ff5252',22);}
+  /* --- 炸彈（經典：開場10秒安全學習期；狂熱：更快更多） --- */
+  if(!bombWarned&&elapsed>(hard?3.5:8.5)){bombWarned=true;
+    floatTxt(GAME_W/2,130,hard?'💣💣 狂熱炸彈雨來了！':'💣 小心！炸彈要來了','#ff5252',22);}
   bombT-=dt;
-  const maxBombs=Math.min(1+Math.floor(elapsed/15),6);
-  if(bombT<=0&&bombs.length<maxBombs){bombT=Math.max(7-elapsed*.05,3);spawnBomb();}
+  const maxBombs=hard?Math.min(2+Math.floor(elapsed/10),8):Math.min(1+Math.floor(elapsed/15),6);
+  if(bombT<=0&&bombs.length<maxBombs){
+    bombT=hard?Math.max(5-elapsed*.06,2.2):Math.max(7-elapsed*.05,3);spawnBomb();}
   for(let i=bombs.length-1;i>=0;i--){
     const b=bombs[i];
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.wob+=dt*5;b.fuse+=dt;
@@ -445,11 +498,12 @@ function update(dt){
       if(p.starT>0){
         /* 無敵狀態：打爆炸彈得分！ */
         bombs.splice(i,1);
-        score+=25;
+        const popGain=Math.round(25*HMULT);
+        score+=popGain;
         freeze=.09;shake=Math.max(shake,8);
         sfx.pop();
         burst(b.x,b.y,'#ffe74c',26,300);burst(b.x,b.y,'#ff7043',14,200);
-        floatTxt(b.x,b.y-24,'💥 打爆炸彈 +25！','#ffe74c',24);
+        floatTxt(b.x,b.y-24,'💥 打爆炸彈 +'+popGain+'！','#ffe74c',24);
         p.sx=1.35;p.sy=.7;
         continue;
       }
@@ -701,7 +755,11 @@ function drawHUD(){
   ctx.fillStyle='#7a5a10';ctx.font='bold 21px sans-serif';ctx.textAlign='left';
   ctx.fillText(Math.round(dispScore),54,37);
   ctx.font='12px sans-serif';ctx.fillStyle='#a08040';
-  ctx.fillText('最佳 '+best,110,36);
+  ctx.fillText('最佳 '+(hard?bestH:best),110,36);
+  if(hard){
+    ctx.font='bold 14px sans-serif';ctx.fillStyle='#e8590c';
+    ctx.fillText('🔥 狂熱 ×1.5',14,60);
+  }
   // Combo
   if(combo>=2){
     const pulse=1+.12*Math.sin(tGlobal*10);
@@ -719,7 +777,7 @@ function drawHUD(){
   // 時間條
   const tw=TIMEBAR_W,tx=TIMEBAR_X;
   panel(tx-8,10,tw+16,30);
-  const frac=clamp(dispTime/BASE_TIME,0,1.5);
+  const frac=clamp(dispTime/MODE_TIME,0,1.5);
   const barGrad=timeLeft>10?barGreen:barRed;
   ctx.fillStyle='rgba(0,0,0,.12)';ctx.fillRect(tx,17,tw,16);
   ctx.fillStyle=barGrad;ctx.fillRect(tx,17,tw*Math.min(frac,1),16);
@@ -823,13 +881,29 @@ function frame(now){
   }
   draw();
 }
-document.getElementById('startBtn').addEventListener('click',startPlay);
+document.getElementById('startBtn').addEventListener('click',()=>{hard=false;startPlay();});
+document.getElementById('hardBtn').addEventListener('click',()=>{
+  if(!unlocked){
+    sfx.tick();
+    const hh=document.getElementById('hardHint');
+    hh.style.color='#d9480f';setTimeout(()=>hh.style.color='',600);
+    return;
+  }
+  hard=true;startPlay();
+});
 document.getElementById('restartBtn').addEventListener('click',startPlay);
+document.getElementById('homeBtn').addEventListener('click',()=>{
+  state='title';refreshTitle();
+  document.getElementById('overOvl').classList.add('hide');
+  document.getElementById('titleOvl').classList.remove('hide');
+});
 addEventListener('keydown',e=>{
   if((e.code==='Space'||e.code==='Enter')&&state!=='play')startPlay();
 });
 /* 可玩性實測掛鉤（無頭瀏覽器 QA 用） */
-window.__test=()=>({state,x:player.x,y:player.y,score,timeLeft});
+window.__test=()=>({state,x:player.x,y:player.y,score,timeLeft,hard,unlocked,
+  items:items.length,bombs:bombs.length,combo,ptrDown:ptr.down,muted});
+refreshTitle();
 resetGame();
 requestAnimationFrame(frame);
 </script>

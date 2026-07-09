@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -66,6 +66,25 @@
     transform: translateY(4px);
     box-shadow: 0 1px 0 #c74679, 0 4px 10px rgba(201, 70, 121, 0.3);
   }
+  .bigbtn.hard {
+    background: linear-gradient(180deg, #ffb25c, #e8582f);
+    box-shadow: 0 5px 0 #b03c1a, 0 10px 20px rgba(176, 60, 26, 0.35);
+    font-size: 19px;
+    padding: 12px 30px;
+    margin-left: 10px;
+  }
+  .bigbtn.hard:active { box-shadow: 0 1px 0 #b03c1a, 0 4px 10px rgba(176, 60, 26, 0.3); }
+  .bigbtn.locked {
+    background: linear-gradient(180deg, #c8ccd4, #9aa0ab);
+    box-shadow: 0 5px 0 #767d88, 0 10px 20px rgba(80, 90, 105, 0.3);
+  }
+  .bigbtn.small {
+    font-size: 16px;
+    padding: 10px 26px;
+    background: linear-gradient(180deg, #9db8e8, #4a6db4);
+    box-shadow: 0 4px 0 #33518c, 0 8px 16px rgba(51, 81, 140, 0.3);
+    margin-left: 10px;
+  }
   #finalScore { font-size: 44px; font-weight: bold; color: #f9629e; margin: 8px 0 0; }
   #bestLine { font-size: 15px; opacity: 0.85; margin-bottom: 6px; }
   #newBest {
@@ -97,8 +116,9 @@
     <h1>格子跑酷遊戲</h1>
     <div class="sub" style="color:#4a6db4;font-weight:bold;letter-spacing:2px">～ 往畫面內跑 ～</div>
     <div class="sub">小跑者在格子路上全速前進！<br>跳過黑色峽谷、空中收集金幣，<br>吃到 ⭐ 獲得護盾，掉洞免死一次！</div>
-    <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.85">💻 電腦：空白鍵 / ↑＝跳躍（長按跳更高）<br>📱 平板：點螢幕任一處＝跳躍（按住跳更高）<br>✌️ 空中再按一次＝二段跳！</div>
+    <button id="startBtn" class="bigbtn">開 始</button><button id="hardBtn" class="bigbtn hard">🔥 極速模式</button>
+    <div id="hardHint" class="sub" style="margin:8px 0 4px;color:#c05621;font-weight:bold"></div>
+    <div class="sub" style="opacity:0.85">💻 電腦：空白鍵 / ↑＝跳躍（長按跳更高）<br>📱 平板：點螢幕任一處＝跳躍（按住跳更高）<br>✌️ 空中再按一次＝二段跳！<br>🔥 極速模式：起跑更快、峽谷更密，分數 ×2</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -106,7 +126,8 @@
     <div id="newBest">🏆 新紀錄！</div>
     <div id="finalScore">0 格</div>
     <div id="bestLine">最佳紀錄：0 格</div>
-    <button id="restartBtn" class="bigbtn">再玩一次</button>
+    <div id="unlockLine" style="display:none;color:#e8582f;font-weight:bold;font-size:17px;margin:6px 0">🔓 解鎖『🔥 極速模式』！回選單挑戰看看</div>
+    <button id="restartBtn" class="bigbtn">再玩一次</button><button id="menuBtn" class="bigbtn small">回選單</button>
   </div>
 </div>
 
@@ -239,7 +260,10 @@ let lastStarRow = 0;
 let tutorialT = 0;
 let playT = 0;                // 本場遊玩秒數（時長曲線用）
 let firstGapHint = false;     // 首次遊玩：第一個峽谷前的教練提示
-const totalScore = () => Math.floor(dist) + bonus;
+let hardMode = false;         // 🔥 極速模式（進階內容：更快更密、分數×2）
+let hardUnlocked = localStorage.getItem('parkour-hard') === '1';
+const HARD_UNLOCK = 100;      // 一般模式單場 100 分解鎖
+const totalScore = () => (Math.floor(dist) + bonus) * (hardMode ? 2 : 1);
 
 // 玩家（垂直跳躍物理）
 const player = {
@@ -260,12 +284,17 @@ function ensureRows() {
   while (genRow < target) {
     genRow++;
     let gap = false, wide = false;
-    if (genRow > 16 && genRow - lastGapRow >= 4) {      // 前16格＝安全學習期
-      const p = Math.min(0.36, 0.115 + dist * 0.00045);
+    // 安全學習期：一般前16格、極速前8格
+    if (genRow > (hardMode ? 8 : 16) && genRow - lastGapRow >= (hardMode ? 3 : 4)) {
+      const p = hardMode
+        ? Math.min(0.44, 0.17 + dist * 0.0005)
+        : Math.min(0.36, 0.115 + dist * 0.00045);
       if (Math.random() < p) {
         gap = true;
-        // 寬峽谷：後期登場且比例漸增（收尾難度）
-        wide = genRow > 150 && Math.random() < Math.min(0.62, 0.35 + (dist - 150) * 0.0005);
+        // 寬峽谷：後期登場且比例漸增（極速模式提早報到）
+        wide = hardMode
+          ? genRow > 50 && Math.random() < Math.min(0.66, 0.4 + (dist - 50) * 0.0006)
+          : genRow > 150 && Math.random() < Math.min(0.62, 0.35 + (dist - 150) * 0.0005);
       }
     }
     rowData.set(genRow, { gap, judged: false });
@@ -342,8 +371,9 @@ function addFloat(x, y, text, color, size, life) {
   floats.push({ x, y, text, color: color || '#fff', life: life || 0.9, size: size || 26 });
 }
 
-function resetGame() {
-  dist = 0; speed = 5.5;
+function resetGame(hard) {
+  hardMode = !!hard;
+  dist = 0; speed = hardMode ? 7.5 : 5.5;
   gapStreak = 0; dispScore = 0;
   nextMilestone = 100;
   rowData = new Map();
@@ -390,8 +420,8 @@ addEventListener('keydown', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
     e.preventDefault();
     if (mode === 'play') { if (!e.repeat) pressJump(); }
-    else if (mode === 'title') startGame();
-    else if (mode === 'over' && overCooldown <= 0) startGame();
+    else if (mode === 'title') startGame(false);
+    else if (mode === 'over' && overCooldown <= 0) startGame(hardMode);
   }
 });
 addEventListener('keyup', e => {
@@ -415,12 +445,19 @@ canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false }
 // ----- 狀態切換 -----
 const titleOverlay = document.getElementById('titleOverlay');
 const overOverlay = document.getElementById('overOverlay');
-function startGame() {
-  resetGame();
+function startGame(hard) {
+  resetGame(hard);
   mode = 'play';
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
+}
+function goTitle() {
+  resetGame(false);
+  mode = 'title';
+  overOverlay.classList.remove('show');
+  refreshHardBtn();
+  titleOverlay.classList.add('show');
 }
 function endGame() {
   mode = 'over';
@@ -433,20 +470,56 @@ function endGame() {
     localStorage.setItem('parkour-best', String(best));
     setTimeout(() => sfx.best(), 400);
   }
-  document.getElementById('finalScore').textContent = score + ' 分';
+  document.getElementById('finalScore').textContent = score + ' 分' + (hardMode ? '（🔥 ×2）' : '');
   document.getElementById('bestLine').textContent =
     '跑了 ' + Math.floor(dist) + ' 格 ＋ 🪙 ' + coins + '｜最佳紀錄：' + best + ' 分';
   document.getElementById('newBest').style.display = isBest ? 'block' : 'none';
+  // 進階內容解鎖：一般模式單場 100 分 → 開啟極速模式
+  const unlockedNow = !hardMode && !hardUnlocked && score >= HARD_UNLOCK;
+  if (unlockedNow) {
+    hardUnlocked = true;
+    localStorage.setItem('parkour-hard', '1');
+    refreshHardBtn();
+    setTimeout(() => sfx.star(), 700);
+  }
+  document.getElementById('unlockLine').style.display = unlockedNow ? 'block' : 'none';
   overOverlay.classList.add('show');
 }
-document.getElementById('startBtn').addEventListener('click', startGame);
+const hardBtn = document.getElementById('hardBtn');
+const hardHint = document.getElementById('hardHint');
+function refreshHardBtn() {
+  if (hardUnlocked) {
+    hardBtn.classList.remove('locked');
+    hardBtn.textContent = '🔥 極速模式';
+    hardHint.textContent = '🔥 極速模式已解鎖：起跑更快、峽谷更密，分數 ×2！';
+  } else {
+    hardBtn.classList.add('locked');
+    hardBtn.textContent = '🔒 極速模式';
+    hardHint.textContent = '一般模式單場拿到 ' + HARD_UNLOCK + ' 分，就能解鎖 🔥 極速模式！';
+  }
+}
+refreshHardBtn();
+document.getElementById('startBtn').addEventListener('click', () => startGame(false));
+hardBtn.addEventListener('click', () => {
+  if (!hardUnlocked) {
+    beep(220, 0.12, 'square', 0.1, -80);
+    hardHint.style.color = '#d43a2f';
+    setTimeout(() => { hardHint.style.color = '#c05621'; }, 400);
+    return;
+  }
+  startGame(true);
+});
 document.getElementById('restartBtn').addEventListener('click', () => {
-  if (overCooldown <= 0) startGame();
+  if (overCooldown <= 0) startGame(hardMode);   // 保持同一個模式再玩
+});
+document.getElementById('menuBtn').addEventListener('click', () => {
+  if (overCooldown <= 0) goTitle();
 });
 
 function rescue() {
   // 護盾救援：從洞口自動彈起
   shield = false;
+  gapStreak = 0;              // 掉洞了，連跳中斷
   player.grounded = false;
   player.h = 16;
   player.vy = JUMP_V0 * 1.05;
@@ -508,10 +581,12 @@ function update(dt) {
   }
   if (mode === 'over') return;
 
-  // 前進與加速（漸進難度 + 110秒後的衝刺收尾，讓多數場次在4分內結束）
+  // 前進與加速（漸進難度 + 衝刺收尾，讓多數場次在4分內結束；極速模式全面上調）
   if (mode === 'play') playT += dt;
-  const lateRamp = Math.min(2.6, Math.max(0, playT - 110) * 0.026);
-  const targetSpeed = Math.min(13, 5.5 + dist * 0.012) + lateRamp;
+  const lateRamp = Math.min(2.6, Math.max(0, playT - (hardMode ? 80 : 110)) * 0.026);
+  const targetSpeed = (hardMode
+    ? Math.min(14.5, 7.5 + dist * 0.014)
+    : Math.min(13, 5.5 + dist * 0.012)) + lateRamp;
   speed += (targetSpeed - speed) * Math.min(1, 2 * dt);
   dist += speed * dt;
   ensureRows();
@@ -528,13 +603,13 @@ function update(dt) {
     }
   }
 
-  // 跳躍物理
-  if (player.grounded && jumpBuffer > 0 && mode === 'play') {
+  // 跳躍物理（title＝標題展示模式也要能跳，展示才像真的在玩）
+  if (player.grounded && jumpBuffer > 0 && mode !== 'over') {
     jumpBuffer = 0;
     player.grounded = false;
     player.vy = JUMP_V0;
     player.sx = 0.72; player.sy = 1.35;
-    sfx.jump();
+    if (mode === 'play') sfx.jump();
     const p0 = proj(0);
     burst(GAME_W / 2, p0.y - 6, 'rgba(220,190,150,1)', 5, 120, 40);
   }
@@ -548,7 +623,7 @@ function update(dt) {
       player.grounded = true;
       player.airJumps = 1; player.spinT = 0;
       player.sx = 1.3; player.sy = 0.68;
-      sfx.land();
+      if (mode === 'play') sfx.land();
       const p0 = proj(0);
       burst(GAME_W / 2, p0.y - 6, 'rgba(220,190,150,1)', 6, 140, 30);
     }
@@ -574,13 +649,13 @@ function update(dt) {
         coins++;
         coinChain++; coinChainT = 1.4;
         bonus += 2;
-        sfx.coin(coinChain);
+        if (mode === 'play') sfx.coin(coinChain);
         burst(GAME_W / 2, iy, '#ffd447', 8, 200, 90);
         addFloat(GAME_W / 2 + 60, iy, '+2', '#ffd447', 22);
       } else {
         shield = true;
         bonus += 5;
-        sfx.star();
+        if (mode === 'play') sfx.star();
         burst(GAME_W / 2, iy, '#7fe3ff', 16, 260, 120);
         addFloat(GAME_W / 2, iy - 30, '⭐ 護盾！', '#7fe3ff', 28);
       }
@@ -621,7 +696,7 @@ function update(dt) {
   if (Math.floor(dist) >= nextMilestone) {
     addFloat(GAME_W / 2, 200, nextMilestone + ' 格！', '#fff', 40);
     addFloat(GAME_W / 2, 246, '進入第 ' + (nextMilestone / 100 + 1) + ' 關', '#ffd447', 24);
-    sfx.mile();
+    if (mode === 'play') sfx.mile();
     shake = 4;
     nextMilestone += 100;
   }
@@ -1298,6 +1373,16 @@ function drawHUD() {
   ctx.font = 'bold 24px "Microsoft JhengHei", sans-serif';
   ctx.fillText('分數: ' + Math.round(dispScore), GAME_W / 2, 47);
 
+  // 極速模式徽章
+  if (hardMode) {
+    ctx.fillStyle = 'rgba(232,88,47,0.92)';
+    rr(GAME_W / 2 + 158, 20, 96, 38, 19);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('🔥 ×2', GAME_W / 2 + 206, 45);
+  }
+
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
   rr(16, 16, 150, 40, 20);
@@ -1398,13 +1483,13 @@ function frame(now) {
   draw();
 }
 
-resetGame();
+resetGame(false);
 mode = 'title';
 titleOverlay.classList.add('show');
 requestAnimationFrame(frame);
 
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
-window.__test = () => ({ mode, dist, h: player.h, score: totalScore() });
+window.__test = () => ({ mode, dist, h: player.h, score: totalScore(), speed, hard: hardMode, unlocked: hardUnlocked, parts: parts.length, items: items.length });
 </script>
 </body>
 </html>

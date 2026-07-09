@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -511,23 +511,32 @@ function drawWither(wi) {
 
 // ---------- 頭骨彈 ----------
 const skulls = [];
-function fireSkull(fromX, fromY, aimX, aimY, fast) {
+function fireSkull(fromX, fromY, aimX, aimY, fast, homing) {
   const dx = aimX - fromX, dy = aimY - fromY;
   const d = Math.hypot(dx, dy) || 1;
-  const sp = fast ? 340 : 250;
-  skulls.push({ x: fromX, y: fromY, vx: dx / d * sp, vy: dy / d * sp - 60, rot: 0, fast, trailT: 0 });
+  const sp = (fast ? 340 : 250) * (hardMode ? 1.12 : 1);
+  skulls.push({ x: fromX, y: fromY, vx: dx / d * sp, vy: dy / d * sp - 60, rot: 0, fast, trailT: 0, homing: homing ? 1.3 : 0 });
   sfx.skull();
 }
 function updateSkulls(dt) {
   for (let i = skulls.length - 1; i >= 0; i--) {
     const k = skulls[i];
+    // 困難模式限定：熾焰追蹤頭骨，前 1.3 秒會轉彎追人（可用完美反彈化解）
+    if (k.homing > 0 && !k.friendly && !steve.dead) {
+      k.homing -= dt;
+      const hd = Math.hypot(steve.x - k.x, steve.y - 44 - k.y) || 1;
+      k.vx += (steve.x - k.x) / hd * 520 * dt;
+      k.vy += (steve.y - 44 - k.y) / hd * 520 * dt;
+      const spd = Math.hypot(k.vx, k.vy);
+      if (spd > 330) { k.vx *= 330 / spd; k.vy *= 330 / spd; }
+    }
     k.x += k.vx * dt; k.y += k.vy * dt;
-    if (!k.friendly) k.vy += 90 * dt;
+    if (!k.friendly && !(k.homing > 0)) k.vy += 90 * dt;
     k.rot += dt * 6;
     k.trailT += dt;
     if (k.trailT > 0.05) {
       k.trailT = 0;
-      parts.push({ x: k.x, y: k.y, vx: rnd(-15, 15), vy: rnd(-15, 15), life: 0.35, color: k.friendly ? PAL.gold : k.fast ? '#bb88ff' : '#888899', size: 4, grav: 0 });
+      parts.push({ x: k.x, y: k.y, vx: rnd(-15, 15), vy: rnd(-15, 15), life: 0.35, color: k.friendly ? PAL.gold : k.homing > 0 ? '#ff7e3d' : k.fast ? '#bb88ff' : '#888899', size: k.homing > 0 ? 5 : 4, grav: 0 });
     }
     // 反彈頭骨命中凋零王
     if (k.friendly && !wither.dead) {
@@ -650,7 +659,7 @@ function damageWither(dmg, big, hx, hy, label) {
   burst(hx || wither.x, hy || by, '#44444f', big ? 22 : 12, 260);
   burst(wither.x, by, PAL.diamond, 6, 200);
   addFloat((hx || wither.x) + rnd(-20, 20), (hy || by) - 90, (label || '-') + dmg, big ? PAL.gold : '#dffcff', big);
-  if (wither.hp <= 150 && wither.phase === 1) {
+  if (wither.hp <= wither.hpMax * 0.5 && wither.phase === 1) {
     wither.phase = 2;
     sfx.phase();
     shake = Math.max(shake, 10);
@@ -658,7 +667,7 @@ function damageWither(dmg, big, hx, hy, label) {
     burst(wither.x, by, PAL.eyeRage, 30, 320);
     spawnApple(rnd(150, 450));
   }
-  if (wither.hp <= 75 && wither.phase === 2) {
+  if (wither.hp <= wither.hpMax * 0.25 && wither.phase === 2) {
     wither.phase = 3;
     wither.rainT = 1.2;
     sfx.phase();
@@ -678,9 +687,9 @@ function drawSkulls() {
     ctx.save();
     ctx.translate(k.x, k.y);
     ctx.rotate(k.rot);
-    const c = k.friendly ? '#8a6a1a' : k.fast ? '#3a2a55' : PAL.wither;
+    const c = k.friendly ? '#8a6a1a' : k.homing > 0 ? '#7a2810' : k.fast ? '#3a2a55' : PAL.wither;
     box3d(-9, -9, 18, 18, 4, c, true);
-    ctx.fillStyle = k.friendly ? '#fff2b0' : k.fast ? PAL.eyeRage : PAL.eye;
+    ctx.fillStyle = k.friendly ? '#fff2b0' : k.homing > 0 ? '#ffcf5c' : k.fast ? PAL.eyeRage : PAL.eye;
     ctx.globalAlpha = 0.35;
     ctx.fillRect(-8, -6, 8, 8); ctx.fillRect(0, -6, 8, 8);
     ctx.globalAlpha = 1;
@@ -746,6 +755,8 @@ addEventListener('keydown', e => {
   if (!e.repeat && state.onKey) state.onKey(e.code);
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
+// 視窗失焦：清空按鍵與觸點，避免卡鍵（按住方向鍵切頁籤回來會一直跑）
+addEventListener('blur', () => { for (const k in keys) keys[k] = false; pointers.clear(); });
 // 觸控虛擬按鍵區
 const tBtns = {
   left: { x: 14, y: 436, w: 88, h: 88, label: '◀' },
@@ -782,15 +793,16 @@ function drawTouchUI() {
   }
   ctx.globalAlpha = 1; ctx.textBaseline = 'alphabetic';
 }
-function button(x, y, w, h, label, cb, size) {
+function button(x, y, w, h, label, cb, size, cols) {
   uiButtons.push({ x, y, w, h, cb });
   ctx.save();
+  cols = cols || ['#7ec858', '#4a8a32', '#2c5a1c'];
   const g = ctx.createLinearGradient(x, y, x, y + h);
-  g.addColorStop(0, '#7ec858'); g.addColorStop(1, '#4a8a32');
+  g.addColorStop(0, cols[0]); g.addColorStop(1, cols[1]);
   ctx.fillStyle = g;
   roundRect(x, y, w, h, 10);
   ctx.fill();
-  ctx.strokeStyle = '#2c5a1c'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.strokeStyle = cols[2]; ctx.lineWidth = 3; ctx.stroke();
   ctx.fillStyle = '#ffffff';
   ctx.font = 'bold ' + (size || 24) + 'px sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -872,7 +884,8 @@ function drawBossBar(dt) {
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText('凋零王 ' + Math.max(0, Math.ceil(wither.hp)) + '/300' + (wither.phase === 3 ? ' 【最終狂暴】' : wither.phase === 2 ? ' 【狂暴】' : ''), GAME_W / 2, by + 46);
+  ctx.fillStyle = hardMode ? '#ffcf5c' : '#fff';
+  ctx.fillText((hardMode ? '【困難】狂暴凋零王 ' : '凋零王 ') + Math.max(0, Math.ceil(wither.hp)) + '/' + wither.hpMax + (wither.phase === 3 ? ' 【最終狂暴】' : wither.phase === 2 ? ' 【狂暴】' : ''), GAME_W / 2, by + 46);
 }
 function drawCombo() {
   if (combo < 2) return;
@@ -901,14 +914,28 @@ function drawCombo() {
 // ---------- 遊戲流程 ----------
 let elapsed = 0, dealt = 0, best = 0, newBest = false, finalScore = 0;
 let combo = 0, comboT = 0, maxCombo = 0, comboPop = 0, parries = 0, missHint = 0;
+// v4 進階內容：狂暴凋零・困難模式（通關一次解鎖）
+let hardMode = false, bestHard = 0, unlockedHard = false, homingHint = false, justUnlocked = false;
 try { best = parseInt(localStorage.getItem('史蒂夫大戰凋零王.best') || '0', 10) || 0; } catch (err) { best = 0; }
+try {
+  bestHard = parseInt(localStorage.getItem('史蒂夫大戰凋零王.bestHard') || '0', 10) || 0;
+  unlockedHard = localStorage.getItem('史蒂夫大戰凋零王.hard') === '1';
+} catch (err) {}
+function unlockHard() {
+  if (unlockedHard) return false;
+  unlockedHard = true;
+  try { localStorage.setItem('史蒂夫大戰凋零王.hard', '1'); } catch (err) {}
+  return true;
+}
 function resetFight() {
   steve.x = 180; steve.y = GROUND_Y; steve.vx = 0; steve.vy = 0;
   steve.hp = 20; steve.face = 1; steve.grounded = true;
   steve.atkT = 0; steve.atkCd = 0; steve.blocking = false; steve.hurtT = 0; steve.dead = false;
   steve.sx = 1; steve.sy = 1;
   steve.blockT = 9;
-  wither.x = 660; wither.y = 290; wither.hp = 300; wither.bob = 0; wither.flash = 0;
+  wither.x = 660; wither.y = 290; wither.bob = 0; wither.flash = 0;
+  wither.hpMax = hardMode ? 400 : 300;
+  wither.hp = wither.hpMax;
   wither.fireT = 3.4; wither.chargeT = 7; wither.charging = 0; wither.phase = 1;
   wither.tired = false;
   wither.dead = false; wither.deathT = 0; wither.sx = 1; wither.sy = 1; wither.rainT = 3;
@@ -916,6 +943,8 @@ function resetFight() {
   items.length = 0; warnings.length = 0;
   elapsed = 0; dealt = 0; bossBarDisp = 1;
   combo = 0; comboT = 0; maxCombo = 0; comboPop = 0; parries = 0; missHint = 0;
+  shake = 0; freeze = 0; prevTouch = {};
+  wither.volley = 0; homingHint = false;
 }
 let state = null;
 function setState(s) { state = s; if (s.enter) s.enter(); }
@@ -949,29 +978,40 @@ const titleState = {
     ctx.font = 'bold 19px sans-serif';
     ctx.fillText('鑽石劍連斬累積連擊！頭骨彈撞到前一瞬舉盾＝完美反彈回敬！', GAME_W / 2, 178);
     ctx.fillStyle = 'rgba(10,12,24,0.65)';
-    roundRect(GAME_W / 2 - 310, 190, 620, 54, 10);
+    roundRect(GAME_W / 2 - 310, 190, 620, 76, 10);
     ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText('電腦：← → 移動 · ↑/空白鍵 跳 · J 攻擊 · K 按住舉盾', GAME_W / 2, 212);
     ctx.fillText('平板：畫面下方按鈕 ◀ ▶ 移動 · 「跳」「攻」「盾」', GAME_W / 2, 234);
-    if (best > 0) {
+    ctx.fillStyle = unlockedHard ? '#ffcf5c' : PAL.dim;
+    ctx.fillText(unlockedHard
+      ? '已解鎖【狂暴凋零・困難模式】：400 HP＋熾焰追蹤頭骨，分數 ×1.5！'
+      : '擊敗凋零王一次，解鎖【狂暴凋零・困難模式】（追蹤頭骨＋分數 ×1.5）', GAME_W / 2, 257);
+    if (best > 0 || bestHard > 0) {
       ctx.fillStyle = PAL.gold;
-      ctx.font = 'bold 16px monospace';
-      ctx.fillText('最佳戰績：' + best + ' 分', GAME_W / 2, 262);
+      ctx.font = 'bold 15px monospace';
+      ctx.fillText('最佳戰績：' + best + ' 分' + (bestHard > 0 ? ' · 困難最佳：' + bestHard + ' 分' : ''), GAME_W / 2, 285);
     }
     const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
     ctx.save();
-    ctx.translate(GAME_W / 2, 304);
+    ctx.translate(GAME_W / 2, 326);
     ctx.scale(pulse, pulse);
-    ctx.translate(-GAME_W / 2, -304);
-    button(GAME_W / 2 - 110, 272, 220, 64, '開 始', startGame, 30);
+    ctx.translate(-GAME_W / 2, -326);
+    if (unlockedHard) {
+      button(GAME_W / 2 - 216, 296, 206, 60, '開 始', startGame, 27);
+      button(GAME_W / 2 + 10, 296, 206, 60, '困難模式', startHard, 27, ['#a76bff', '#5c2ca0', '#3a1a68']);
+    } else {
+      button(GAME_W / 2 - 110, 296, 220, 60, '開 始', startGame, 28);
+    }
     ctx.restore();
     muteButton();
   }
 };
-function startGame() { sfx.click(); resetFight(); setState(playState); }
+function startGame() { sfx.click(); hardMode = false; resetFight(); setState(playState); }
+function startHard() { sfx.click(); hardMode = true; resetFight(); setState(playState); }
+function restartGame() { sfx.click(); resetFight(); setState(playState); } // 保持目前模式再玩一次
 
 // ===== 戰鬥 =====
 const playState = {
@@ -1029,10 +1069,20 @@ const playState = {
         finalScore = wither.dead
           ? Math.max(0, Math.round(3000 - elapsed * 15)) + steve.hp * 150 + 1000 + maxCombo * 50 + parries * 150
           : dealt + parries * 100;
-        newBest = wither.dead && finalScore > best;
-        if (newBest) {
-          best = finalScore;
-          try { localStorage.setItem('史蒂夫大戰凋零王.best', String(best)); } catch (err) {}
+        if (hardMode) finalScore = Math.round(finalScore * 1.5); // 困難模式分數 ×1.5
+        justUnlocked = wither.dead && !hardMode && unlockHard();
+        if (hardMode) {
+          newBest = wither.dead && finalScore > bestHard;
+          if (newBest) {
+            bestHard = finalScore;
+            try { localStorage.setItem('史蒂夫大戰凋零王.bestHard', String(bestHard)); } catch (err) {}
+          }
+        } else {
+          newBest = wither.dead && finalScore > best;
+          if (newBest) {
+            best = finalScore;
+            try { localStorage.setItem('史蒂夫大戰凋零王.best', String(best)); } catch (err) {}
+          }
         }
         if (wither.dead) sfx.win(); else sfx.lose();
         setState(overState);
@@ -1105,13 +1155,20 @@ const playState = {
             addFloat(wither.x, wither.y - 130, '凋零王失去耐心了！', PAL.eyeRage, true);
             sfx.phase();
           }
-          wither.fireT = ((wither.phase === 3 ? 1.0 : rage ? 1.15 : 1.6) + hpR * 1.2 + rnd(-0.15, 0.15)) * late;
+          wither.fireT = ((wither.phase === 3 ? 1.0 : rage ? 1.15 : 1.6) + hpR * 1.2 + rnd(-0.15, 0.15)) * late * (hardMode ? 0.8 : 1);
           const heads = [[-52, -26], [52, -26], [0, -34]];
           const n = rage ? 3 : 1;
+          wither.volley = (wither.volley || 0) + 1;
           for (let i = 0; i < n; i++) {
             const h = heads[i % 3];
             const lead = steve.x + steve.vx * 0.45 + (i - 1) * 60;
-            fireSkull(wither.x + h[0], wither.y + h[1] + Math.sin(wither.bob) * 12, lead, steve.y - 40, rage);
+            // 困難模式：每第 2 波夾帶一顆熾焰追蹤頭骨（新招式）
+            const homing = hardMode && i === n - 1 && wither.volley % 2 === 0;
+            fireSkull(wither.x + h[0], wither.y + h[1] + Math.sin(wither.bob) * 12, lead, steve.y - 40, rage, homing);
+            if (homing && !homingHint) {
+              homingHint = true;
+              addFloat(wither.x, wither.y - 120, '熾焰追蹤頭骨！會轉彎追人，快反彈它！', '#ff7e3d', true);
+            }
           }
         }
         // 第三階段：頭骨雨（地面紅圈預警 → 天降頭骨）
@@ -1150,7 +1207,7 @@ const playState = {
         }
         if (wither.x < 120 || wither.x > GAME_W - 120) {
           wither.charging = 0;
-          wither.chargeT = wither.phase >= 2 ? rnd(4.5, 6) : rnd(6.5, 8.5);
+          wither.chargeT = (wither.phase >= 2 ? rnd(4.5, 6) : rnd(6.5, 8.5)) * (hardMode ? 0.8 : 1);
           // 俯衝後有機會掉金蘋果（受傷才掉 → 風險回報）
           if (Math.random() < 0.65) spawnApple(rnd(120, GAME_W - 200));
         }
