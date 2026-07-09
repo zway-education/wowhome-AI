@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -359,6 +360,7 @@ function drawFigure(x, y, face, opts) {
   const bob = o.walk ? Math.sin(o.walkT * 10) * 1.6 : Math.sin(bgTime * 2 + (o.ph || 0)) * 0.7;
   ctx.save();
   ctx.translate(x, y);
+  if (o.scale) ctx.scale(o.scale, o.scale);
   if (o.fade !== undefined) ctx.globalAlpha = o.fade;
   // 影子
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
@@ -456,8 +458,9 @@ const player = { x: 120, y: 470, face: -1.2, hp: 3, stam: 100, hunger: 80, walkT
 let cultists = [], meat = { x: 520, y: 330, alive: true };
 let day = 47, kills = 0, takedowns = 0, nights = 0, phase = 'raid';
 let best = 0, newBest = false, finalScore = 0;
+let bonus = 0, spotted = false, chain = 0, treasures = [];
 try { best = parseInt(localStorage.getItem('夜襲邪教據點.best') || '0', 10) || 0; } catch (err) { best = 0; }
-const ATK_RANGE = 52, ATK_COST = 22, ATK_CD = 0.5;
+const ATK_RANGE = 52, ATK_COST = 20, ATK_CD = 0.5;
 function spawnNight() {
   const n = Math.min(3 + nights, 7);
   cultists = [];
@@ -473,12 +476,42 @@ function spawnNight() {
     });
     cultists[i].baseX = cultists[i].x; cultists[i].baseY = cultists[i].y;
   }
+  // 第 2 晚起出現邪教頭目：更壯、視野更廣、擊殺回復 1 HP
+  if (nights >= 1) {
+    const c = cultists[0];
+    c.leader = true; c.hp = 3; c.range += 45; c.speed += 14; c.st = 'patrol';
+  }
+  // 祭品金幣（風險回報：散在營地深處）
+  treasures = [];
+  for (let i = 0; i < 2; i++) {
+    const a = rnd(0, 6.2832);
+    treasures.push({ x: CAMP.x + Math.cos(a) * rnd(90, 150), y: CAMP.y + Math.sin(a) * rnd(70, 115), ph: rnd(0, 6) });
+  }
   meat.alive = true;
   player.x = 120; player.y = 470; player.face = -1.2;
   player.loot = false;
+  spotted = false; chain = 0;
   phase = 'raid';
 }
-function calcScore() { return nights * 100 + kills * 25 + takedowns * 15; }
+function calcScore() { return nights * 100 + kills * 25 + takedowns * 15 + bonus; }
+function drawTreasures() {
+  for (const tr of treasures) {
+    const tw = Math.sin(bgTime * 3 + tr.ph);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.ellipse(tr.x, tr.y + 5, 11, 4, 0, 0, 6.29); ctx.fill();
+    ctx.save();
+    ctx.translate(tr.x, tr.y);
+    ctx.shadowColor = PAL.fireHot; ctx.shadowBlur = 10 + tw * 4;
+    ctx.fillStyle = PAL.amber;
+    ctx.beginPath(); ctx.arc(-5, 0, 5, 0, 6.29); ctx.arc(5, 1, 5, 0, 6.29); ctx.arc(0, -5, 5, 0, 6.29); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#7a5c28';
+    ctx.beginPath(); ctx.arc(-5, 0, 2, 0, 6.29); ctx.arc(5, 1, 2, 0, 6.29); ctx.fill();
+    ctx.fillStyle = 'rgba(255,240,190,0.9)';
+    ctx.fillRect(-2, -8, 2.5, 2.5);
+    ctx.restore();
+  }
+}
 
 // ---------- 輸入 ----------
 const keys = {};
@@ -540,12 +573,22 @@ function tryAttack() {
   player.atkT = 0.28;
   player.stam -= ATK_COST;
   sfx.swing();
+  // 瞄準輔助：錐內沒目標時，自動轉向最近的敵人（觸控友善）
+  const REACH = ATK_RANGE + 12;
+  let inConeAny = false, nearest = null, nd = 1e9;
+  for (const c of cultists) {
+    if (c.dead) continue;
+    const d = Math.hypot(c.x - player.x, c.y - player.y);
+    if (d < REACH && Math.abs(angDiff(Math.atan2(c.y - player.y, c.x - player.x), player.face)) < 1.3) inConeAny = true;
+    if (d < nd) { nd = d; nearest = c; }
+  }
+  if (!inConeAny && nearest && nd < REACH) player.face = Math.atan2(nearest.y - player.y, nearest.x - player.x);
   let hitAny = false;
   for (const c of cultists) {
     if (c.dead) continue;
     const d = Math.hypot(c.x - player.x, c.y - player.y);
     const dirTo = Math.atan2(c.y - player.y, c.x - player.x);
-    if (d < ATK_RANGE && Math.abs(angDiff(dirTo, player.face)) < 1.3) {
+    if (d < REACH && Math.abs(angDiff(dirTo, player.face)) < 1.3) {
       hitAny = true;
       // 背後偷襲：信徒沒發現你 → 一擊放倒
       const backstab = c.alert <= 0 && Math.abs(angDiff(c.face, dirTo)) < 1.5;
@@ -555,6 +598,12 @@ function tryAttack() {
       if (backstab && c.hp <= 0) {
         takedowns++;
         addFloat(c.x, c.y - 36, '偷襲成功！', PAL.amber, true);
+        // 無聲連殺：整晚沒被發現的連續偷襲，加分越滾越多
+        if (!spotted) {
+          chain++;
+          bonus += chain * 10;
+          addFloat(c.x, c.y - 58, '無聲連殺 x' + chain + '（+' + chain * 10 + '）', PAL.fireHot, false);
+        }
         sfx.takedown();
         freeze = 0.08; shake = Math.max(shake, 6);
       } else {
@@ -563,10 +612,21 @@ function tryAttack() {
         freeze = 0.04; shake = Math.max(shake, 3.5);
         if (c.alert <= 0) { c.alert = 2.2; sfx.alert(); }
         c.chaseT = 3;
+        spotted = true; chain = 0;
       }
       if (c.hp <= 0) {
         c.dead = true; kills++;
         burst(c.x, c.y, '#7a6a52', 14, 190, 60);
+        if (c.leader) {
+          bonus += 75;
+          if (player.hp < 3) {
+            player.hp++;
+            addFloat(player.x, player.y - 54, '擊殺頭目！回復 1 HP（+75）', PAL.good, true);
+          } else {
+            addFloat(c.x, c.y - 54, '擊殺頭目！+75', PAL.amber, true);
+          }
+          sfx.night();
+        }
         // 全部清空 → 搶祭壇
         if (cultists.every(cc => cc.dead)) {
           phase = 'loot';

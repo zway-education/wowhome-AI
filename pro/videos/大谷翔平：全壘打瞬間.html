@@ -581,8 +581,8 @@ function drawBallAndTrail(){
   if(trail.length > 1){
     ctx.save(); ctx.globalCompositeOperation = 'lighter';
     for(let i = 1; i < trail.length; i++){
-      const p0 = trail[i - 1], p1 = trail[i]; ctx.globalAlpha = p1.a * 0.55; ctx.strokeStyle = '#ffcb3d';
-      ctx.lineWidth = lerp(1, 6, i / trail.length); ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(p0.x, p0.y);
+      const p0 = trail[i - 1], p1 = trail[i]; ctx.globalAlpha = p1.a * 0.6; ctx.strokeStyle = '#ffcb3d';
+      ctx.lineWidth = lerp(1.5, 9, i / trail.length); ctx.lineCap = 'round'; ctx.beginPath(); ctx.moveTo(p0.x, p0.y);
       ctx.lineTo(p1.x, p1.y); ctx.stroke();
     }
     ctx.restore(); ctx.globalAlpha = 1;
@@ -598,7 +598,14 @@ function drawBallAndTrail(){
     }
     ctx.globalAlpha = 1; drawBaseball(b.x, b.y, 5.5, rt * 14);
   } else {
-    ctx.save(); ctx.shadowColor = '#ffcb3d'; ctx.shadowBlur = 14; drawBaseball(b.x, b.y, 6, rt * 10); ctx.restore();
+    /* 彗星球：大顆＋脈動光暈，飛行全程都看得清楚 */
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    const gr = 22 + Math.sin(rt * 9) * 4;
+    const cg = ctx.createRadialGradient(b.x, b.y, 2, b.x, b.y, gr);
+    cg.addColorStop(0, 'rgba(255,246,210,0.9)'); cg.addColorStop(0.45, 'rgba(255,203,61,0.4)');
+    cg.addColorStop(1, 'rgba(255,203,61,0)'); ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(b.x, b.y, gr, 0, TAU); ctx.fill();
+    ctx.restore();
+    ctx.save(); ctx.shadowColor = '#ffcb3d'; ctx.shadowBlur = 18; drawBaseball(b.x, b.y, 8.5, rt * 10); ctx.restore();
   }
 }
 
@@ -811,6 +818,10 @@ function drawPitcher(){
     armA = lerp(-2.1, -3.05, easeInOutCubic(p)); lean = -0.18 * easeInOutCubic(p);
   } else if(tl >= T.pitch){
     const p = easeOutCubic(seg(tl, T.pitch, T.pitch + 0.22)); armA = lerp(-3.05, -0.4, p); lean = lerp(-0.18, 0.32, p); leg = lerp(10, 0, p);
+    if(tl >= T.land){                                    /* 被轟出全壘打：垂頭喪氣 */
+      const q = easeInOutCubic(seg(tl, T.land, T.land + 1.3));
+      lean = lerp(0.32, 0.55, q); armA = lerp(-0.4, -1.4, q);
+    }
   }
   ctx.save(); ctx.translate(x, yF + breath * 0.4); softShadow(0, 1, 16, 4.5, 0.32);
   /* 腿（灰褲、兩段式、描邊） */
@@ -873,6 +884,10 @@ function batterPose(){
   if(tl < T.load){
     P.bat = -2.05 + Math.sin(rt * 3.1) * 0.08;          /* 待球晃棒 */
     P.crouch = Math.sin(rt * 2.2) * 0.8;                 /* 呼吸 */
+    if(tl > 6.25 && tl < 7.7){                           /* 配合字幕：緩緩舉起球棒 */
+      const sw = Math.sin(seg(tl, 6.25, 7.7) * Math.PI);
+      P.bat -= 0.55 * sw; P.crouch += sw * 2.4; P.torso -= 0.06 * sw;
+    }
   } else if(tl < T.swing){
     const p = easeOutCubic(seg(tl, T.load, T.loadEnd));  /* 預備蓄力（anticipation） */
     P.bat = lerp(-2.05, -1.7, p); P.torso = lerp(-0.05, -0.24, p); P.crouch = lerp(0, 5, p);
@@ -1011,6 +1026,129 @@ function drawBatProj(){
   if(!batProj) return; ctx.save(); ctx.translate(batProj.x, batProj.y); ctx.rotate(batProj.rot); drawBat(34); ctx.restore();
 }
 
+/* ---- 外野手：追球 → 飛身跳接撲空 → 跌坐冒金星（喜劇擔當） ---- */
+function drawStar4(px, py, r, rot){
+  ctx.save(); ctx.translate(px, py); ctx.rotate(rot); ctx.fillStyle = '#ffcb3d'; ctx.beginPath();
+  for(let i = 0; i < 8; i++){
+    const rr = i % 2 ? r * 0.4 : r; const a = i / 8 * TAU; ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+function drawFielder(){
+  const sc = 0.74; let x = 782, jump = 0, run = 0, sit = 0, reach = 0, tilt = 0;
+  if(tl >= 10.05 && tl < 12.85){
+    run = 1; x = lerp(782, 872, easeInOutCubic(seg(tl, 10.05, 12.85)));
+  } else if(tl >= 12.85 && tl < 13.42){
+    const p = seg(tl, 12.85, 13.42); x = lerp(872, 886, p); jump = Math.sin(p * Math.PI) * 30;
+    reach = Math.sin(Math.min(1, p * 1.5) * Math.PI / 2); tilt = -0.28 * reach;
+  } else if(tl >= 13.42){
+    x = 888; sit = easeOutCubic(seg(tl, 13.42, 13.78)); reach = 1 - sit;
+  }
+  ctx.save(); ctx.translate(x, 331 - jump); ctx.scale(sc, sc);
+  softShadow(0, jump / sc + 1, 15 + jump * 0.25, 4.5, 0.3 - jump * 0.004);
+  if(sit > 0){ ctx.translate(0, 7 * sit); ctx.rotate(-0.85 * sit); } else ctx.rotate(tilt);
+  /* 腿 */
+  if(run){
+    const c = Math.sin(rt * 13);
+    limb2(0, -20, -5 - c * 4, -10, -8 - c * 6, -1 + Math.abs(c) * 3, 5, '#b9c2cc');
+    limb2(0, -20, 5 + c * 4, -10, 8 + c * 6, -1 + Math.abs(Math.sin(rt * 13 + 2)) * 3, 5, '#b9c2cc');
+  } else if(sit > 0.3){
+    limb2(0, -18, 8, -13, 16, -15, 5, '#b9c2cc'); limb2(0, -18, 9, -8, 17, -9, 5, '#b9c2cc');
+    shoe(17, -15, 1, '#22303f'); shoe(18, -9, 1, '#22303f');
+  } else {
+    limb2(0, -20, -5, -10, -7, 0, 5, '#b9c2cc'); limb2(0, -20, 5, -10, 7, 0, 5, '#b9c2cc');
+  }
+  if(sit <= 0.3){ shoe(run ? -8 : -7, 0, -1, '#22303f'); shoe(run ? 8 : 7, 0, 1, '#22303f'); }
+  /* 軀幹（客隊灰） */
+  ctx.beginPath(); ctx.moveTo(-6, -19); ctx.quadraticCurveTo(-7.5, -27, -6.4, -34.5);
+  ctx.quadraticCurveTo(0, -37.5, 6.4, -34.5); ctx.quadraticCurveTo(7.5, -27, 6, -19);
+  ctx.quadraticCurveTo(0, -17.2, -6, -19); ctx.closePath(); ctx.fillStyle = '#c9d2da'; ctx.fill();
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5; ctx.stroke();
+  /* 頭（面向右追球）＋紅帽 */
+  ctx.beginPath(); ctx.arc(0.5, -42, 5.8, 0, TAU); ctx.fillStyle = '#e8b98a'; ctx.fill();
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.3; ctx.stroke();
+  ctx.fillStyle = '#c0392b'; ctx.beginPath(); ctx.arc(0.5, -42.7, 6.2, Math.PI * 0.98, Math.PI * 2.02);
+  ctx.closePath(); ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(5.4, -44); ctx.quadraticCurveTo(11.5, -43.5, 11.2, -41.3);
+  ctx.quadraticCurveTo(7.5, -40.7, 4.8, -41.9); ctx.closePath(); ctx.fill(); ctx.stroke();
+  /* 表情：撲空後 >< 眼 */
+  ctx.strokeStyle = '#3a2417'; ctx.lineWidth = 1.1;
+  if(sit > 0.5){
+    ctx.beginPath(); ctx.moveTo(2, -43.5); ctx.lineTo(4.4, -42.2); ctx.moveTo(4.4, -43.5); ctx.lineTo(2, -42.2); ctx.stroke();
+    ctx.fillStyle = '#7c3a2d'; ctx.beginPath(); ctx.ellipse(3.4, -39, 1.6, 1.1, 0, 0, TAU); ctx.fill();
+  } else {
+    ctx.fillStyle = '#1b1410'; ctx.beginPath(); ctx.arc(3.2, -42.6, 1, 0, TAU); ctx.fill();
+  }
+  /* 手臂：跳接時手套高舉 */
+  const gx = lerp(7, 11, reach), gy2 = lerp(-27, -56, reach);
+  armTo(2, -32, gx, gy2, 2.5, 3.8, '#c9d2da');
+  ctx.beginPath(); ctx.arc(gx + 1, gy2 - 1.5, 3.6, 0, TAU); ctx.fillStyle = '#7a4a22'; ctx.fill();
+  ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.2; ctx.stroke();
+  armTo(-2, -32, run ? -9 : -7, run ? -36 : -25, -2.5, 3.8, '#c9d2da');
+  /* 跌坐冒金星 */
+  if(sit > 0.8 && tl < T.fadeOut){
+    for(let i = 0; i < 3; i++){
+      const a = rt * 4 + i * 2.09; drawStar4(Math.cos(a) * 13, -50 + Math.sin(a) * 3.5, 3, rt * 5 + i);
+    }
+  }
+  ctx.restore();
+}
+
+/* ---- 隊友：第三幕從休息區衝出來一起跳 ---- */
+const MATES = [
+  { x0:140, y0:450, x1:418, y1:424, d:0 },
+  { x0:100, y0:466, x1:486, y1:436, d:0.3 }
+];
+function drawMates(){
+  if(tl < T.armsUp + 0.15) return;
+  for(let m = 0; m < MATES.length; m++){
+    const M = MATES[m]; const p = easeInOutCubic(seg(tl, T.armsUp + 0.15 + M.d, 16.35 + M.d));
+    const x = lerp(M.x0, M.x1, p), y = lerp(M.y0, M.y1, p); const arrived = p >= 1;
+    const jump = arrived ? Math.abs(Math.sin((tl - 16.35 - M.d) * 5 + m * 1.7)) * 8 : 0;
+    const bob = arrived ? 0 : Math.abs(Math.sin(rt * 11 + m * 2)) * 3.5;
+    ctx.save(); ctx.translate(x, y - jump - bob); ctx.scale(0.82, 0.82);
+    softShadow(0, (jump + bob) / 0.82 + 2, 17, 5.5, 0.32);
+    /* 腿 */
+    if(arrived){
+      limb2(0, -22, -6, -11, -9, 0, 6, '#e9e2cf'); limb2(0, -22, 7, -11, 10, 0, 6, '#e9e2cf');
+      shoe(-9, 0, -1, '#16233a'); shoe(10, 0, 1, '#16233a');
+    } else {
+      const c = Math.sin(rt * 13 + m * 3);
+      limb2(0, -22, -5 - c * 5, -11, -8 - c * 7, -1 + Math.abs(c) * 4, 6, '#e9e2cf');
+      limb2(0, -22, 5 + c * 5, -11, 8 + c * 7, -1 + Math.abs(Math.sin(rt * 13 + m * 3 + 2)) * 4, 6, '#e9e2cf');
+      shoe(-8 - c * 7, -1, -1, '#16233a'); shoe(8 + c * 7, -1, 1, '#16233a');
+    }
+    /* 軀幹（主隊白） */
+    ctx.beginPath(); ctx.moveTo(-7, -21); ctx.quadraticCurveTo(-8.6, -30, -7.6, -39);
+    ctx.quadraticCurveTo(0, -42.5, 7.6, -39); ctx.quadraticCurveTo(8.6, -30, 7, -21);
+    ctx.quadraticCurveTo(0, -18.6, -7, -21); ctx.closePath(); ctx.fillStyle = '#f6f1e0'; ctx.fill();
+    ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1.3; ctx.beginPath(); ctx.moveTo(2, -40); ctx.lineTo(2, -23); ctx.stroke();
+    /* 頭＋藍帽 */
+    ctx.beginPath(); ctx.arc(0.5, -47.5, 6.4, 0, TAU); ctx.fillStyle = '#e8b98a'; ctx.fill();
+    ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.3; ctx.stroke();
+    ctx.fillStyle = '#1c4fa1'; ctx.beginPath(); ctx.arc(0.5, -48.2, 6.9, Math.PI * 0.98, Math.PI * 2.02);
+    ctx.closePath(); ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.2; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(5.8, -49.6); ctx.quadraticCurveTo(12.4, -49, 12.1, -46.7);
+    ctx.quadraticCurveTo(8, -46.1, 5.2, -47.4); ctx.closePath(); ctx.fill(); ctx.stroke();
+    /* 笑臉 */
+    ctx.strokeStyle = '#3a2417'; ctx.lineWidth = 1.2; ctx.beginPath();
+    ctx.arc(3.6, -48, 1.6, Math.PI * 1.05, Math.PI * 1.95); ctx.stroke();
+    ctx.fillStyle = '#7c3a2d'; ctx.beginPath(); ctx.arc(2.4, -44.6, 2, 0, Math.PI); ctx.closePath(); ctx.fill();
+    /* 手臂 */
+    if(arrived){
+      armTo(-5, -36, -13, -58, -3, 4.4, '#f6f1e0'); armTo(5, -36, 14, -58, 3, 4.4, '#f6f1e0');
+      ctx.fillStyle = '#e8b98a'; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.1;
+      ctx.beginPath(); ctx.arc(-13, -58, 2.5, 0, TAU); ctx.fill(); ctx.stroke();
+      ctx.beginPath(); ctx.arc(14, -58, 2.5, 0, TAU); ctx.fill(); ctx.stroke();
+    } else {
+      const c = Math.sin(rt * 13 + m * 3);
+      armTo(-5, -36, -9 + c * 5, -28, -2.5, 4.4, '#f6f1e0'); armTo(5, -36, 9 - c * 5, -28, 2.5, 4.4, '#f6f1e0');
+    }
+    ctx.restore();
+  }
+}
+
 /* ============================================================
    第 10 節　鏡頭系統（分鏡切換＋緩動追蹤＋手持微晃）
    ============================================================ */
@@ -1079,7 +1217,7 @@ const SUBS = [
   { a:19.6,  b:22.4, text:'今夜的英雄——大谷翔平。' }
 ];
 const ACTS = [
-  { at:0.35,  dur:2.3, no:'第 一 幕', name:'夜空下的球場' },
+  { at:2.95,  dur:2.0, no:'第 一 幕', name:'夜空下的球場' },
   { at:8.64,  dur:1.7, no:'第 二 幕', name:'決勝一擊' },
   { at:14.62, dur:2.1, no:'第 三 幕', name:'英雄時刻' }
 ]; let lastSub = '';
@@ -1120,11 +1258,20 @@ function onLand(){
   shake = Math.max(shake, 4); spawnConfetti(905, 205, 42, 130); noiseBurst(0.5, 0.22, { f0:700, f1:120 });
 }
 const fwEvent = (x, c) => () => launchRocket(x, c);
+function onMoonCross(){
+  const b = ballState(tl);
+  if(b){ spawnSpark(b.x, b.y, 22, 150, ['#fff2c0', '#ffcb3d', '#ffffff']); } sfxDing();
+}
+function onFielderFlop(){
+  spawnDust(886, 331, 7); shake = Math.max(shake, 3.5); noiseBurst(0.3, 0.2, { f0:500, f1:90 });
+}
 const EVENTS = [
   { t:T.pitch,     fired:false, fn:sfxWhoosh },
   { t:T.hit,       fired:false, fn:onHit },
   { t:T.batFlip,   fired:false, fn:onBatFlip },
+  { t:11.95,       fired:false, fn:onMoonCross },
   { t:T.wallCross, fired:false, fn:onWallCross },
+  { t:13.45,       fired:false, fn:onFielderFlop },
   { t:T.land,      fired:false, fn:onLand },
   { t:14.75,       fired:false, fn:sfxTada },
   { t:15.3,        fired:false, fn:fwEvent(220, '#ffcb3d') },
@@ -1159,7 +1306,7 @@ function render(){
   ctx.translate(W / 2 + shx, H / 2 + shy + wob * 0.4); ctx.scale(cam.zoom, cam.zoom); ctx.translate(-cam.x + wob / cam.zoom, -cam.y);
 
   withParallax(0.16, drawSky); withParallax(0.5, drawSkyline); withParallax(0.82, drawStands); drawWallAndField();
-  drawPitcher(); drawBatter(); drawBatProj(); drawBallAndTrail(); drawImpactFX(); drawParticles(); withParallax(1.3, drawForeground); ctx.restore();
+  drawFielder(); drawPitcher(); drawBatter(); drawMates(); drawBatProj(); drawBallAndTrail(); drawImpactFX(); drawParticles(); withParallax(1.3, drawForeground); ctx.restore();
 
   /* --- 螢幕空間層 --- */
   /* 統一冷色調 + 擊球後暖色 */
