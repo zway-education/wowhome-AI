@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -24,7 +25,7 @@
   #barTW { position: absolute; left: 4px;  top: -18px; font-size: 11px; opacity: .9; }
   #barAF { position: absolute; right: 4px; top: -18px; font-size: 11px; opacity: .9; }
   /* ===== 靜音鈕 ===== */
-  #muteBtn { position: absolute; right: 10px; bottom: 10px; z-index: 30; width: 46px; height: 46px;
+  #muteBtn { position: absolute; right: 10px; bottom: 10px; z-index: 30; width: 48px; height: 48px;
     border-radius: 50%; border: 2px solid rgba(255,255,255,.5); background: rgba(12,18,40,.55); color: #fff;
     font-size: 20px; cursor: pointer; padding: 0; transition: transform .15s ease; }
   #muteBtn:active { transform: scale(.88); }
@@ -40,6 +41,10 @@
   .ov .stats { display: flex; gap: 18px; font-size: clamp(14px, 3vw, 20px);
     background: rgba(255,255,255,.1); padding: 10px 22px; border-radius: 14px; }
   .ov .hint { font-size: 12px; opacity: .65; }
+  .ov .ctrlBox { background: rgba(255,255,255,.12); border: 1px solid rgba(255,255,255,.25);
+    border-radius: 14px; padding: 10px 20px; font-size: clamp(13px, 2.8vw, 16px); line-height: 1.9; }
+  .ov .ctrlBox b { color: #ffe08a; }
+  .ov .ctrlBox .sub { font-size: clamp(11px, 2.2vw, 13px); opacity: .75; }
   .btn { font-family: inherit; font-size: clamp(16px, 3.4vw, 20px); padding: 13px 34px; border-radius: 999px;
     border: none; border-bottom: 4px solid #c99400; background: linear-gradient(180deg,#ffe08a,#ffce54);
     color: #3a2a00; font-weight: bold; cursor: pointer; box-shadow: 0 6px 18px rgba(255,206,84,.35);
@@ -67,7 +72,11 @@
       上下移動閃避烏雲、碎片與閃電，順路撿金幣 🪙，<br>
       撐過印度洋、飛越撒哈拉，就能平安降落非洲大陸！
     </p>
-    <p class="hint">⌨️ ↑↓ / W S 移動　📱 手指拖曳移動　Ｍ鍵切換靜音</p>
+    <div class="ctrlBox">
+      <div>💻 電腦：<b>↑ ↓ 或 W S</b> 上下移動，空白鍵開始</div>
+      <div>📱 平板：<b>手指按住畫面拖曳</b>，Conie 跟著移動</div>
+      <div class="sub">閃開烏雲⛈️碎片🪵禿鷹🦅，撿 🪙🛡️⭐　Ｍ鍵靜音</div>
+    </div>
     <div class="stats hiddenEl" id="menuBest">🏆 最佳分數：<b id="menuBestN">0</b></div>
     <button class="btn" id="startBtn">開始被吹飛 🚀</button>
   </div>
@@ -224,7 +233,9 @@ function pointToLogical(e){
 }
 canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
-  drag.active = true; drag.y = pointToLogical(e).y;
+  const pt = pointToLogical(e);
+  drag.active = true; drag.y = pt.y;
+  if(state === 'play') burst(pt.x, pt.y, 'rgba(255,255,255,0.9)', 5, 110, 0);  // v2：觸碰即時回饋
   canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
 });
 canvas.addEventListener('pointermove', e => {
@@ -245,11 +256,13 @@ let shake = 0, freeze = 0, flash = 0, redFlash = 0;
 let endTimer = 0, endWon = false;
 let best = parseInt(localStorage.getItem('conie_africa_best') || '0', 10) || 0;
 
-const P = { x: 210, y: GAME_H / 2, vy: 0, r: 22, hitR: 14, sx: 1, sy: 1, rot: 0 };
+const P = { x: 210, y: GAME_H / 2, vy: 0, r: 22, hitR: 14, sx: 1, sy: 1, rot: 0, shield: false, star: 0 };
 
 let obstacles = [], coinsList = [], hearts = [], parts = [], floats = [];
+let pows = [];                       // v2：道具（🛡護盾 / ⭐無敵衝刺）
 let banner = null;                   // 里程碑大字
-let spawnT = 0, coinT = 0, heartT = 0;
+let spawnT = 0, coinT = 0, heartT = 0, powT = 0, powIdx = 0;
+let playT = 0, finale = false;       // v2：開場提示計時 / 最後衝刺
 
 // 里程碑
 let milestones;
@@ -391,13 +404,13 @@ function resetGame(){
   invuln = 1.2; combo = 0; comboT = 0;
   shake = 0; freeze = 0; flash = 0; redFlash = 0;
   obstacles = []; coinsList = []; hearts = []; parts = []; floats = [];
+  pows = []; powT = 8; powIdx = 0; playT = 0; finale = false;
   banner = null;
   spawnT = 1.4; coinT = 0.8; heartT = 0;
-  P.y = GAME_H / 2; P.vy = 0; P.sx = 1; P.sy = 1; P.rot = 0;
+  P.y = GAME_H / 2; P.vy = 0; P.sx = 1; P.sy = 1; P.rot = 0; P.shield = false; P.star = 0;
   milestones = makeMilestones();
   initClouds();
   updateHud(true);
-  addFloat(P.x, P.y - 60, '↕ 上下移動閃避！', '#fff', 22);
 }
 
 // ---------- HUD ----------
@@ -413,6 +426,15 @@ function updateHud(force){
 // ---------- 玩家受擊 ----------
 function hitPlayer(){
   if(invuln > 0) return;
+  if(P.shield){   // v2：護盾擋下一次
+    P.shield = false;
+    invuln = 1.2;
+    freeze = 0.06; shake = 6;
+    burst(P.x, P.y, '#7fd1ff', 18, 260);
+    addFloat(P.x, P.y - 40, '🛡️ 護盾擋下！', '#7fd1ff', 22);
+    sfx.thunder();
+    return;
+  }
   lives--;
   combo = 0;
   invuln = 1.6;
@@ -434,10 +456,19 @@ function hitPlayer(){
 // ---------- 更新：遊戲中 ----------
 function updatePlay(dt){
   const p = progress();
-  dist += scrollSpeed() * dt;
-  score += scrollSpeed() * dt / 60;           // 距離分
+  playT += dt;
+  if(P.star > 0) P.star -= dt;
+  const starOn = P.star > 0;
+  dist += scrollSpeed() * (starOn ? 1.35 : 1) * dt;
+  score += scrollSpeed() * dt / 60 * (finale ? 2 : 1);   // 距離分（終盤 x2）
   if(invuln > 0) invuln -= dt;
   if(comboT > 0){ comboT -= dt; if(comboT <= 0) combo = 0; }
+  // v2：最後衝刺（82% 起）
+  if(!finale && p >= 0.82){
+    finale = true;
+    banner = { txt: '⚡ 最後衝刺！分數 x2', t: 0 };
+    sfx.milestone(); shake = 5;
+  }
 
   // --- 玩家移動 ---
   const topB = P.r + 30, botB = GAME_H - 44 - P.r;
@@ -460,10 +491,13 @@ function updatePlay(dt){
   P.rot += (clamp(P.vy / 900, -1, 1) * 0.35 - P.rot) * Math.min(1, 12 * dt);
   P.sx += (1 - P.sx) * Math.min(1, 10 * dt);
   P.sy += (1 - P.sy) * Math.min(1, 10 * dt);
-  // 風的尾流粒子
+  // 風的尾流粒子（⭐ 無敵時變彩虹尾流）
   if(Math.random() < 40 * dt && parts.length < 280){
+    const rainbow = ['#ff6b6b','#ffd23f','#9be27f','#7fd1ff','#c792ea'];
     parts.push({ x: P.x - 24, y: P.y + rand(-12, 12), vx: -scrollSpeed() * 0.7, vy: rand(-15, 15),
-      life: rand(0.25, 0.45), ttl: 0.45, color: 'rgba(255,255,255,0.8)', g: 0, sz: 3 });
+      life: rand(0.25, 0.45), ttl: 0.45,
+      color: starOn ? rainbow[Math.floor(Math.random() * rainbow.length)] : 'rgba(255,255,255,0.8)',
+      g: 0, sz: starOn ? 5 : 3 });
   }
 
   // --- 生成 ---
@@ -473,11 +507,38 @@ function updatePlay(dt){
     spawnT = Math.max(0.4, 1.2 - p * 0.72) * rand(0.75, 1.2);
   }
   coinT -= dt;
-  if(coinT <= 0){ spawnCoins(); coinT = rand(1.7, 3.2); }
+  if(coinT <= 0){ spawnCoins(); coinT = finale ? rand(0.9, 1.6) : rand(1.7, 3.2); }
   if(lives < 3){
     heartT += dt;
     if(heartT > 9){ heartT = 0; if(Math.random() < 0.6) spawnHeart(); }
   }
+  // v2：道具生成（護盾 / 無敵星交替，約 11 秒一顆）
+  powT -= dt;
+  if(powT <= 0){
+    powT = rand(9, 13);
+    const kind = (powIdx++ % 2 === 0) ? 'shield' : 'star';
+    pows.push({ kind, x: GAME_W + 40, y: rand(90, GAME_H - 130), r: 16, wob: rand(0, TAU) });
+  }
+  // v2：道具移動與拾取
+  for(const pw of pows){
+    pw.x -= scrollSpeed() * 1.12 * dt; pw.wob += 4 * dt;
+    if(Math.hypot(P.x - pw.x, P.y - pw.y) < pw.r + P.r){
+      pw.dead = true;
+      if(pw.kind === 'shield'){
+        P.shield = true;
+        addFloat(pw.x, pw.y - 20, '🛡️ 護盾！', '#7fd1ff', 22);
+        burst(pw.x, pw.y, '#7fd1ff', 14, 220, 150);
+        sfx.heart();
+      } else {
+        P.star = 2.8;
+        addFloat(pw.x, pw.y - 20, '⭐ 無敵衝刺！', '#ffe08a', 24);
+        burst(pw.x, pw.y, '#ffd23f', 18, 260, 100);
+        flash = 0.12; sfx.milestone();
+      }
+    }
+    if(pw.x < -40) pw.dead = true;
+  }
+  pows = pows.filter(pw => !pw.dead);
 
   // --- 障礙物 ---
   const sc = scrollSpeed();
@@ -514,7 +575,7 @@ function updatePlay(dt){
       c.dead = true;
       coins++;
       combo++; comboT = 1.5;
-      const bonus = 20 + Math.min(combo, 10) * 3;
+      const bonus = (20 + Math.min(combo, 10) * 3) * (finale ? 2 : 1);
       score += bonus;
       P.sx = 1.14; P.sy = 1.14;
       burst(c.x, c.y, '#ffd23f', 10, 200, 300);
@@ -541,13 +602,39 @@ function updatePlay(dt){
   hearts = hearts.filter(h => !h.dead);
 
   // --- 碰撞（判定寬容：受擊箱比圖形小）---
-  if(invuln <= 0){
+  if(starOn){
+    // v2：⭐ 無敵衝刺 → 撞碎障礙物得分
+    for(const o of obstacles){
+      let oy = o.y, or = o.r * 0.85;
+      if(o.kind === 'cloud' || o.kind === 'thunder') oy += Math.sin(o.wob) * 6;
+      if(Math.hypot(o.x - P.x, oy - P.y) < or + P.r){
+        o.dead = true;
+        const gain = 30 * (finale ? 2 : 1);
+        score += gain;
+        addFloat(o.x, oy - 20, '💥 +' + gain, '#ffe08a', 20);
+        burst(o.x, oy, '#ffd23f', 14, 280, 250);
+        shake = Math.max(shake, 4); freeze = Math.max(freeze, 0.03);
+        sfx.coin(6);
+      }
+    }
+    obstacles = obstacles.filter(o => !o.dead);
+  } else if(invuln <= 0){
     for(const o of obstacles){
       let ox = o.x, oy = o.y, or = o.r * 0.85;
       if(o.kind === 'cloud' || o.kind === 'thunder') oy += Math.sin(o.wob) * 6;
       if(Math.hypot(ox - P.x, oy - P.y) < or + P.hitR){ hitPlayer(); break; }
       if(o.kind === 'thunder' && o.phase === 'bolt'){
         if(Math.abs(P.x - o.x) < 20 && P.y > oy && P.y < oy + o.boltLen + 10){ hitPlayer(); break; }
+      }
+      // v2：擦身好險獎勵（貼近但沒撞到）
+      if(!o.grazed && o.x < P.x && o.x > P.x - 30){
+        o.grazed = true;
+        const dd = Math.hypot(ox - P.x, oy - P.y);
+        if(dd < or + P.hitR + 22){
+          const gain = 5 * (finale ? 2 : 1);
+          score += gain;
+          addFloat(P.x + 10, P.y - 34, '好險！+' + gain, '#bfe9ff', 16);
+        }
       }
     }
   }
@@ -649,11 +736,11 @@ function drawBackground(){
   // 視差雲層（遠 → 近前兩層；最近一層蓋在角色前，於 drawFront 畫）
   for(let L = 0; L < 2; L++) drawCloudLayer(L, p);
 
-  // 速度線
-  ctx.strokeStyle = 'rgba(255,255,255,0.28)';
-  ctx.lineWidth = 2;
+  // 速度線（最後衝刺時更強烈）
+  ctx.strokeStyle = finale ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.28)';
+  ctx.lineWidth = finale ? 3 : 2;
   for(const w of windLines){
-    ctx.globalAlpha = 0.15 + 0.2 * Math.sin(w.y);
+    ctx.globalAlpha = 0.15 + 0.2 * Math.sin(w.y) + (finale ? 0.15 : 0);
     ctx.beginPath();
     ctx.moveTo(w.x, w.y);
     ctx.lineTo(w.x + w.len, w.y);
@@ -932,6 +1019,25 @@ function drawCoins(){
     ctx.restore();
   }
 }
+function drawPows(){   // v2：道具（發光圓泡＋圖示）
+  for(const pw of pows){
+    const y = pw.y + Math.sin(pw.wob) * 6;
+    const col = pw.kind === 'shield' ? '#7fd1ff' : '#ffd23f';
+    ctx.save();
+    ctx.translate(pw.x, y);
+    ctx.shadowColor = col; ctx.shadowBlur = 16;
+    ctx.fillStyle = 'rgba(12,18,40,0.5)';
+    ctx.beginPath(); ctx.arc(0, 0, pw.r + 5, 0, TAU); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = col; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(0, 0, pw.r + 5, 0, TAU); ctx.stroke();
+    ctx.font = '20px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(pw.kind === 'shield' ? '🛡️' : '⭐', 0, 1);
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+}
 function drawHearts(){
   for(const h of hearts){
     const y = h.y + Math.sin(h.wob) * 5;
@@ -949,9 +1055,26 @@ function drawHearts(){
 
 // ---------- 玩家 Conie ----------
 function drawPlayer(){
-  const flicker = invuln > 0 && state === 'play' && Math.floor(t * 14) % 2 === 0;
+  const flicker = invuln > 0 && P.star <= 0 && state === 'play' && Math.floor(t * 14) % 2 === 0;
   ctx.save();
   ctx.translate(P.x, P.y);
+  if(P.star > 0){   // v2：⭐ 無敵金色光環
+    const pulse = 1 + Math.sin(t * 12) * 0.08;
+    ctx.save();
+    ctx.globalAlpha = P.star < 0.8 ? P.star / 0.8 : 1;   // 快結束時淡出提示
+    ctx.strokeStyle = '#ffd23f'; ctx.lineWidth = 4;
+    ctx.shadowColor = '#ffd23f'; ctx.shadowBlur = 18;
+    ctx.beginPath(); ctx.arc(0, 0, 34 * pulse, 0, TAU); ctx.stroke();
+    ctx.restore();
+  }
+  if(P.shield){     // v2：🛡 護盾泡泡
+    ctx.save();
+    ctx.globalAlpha = 0.55 + Math.sin(t * 5) * 0.15;
+    ctx.strokeStyle = '#7fd1ff'; ctx.lineWidth = 3;
+    ctx.fillStyle = 'rgba(127,209,255,0.12)';
+    ctx.beginPath(); ctx.arc(0, 0, 31, 0, TAU); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
   ctx.rotate(P.rot);
   ctx.scale(P.sx, P.sy);
   ctx.globalAlpha = flicker ? 0.35 : 1;
@@ -1080,6 +1203,7 @@ function draw(){
   drawGround();
   drawCoins();
   drawHearts();
+  drawPows();
   drawObstacles();
   if(!(state === 'dead' && P.y > GAME_H + 60)) drawPlayer();
   drawCloudLayer(2, progress());   // 最近的前景雲，蓋在角色前增加深度
@@ -1088,6 +1212,33 @@ function draw(){
   ctx.restore();
 
   drawBanner();
+  if(state === 'play' && playT < 3.4){   // v2：開場常駐操作提示
+    ctx.save();
+    ctx.globalAlpha = clamp(3.4 - playT, 0, 1);
+    ctx.fillStyle = 'rgba(10,16,38,0.6)';
+    const hw = 260;
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(GAME_W/2 - hw, GAME_H - 76, hw*2, 40, 20)
+                  : ctx.rect(GAME_W/2 - hw, GAME_H - 76, hw*2, 40);
+    ctx.fill();
+    ctx.font = 'bold 19px sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('↕ 手指拖曳 或 ↑↓ / W S 上下移動閃避！', GAME_W/2, GAME_H - 56);
+    ctx.textBaseline = 'alphabetic';
+    ctx.restore();
+  }
+  if(innerHeight > innerWidth * 1.15){   // v2：直向持機提示
+    ctx.save();
+    ctx.globalAlpha = 0.85;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ffe08a';
+    ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 4;
+    ctx.strokeText('↻ 轉成橫向，畫面更大！', GAME_W/2, 66);
+    ctx.fillText('↻ 轉成橫向，畫面更大！', GAME_W/2, 66);
+    ctx.restore();
+  }
   drawScreenFx();
 }
 

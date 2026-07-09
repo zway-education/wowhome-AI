@@ -519,7 +519,7 @@ const pointers = new Map();
 const TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 let joy = null; // {id, ox, oy, dx, dy}
 const uiButtons = [];
-const ATK_BTN = { x: 858, y: 432, r: 46 };
+const ATK_BTN = { x: 852, y: 418, r: 48 };
 function toLogical(e) {
   const r = canvas.getBoundingClientRect();
   const s = r.width / GAME_W;
@@ -680,6 +680,7 @@ function drawScene(lootGlow) {
   drawTent(TENTS[0]); drawTent(TENTS[1]);
   drawTotem(lootGlow);
   drawMeat(meat);
+  drawTreasures();
 }
 function drawAtmosphere() {
   // 樹（最上層蓋住邊緣）
@@ -760,14 +761,19 @@ const titleState = {
     ctx.textAlign = 'center';
     ctx.fillStyle = PAL.ink;
     ctx.font = 'bold 17px sans-serif';
-    ctx.fillText('避開信徒的視線，繞到背後一擊偷襲；清空據點、搶祭壇、撤回森林！', GAME_W / 2, 168);
-    ctx.fillStyle = PAL.dim;
-    ctx.font = '14px sans-serif';
-    ctx.fillText('鍵盤：WASD / 方向鍵移動、E 或 空白鍵攻擊　｜　手機：左半搖桿 + 攻擊鈕', GAME_W / 2, 196);
+    ctx.fillText('避開信徒的視線，繞到背後一擊偷襲；清空據點、搶祭壇、撤回森林！', GAME_W / 2, 166);
+    ctx.fillStyle = 'rgba(6,11,8,0.7)';
+    roundRect(GAME_W / 2 - 300, 178, 600, 52, 8);
+    ctx.fill();
+    ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('電腦：W A S D 或 ← ↑ ↓ → 移動 · E / 空白鍵 攻擊', GAME_W / 2, 199);
+    ctx.fillText('平板：手指按住畫面拖曳＝搖桿移動 · 點右下紅色「攻擊」鈕', GAME_W / 2, 221);
     if (best > 0) {
       ctx.fillStyle = PAL.amber;
       ctx.font = 'bold 16px monospace';
-      ctx.fillText('最佳戰績：' + best + ' 分', GAME_W / 2, 226);
+      ctx.fillText('最佳戰績：' + best + ' 分', GAME_W / 2, 245);
     }
     const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
     ctx.save();
@@ -790,7 +796,7 @@ const titleState = {
 };
 function startGame() {
   sfx.click();
-  day = 47; kills = 0; takedowns = 0; nights = 0;
+  day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0;
   player.hp = 3; player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
   parts.length = 0; floaters.length = 0;
   spawnNight();
@@ -799,7 +805,7 @@ function startGame() {
 
 // ===== 夜襲進行 =====
 const playState = {
-  enter() { this.banner = 2.2; this.nightFade = 0; },
+  enter() { this.banner = 4; this.nightFade = 0; },
   onKey(code) { if (code === 'KeyE' || code === 'Space' || code === 'KeyJ') tryAttack(); },
   update(dt) {
     fogUpdate(dt);
@@ -847,6 +853,18 @@ const playState = {
       sfx.eat();
       burst(meat.x, meat.y, PAL.good, 6, 110, 50);
     }
+    // 撿祭品金幣（風險回報）
+    for (let i = treasures.length - 1; i >= 0; i--) {
+      const tr = treasures[i];
+      if (Math.hypot(tr.x - player.x, tr.y - player.y) < 26) {
+        treasures.splice(i, 1);
+        bonus += 25;
+        player.stam = Math.min(100, player.stam + 15);
+        addFloat(tr.x, tr.y - 20, '祭品 +25 分', PAL.amber, false);
+        sfx.loot();
+        burst(tr.x, tr.y, PAL.amber, 10, 150, 60);
+      }
+    }
     // 信徒 AI
     for (const c of cultists) {
       if (c.dead) { c.fade = Math.max(0.35, c.fade - dt * 0.6); continue; }
@@ -861,6 +879,7 @@ const playState = {
         c.chaseT = 3.2;
         if (c.alert <= 0) { sfx.alert(); addFloat(c.x, c.y - 40, '發現你了！', PAL.bad, false); }
         c.alert = 2.5;
+        spotted = true; chain = 0;
       }
       c.alert = Math.max(0, c.alert - dt);
       if (c.chaseT > 0 && player.hp > 0) {
@@ -897,6 +916,14 @@ const playState = {
       nights++; day++;
       sfx.night();
       addFloat(player.x, player.y - 50, '夜襲成功！第 ' + day + ' 天', PAL.fireHot, true);
+      if (!spotted) {
+        bonus += 150;
+        addFloat(player.x, player.y - 76, '完美夜襲！全程未被發現 +150', PAL.amber, true);
+      }
+      if (player.hp < 3) {
+        player.hp++;
+        addFloat(player.x, player.y - 100, '夜晚休整 +1 HP', PAL.good, false);
+      }
       burst(player.x, player.y - 20, PAL.fireHot, 20, 200, 120);
       player.stam = Math.min(100, player.stam + 25);
       this.nightFade = 1.2;
@@ -928,7 +955,7 @@ const playState = {
       ctx.setLineDash([]);
     }
     // 角色（依 y 排序偽深度）
-    const order = [...cultists.map(c => ({ y: c.y, f: () => drawFigure(c.x, c.y, c.face, { color: PAL.cult, trim: PAL.cultTrim, eyes: true, walk: c.chaseT > 0 || c.st === 'patrol', walkT: bgTime + c.ph, alert: c.alert, flash: c.flash, dead: c.dead, fade: c.fade, ph: c.ph }) })),
+    const order = [...cultists.map(c => ({ y: c.y, f: () => drawFigure(c.x, c.y, c.face, { color: c.leader ? '#4a2418' : PAL.cult, trim: c.leader ? '#d8a03a' : PAL.cultTrim, eyes: true, scale: c.leader ? 1.35 : 1, walk: c.chaseT > 0 || c.st === 'patrol', walkT: bgTime + c.ph, alert: c.alert, flash: c.flash, dead: c.dead, fade: c.fade, ph: c.ph }) })),
       { y: player.y, f: () => drawFigure(player.x, player.y, player.face, { color: PAL.player, trim: PAL.playerTrim, walk: player.walk, walkT: player.walkT, swing: player.atkT > 0 ? 1 - player.atkT / 0.28 : 0, flash: player.hurtT, loot: player.loot, skin: '#c8a080' }) },
       { y: FIRE.y, f: drawFire }];
     order.sort((a, b) => a.y - b.y);
@@ -942,12 +969,15 @@ const playState = {
     if (this.banner > 0) {
       ctx.globalAlpha = clamp(this.banner, 0, 1);
       ctx.fillStyle = 'rgba(6,11,8,0.75)';
-      roundRect(GAME_W / 2 - 270, 88, 540, 44, 6);
+      roundRect(GAME_W / 2 - 270, 82, 540, 70, 6);
       ctx.fill();
       ctx.fillStyle = PAL.bone;
       ctx.font = 'bold 20px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('DAY ' + day + '：站著不動比較不會被看見，繞到背後偷襲！', GAME_W / 2, 117);
+      ctx.fillText('DAY ' + day + '：站著不動比較不會被看見，繞到背後偷襲！', GAME_W / 2, 110);
+      ctx.fillStyle = PAL.amber;
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(TOUCH ? '按住畫面拖曳＝移動 · 右下紅鈕＝攻擊' : 'WASD／方向鍵＝移動 · E 或空白鍵＝攻擊', GAME_W / 2, 138);
       ctx.globalAlpha = 1;
     }
     if (this.nightFade > 0) {
@@ -1049,7 +1079,7 @@ function drawHUD(st) {
   muteButton();
 }
 function muteButton() {
-  const x = GAME_W - 54, y = GAME_H - 118, s = 40;
+  const x = GAME_W - 56, y = GAME_H - 52, s = 44;
   uiButtons.push({ x, y, w: s, h: s, cb: () => { setMuted(!muted); if (!muted) sfx.click(); } });
   ctx.save();
   ctx.fillStyle = 'rgba(10,18,12,0.75)';
@@ -1151,6 +1181,8 @@ function frame(now) {
   }
   state.draw();
 }
+// 測試掛鉤（自動化冒煙測試用，不影響遊戲）
+window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : 'title', x: player.x, y: player.y, stam: player.stam, atkT: player.atkT });
 setState(titleState);
 requestAnimationFrame(frame);
 </script>

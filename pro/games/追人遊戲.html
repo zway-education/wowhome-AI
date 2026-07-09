@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -96,9 +97,9 @@
   <div id="titleOverlay" class="overlay">
     <h1>追人遊戲</h1>
     <div class="sub" style="color:#ff5252;font-weight:bold">GINO 來了，快跑！</div>
-    <div class="sub">在迷宮裡逃離 GINO 的追捕，撐越久越厲害。<br>⚡ 閃電鞋＝短暫加速　❄ 冰凍＝凍住 GINO<br>小心：GINO 會越跑越快……</div>
+    <div class="sub">在迷宮裡逃離 GINO，收集 💎 寶石進入下一回合！<br>⚡ 加速　❄ 冰凍 GINO　👻 隱形藥水<br>小心：GINO 會越跑越快……</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.6">方向鍵 / WASD 移動，滑鼠指哪跑哪<br>手機：按住螢幕拖曳＝虛擬搖桿</div>
+    <div class="sub" style="opacity:0.85">🖥️ 電腦：方向鍵 / WASD 移動（滑鼠指哪跑哪）<br>📱 平板：手指按住螢幕拖曳＝虛擬搖桿</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -254,10 +255,13 @@ function hitsWall(x, y, r) {
   return false;
 }
 function moveWithCollision(e, nx, ny) {
-  if (!hitsWall(nx, e.y, e.r)) e.x = nx;
-  if (!hitsWall(e.x, ny, e.r)) e.y = ny;
+  const okX = !hitsWall(nx, e.y, e.r);
+  if (okX) e.x = nx;
+  const okY = !hitsWall(e.x, ny, e.r);
+  if (okY) e.y = ny;
   e.x = clamp(e.x, MAZE_X + e.r + 2, MAZE_X + COLS * CELL - e.r - 2);
   e.y = clamp(e.y, MAZE_Y + e.r + 2, MAZE_Y + ROWS * CELL - e.r - 2);
+  return { okX, okY };
 }
 
 // ----- Web Audio -----
@@ -307,7 +311,10 @@ const sfx = {
   caught() { beep(300, 0.6, 'sawtooth', 0.2, -240); noiseBurst(0.5, 0.25); },
   start()  { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
   best()   { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); },
-  roar()   { beep(150, 0.4, 'sawtooth', 0.16, -60); }
+  roar()   { beep(150, 0.4, 'sawtooth', 0.16, -60); },
+  gem(i)   { beep(740 + i * 90, 0.09, 'triangle', 0.12, 260); },
+  round()  { [659, 784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.11), i * 90)); },
+  ghost()  { beep(600, 0.35, 'sine', 0.12, -320); setTimeout(() => beep(400, 0.3, 'sine', 0.1, -200), 100); }
 };
 const muteBtn = document.getElementById('muteBtn');
 function refreshMute() { muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -330,13 +337,21 @@ let heartTimer = 0;
 let items = [];             // {x,y,type,age}
 let itemTimer = 0;
 let secondSpawned = false;
+let round = 1;              // 回合（收齊寶石進下一回合）
+let gems = [];              // {x,y,phase}
+let gemsGot = 0;            // 本場撿到的寶石總數
+let bonus = 0;              // 寶石與回合獎勵分
+let tutorialT = 0;
+const GEMS_PER_ROUND = 5;
+const totalScore = () => Math.floor(survive) + bonus;
 
 const player = {
   x: 0, y: 0, r: 13, speed: 175,
   fx: 1, fy: 0,             // 面向
   sx: 1, sy: 1,
   runPhase: 0, moving: false,
-  boost: 0                  // 加速剩餘秒數
+  boost: 0,                 // 加速剩餘秒數
+  ghost: 0                  // 隱形剩餘秒數
 };
 function makeChaser(name) {
   return {
@@ -368,15 +383,68 @@ function resetGame() {
   items = [];
   itemTimer = 4;
   secondSpawned = false;
+  round = 1; gemsGot = 0; bonus = 0;
+  tutorialT = localStorage.getItem('chase-played') ? 5 : 9;
   const pc = cellCenter(0, 0);
   player.x = pc.x; player.y = pc.y;
-  player.boost = 0; player.sx = 1; player.sy = 1;
+  player.boost = 0; player.ghost = 0; player.sx = 1; player.sy = 1;
   chasers = [makeChaser('GINO')];
   const cc = cellCenter(ROWS - 1, COLS - 1);
   chasers[0].x = cc.x; chasers[0].y = cc.y;
+  spawnGems();
   parts.length = 0; floats.length = 0;
   shake = 0; freeze = 0; flash = 0;
-  joy = null; mouse = null;
+  joy = null; joyId = null; mouse = null;
+}
+
+// ----- 寶石與回合 -----
+function spawnGems() {
+  gems = [];
+  let tries = 0;
+  while (gems.length < GEMS_PER_ROUND && tries < 400) {
+    tries++;
+    const r = Math.floor(Math.random() * ROWS), c = Math.floor(Math.random() * COLS);
+    const p = cellCenter(r, c);
+    if (Math.hypot(p.x - player.x, p.y - player.y) < 90) continue;
+    if (gems.some(g => Math.hypot(g.x - p.x, g.y - p.y) < 80)) continue;
+    gems.push({ x: p.x, y: p.y, phase: Math.random() * 6.3 });
+  }
+}
+function nextRound() {
+  round++;
+  bonus += 10;
+  buildMaze();
+  // 玩家吸附到目前格子中心（不會被新牆卡住）
+  const pcell = cellOf(player.x, player.y);
+  const pc = cellCenter(pcell.r, pcell.c);
+  player.x = pc.x; player.y = pc.y;
+  // 追兵送回離玩家最遠的角落並短暫冰凍
+  const corners = [[0, 0], [0, COLS - 1], [ROWS - 1, 0], [ROWS - 1, COLS - 1]]
+    .map(([r, c]) => cellCenter(r, c))
+    .sort((a, b) => Math.hypot(b.x - player.x, b.y - player.y) - Math.hypot(a.x - player.x, a.y - player.y));
+  chasers.forEach((ch, i) => {
+    const p = corners[i % 2];
+    ch.x = p.x; ch.y = p.y;
+    ch.path = null; ch.repathTimer = 0;
+    ch.frozen = Math.max(ch.frozen, 1.6);
+    burst(ch.x, ch.y, '#b3ecf5', 10, 200);
+  });
+  // 第 3 回合：GINO 2號 登場
+  if (!secondSpawned && round >= 3) {
+    secondSpawned = true;
+    const c2 = makeChaser('GINO 2號');
+    c2.x = corners[1].x; c2.y = corners[1].y;
+    c2.frozen = 1.6;
+    chasers.push(c2);
+    addFloat(GAME_W / 2, 200, '⚠ GINO 2號 也加入追捕！', '#ff8a65', 26);
+    sfx.roar();
+  }
+  spawnGems();
+  items = [];
+  itemTimer = Math.min(itemTimer, 3);
+  addFloat(GAME_W / 2, 150, '🎉 第 ' + round + ' 回合！+10 分', '#ffd54f', 30);
+  flash = 0.18; shake = 6;
+  sfx.round();
 }
 
 // ----- 輸入 -----
@@ -399,31 +467,46 @@ canvas.addEventListener('mousemove', e => {
 });
 canvas.addEventListener('mouseleave', () => mouse = null);
 
-// 浮動虛擬搖桿（觸控）
-let joy = null;
+// 浮動虛擬搖桿（觸控）：掛在整個舞台（直式黑邊也能玩）、
+// 落指處即搖桿基座、追蹤單一手指 identifier（第二指不會搶走搖桿）
+let joy = null, joyId = null;
+const stage = document.getElementById('stage');
 function touchPos(t) {
   const rect = canvas.getBoundingClientRect();
   return { x: (t.clientX - rect.left) / canvas._scale, y: (t.clientY - rect.top) / canvas._scale };
 }
-canvas.addEventListener('touchstart', e => {
+stage.addEventListener('touchstart', e => {
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
   e.preventDefault();
-  const p = touchPos(e.touches[0]);
+  if (joy) return;
+  const t = e.changedTouches[0];
+  const p = touchPos(t);
   joy = { cx: p.x, cy: p.y, dx: 0, dy: 0 };
+  joyId = t.identifier;
   mouse = null;
 }, { passive: false });
-canvas.addEventListener('touchmove', e => {
+stage.addEventListener('touchmove', e => {
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
   e.preventDefault();
   if (!joy) return;
-  const p = touchPos(e.touches[0]);
-  let dx = p.x - joy.cx, dy = p.y - joy.cy;
-  const len = Math.hypot(dx, dy);
-  if (len > 55) { dx = dx / len * 55; dy = dy / len * 55; }
-  joy.dx = dx; joy.dy = dy;
+  for (const t of e.changedTouches) {
+    if (t.identifier !== joyId) continue;
+    const p = touchPos(t);
+    let dx = p.x - joy.cx, dy = p.y - joy.cy;
+    const len = Math.hypot(dx, dy);
+    if (len > 55) { dx = dx / len * 55; dy = dy / len * 55; }
+    joy.dx = dx; joy.dy = dy;
+  }
 }, { passive: false });
-canvas.addEventListener('touchend', e => {
+function endTouch(e) {
+  for (const t of e.changedTouches) {
+    if (t.identifier === joyId) { joy = null; joyId = null; }
+  }
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
   e.preventDefault();
-  if (e.touches.length === 0) joy = null;
-}, { passive: false });
+}
+stage.addEventListener('touchend', endTouch, { passive: false });
+stage.addEventListener('touchcancel', endTouch, { passive: false });
 
 // ----- 狀態切換 -----
 const titleOverlay = document.getElementById('titleOverlay');
@@ -438,14 +521,17 @@ function startGame() {
 function endGame() {
   mode = 'over';
   overCooldown = 0.5;
-  const isBest = survive > best;
+  localStorage.setItem('chase-played', '1');
+  const score = totalScore();
+  const isBest = score > best;
   if (isBest) {
-    best = survive;
-    localStorage.setItem('chase-best', best.toFixed(1));
+    best = score;
+    localStorage.setItem('chase-best', String(best));
     setTimeout(() => sfx.best(), 400);
   }
-  document.getElementById('finalScore').textContent = '你存活了 ' + survive.toFixed(1) + ' 秒';
-  document.getElementById('bestLine').textContent = '最佳紀錄：' + best.toFixed(1) + ' 秒';
+  document.getElementById('finalScore').textContent = score + ' 分';
+  document.getElementById('bestLine').textContent =
+    '存活 ' + survive.toFixed(1) + ' 秒 ＋ 💎 ' + gemsGot + ' 顆（第 ' + round + ' 回合）｜最佳：' + Math.round(best) + ' 分';
   document.getElementById('newBest').style.display = isBest ? 'block' : 'none';
   overOverlay.classList.add('show');
 }
@@ -491,6 +577,7 @@ function update(dt) {
   if (shake < 0.05) shake = 0;
   flash = Math.max(0, flash - dt * 3);
   overCooldown = Math.max(0, overCooldown - dt);
+  tutorialT = Math.max(0, tutorialT - dt);
   player.sx += (1 - player.sx) * Math.min(1, 12 * dt);
   player.sy += (1 - player.sy) * Math.min(1, 12 * dt);
 
@@ -511,6 +598,7 @@ function update(dt) {
 
   survive += dt;
   player.boost = Math.max(0, player.boost - dt);
+  player.ghost = Math.max(0, player.ghost - dt);
 
   // --- 玩家移動 ---
   let dx = 0, dy = 0;
@@ -523,19 +611,36 @@ function update(dt) {
   }
   const spd = player.speed * (player.boost > 0 ? 1.65 : 1);
   player.moving = false;
+  let res = null, wdx = 0, wdy = 0;
   if (dx !== 0 || dy !== 0) {
     const len = Math.hypot(dx, dy);
-    moveWithCollision(player, player.x + dx / len * spd * dt, player.y + dy / len * spd * dt);
-    player.fx = dx / len; player.fy = dy / len;
+    wdx = dx / len; wdy = dy / len;
+    res = moveWithCollision(player, player.x + wdx * spd * dt, player.y + wdy * spd * dt);
+    player.fx = wdx; player.fy = wdy;
     player.moving = true;
   } else if (mouse) {
     const mdx = mouse.x - player.x, mdy = mouse.y - player.y;
     const d = Math.hypot(mdx, mdy);
     if (d > 6) {
       const step = Math.min(spd * dt, d);
-      moveWithCollision(player, player.x + mdx / d * step, player.y + mdy / d * step);
-      player.fx = mdx / d; player.fy = mdy / d;
+      wdx = mdx / d; wdy = mdy / d;
+      res = moveWithCollision(player, player.x + wdx * step, player.y + wdy * step);
+      player.fx = wdx; player.fy = wdy;
       player.moving = true;
+    }
+  }
+  // 轉角助滑（Pac-Man 式）：想走的方向被牆擋住時，往走廊中心微推，圓滑過彎
+  if (res && (!res.okX || !res.okY)) {
+    const pcell = cellOf(player.x, player.y);
+    const cen = cellCenter(pcell.r, pcell.c);
+    const assist = spd * dt * 0.9;
+    if (!res.okX && Math.abs(wdx) > 0.3) {
+      const ny2 = player.y + clamp(cen.y - player.y, -assist, assist);
+      if (!hitsWall(player.x, ny2, player.r)) player.y = ny2;
+    }
+    if (!res.okY && Math.abs(wdy) > 0.3) {
+      const nx2 = player.x + clamp(cen.x - player.x, -assist, assist);
+      if (!hitsWall(nx2, player.y, player.r)) player.x = nx2;
     }
   }
   if (player.moving) {
@@ -547,11 +652,25 @@ function update(dt) {
     }
   }
 
+  // --- 寶石拾取（收齊進下一回合）---
+  for (let i = gems.length - 1; i >= 0; i--) {
+    const g = gems[i];
+    if (Math.hypot(g.x - player.x, g.y - player.y) < player.r + 16) {
+      gems.splice(i, 1);
+      gemsGot++;
+      bonus += 5;
+      sfx.gem(GEMS_PER_ROUND - gems.length);
+      burst(g.x, g.y, '#69f0ae', 14, 240);
+      addFloat(g.x, g.y - 16, '💎 +5', '#69f0ae');
+      if (gems.length === 0) nextRound();
+    }
+  }
+
   // --- 道具生成與拾取 ---
   itemTimer -= dt;
-  if (itemTimer <= 0 && items.length < 2) {
+  if (itemTimer <= 0 && items.length < 3) {
     spawnItem();
-    itemTimer = 6.5;
+    itemTimer = 5;
   }
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
@@ -561,38 +680,49 @@ function update(dt) {
         addFloat(it.x, it.y - 16, '⚡ 加速！', '#ffd54f');
         burst(it.x, it.y, '#ffd54f', 14, 240);
         sfx.boost();
-      } else {
+      } else if (it.type === 'freeze') {
         for (const ch of chasers) ch.frozen = 2.5;
         addFloat(it.x, it.y - 16, '❄ 冰凍 GINO！', '#80deea');
         burst(it.x, it.y, '#80deea', 16, 260);
         for (const ch of chasers) burst(ch.x, ch.y, '#b3ecf5', 12, 200);
         sfx.freeze();
+      } else {
+        player.ghost = 4;
+        addFloat(it.x, it.y - 16, '👻 隱形 4 秒！', '#ce93d8');
+        burst(it.x, it.y, '#ce93d8', 16, 260);
+        sfx.ghost();
       }
       items.splice(i, 1);
     }
   }
 
   // --- 追兵 AI ---
-  const rampSpeed = Math.min(215, 115 + survive * 2.2);
+  const rampSpeed = Math.min(215, 112 + survive * 1.9 + (round - 1) * 10);
   for (const ch of chasers) {
     ch.frozen = Math.max(0, ch.frozen - dt);
     if (ch.frozen > 0) continue;
-    ch.speed = ch.name === 'GINO' ? rampSpeed : rampSpeed * 0.88;
+    ch.speed = (ch.name === 'GINO' ? rampSpeed : rampSpeed * 0.88) * (player.ghost > 0 ? 0.75 : 1);
     ch.repathTimer -= dt;
     const cc = cellOf(ch.x, ch.y), pc = cellOf(player.x, player.y);
     if (ch.repathTimer <= 0 || !ch.path || ch.path.length < 2) {
-      ch.path = bfsPath(cc.r, cc.c, pc.r, pc.c);
-      ch.repathTimer = 0.25;
+      if (player.ghost > 0) {
+        // 看不見玩家：迷惘亂走
+        ch.path = bfsPath(cc.r, cc.c, Math.floor(Math.random() * ROWS), Math.floor(Math.random() * COLS));
+        ch.repathTimer = 0.8;
+      } else {
+        ch.path = bfsPath(cc.r, cc.c, pc.r, pc.c);
+        ch.repathTimer = 0.25;
+      }
     }
-    let tx = player.x, ty = player.y;
+    let tx = ch.x, ty = ch.y;
     if (ch.path && ch.path.length > 1) {
       // 找路徑上第一個不是目前格的節點
       let idx = 1;
       while (idx < ch.path.length - 1 && ch.path[idx][0] === cc.r && ch.path[idx][1] === cc.c) idx++;
       const node = ch.path[idx];
-      if (ch.path.length <= 2) { tx = player.x; ty = player.y; }
+      if (ch.path.length <= 2 && player.ghost <= 0) { tx = player.x; ty = player.y; }
       else { const t = cellCenter(node[0], node[1]); tx = t.x; ty = t.y; }
-    }
+    } else if (player.ghost <= 0) { tx = player.x; ty = player.y; }
     const tdx = tx - ch.x, tdy = ty - ch.y;
     const td = Math.hypot(tdx, tdy);
     if (td > 0.5) {
@@ -602,31 +732,11 @@ function update(dt) {
       ch.fx = tdx / td; ch.fy = tdy / td;
       ch.runPhase += dt * 9;
     }
-    // 抓到判定（碰撞箱對玩家寬容：比圖形小）
-    if (Math.hypot(player.x - ch.x, player.y - ch.y) < player.r + ch.r - 8) {
+    // 抓到判定（碰撞箱對玩家寬容：比圖形小；隱形時不會被抓）
+    if (player.ghost <= 0 && Math.hypot(player.x - ch.x, player.y - ch.y) < player.r + ch.r - 8) {
       catchPlayer();
       return;
     }
-  }
-
-  // --- 第二追兵登場 ---
-  if (!secondSpawned && survive > 40) {
-    secondSpawned = true;
-    const c2 = makeChaser('GINO 2號');
-    // 從離玩家最遠的角落出現
-    const corners = [[0, 0], [0, COLS - 1], [ROWS - 1, 0], [ROWS - 1, COLS - 1]];
-    let bestCorner = corners[0], bestD = -1;
-    for (const [r, c] of corners) {
-      const p = cellCenter(r, c);
-      const d = Math.hypot(p.x - player.x, p.y - player.y);
-      if (d > bestD) { bestD = d; bestCorner = [r, c]; }
-    }
-    const sp = cellCenter(bestCorner[0], bestCorner[1]);
-    c2.x = sp.x; c2.y = sp.y;
-    chasers.push(c2);
-    addFloat(GAME_W / 2, 160, '⚠ GINO 2號 也加入追捕！', '#ff8a65', 28);
-    shake = 6;
-    sfx.roar();
   }
 
   // --- 心跳緊張音 ---
@@ -730,6 +840,42 @@ function drawMaze() {
   ctx.stroke();
 }
 
+// 寶石（回合目標）
+function drawGems() {
+  for (const g of gems) {
+    const bob = Math.sin(elapsed * 3 + g.phase) * 3;
+    const tw = 0.75 + Math.sin(elapsed * 5 + g.phase) * 0.25;
+    ctx.save();
+    ctx.translate(g.x, g.y + bob);
+    ctx.fillStyle = 'rgba(105,240,174,0.15)';
+    ctx.beginPath();
+    ctx.ellipse(0, 14 - bob, 14, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowColor = '#69f0ae';
+    ctx.shadowBlur = 12 * tw;
+    const gg = ctx.createLinearGradient(0, -11, 0, 11);
+    gg.addColorStop(0, '#b9f6ca');
+    gg.addColorStop(0.5, '#69f0ae');
+    gg.addColorStop(1, '#00c853');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.moveTo(0, -11);
+    ctx.lineTo(8, -3);
+    ctx.lineTo(0, 11);
+    ctx.lineTo(-8, -3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)';
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    ctx.moveTo(-8, -3); ctx.lineTo(8, -3);
+    ctx.moveTo(0, -11); ctx.lineTo(0, 11);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
 function drawItems() {
   for (const it of items) {
     const bob = Math.sin(it.age * 4) * 3;
@@ -738,7 +884,7 @@ function drawItems() {
     ctx.translate(it.x, it.y + bob);
     ctx.scale(appear, appear);
     // 地上光圈
-    ctx.fillStyle = it.type === 'boost' ? 'rgba(255,213,79,0.18)' : 'rgba(128,222,234,0.18)';
+    ctx.fillStyle = it.type === 'boost' ? 'rgba(255,213,79,0.18)' : it.type === 'freeze' ? 'rgba(128,222,234,0.18)' : 'rgba(206,147,216,0.18)';
     ctx.beginPath();
     ctx.ellipse(0, 14 - bob, 16, 5, 0, 0, Math.PI * 2);
     ctx.fill();
@@ -763,6 +909,23 @@ function drawItems() {
       ctx.strokeStyle = 'rgba(255,255,255,0.8)';
       ctx.lineWidth = 1.5;
       ctx.stroke();
+    } else if (it.type === 'ghost') {
+      // 隱形藥水：紫色圓瓶 + 幽靈眼睛
+      ctx.shadowColor = '#ce93d8';
+      ctx.shadowBlur = 12;
+      ctx.fillStyle = 'rgba(206,147,216,0.9)';
+      ctx.beginPath();
+      ctx.arc(0, 2, 9, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = '#8e5aa8';
+      ctx.fillRect(-3.5, -13, 7, 6);
+      ctx.fillStyle = '#e1bee7';
+      ctx.fillRect(-4.5, -14.5, 9, 3);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(-3, 1, 2, 0, Math.PI * 2); ctx.arc(3, 1, 2, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#4a148c';
+      ctx.beginPath(); ctx.arc(-3, 1.5, 1, 0, Math.PI * 2); ctx.arc(3, 1.5, 1, 0, Math.PI * 2); ctx.fill();
     } else {
       // 雪花：六向冰晶 + 光暈
       ctx.shadowColor = '#80deea';
@@ -797,7 +960,7 @@ function drawPlayer() {
   const scared = (() => {
     let n = Infinity;
     for (const ch of chasers) if (ch.frozen <= 0) n = Math.min(n, Math.hypot(p.x - ch.x, p.y - ch.y));
-    return n < 140;
+    return n < 140 && p.ghost <= 0;
   })();
   const breathe = p.moving ? 0 : Math.sin(elapsed * 4) * 0.03;
   const hop = p.moving ? Math.abs(Math.sin(p.runPhase)) * -3 : 0;
@@ -811,6 +974,16 @@ function drawPlayer() {
   ctx.save();
   ctx.translate(p.x, p.y + hop);
   ctx.scale(p.sx, p.sy + breathe);
+
+  // 隱形：半透明閃爍 + 紫色微光
+  if (p.ghost > 0) {
+    ctx.globalAlpha = p.ghost < 1 ? 0.4 + Math.sin(elapsed * 16) * 0.25 : 0.45;
+    ctx.strokeStyle = 'rgba(206,147,216,0.6)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(0, 0, 19, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   // 加速光環
   if (p.boost > 0) {
@@ -1021,6 +1194,14 @@ function drawChaser(ch) {
     ctx.stroke();
   }
 
+  // 玩家隱形時的迷惘問號
+  if (player.ghost > 0 && !frozen) {
+    ctx.fillStyle = '#e1bee7';
+    ctx.font = 'bold 18px "Microsoft JhengHei", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('?', 8, -30 + Math.sin(elapsed * 6) * 2);
+  }
+
   ctx.restore();
 
   // 名牌
@@ -1088,33 +1269,70 @@ function drawHUD() {
   ctx.font = 'bold 24px "Microsoft JhengHei", sans-serif';
   ctx.fillText(survive.toFixed(1) + ' 秒', GAME_W / 2, 54);
 
-  // 最佳
+  // 最佳 + 回合寶石進度
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(26,28,44,0.85)';
   rr(16, 12, 170, 34, 12);
   ctx.fill();
   ctx.fillStyle = '#f4f4f4';
   ctx.font = '15px "Microsoft JhengHei", sans-serif';
-  ctx.fillText('🏆 最佳 ' + best.toFixed(1) + ' 秒', 30, 34);
+  ctx.fillText('🏆 最佳 ' + Math.round(best) + ' 分', 30, 34);
+  ctx.fillStyle = 'rgba(26,28,44,0.85)';
+  rr(16, 52, 216, 32, 12);
+  ctx.fill();
+  ctx.fillStyle = '#69f0ae';
+  ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
+  ctx.fillText('第 ' + round + ' 回合　💎 ' + (GEMS_PER_ROUND - gems.length) + '/' + GEMS_PER_ROUND, 30, 74);
 
-  // 狀態圖示
-  let ix = GAME_W - 200;
+  // 分數（右上）
+  ctx.fillStyle = 'rgba(26,28,44,0.85)';
+  rr(GAME_W - 186, 12, 170, 34, 12);
+  ctx.fill();
+  ctx.fillStyle = '#ffd54f';
+  ctx.font = 'bold 16px "Microsoft JhengHei", sans-serif';
+  ctx.fillText('分數 ' + totalScore(), GAME_W - 168, 35);
+
+  // 狀態圖示（第二列）
+  let ix = GAME_W - 116;
   if (player.boost > 0) {
     ctx.fillStyle = 'rgba(255,213,79,0.2)';
-    rr(ix, 12, 92, 34, 12);
+    rr(ix, 52, 92, 32, 12);
     ctx.fill();
     ctx.fillStyle = '#ffd54f';
     ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
-    ctx.fillText('⚡ ' + player.boost.toFixed(1) + 's', ix + 12, 34);
+    ctx.fillText('⚡ ' + player.boost.toFixed(1) + 's', ix + 12, 74);
+    ix -= 100;
+  }
+  if (player.ghost > 0) {
+    ctx.fillStyle = 'rgba(206,147,216,0.2)';
+    rr(ix, 52, 92, 32, 12);
+    ctx.fill();
+    ctx.fillStyle = '#ce93d8';
+    ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('👻 ' + player.ghost.toFixed(1) + 's', ix + 12, 74);
     ix -= 100;
   }
   if (chasers.length && chasers[0].frozen > 0) {
     ctx.fillStyle = 'rgba(128,222,234,0.2)';
-    rr(ix, 12, 92, 34, 12);
+    rr(ix, 52, 92, 32, 12);
     ctx.fill();
     ctx.fillStyle = '#80deea';
     ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
-    ctx.fillText('❄ ' + chasers[0].frozen.toFixed(1) + 's', ix + 12, 34);
+    ctx.fillText('❄ ' + chasers[0].frozen.toFixed(1) + 's', ix + 12, 74);
+  }
+
+  // 首次遊玩教學提示
+  if (tutorialT > 0 && mode === 'play') {
+    ctx.globalAlpha = Math.min(1, tutorialT);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 19px "Microsoft JhengHei", sans-serif';
+    const tip = '📱 按住拖曳＝移動　🖥️ 方向鍵/WASD　收集 💎 進下一回合！';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+    ctx.lineWidth = 5;
+    ctx.strokeText(tip, GAME_W / 2, GAME_H - 16);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(tip, GAME_W / 2, GAME_H - 16);
+    ctx.globalAlpha = 1;
   }
 }
 
@@ -1140,6 +1358,7 @@ function draw() {
 
   drawBackground();
   drawMaze();
+  drawGems();
   drawItems();
   for (const ch of chasers) drawChaser(ch);
   if (deathTimer < 0 || Math.floor(deathTimer * 12) % 2 === 0) drawPlayer();
@@ -1179,6 +1398,9 @@ resetGame();
 mode = 'title';
 titleOverlay.classList.add('show');
 requestAnimationFrame(frame);
+
+// 測試掛鉤（自動化冒煙測試用，不影響遊戲）
+window.__test = () => ({ mode, x: player.x, y: player.y, survive, round, gemsLeft: gems.length, score: totalScore() });
 </script>
 </body>
 </html>

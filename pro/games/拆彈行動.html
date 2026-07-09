@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -31,11 +32,32 @@
    剪斷正確的電線。剪錯或超時——轟！關卡越深線越多、時間越短。
    ============================================================ */
 
-/* ===== 畫布 ===== */
-const GAME_W = 960, GAME_H = 540;
+/* ===== 畫布（v2：直向／橫向雙版面）===== */
+let GAME_W = 960, GAME_H = 540, PORTRAIT = false;
+let CASE_X = 190, CASE_Y = 74, CASE_W = 580, CASE_H = 430;
+let WIRE_X1 = 264, WIRE_X2 = 686, WIRE_Y1 = 262, WIRE_Y2 = 452;
+let wires = [];
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+function layout(){
+  PORTRAIT = innerHeight > innerWidth;
+  GAME_W = PORTRAIT ? 540 : 960;
+  GAME_H = PORTRAIT ? 880 : 540;
+  if(PORTRAIT){ CASE_X = 20; CASE_Y = 120; CASE_W = 500; CASE_H = 640; }
+  else{ CASE_X = 190; CASE_Y = 74; CASE_W = 580; CASE_H = 430; }
+  WIRE_X1 = CASE_X + 74; WIRE_X2 = CASE_X + CASE_W - 84;
+  WIRE_Y1 = CASE_Y + 188;
+  WIRE_Y2 = PORTRAIT ? CASE_Y + CASE_H - 50 : CASE_Y + 378;
+  if(wires.length > 1){
+    const gap = (WIRE_Y2 - WIRE_Y1) / (wires.length - 1);
+    wires.forEach((w, i) => {
+      w.y = WIRE_Y1 + i * gap;
+      if(w.cut) w.cutX = clamp(w.cutX, WIRE_X1 + 30, WIRE_X2 - 30);
+    });
+  }
+}
 function resize(){
+  layout();
   const scale = Math.min((innerWidth - 18) / GAME_W, (innerHeight - 18) / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width  = Math.round(GAME_W * scale * dpr);
@@ -126,7 +148,8 @@ const sfx = {
   boom(){ noise(0.6, 0.3); beep(70, 0.7, 'sawtooth', 0.2, -35); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   chirp(){ beep(1200 + Math.random() * 500, 0.07, 'sine', 0.05, 300); },
-  lose(){ [330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.24, 'triangle', 0.12), i * 160)); }
+  lose(){ [330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.24, 'triangle', 0.12), i * 160)); },
+  shield(){ noise(0.12, 0.16); beep(240, 0.25, 'sawtooth', 0.14, -90); setTimeout(() => beep(520, 0.14, 'triangle', 0.1), 180); }
 };
 function toggleMute(){
   muted = !muted;
@@ -187,15 +210,14 @@ const COLORS = [
   { name: '白色', hex: '#e8ecf1', dark: '#8a93a3' },
   { name: '紫色', hex: '#b673ff', dark: '#6a3a99' }
 ];
-const CASE_X = 190, CASE_Y = 74, CASE_W = 580, CASE_H = 430;
-const WIRE_X1 = CASE_X + 74, WIRE_X2 = CASE_X + CASE_W - 84;
 let stateName = 'title';
 let stateT = 0, T = 0;
 let shake = 0, freeze = 0, flash = 0;
 let round = 1, defused = 0, score = 0, scoreShow = 0, best = 0;
 try{ best = parseInt(localStorage.getItem('bombpro_best') || '0', 10) || 0; }catch(e){}
 let newBest = false;
-let wires = [], correctIndex = -1, clueText = '';
+let correctIndex = -1, clueText = '';
+let shields = 0, mags = 1;      /* v2：🛡 保險絲、🔍 排除鏡 */
 let timeLeft = 15, timeMax = 15, lastTick = 99;
 let phase = 'active', phaseT = 0;   // active / success / boom
 let overT = 0, boomReason = '';
@@ -216,16 +238,21 @@ function buildRound(){
   const cols = [];
   for(let i = 0; i < wireCount; i++) cols.push(pick(COLORS));
   if(Math.random() < 0.55 && wireCount >= 3) cols[1] = cols[0];   // 製造重複色
-  const gap = (452 - 262) / (wireCount - 1);
+  const gap = (WIRE_Y2 - WIRE_Y1) / (wireCount - 1);
   wires = nums.map((n, i) => ({
     number: n, color: cols[i],
-    y: 262 + i * gap, sag: 12 + (i * 37) % 14,
-    cut: false, cutX: 0, cutT: 0
+    y: WIRE_Y1 + i * gap, sag: 12 + (i * 37) % 14,
+    cut: false, cutX: 0, cutT: 0, ruled: false
   }));
   /* 收集有效提示 */
   const options = [];
   options.push({ type: 'max', idx: wires.findIndex(w => w.number === Math.max(...nums)), txt: '剪斷數字「最大」的那條線。' });
   options.push({ type: 'min', idx: wires.findIndex(w => w.number === Math.min(...nums)), txt: '剪斷數字「最小」的那條線。' });
+  /* v2：數字最接近 5（唯一時才成立） */
+  const d5 = nums.map(n => Math.abs(n - 5));
+  const min5 = Math.min(...d5);
+  if(d5.filter(d => d === min5).length === 1)
+    options.push({ type: 'near5', idx: d5.indexOf(min5), txt: '剪斷數字「最接近 5」的那條線。' });
   const counts = {};
   cols.forEach(c => counts[c.name] = (counts[c.name] || 0) + 1);
   const singles = cols.filter(c => counts[c.name] === 1);
@@ -240,6 +267,14 @@ function buildRound(){
   const odds = wires.filter(w => w.number % 2 === 1);
   if(evens.length === 1) options.push({ type: 'even', idx: wires.indexOf(evens[0]), txt: '剪斷數字是「唯一偶數」的那條線。' });
   if(odds.length === 1) options.push({ type: 'oddnum', idx: wires.indexOf(odds[0]), txt: '剪斷數字是「唯一奇數」的那條線。' });
+  /* v2：兩步驟題（第 3 關起）——同色群組中數字最大 */
+  if(round >= 3){
+    Object.keys(counts).filter(nm => counts[nm] >= 2).forEach(nm => {
+      const group = wires.filter(w => w.color.name === nm);
+      const mx = Math.max(...group.map(w => w.number));
+      options.push({ type: 'colormax', idx: wires.findIndex(w => w.color.name === nm && w.number === mx), txt: '在「' + nm + '」的線中，剪斷數字最大的那條。' });
+    });
+  }
   const chosen = pick(options);
   correctIndex = chosen.idx;
   clueText = chosen.txt;
@@ -249,6 +284,7 @@ function buildRound(){
 }
 function startGame(){
   round = 1; defused = 0; score = 0; scoreShow = 0; newBest = false;
+  shields = 0; mags = 1;
   parts = []; floaters.length = 0; villagers = [];
   buildRound();
   stateName = 'play'; stateT = 0;
@@ -275,14 +311,17 @@ function wireYAt(w, x){
 }
 function tryCut(x, y){
   if(phase !== 'active') return;
+  /* v2：寬容判定——找 22px 內「最近」的一條線，不會跨線誤剪 */
+  let bi = -1, bd = 22;
   for(let i = 0; i < wires.length; i++){
     const w = wires[i];
     if(w.cut) continue;
-    if(x > WIRE_X1 - 6 && x < WIRE_X2 + 6 && Math.abs(y - wireYAt(w, x)) < 15){
-      cutWire(i, clamp(x, WIRE_X1 + 30, WIRE_X2 - 30));
-      return;
+    if(x > WIRE_X1 - 10 && x < WIRE_X2 + 10){
+      const d = Math.abs(y - wireYAt(w, x));
+      if(d < bd){ bd = d; bi = i; }
     }
   }
+  if(bi >= 0) cutWire(bi, clamp(x, WIRE_X1 + 30, WIRE_X2 - 30));
 }
 function cutWire(i, x){
   const w = wires[i];
@@ -294,26 +333,61 @@ function cutWire(i, x){
   freeze = 0.05;
   if(i === correctIndex){
     phase = 'success'; phaseT = 0;
-    const gain = 100 + Math.round(timeLeft * 10);
+    /* v2：神速獎勵 */
+    const fast = timeLeft > timeMax * 0.6;
+    const gain = 100 + Math.round(timeLeft * 10) + (fast ? 50 : 0);
     score += gain;
     defused++;
     addFloater(GAME_W / 2, 236, '成功拆除！+' + gain, '#33d1a6', 28);
+    if(fast) addFloater(GAME_W / 2, 272, '⚡ 神速拆除 +50', '#ffd23d', 22);
+    /* v2：道具獲得 */
+    if(defused % 3 === 0 && shields < 2){
+      shields++;
+      addFloater(GAME_W / 2, 306, '獲得 🛡 保險絲！（剪錯自動擋一次）', '#8fb4e3', 20);
+    }
+    if(defused % 4 === 0 && mags < 2){
+      mags++;
+      addFloater(GAME_W / 2, 334, '獲得 🔍 排除鏡！', '#ffd77e', 20);
+    }
     shake = 3;
     sfx.success();
     spawnCrowd();
+  }else if(shields > 0){
+    /* v2：保險絲擋下爆炸 */
+    shields--;
+    freeze = 0.1; shake = 10; flash = 0.3;
+    addFloater(GAME_W / 2, GAME_H / 2 - 60, '🛡 保險絲擋下了爆炸！', '#8fb4e3', 26);
+    addFloater(GAME_W / 2, GAME_H / 2 - 24, '剩 ' + shields + ' 個，小心！', '#e8ecf1', 18);
+    sfx.shield();
+    if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
   }else{
     boomReason = '剪錯線了…';
     triggerBoom();
   }
+}
+/* v2：🔍 排除鏡——劃掉兩條錯誤的線 */
+function useMag(){
+  if(stateName !== 'play' || phase !== 'active' || mags <= 0) return;
+  const cands = wires.map((w, i) => i)
+    .filter(i => !wires[i].cut && !wires[i].ruled && i !== correctIndex);
+  if(!cands.length) return;
+  mags--;
+  for(let k = 0; k < 2 && cands.length; k++){
+    const j = cands.splice(Math.floor(Math.random() * cands.length), 1)[0];
+    wires[j].ruled = true;
+    addFloater(WIRE_X1 + 90, wires[j].y - 14, '✗ 排除', '#7c8798', 16);
+  }
+  sfx.ui();
 }
 function triggerBoom(){
   phase = 'boom'; phaseT = 0;
   flash = 1;
   shake = 22;
   freeze = 0.12;
-  burst(GAME_W / 2, 300, '#ffb020', 30, 420, 0.8);
-  burst(GAME_W / 2, 300, '#ff4444', 24, 360, 0.7);
-  burst(GAME_W / 2, 300, '#3f3f3f', 18, 280, 0.9);
+  const by = GAME_H * 0.55;
+  burst(GAME_W / 2, by, '#ffb020', 30, 420, 0.8);
+  burst(GAME_W / 2, by, '#ff4444', 24, 360, 0.7);
+  burst(GAME_W / 2, by, '#3f3f3f', 18, 280, 0.9);
   sfx.boom();
 }
 
@@ -437,7 +511,7 @@ function drawBG(){
   ctx.beginPath(); ctx.arc(130, 96, 4.5, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.arc(126, 74, 3, 0, Math.PI * 2); ctx.fill();
   /* 探照燈（緩慢擺動的光束） */
-  for(const s of [[240, 0.9, 0.35], [780, -0.7, 0.55]]){
+  for(const s of [[GAME_W * 0.25, 0.9, 0.35], [GAME_W * 0.81, -0.7, 0.55]]){
     const ang = -Math.PI / 2 + Math.sin(T * s[2]) * 0.5 + s[1] * 0.2;
     ctx.save();
     ctx.translate(s[0], GAME_H - 130);
@@ -547,8 +621,11 @@ function drawCase(){
   ctx.strokeStyle = '#2a3345'; ctx.lineWidth = 2; ctx.stroke();
   drawTimer(CASE_X + 130, CASE_Y + 56);
   /* LED 燈列 */
+  const SX1 = CASE_X + Math.round(CASE_W * 0.431);
+  const SX2 = CASE_X + Math.round(CASE_W * 0.569);
+  const SX3 = CASE_X + Math.round(CASE_W * 0.707);
   for(let i = 0; i < 5; i++){
-    const lx = CASE_X + 250 + i * 22;
+    const lx = SX1 + i * 22;
     const urgent = timeLeft <= 5 && phase === 'active';
     const on = phase === 'success' ? true : urgent ? Math.floor(T * 8) % 2 === 0 : Math.floor(timeLeft) % 5 === i;
     const c = phase === 'success' ? '#33d1a6' : '#ff4444';
@@ -562,16 +639,16 @@ function drawCase(){
   ctx.font = 'bold 14px ' + FONT;
   ctx.textAlign = 'left';
   ctx.fillStyle = '#7c8798';
-  ctx.fillText('關卡', CASE_X + 250, CASE_Y + 66);
-  ctx.fillText('拆除', CASE_X + 330, CASE_Y + 66);
-  ctx.fillText('最佳', CASE_X + 410, CASE_Y + 66);
+  ctx.fillText('關卡', SX1, CASE_Y + 66);
+  ctx.fillText('拆除', SX2, CASE_Y + 66);
+  ctx.fillText('最佳', SX3, CASE_Y + 66);
   ctx.font = 'bold 20px ' + MONO;
   ctx.fillStyle = '#e8ecf1';
-  ctx.fillText(String(round), CASE_X + 250, CASE_Y + 88);
+  ctx.fillText(String(round), SX1, CASE_Y + 88);
   ctx.fillStyle = '#33d1a6';
-  ctx.fillText(String(defused), CASE_X + 330, CASE_Y + 88);
+  ctx.fillText(String(defused), SX2, CASE_Y + 88);
   ctx.fillStyle = '#ffb020';
-  ctx.fillText(String(best), CASE_X + 410, CASE_Y + 88);
+  ctx.fillText(String(best), SX3, CASE_Y + 88);
   /* 炸彈本體圖示（OpenMoji）＋引信火花 */
   const wob = phase === 'active' && timeLeft <= 5 ? Math.sin(T * 22) * 0.06 : Math.sin(T * 2.2) * 0.03;
   ctx.save();
@@ -596,6 +673,11 @@ function drawCase(){
   ctx.fillText('案情提示：', CASE_X + 34, CASE_Y + 137);
   ctx.fillStyle = '#e8ecf1';
   ctx.fillText(clueText, CASE_X + 122, CASE_Y + 137);
+  /* v2：危險等級 */
+  ctx.font = 'bold 13px ' + FONT;
+  ctx.textAlign = 'right';
+  ctx.fillStyle = '#ff4444';
+  ctx.fillText('危險 ' + '★'.repeat(Math.min(5, Math.ceil(round / 2))), CASE_X + CASE_W - 30, CASE_Y + 172);
 }
 function drawWires(){
   for(let i = 0; i < wires.length; i++){
@@ -625,12 +707,26 @@ function drawWires(){
     const hover = !touchMode && stateName === 'play' && phase === 'active' && !w.cut &&
       mouse.x > WIRE_X1 - 6 && mouse.x < WIRE_X2 + 6 && Math.abs(mouse.y - wireYAt(w, mouse.x)) < 15;
     if(!w.cut){
+      if(w.ruled) ctx.globalAlpha = 0.32;   /* v2：被排除鏡劃掉的線變暗 */
       wirePath(w.y, w.sag, WIRE_X1, WIRE_X2);
       ctx.strokeStyle = w.color.dark; ctx.lineWidth = hover ? 13 : 11; ctx.stroke();
       wirePath(w.y, w.sag, WIRE_X1, WIRE_X2);
       ctx.strokeStyle = w.color.hex; ctx.lineWidth = hover ? 9 : 7.5; ctx.stroke();
       wirePath(w.y - 2, w.sag, WIRE_X1, WIRE_X2);
       ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.globalAlpha = 1;
+      if(w.ruled){
+        const mx = (WIRE_X1 + WIRE_X2) / 2, my = wireYAt(w, mx);
+        ctx.strokeStyle = '#7c8798'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(mx - 12, my - 12); ctx.lineTo(mx + 12, my + 12);
+        ctx.moveTo(mx + 12, my - 12); ctx.lineTo(mx - 12, my + 12);
+        ctx.stroke();
+        ctx.font = 'bold 12px ' + FONT;
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#7c8798';
+        ctx.fillText('排除', mx + 38, my + 4);
+      }
       if(hover){
         ctx.globalAlpha = 0.5 + Math.sin(T * 8) * 0.3;
         wirePath(w.y, w.sag, WIRE_X1, WIRE_X2);
@@ -705,7 +801,23 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.textBaseline = 'alphabetic';
 }
 function drawMuteBtn(){
-  drawButton(GAME_W - 64, 10, 54, 34, muted ? '🔇' : '🔊', toggleMute, false);
+  drawButton(GAME_W - 72, 10, 62, 48, muted ? '🔇' : '🔊', toggleMute, false);
+}
+/* v2：道具列（左下 🔍 按鈕、右下 🛡 顯示，拇指好按） */
+function drawTools(){
+  if(stateName !== 'play' || phase !== 'active') return;
+  ctx.globalAlpha = mags > 0 ? 1 : 0.45;
+  drawButton(14, GAME_H - 66, 170, 52, '🔍 排除 ×' + mags, useMag, mags > 0);
+  ctx.globalAlpha = 1;
+  const sx = GAME_W - 184;
+  rr(sx, GAME_H - 66, 170, 52, 10);
+  ctx.fillStyle = shields > 0 ? 'rgba(143,180,227,.2)' : 'rgba(255,255,255,.06)';
+  ctx.fill();
+  ctx.strokeStyle = shields > 0 ? '#8fb4e3' : '#3a4358'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.font = 'bold 20px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = shields > 0 ? '#cfe0f5' : '#5a6478';
+  ctx.fillText('🛡 保險絲 ×' + shields, sx + 85, GAME_H - 33);
 }
 function bigText(txt, y, size, color, scaleK){
   ctx.save();
@@ -732,11 +844,13 @@ addEventListener('keydown', e => {
     return;
   }
   if(stateName === 'play' && phase === 'active'){
-    const mDigit = c.match(/^(Digit|Numpad)([1-6])$/);
+    if(c === 'KeyQ'){ useMag(); return; }
+    /* v2：數字鍵＝電線上「印的號碼」（不再是第幾條，更直覺） */
+    const mDigit = c.match(/^(Digit|Numpad)([1-9])$/);
     if(mDigit){
-      const idx = parseInt(mDigit[2], 10) - 1;
-      if(idx < wires.length && !wires[idx].cut)
-        cutWire(idx, (WIRE_X1 + WIRE_X2) / 2);
+      const num = parseInt(mDigit[2], 10);
+      const idx = wires.findIndex(w => !w.cut && w.number === num);
+      if(idx >= 0) cutWire(idx, (WIRE_X1 + WIRE_X2) / 2);
     }
   }
 });
@@ -750,7 +864,8 @@ canvas.addEventListener('pointerdown', e => {
   const p = evPos(e.clientX, e.clientY);
   mouse.x = p.x; mouse.y = p.y;
   for(const b of uiButtons){
-    if(p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h){
+    /* v2：按鈕命中範圍外加 8px 緩衝 */
+    if(p.x >= b.x - 8 && p.x <= b.x + b.w + 8 && p.y >= b.y - 8 && p.y <= b.y + b.h + 8){
       sfx.ui(); b.cb(); return;
     }
   }
@@ -778,10 +893,11 @@ function drawWorld(){
   if(phase === 'boom' || (stateName === 'over' && overT < 0.6)){
     const k = phase === 'boom' ? clamp(phaseT / 0.5, 0, 1) : 1;
     const sz = 180 + k * 220;
+    const bcy = GAME_H * 0.52;
     ctx.globalAlpha = 1 - k * 0.6;
-    drawImg(IMG.boom, GAME_W / 2 - sz / 2, 280 - sz / 2, sz, sz);
-    drawImg(IMG.boom, GAME_W / 2 - 160 - sz / 4, 220 - sz / 4, sz / 2, sz / 2);
-    drawImg(IMG.boom, GAME_W / 2 + 120 - sz / 4, 350 - sz / 4, sz / 2, sz / 2);
+    drawImg(IMG.boom, GAME_W / 2 - sz / 2, bcy - sz / 2, sz, sz);
+    drawImg(IMG.boom, GAME_W / 2 - 160 - sz / 4, bcy - 60 - sz / 4, sz / 2, sz / 2);
+    drawImg(IMG.boom, GAME_W / 2 + 120 - sz / 4, bcy + 70 - sz / 4, sz / 2, sz / 2);
     ctx.globalAlpha = 1;
   }
   drawParts();
@@ -810,12 +926,16 @@ function titleDraw(){
   if(stateT > 0.35){
     drawButton(GAME_W / 2 - 120, 282, 240, 58, '開始拆彈', startGame, true);
   }
+  ctx.font = 'bold 15px ' + FONT;
+  ctx.fillStyle = '#e8ecf1';
+  ctx.fillText('🖱️ 電腦：滑鼠點電線剪斷，或按「線上號碼」數字鍵 1～9', GAME_W / 2, 372);
+  ctx.fillText('👆 平板：手指輕點要剪的電線', GAME_W / 2, 398);
   ctx.font = '14px ' + FONT;
   ctx.fillStyle = 'rgba(232,236,241,.75)';
-  ctx.fillText('滑鼠點線 / 手指輕點　也可按數字鍵 1-6 剪線　按 M 靜音', GAME_W / 2, 384);
+  ctx.fillText('🔍 排除鏡劃掉錯線（按 Q 或左下按鈕）　🛡 保險絲擋一次爆炸　按 M 靜音', GAME_W / 2, 426);
   if(best > 0){
     ctx.fillStyle = '#ffb020';
-    ctx.fillText('最佳紀錄：連續拆除 ' + best + ' 顆', GAME_W / 2, 412);
+    ctx.fillText('最佳紀錄：連續拆除 ' + best + ' 顆', GAME_W / 2, 452);
   }
   drawMuteBtn();
 }
@@ -828,17 +948,24 @@ function playDraw(){
   ctx.strokeText('分數 ' + Math.round(scoreShow), 20, 34);
   ctx.fillStyle = '#ffd23d';
   ctx.fillText('分數 ' + Math.round(scoreShow), 20, 34);
-  if(phase === 'active' && round === 1 && phaseT < 4){
-    ctx.font = '15px ' + FONT;
+  /* v2：開局操作提示（第一關前 6 秒，漸淡） */
+  if(phase === 'active' && round === 1 && phaseT < 6){
+    ctx.globalAlpha = clamp((6 - phaseT) / 1.2, 0, 1);
+    ctx.font = 'bold 16px ' + FONT;
     ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(232,236,241,.8)';
-    ctx.fillText('仔細看清楚每條線的數字與顏色，再動手。', GAME_W / 2, GAME_H - 14);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(5,8,16,.85)';
+    const hint = touchMode ? '👆 看提示，手指輕點正確的電線剪斷！' : '🖱️ 看提示，點電線或按線上號碼鍵剪斷！';
+    ctx.strokeText(hint, GAME_W / 2, GAME_H - 84);
+    ctx.fillStyle = '#ffd77e';
+    ctx.fillText(hint, GAME_W / 2, GAME_H - 84);
+    ctx.globalAlpha = 1;
   }
   if(phase === 'success'){
     bigText('成功拆除！', 56, 40, '#33d1a6', easeOutBack(Math.min(1, phaseT / 0.4)));
   }else if(phase === 'boom'){
-    bigText('轟！！', 270, 84, '#ff4444', easeOutBack(Math.min(1, phaseT / 0.3)));
+    bigText('轟！！', GAME_H / 2, 84, '#ff4444', easeOutBack(Math.min(1, phaseT / 0.3)));
   }
+  drawTools();
   drawMuteBtn();
   drawScissors();
 }
@@ -860,7 +987,7 @@ function overDraw(){
   ctx.fillText('任務結束', 0, -88);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = '#7c8798';
-  ctx.fillText(boomReason + '炸彈爆炸了。', 0, -54);
+  ctx.fillText(boomReason + '炸彈爆炸了。（挑戰到第 ' + round + ' 關）', 0, -54);
   ctx.font = 'bold 26px ' + FONT;
   ctx.fillStyle = '#e8ecf1';
   ctx.fillText('連續拆除　' + defused + '　顆炸彈', 0, -8);
@@ -876,7 +1003,7 @@ function overDraw(){
   ctx.restore();
   if(overT > 0.3){
     drawButton(GAME_W / 2 - 120, GAME_H / 2 + 128, 240, 54, '再玩一次', startGame, true);
-    drawButton(GAME_W / 2 - 80, GAME_H - 44, 160, 34, '回主選單', toTitle, false);
+    drawButton(GAME_W / 2 - 100, GAME_H / 2 + 194, 200, 48, '回主選單', toTitle, false);
   }
   drawMuteBtn();
 }

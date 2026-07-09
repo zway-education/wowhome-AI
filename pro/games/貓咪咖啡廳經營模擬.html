@@ -210,7 +210,9 @@ const sfx={
   upgrade(){[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.12,'square',.08),i*80));},
   dayend(){[784,659,587,523].forEach((f,i)=>setTimeout(()=>beep(f,.18,'triangle',.1),i*140));},
   fanfare(){[523,659,784,1047,1319,1568].forEach((f,i)=>setTimeout(()=>beep(f,.16,'square',.09),i*90));},
-  rush(){beep(660,.14,'square',.1);setTimeout(()=>beep(660,.14,'square',.1),180);}
+  rush(){beep(660,.14,'square',.1);setTimeout(()=>beep(660,.14,'square',.1),180);},
+  perfect(){beep(1175,.07,'square',.09);setTimeout(()=>beep(1568,.12,'square',.09),60);},
+  goal(){[659,784,988,1319].forEach((f,i)=>setTimeout(()=>beep(f,.14,'triangle',.1),i*90));}
 };
 /* 溫馨爵士 BGM（合成） */
 const Music=(()=>{
@@ -306,6 +308,10 @@ const ORDER_TYPES=[
   {img:'f_icecream',name:'冰淇淋',base:20},{img:'f_croissant',name:'可頌',base:16},
 ];
 const TOTAL_DAYS=7;
+/* 每日賺錢目標 */
+const GOALS=[180,300,450,600,800,1000,1300];
+/* 第7天壓軸貴客 */
+const CRITIC={key:'critic',name:'美食評論家',img:'cu_vip',pat:.65,tip:3,repLoss:15,orders:[2,2]};
 /* ============ 狀態 ============ */
 let S=null;
 function freshState(){
@@ -315,6 +321,9 @@ function freshState(){
     upgrades:{table:1,menu:0,deco:0,toy:0},
     catSeq:1,logs:[],running:false,rushUntil:0,spawnMs:9000,
     served:0,angry:0,totalEarned:0,
+    dayEarned:0,dayGoal:GOALS[0],goalDone:false,goalStars:0,
+    streak:0,bestStreak:0,perfects:0,
+    criticPending:false,criticDone:false,
   };
 }
 let best=0;try{best=+localStorage.getItem('catcafe.best')||0;}catch(e){}
@@ -349,7 +358,7 @@ function initTables(){
     S.tables.push({id:i,x:TABLE_SLOTS[i].x,y:TABLE_SLOTS[i].y,cust:null,pop:0,plate:null});
 }
 /* ============ 粒子 / 飄字 ============ */
-let parts=[],floats=[],tGlobal=0,shake=0;
+let parts=[],floats=[],tGlobal=0,shake=0,playHintT=0;
 function burst(x,y,kind,n){
   for(let i=0;i<(n||8);i++){
     if(parts.length>200)parts.shift();
@@ -378,6 +387,9 @@ function updateStats(){
   document.getElementById('stTime').textContent=pad2(S.hour)+':'+pad2(S.minute);
   document.getElementById('stCats').textContent=S.cats.length;
   document.getElementById('stServed').textContent=S.served;
+  const g=document.getElementById('stGoal');
+  g.textContent=(S.goalDone?'✔ ':'')+Math.min(S.dayEarned,S.dayGoal)+'/'+S.dayGoal;
+  g.style.color=S.goalDone?'var(--green)':'';
 }
 /* ============ 商店（分頁） ============ */
 let curTab='cat';
@@ -491,6 +503,21 @@ function trySpawnCustomer(){
   t.cust={type:ct,img:ct.img,orders,base:orders.reduce((a,o)=>a+o.base,0),
     patience:patMax,maxPat:patMax,cute,state:'walk',t:0};
   sfx.bell();
+  return true;
+}
+function spawnCritic(){
+  const free=S.tables.filter(t=>!t.cust);
+  if(!free.length)return false;
+  const t=free[Math.random()*free.length|0];
+  const orders=Array.from({length:2},()=>ORDER_TYPES[Math.random()*ORDER_TYPES.length|0]);
+  const cute=S.cats.length?S.cats.reduce((a,c)=>a+c.cute,0)/S.cats.length:1;
+  const patMax=14;
+  t.cust={type:CRITIC,img:CRITIC.img,orders,base:orders.reduce((a,o)=>a+o.base,0),
+    patience:patMax,maxPat:patMax,cute,state:'walk',t:0};
+  sfx.rush();shake=Math.max(shake,5);
+  floatTxt(480,160,'📰 美食評論家駕到！快完美服務他！','#e06060',24);
+  log('📰 美食評論家上門了！耐心超短，動作要快！');
+  return true;
 }
 function serveTable(t){
   if(!t.cust||t.cust.state!=='wait')return;
@@ -498,20 +525,55 @@ function serveTable(t){
   const menuB=1+S.upgrades.menu*.15;
   const moodAvg=S.cats.length?S.cats.reduce((a,x)=>a+x.mood,0)/S.cats.length/100:.5;
   const tipM=(1+c.cute*.05+moodAvg*.4)*c.type.tip;
-  const rev=Math.round(c.base*menuB*tipM);
+  let rev=Math.round(c.base*menuB*tipM);
+  /* 完美服務：耐心還很高就上餐 → 小費 1.5 倍＋連擊 */
+  const perfect=c.patience/c.maxPat>=.7;
+  c.perfect=perfect;
+  if(perfect){
+    rev=Math.round(rev*1.5);
+    S.streak++;S.perfects++;S.bestStreak=Math.max(S.bestStreak,S.streak);
+    floatTxt(t.x,t.y-78,'✨ 完美服務 ×'+S.streak+'！','#e0a72d',19);
+    burst(t.x,t.y-46,'spark',8);
+    if(S.streak%3===0){
+      S.rep+=2;
+      floatTxt(t.x,t.y-98,'連擊獎勵 ⭐+2','#7cb87c',17);
+      sfx.perfect();
+    }else sfx.serve();
+  }else{
+    S.streak=0;
+    sfx.serve();
+  }
   c.state='eat';c.t=0;c.revenue=rev;
   t.pop=1;t.plate=c.orders[0].img;
-  sfx.serve();
-  log('✅ '+c.type.name+' 在桌'+(t.id+1)+' 點了 '+c.orders.map(o=>o.name).join('、')+'，收入 💰'+rev);
+  log((perfect?'✨ 完美服務！':'✅ ')+c.type.name+' 在桌'+(t.id+1)+' 點了 '+c.orders.map(o=>o.name).join('、')+'，收入 💰'+rev);
 }
 function finishEat(t){
   const c=t.cust;
-  S.money+=c.revenue;S.totalEarned+=c.revenue;S.rep+=1;S.served++;
+  S.money+=c.revenue;S.totalEarned+=c.revenue;S.dayEarned+=c.revenue;S.rep+=1;S.served++;
   sfx.coin();bump('stMoney');
   burst(t.x,t.y-40,'coin',10);burst(t.x,t.y-40,'heart',3);
   floatTxt(t.x,t.y-60,'+💰'+c.revenue,'#e0a72d',19);
+  if(c.type.key==='critic'){
+    const bm=c.perfect?250:120,br=c.perfect?20:8;
+    S.money+=bm;S.totalEarned+=bm;S.dayEarned+=bm;S.rep+=br;
+    sfx.fanfare();shake=Math.max(shake,4);
+    burst(t.x,t.y-60,'spark',16);
+    floatTxt(480,180,c.perfect?'📰 五星好評！+💰250 ⭐+20':'📰 好評！+💰120 ⭐+8','#e0a72d',24);
+    log(c.perfect?'📰 評論家給了五星好評！咖啡廳聲名大噪！':'📰 評論家滿意地離開了，給了不錯的評價');
+  }
   t.cust=null;t.plate=null;
+  checkGoal();
   updateStats();
+}
+function checkGoal(){
+  if(S.goalDone||S.dayEarned<S.dayGoal)return;
+  S.goalDone=true;S.goalStars++;
+  const bonus=60+S.day*20;
+  S.money+=bonus;S.totalEarned+=bonus;S.rep+=3;
+  sfx.goal();bump('stMoney');
+  floatTxt(480,150,'🎯 每日目標達成！獎金 💰'+bonus+' ⭐+3','#7cb87c',24);
+  burst(480,180,'spark',18);
+  log('🎯 達成每日目標 💰'+S.dayGoal+'！獎金 💰'+bonus+'、聲望 +3');
 }
 function tickPatience(){
   let leftCount=0,vipLeft=false;
@@ -521,6 +583,11 @@ function tickPatience(){
       if(t.cust.patience<=0){
         S.rep=Math.max(0,S.rep-t.cust.type.repLoss);
         if(t.cust.type.key==='vip')vipLeft=true;
+        if(t.cust.type.key==='critic'){
+          shake=Math.max(shake,8);
+          floatTxt(480,180,'📰 毒舌差評…聲望 -15','#e06060',24);
+          log('📰 慘了！評論家怒而離席，寫了毒舌差評（聲望 -15）');
+        }
         burst(t.x,t.y-50,'angry',6);
         floatTxt(t.x,t.y-64,'💢','#e06060',22);
         t.cust=null;t.plate=null;leftCount++;S.angry++;
@@ -590,6 +657,22 @@ function gameTick(){
   document.getElementById('rushBanner').style.display=isRush()?'block':'none';
   spawnTimer-=1000;
   if(spawnTimer<=0){trySpawnCustomer();spawnTimer=spawnIntervalMs();}
+  /* 第 7 天中午：美食評論家壓軸登場 */
+  if(S.day===TOTAL_DAYS&&!S.criticDone&&!S.criticPending&&S.hour>=12)S.criticPending=true;
+  if(S.criticPending&&spawnCritic()){S.criticPending=false;S.criticDone=true;}
+  /* 貓咪招財：心情好的貓會招來客人 */
+  for(const c of S.cats){
+    if(c.mood>70&&Math.random()<.012){
+      const free=S.tables.filter(t=>!t.cust);
+      if(free.length){
+        trySpawnCustomer();
+        burst(c.x,c.y-20,'spark',10);
+        floatTxt(c.x,c.y-42,'🐾 招財喵！','#e0a72d',16);
+        log('🐾 '+c.name+' #'+c.id+' 招來了一位客人！（心情好的貓咪會招財）');
+      }
+      break;
+    }
+  }
   if(S.staff.some(s=>s.key==='barista')&&Math.random()<.35){
     const waiting=S.tables.filter(t=>t.cust&&t.cust.state==='wait');
     if(waiting.length){
@@ -611,22 +694,29 @@ function endDay(){
   document.getElementById('rushBanner').style.display='none';
   if(S.day>=TOTAL_DAYS){showFinal();return;}
   document.getElementById('dayTitle').textContent='第 '+S.day+' 天結束！';
-  document.getElementById('dayBody').innerHTML='今天辛苦了！☕<br>營業獎金 💰'+bonus+
+  document.getElementById('dayBody').innerHTML='今天辛苦了！☕<br>'+
+    (S.goalDone?'🎯 <b style="color:var(--green)">每日目標達成 ✔</b>':
+      '🎯 <b style="color:var(--red)">目標未達成 ✘</b>（'+S.dayEarned+'/'+S.dayGoal+'）')+
+    '・目標星 ⭐'+S.goalStars+'/'+TOTAL_DAYS+
+    '<br>營業獎金 💰'+bonus+
     '<br>目前金錢 💰'+S.money+'・聲望 ⭐'+S.rep+
-    '<br><span class="small">已服務 '+S.served+' 位・氣走 '+S.angry+' 位</span>'+
-    '<br><span class="small" style="color:var(--red)">明天顧客會更多、更沒耐心，加油！</span>';
+    '<br><span class="small">已服務 '+S.served+' 位・氣走 '+S.angry+' 位・最高完美連擊 ×'+S.bestStreak+'</span>'+
+    '<br><span class="small" style="color:var(--red)">明天顧客更多更沒耐心，目標 💰'+GOALS[Math.min(S.day,TOTAL_DAYS-1)]+'，加油！</span>';
   document.getElementById('dayOvl').classList.remove('hidden');
 }
 function nextDay(){
   document.getElementById('dayOvl').classList.add('hidden');
-  S.day++;S.hour=8;S.minute=0;S.rushUntil=0;spawnTimer=9000;
+  S.day++;S.hour=8;S.minute=0;S.rushUntil=0;spawnTimer=4000;
+  S.dayEarned=0;S.goalDone=false;S.streak=0;
+  S.dayGoal=GOALS[Math.min(S.day-1,GOALS.length-1)];
   S.running=true;state='play';
-  log('☀️ 第 '+S.day+' 天開始營業！');
+  log('☀️ 第 '+S.day+' 天開始營業！今日目標：賺 💰'+S.dayGoal);
+  if(S.day===TOTAL_DAYS)log('📰 聽說今天中午美食評論家會來視察…');
   updateStats();
 }
 function showFinal(){
   state='end';
-  const score=S.money+S.rep*10;
+  const score=S.money+S.rep*10+S.goalStars*100;
   const isNew=score>best;
   if(isNew){best=score;try{localStorage.setItem('catcafe.best',best);}catch(e){}}
   const grade=score>=4000?'S':score>=2500?'A':score>=1500?'B':score>=800?'C':'D';
@@ -635,6 +725,8 @@ function showFinal(){
   document.getElementById('endGrade').textContent=grade;
   document.getElementById('endBody').innerHTML='<b style="font-size:1.3em">分數 '+score+'</b>'+
     (isNew?' <span style="color:var(--red)">✨新紀錄！</span>':'')+
+    '<br><span class="small">＝金錢＋聲望×10＋目標星×100</span>'+
+    '<br>🎯 目標星 '+S.goalStars+'/'+TOTAL_DAYS+'・✨ 最高完美連擊 ×'+S.bestStreak+
     '<br>💰 總收入 '+S.totalEarned+'・⭐ 聲望 '+S.rep+
     '<br>✅ 服務 '+S.served+' 位・😠 氣走 '+S.angry+' 位・😻 貓咪 '+S.cats.length+' 隻'+
     '<br>🏆 最佳紀錄 '+best+'<br><br>'+msg;
@@ -643,10 +735,10 @@ function showFinal(){
 }
 function startGame(){
   S=freshState();
-  dispMoney=150;parts=[];floats=[];spawnTimer=9000;tickAcc=0;
+  dispMoney=150;parts=[];floats=[];spawnTimer=2500;tickAcc=0;playHintT=8;
   initTables();
   S.logs=[];logBox.innerHTML='';
-  log('🏪 咖啡廳開張了！先招募一隻貓咪吧～');
+  log('🏪 咖啡廳開張了！先招募一隻貓咪吧～ 今日目標：賺 💰'+S.dayGoal);
   renderShop();renderCatList();updateStats();
   document.getElementById('titleOvl').classList.add('hidden');
   document.getElementById('endOvl').classList.add('hidden');
@@ -663,8 +755,9 @@ cv.addEventListener('pointerdown',e=>{
   e.preventDefault();audio();
   if(state!=='play')return;
   const p=canvasPos(e);
+  burst(p.x,p.y,'spark',4);   /* 每次點擊都有漣漪回饋 */
   for(const c of S.cats){
-    if(Math.hypot(p.x-c.x,p.y-(c.y-16))<30){petCat(c);return;}
+    if(Math.hypot(p.x-c.x,p.y-(c.y-16))<38){petCat(c);return;}
   }
   for(const t of S.tables){
     if(Math.hypot(p.x-t.x,p.y-(t.y-20))<60){serveTable(t);return;}
@@ -680,6 +773,7 @@ function update(dt){
     if(p.life<=0)parts.splice(i,1);}
   for(let i=floats.length-1;i>=0;i--){const f=floats[i];f.y-=30*dt;f.life-=dt;if(f.life<=0)floats.splice(i,1);}
   if(state!=='play'||!S.running)return;
+  playHintT-=dt;
   tickAcc+=dt;
   while(tickAcc>=1){tickAcc-=1;gameTick();}
   // 顧客動畫
@@ -897,6 +991,14 @@ function drawCustomer(t){
   ctx.beginPath();ctx.ellipse(0,26,16,5,0,0,7);ctx.fill();
   const im=IMG[c.img];
   if(ok(im))ctx.drawImage(im,-22,-22,44,44);
+  // 評論家徽章
+  if(c.type.key==='critic'){
+    ctx.fillStyle='#e06060';
+    ctx.beginPath();ctx.arc(18,-18,9,0,7);ctx.fill();
+    ctx.strokeStyle='#fff';ctx.lineWidth=1.5;ctx.stroke();
+    ctx.fillStyle='#fff';ctx.font='bold 10px sans-serif';ctx.textAlign='center';
+    ctx.fillText('評',18,-14.5);
+  }
   // 吃飯動畫
   if(c.state==='eat'){
     ctx.font='13px sans-serif';ctx.textAlign='center';
@@ -1004,6 +1106,15 @@ function draw(){
       ctx.fillStyle=f.c;ctx.fillText(f.txt,f.x,f.y);
     }
     ctx.globalAlpha=1;
+    /* 開場操作提示 */
+    if(playHintT>0&&state==='play'){
+      ctx.globalAlpha=clamp(playHintT,0,1);
+      ctx.fillStyle='rgba(74,52,40,.82)';
+      rr(190,486,580,40,14);ctx.fill();
+      ctx.fillStyle='#fff';ctx.font='bold 17px sans-serif';ctx.textAlign='center';
+      ctx.fillText('👆 點桌子上餐・點貓咪摸摸・右側商店買貓與升級',480,512);
+      ctx.globalAlpha=1;
+    }
   }
   ctx.restore();
 }

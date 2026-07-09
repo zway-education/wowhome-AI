@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -115,6 +116,8 @@ const sfx = {
     setTimeout(() => beep(659, 0.1, 'square', 0.1), 90);
     setTimeout(() => beep(784, 0.16, 'square', 0.1), 180);
   },
+  special(){ noise(0.25, 0.2); beep(180, 0.4, 'sawtooth', 0.14, 520); setTimeout(() => beep(880, 0.25, 'square', 0.12, 300), 140); },
+  spReady(){ beep(880, 0.09, 'square', 0.1, 220); setTimeout(() => beep(1175, 0.14, 'square', 0.09), 90); },
   win(){ [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.1), i * 110)); },
   lose(){ [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 150)); }
 };
@@ -125,10 +128,10 @@ function toggleMute(){
 
 /* ===== 輸入：鍵盤 + 觸控 + 滑鼠 ===== */
 const keys = {};
-const in1 = { mx: 0, jumpBuf: 0, atkBuf: 0 };
-const in2 = { mx: 0, jumpBuf: 0, atkBuf: 0 };
-let touchMode = false;
-const touchIn = { left: false, right: false, jump: false, atk: false };
+const in1 = { mx: 0, jumpBuf: 0, atkBuf: 0, spBuf: 0 };
+const in2 = { mx: 0, jumpBuf: 0, atkBuf: 0, spBuf: 0 };
+let touchMode = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+const touchIn = { left: false, right: false, jump: false, atk: false, sp: false };
 
 addEventListener('keydown', e => {
   initAudio();
@@ -145,12 +148,15 @@ addEventListener('keydown', e => {
   if(stateName !== 'play') return;
   if(c === 'KeyW') in1.jumpBuf = 0.12;
   if(c === 'KeyF' || c === 'KeyJ' || c === 'Space') in1.atkBuf = 0.16;
+  if(c === 'KeyS') in1.spBuf = 0.2;
   if(mode === 'ai'){
     if(c === 'ArrowUp') in1.jumpBuf = 0.12;
     if(c === 'KeyK') in1.atkBuf = 0.16;
+    if(c === 'ArrowDown' || c === 'KeyL') in1.spBuf = 0.2;
   }else{
     if(c === 'ArrowUp') in2.jumpBuf = 0.12;
     if(c === 'KeyK') in2.atkBuf = 0.16;
+    if(c === 'ArrowDown' || c === 'KeyL') in2.spBuf = 0.2;
   }
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
@@ -163,8 +169,8 @@ function handleTouches(e){
   e.preventDefault();
   initAudio();
   touchMode = true;
-  const pj = touchIn.jump, pa = touchIn.atk;
-  touchIn.left = touchIn.right = touchIn.jump = touchIn.atk = false;
+  const pj = touchIn.jump, pa = touchIn.atk, ps = touchIn.sp;
+  touchIn.left = touchIn.right = touchIn.jump = touchIn.atk = touchIn.sp = false;
   for(const t of e.touches){
     const p = evPos(t.clientX, t.clientY);
     if(p.y > GAME_H - 175){
@@ -172,10 +178,13 @@ function handleTouches(e){
       else if(p.x < 300) touchIn.right = true;
       else if(p.x > GAME_W - 150) touchIn.atk = true;
       else if(p.x > GAME_W - 300) touchIn.jump = true;
+    }else if(p.y > GAME_H - 290 && p.x > GAME_W - 150){
+      touchIn.sp = true; // 「絕」必殺鈕（攻擊鈕上方）
     }
   }
   if(touchIn.jump && !pj) in1.jumpBuf = 0.12;
   if(touchIn.atk && !pa) in1.atkBuf = 0.16;
+  if(touchIn.sp && !ps) in1.spBuf = 0.2;
 }
 for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
   canvas.addEventListener(ev, handleTouches, { passive: false });
@@ -267,7 +276,8 @@ function createFighter(kind){
     atkTimer: 0, atkDur: 0.28, atkCd: 0, atkCdMax: 0.45,
     dmg: 9, range: 104, speed: 275,
     sx: 1, sy: 1, walkT: 0, moving: false, hitDone: true,
-    dead: false, koT: 0
+    dead: false, koT: 0,
+    sp: 0, spActive: false, spReadyPing: false, combo: 0, comboT: 0
   };
 }
 const p1 = createFighter('wukong');
@@ -280,6 +290,8 @@ function resetRound(healed){
     f.y = GROUND_Y; f.vy = 0; f.kb = 0; f.hurtTimer = 0;
     f.atkTimer = 0; f.atkCd = 0; f.sx = 1; f.sy = 1;
     f.dead = false; f.koT = 0; f.grounded = true; f.walkT = 0;
+    f.spActive = false; f.combo = 0; f.comboT = 0;
+    if(mode !== 'ai') f.sp = 0; // 單人模式的氣跨回合保留
   }
   p1.facing = 1; p2.facing = -1;
   if(mode === 'ai'){
@@ -307,6 +319,8 @@ function startGame(m){
   mode = m;
   round = 1; score = 0; scoreShow = 0;
   wins1 = 0; wins2 = 0;
+  p1.sp = p2.sp = 0;
+  p1.spReadyPing = p2.spReadyPing = false;
   resetRound(false);
   stateName = 'play'; stateT = 0;
 }

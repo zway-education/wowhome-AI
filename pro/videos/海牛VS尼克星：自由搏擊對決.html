@@ -239,6 +239,26 @@ function drawParts(){
     ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
   }
 }
+function drawImpactLines(){
+  if(!ilines) return;
+  const a = clamp(ilines.life / ilines.max, 0, 1);
+  const sx = (ilines.x - cam.x - cam.sx) * cam.z + W/2;
+  const sy = (ilines.y - cam.y - cam.sy) * cam.z + H/2;
+  ctx.save();
+  ctx.globalAlpha = a * 0.7;
+  ctx.strokeStyle = '#fff6dc'; ctx.lineCap = 'round';
+  const n = 26;
+  for(let i=0;i<n;i++){
+    const ang = i/n*TAU + Math.sin(i*13.7)*0.05;
+    const r0 = 110 + 46*Math.abs(Math.sin(i*7.3)) + (1-a)*90;
+    ctx.lineWidth = 1.5 + (i%3)*1.4;
+    ctx.beginPath();
+    ctx.moveTo(sx + Math.cos(ang)*r0, sy + Math.sin(ang)*r0);
+    ctx.lineTo(sx + Math.cos(ang)*820, sy + Math.sin(ang)*820);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
 function comic(x,y,text,col){
   comics.push({x, y, text, col:col||'#ffe27a', t:0, dur:0.75, ang:rnd(-0.18,0.18)});
 }
@@ -433,6 +453,7 @@ function buildEvents(){
   ev(26.0, ()=>{  // 終極對撞
     const ix = 480, iy = FLOOR-100;
     shake = 18; flash = 0.9; freeze = 0.28; excite = 1;
+    ilines = {x:ix, y:iy, life:.6, max:.6};
     spawnSparks(ix, iy, 60, '#8fd0ff'); spawnSparks(ix, iy, 30, '#ffb020');
     waves.push({x:ix,y:iy,r:10,vr:760,life:.5,max:.5});
     waves.push({x:ix,y:iy,r:4, vr:440,life:.6,max:.6});
@@ -1144,6 +1165,7 @@ function render(){
     drawComics();
   });
   layer(1.25, drawForeground);
+  drawImpactLines();          // 漫畫集中線（螢幕空間）
   // 螢幕空間效果：白閃 → 氛圍色 → 暗角 → 電影黑邊
   if(flash > 0){
     ctx.globalAlpha = Math.min(1, flash);
@@ -1199,6 +1221,7 @@ function frame(now){
   cam.sx = (Math.random()*2-1) * shake;
   cam.sy = (Math.random()*2-1) * shake;
   flash = Math.max(0, flash - dt*2.6);
+  if(ilines){ ilines.life -= dt; if(ilines.life <= 0) ilines = null; }
   // 音訊環境
   if(AC && crowdGain) crowdGain.gain.value = 0.02 + excite*0.08;
   updateSubtitle();
@@ -1214,12 +1237,13 @@ sndBtn.addEventListener('click', ()=>{
   audioOn = !audioOn;
   master.gain.value = audioOn ? 0.9 : 0;
   sndBtn.textContent = audioOn ? '🔊 聲音：開' : '🔇 聲音：關';
+  document.getElementById('hint').style.display = 'none';
 });
 replayBtn.addEventListener('click', ()=>{
   T = 0; freeze = 0; shake = 0; flash = 0; excite = 0.15; ended = false;
-  parts = []; waves = []; comics = []; ropeFlexR = ropeFlexL = 0;
+  parts = []; waves = []; comics = []; ilines = null; ropeFlexR = ropeFlexL = 0;
   for(const f of [cow, star]){
-    f.dx=0; f.dy=0; f.rot=0; f.lean=0; f.ext=0; f.extUp=0;
+    f.dx=0; f.dy=0; f.rot=0; f.lean=0; f.ext=0; f.extUp=0; f.duck=0;
     f.sx=1; f.sy=1; f.kb=0; f.hurt=0; f.down=0; f.dizzy=0; f.expr='calm';
   }
   cam.x=480; cam.y=308; cam.z=1.5;
