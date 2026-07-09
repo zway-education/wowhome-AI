@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -167,7 +168,11 @@ const SFX = {
   tick(){ beep(1320,0.04,'square',0.07); },
   win(){ [523,659,784,1047,1319].forEach((f,i)=> beep(f,0.16,'square',0.13,0,i*0.11)); },
   lose(){ beep(392,0.2,'triangle',0.12,-40); beep(294,0.35,'triangle',0.12,-40,0.2); },
-  spark(){ beep(1568,0.06,'square',0.06); }
+  spark(){ beep(1568,0.06,'square',0.06); },
+  fever(){ [659,784,988,1319].forEach((f,i)=> beep(f,0.09,'square',0.13,0,i*0.06)); },
+  boss(){ beep(110,0.4,'sawtooth',0.15,-30); beep(165,0.4,'sawtooth',0.12,-40,0.1); noise(0.2,0.08,0.05); },
+  power(){ beep(523,0.07,'square',0.12); beep(784,0.12,'square',0.12,0,0.07); },
+  freeze(){ beep(1200,0.18,'triangle',0.12,-700); noise(0.1,0.06); }
 };
 function toggleMute(){
   muted = !muted;
@@ -251,14 +256,14 @@ function drawButton(b){
   text(b.label, 0, 2, b.size, b.fg);
   ctx.restore();
 }
-const muteBtn = button(GAME_W-62, 12, 48, 42, '', toggleMute, {ghost:true});
+const muteBtn = button(GAME_W-62, 12, 48, 48, '', toggleMute, {ghost:true});
 function drawMute(){
   drawButton(muteBtn);
   ctx.globalAlpha = 0.85;
   ctx.fillStyle = 'rgba(4,7,15,0.5)';
   rr(muteBtn.x, muteBtn.y, muteBtn.w, muteBtn.h, 12); ctx.fill();
   ctx.strokeStyle = 'rgba(143,160,201,0.4)'; ctx.lineWidth = 1.5; ctx.stroke();
-  text(muted ? '🔇' : '🔊', muteBtn.x+24, muteBtn.y+23, 22, '#f3ecd9');
+  text(muted ? '🔇' : '🔊', muteBtn.x+24, muteBtn.y+25, 22, '#f3ecd9');
   ctx.globalAlpha = 1;
 }
 function pill(x,y,w,h,glow){
@@ -424,6 +429,8 @@ const FISH_KINDS = [
   {r:11, color:'#f4a442', belly:'#ffd98e', pts:20, sp:125, dMin:390, dMax:470},
 ];
 const GOLD_KIND = {r:13, color:'#ffd447', belly:'#fff5d6', pts:50, sp:195, dMin:430, dMax:505, gold:true};
+const BOSS_KIND = {r:33, color:'#ff9f1c', belly:'#ffe3b0', pts:150, sp:150, dMin:395, dMax:480, boss:true};
+const FISH_STARS = [250, 500, 800];
 const IDLE_Y = 168, HOOK_MAX_Y = 512, AIM_MIN = 50, AIM_MAX = 655;
 
 const fishGame = {
@@ -431,6 +438,7 @@ const fishGame = {
   enter(){
     this.score = 0; this.dispScore = 0; this.time = 60; this.elapsed = 0; this.prevCeil = 61;
     this.combo = 0; this.comboPop = 0;
+    this.fever = 0; this.bossCalled = false;   // v2：FEVER 狂熱＋魚王
     this.cast = 'idle';                 // idle → drop → reel
     this.aimX = GAME_W*0.35; this.hookX = this.aimX; this.hookY = IDLE_Y; this.prevHookY = IDLE_Y;
     this.carry = null; this.missed = false; this.rodBend = 0.2; this.mechaSq = 1;
@@ -461,7 +469,7 @@ const fishGame = {
   },
   pMove(p){ this.aimX = clamp(p.x, AIM_MIN, AIM_MAX); },
   pUp(p, id, pt){
-    if(pt && dist(p.x,p.y,pt.sx,pt.sy) < 16 && (tGlobal - pt.t) < 0.4){
+    if(pt && dist(p.x,p.y,pt.sx,pt.sy) < 22 && (tGlobal - pt.t) < 0.55){  // v2：更寬容的點擊判定
       this.aimX = clamp(p.x, AIM_MIN, AIM_MAX);
       if(this.cast === 'idle') this.hookX = this.aimX;
       this.castAction();
@@ -476,13 +484,14 @@ const fishGame = {
     if(keys['ArrowLeft'] || keys['KeyA'])  this.aimX = clamp(this.aimX - 480*dt, AIM_MIN, AIM_MAX);
     if(keys['ArrowRight']|| keys['KeyD'])  this.aimX = clamp(this.aimX + 480*dt, AIM_MIN, AIM_MAX);
     if(this.cast === 'idle') this.hookX += (this.aimX - this.hookX) * (1 - Math.pow(0.0001, dt));
-    // 鉤子升降
+    // 鉤子升降（FEVER 時更俐落）
     this.prevHookY = this.hookY;
+    const spdBoost = this.fever > 0 ? 1.25 : 1;
     if(this.cast === 'drop'){
-      this.hookY += 640*dt;
+      this.hookY += 640*spdBoost*dt;
       if(this.hookY >= HOOK_MAX_Y){ this.hookY = HOOK_MAX_Y; this.cast = 'reel'; this.missed = true; }
     } else if(this.cast === 'reel'){
-      this.hookY -= 860*dt;
+      this.hookY -= 860*spdBoost*dt;
       if(this.hookY <= IDLE_Y){
         this.hookY = IDLE_Y;
         if(this.carry){
@@ -515,17 +524,41 @@ const fishGame = {
         if(j.stun <= 0 && dist(j.x, j.y, this.hookX, this.hookY) < 26){ this.hitJelly(j); break; }
       }
     }
-    for(const f of this.fishes){
+    for(let i=this.fishes.length-1;i>=0;i--){
+      const f = this.fishes[i];
       f.x += f.dir * f.sp * speedMul * dt;
       f.wig += dt * (5 + f.sp/25);
       f.sx += (1-f.sx)*Math.min(1,dt*10); f.sy += (1-f.sy)*Math.min(1,dt*10);
+      if(f.k.boss){  // 魚王限時逗留，時間到就溜走（不折返）
+        f.bossT -= dt;
+        if(f.bossT <= 0){
+          if(f.x < -70 || f.x > GAME_W+70){
+            this.fishes.splice(i,1);
+            floater(GAME_W/2, 250, '魚王溜走了…', '#8fa0c9', 26);
+          }
+          continue;
+        }
+      }
       if(f.dir===1 && f.x > GAME_W+50){ f.x = -50; f.y = f.k.dMin + Math.random()*(f.k.dMax-f.k.dMin); }
       if(f.dir===-1 && f.x < -50){ f.x = GAME_W+50; f.y = f.k.dMin + Math.random()*(f.k.dMax-f.k.dMin); }
     }
-    const cap = 6 + Math.min(4, Math.floor(this.elapsed/15));
-    if(this.fishes.length < cap && Math.random() < 0.02){
+    // v2：FEVER 倒數＋魚潮
+    this.fever = Math.max(0, this.fever - dt);
+    const cap = 6 + Math.min(4, Math.floor(this.elapsed/15)) + (this.fever > 0 ? 4 : 0);
+    if(this.fishes.length < cap && Math.random() < (this.fever > 0 ? 0.09 : 0.02)){
       const goldChance = Math.min(0.06 + this.elapsed*0.004, 0.25);
       this.spawnFish(Math.random() < goldChance, false);
+    }
+    // v2：最後 22 秒魚王登場（高潮時刻）
+    if(!this.bossCalled && this.time <= 22){
+      this.bossCalled = true;
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      this.fishes.push({ k: BOSS_KIND, dir,
+        x: dir===1 ? -60 : GAME_W+60,
+        y: BOSS_KIND.dMin + Math.random()*(BOSS_KIND.dMax-BOSS_KIND.dMin),
+        sp: BOSS_KIND.sp, wig: 0, sx:1, sy:1, bossT: 14 });
+      addShake(6); SFX.boss();
+      floater(GAME_W/2, 230, '👑 魚王出現！150 分！', '#ff9f1c', 34);
     }
     // 水母（15 秒後 1 隻、35 秒後 2 隻）
     const jellyCount = this.elapsed > 35 ? 2 : (this.elapsed > 15 ? 1 : 0);
@@ -551,15 +584,26 @@ const fishGame = {
     this.fishes.splice(i,1);
     this.combo++; this.comboPop = 1;
     const mul = Math.min(this.combo, 5);
-    const gain = f.k.pts * mul;
+    const feverMul = this.fever > 0 ? 2 : 1;
+    const gain = f.k.pts * mul * feverMul;
     this.score += gain;
     this.carry = f; f.sx = 1.35; f.sy = 0.65;
     this.cast = 'reel'; this.mechaSq = 1.25;
-    hitStop(f.k.gold ? 0.1 : 0.05);
-    addShake(f.k.gold ? 8 : 4);
-    if(f.k.gold){ flash = 0.25; SFX.golden(); } else SFX.catchFish();
-    burst(f.x, f.y, [f.k.color, '#fff5d6'], f.k.gold ? 22 : 12, 240, {size:5, g:300, life:0.5});
-    floater(f.x, f.y - 20, '+' + gain + (mul>1 ? '（x'+mul+'）' : ''), f.k.gold ? '#ffd447' : '#ffd77a', f.k.gold ? 30 : 24);
+    const big = f.k.gold || f.k.boss;
+    hitStop(f.k.boss ? 0.14 : (big ? 0.1 : 0.05));
+    addShake(f.k.boss ? 12 : (big ? 8 : 4));
+    if(f.k.boss){ flash = 0.4; SFX.win(); }
+    else if(f.k.gold){ flash = 0.25; SFX.golden(); }
+    else SFX.catchFish();
+    burst(f.x, f.y, [f.k.color, '#fff5d6'], f.k.boss ? 36 : (big ? 22 : 12), f.k.boss ? 340 : 240, {size:5, g:300, life:0.5});
+    floater(f.x, f.y - 20, (f.k.boss ? '👑 ' : '') + '+' + gain + (mul>1 ? '（x'+mul+'）' : '') + (feverMul>1 ? ' FEVER!' : ''),
+            f.k.boss ? '#ff9f1c' : (f.k.gold ? '#ffd447' : '#ffd77a'), f.k.boss ? 34 : (big ? 30 : 24));
+    if(f.k.boss) floater(GAME_W/2, 200, '釣起魚王！太神啦！', '#ffd447', 32);
+    if(this.combo === 5 && this.fever <= 0){  // v2：連擊滿 5 → FEVER 狂熱 8 秒
+      this.fever = 8;
+      flash = Math.max(flash, 0.2); addShake(6); SFX.fever();
+      floater(GAME_W/2, 210, '🔥 FEVER！分數 x2！', '#ff6b5e', 36);
+    }
   },
   hitJelly(j){
     j.stun = 1.6;
@@ -575,9 +619,11 @@ const fishGame = {
     const newBest = this.score > best;
     if(newBest) store('wow101v2_fish_best', String(this.score));
     if(newBest && this.score > 0) SFX.win(); else SFX.whistle();
+    const stars = FISH_STARS.filter(s => this.score >= s).length;
     showOver({ bg: this, replay: fishGame, title: '任務完成，鐵皮特工！',
-      lines: ['本次戰績', this.score + ' 分'],
-      best: Math.max(best, this.score), newBest: newBest && this.score > 0, color: '#ffd77a' });
+      lines: ['本次戰績', this.score + ' 分'], stars,
+      starHint: stars < 3 ? ('下一顆★：' + FISH_STARS[stars] + ' 分') : '全星制霸！',
+      best: Math.max(best, this.score), newBest: newBest && this.score > 0, win: stars >= 3, color: '#ffd77a' });
   },
   draw(){
     beginShake();
@@ -605,11 +651,29 @@ const fishGame = {
     ctx.restore();
     if(this.carry) this.drawFish(this.carry, true);
     drawParts(); drawFloaters(); drawVignette();
+    if(this.fever > 0){  // v2：FEVER 金色氛圍
+      ctx.globalAlpha = 0.1 + 0.05*Math.sin(tGlobal*8);
+      const fg = ctx.createLinearGradient(0,0,0,GAME_H);
+      fg.addColorStop(0,'#ffb627'); fg.addColorStop(1,'rgba(255,107,94,0)');
+      ctx.fillStyle = fg; ctx.fillRect(0,0,GAME_W,GAME_H);
+      ctx.globalAlpha = 1;
+    }
     endShake();
     // ---- HUD ----
     pill(14, 12, 190, 42);
     text('分數', 48, 33, 17, '#8fa0c9');
     text(String(Math.round(this.dispScore)), 130, 33, 26, '#ffd77a');
+    const gotStars = FISH_STARS.filter(s => this.score >= s).length;  // v2：三星目標
+    pill(14, 60, 190, 30);
+    for(let i=0;i<3;i++) text('★', 48 + i*26, 76, 18, i < gotStars ? '#ffd447' : 'rgba(143,160,201,0.35)');
+    if(gotStars < 3) text(String(FISH_STARS[gotStars]), 160, 76, 15, '#8fa0c9');
+    if(this.fever > 0){  // v2：FEVER 倒數膠囊
+      const fs = 1 + 0.06*Math.sin(tGlobal*9);
+      ctx.save(); ctx.translate(268, 85); ctx.scale(fs, fs);
+      pill(-72, -19, 144, 38, 'rgba(255,107,94,0.8)');
+      text('🔥FEVER ' + Math.ceil(this.fever), 0, 0, 19, '#ff6b5e');
+      ctx.restore();
+    }
     if(this.combo >= 2){
       const cs = 1 + this.comboPop*0.25;
       ctx.save(); ctx.translate(268, 33); ctx.scale(cs, cs);
@@ -633,11 +697,22 @@ const fishGame = {
   },
   drawFish(f, hang){
     const yy = hang ? f.y : f.y + Math.sin(f.wig*0.6)*4;
+    if(f.k.boss && !hang){  // v2：魚王皇冠（不隨翻轉鏡像）
+      ctx.save();
+      ctx.translate(f.x, yy - f.k.r*0.62 - 14);
+      ctx.fillStyle = '#ffd447';
+      ctx.beginPath();
+      ctx.moveTo(-11,8); ctx.lineTo(-11,-2); ctx.lineTo(-5,3); ctx.lineTo(0,-6);
+      ctx.lineTo(5,3); ctx.lineTo(11,-2); ctx.lineTo(11,8);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
     ctx.save();
     ctx.translate(f.x, yy);
     if(hang) ctx.rotate(Math.sin(f.wig)*0.35);
     ctx.scale(f.dir * f.sx, f.sy);
     if(f.k.gold){ ctx.shadowColor = '#ffd447'; ctx.shadowBlur = 14; }
+    if(f.k.boss){ ctx.shadowColor = '#ff9f1c'; ctx.shadowBlur = 18; }
     ctx.fillStyle = f.k.color;
     ctx.beginPath(); ctx.ellipse(0, 0, f.k.r, f.k.r*0.62, 0, 0, 7); ctx.fill();
     ctx.shadowBlur = 0;
@@ -684,8 +759,14 @@ const fishGame = {
 const FIELD = {x:34, y:74, w:GAME_W-68, h:GAME_H-114};
 const CY = FIELD.y + FIELD.h/2, GOAL_H = 130, GOAL_D = 26;
 function makeCrab(x, col, colD){
-  return {x, y:CY, vx:0, vy:0, r:24, sx:1, sy:1, legT:0, clawT:0, kickCd:0, face:1, col, colD, hop:0};
+  return {x, y:CY, vx:0, vy:0, r:24, sx:1, sy:1, legT:0, clawT:0, kickCd:0, face:1, col, colD, hop:0,
+          spdT:0, fireN:0, frozT:0};   // v2：道具狀態
 }
+const POW_TYPES = [
+  {icon:'⚡', name:'加速', color:'#ffd447'},
+  {icon:'🔥', name:'火力射門', color:'#ff6b5e'},
+  {icon:'❄', name:'冰凍對手', color:'#7fd8ff'}
+];
 const crabGame = {
   buttons: [],
   enter(){
@@ -695,6 +776,8 @@ const crabGame = {
     this.ball = {x:GAME_W/2, y:CY, vx:0, vy:0, r:13, rot:0};
     this.joy = null; this.kickBuf = 0; this.pauseT = 1.0; this.msg = {txt:'開賽！', t:0, life:1.1};
     this.hint = 6; this.goalGlow = 0; this.buttons = [];
+    this.pows = []; this.powT = 7; this.powHinted = false;   // v2：場中道具
+    this.golden = false; this.goldenEnd = false;             // v2：黃金進球加時
     SFX.whistle();
   },
   onKey(code){
@@ -733,8 +816,14 @@ const crabGame = {
       c.clawT = Math.max(0, c.clawT - dt*3);
       c.kickCd = Math.max(0, c.kickCd - dt);
       c.hop = Math.max(0, c.hop - dt*2);
+      c.spdT = Math.max(0, c.spdT - dt);
+      c.frozT = Math.max(0, c.frozT - dt);
     }
-    if(this.pauseT > 0){ this.pauseT -= dt; return; }
+    if(this.pauseT > 0){
+      this.pauseT -= dt;
+      if(this.pauseT <= 0 && this.goldenEnd) this.finish();  // v2：黃金進球後結算
+      return;
+    }
     this.time -= dt;
     if(this.time <= 0){ this.time = 0; this.finish(); return; }
     const ceil = Math.ceil(this.time);
@@ -747,16 +836,22 @@ const crabGame = {
     if(keys['ArrowDown']||keys['KeyS']) ay += 1;
     const m = Math.hypot(ax, ay);
     if(m > 0){ ax /= m; ay /= m; }
-    if(this.joy){ ax = this.joy.dx/60; ay = this.joy.dy/60; }
-    P.vx += ax*1500*dt; P.vy += ay*1500*dt;
+    if(this.joy){  // v2：8px 死區，避免手指微顫漂移
+      const jm = Math.hypot(this.joy.dx, this.joy.dy);
+      if(jm < 8){ ax = 0; ay = 0; }
+      else { ax = this.joy.dx/60; ay = this.joy.dy/60; }
+    }
+    if(P.frozT > 0){ ax = 0; ay = 0; P.vx *= Math.pow(0.0001, dt); P.vy *= Math.pow(0.0001, dt); }
+    const pAcc = 1500 * (P.spdT > 0 ? 1.45 : 1);
+    P.vx += ax*pAcc*dt; P.vy += ay*pAcc*dt;
     const dampP = Math.pow(0.002, dt);
     P.vx *= dampP; P.vy *= dampP;
     P.x = clamp(P.x + P.vx*dt, FIELD.x + P.r, FIELD.x + FIELD.w - P.r);
     P.y = clamp(P.y + P.vy*dt, FIELD.y + P.r, FIELD.y + FIELD.h - P.r);
     P.legT += dt * (2 + Math.hypot(P.vx, P.vy)/28);
     if(Math.abs(P.vx) > 30) P.face = P.vx > 0 ? 1 : -1;
-    // ---- 玩家踢球（含射門輔助＋輸入緩衝） ----
-    if(this.kickBuf > 0 && P.kickCd <= 0){
+    // ---- 玩家踢球（含射門輔助＋輸入緩衝＋🔥火力射門） ----
+    if(this.kickBuf > 0 && P.kickCd <= 0 && P.frozT <= 0){
       this.kickBuf = 0; P.kickCd = 0.3; P.clawT = 1;
       P.sx = 1.25; P.sy = 0.8;
       const bd = dist(P.x, P.y, B.x, B.y);
@@ -766,30 +861,66 @@ const crabGame = {
         dx = dx*0.68 + (FIELD.x+FIELD.w - B.x)/gd*0.32;
         dy = dy*0.68 + (CY - B.y)/gd*0.32;
         const dm = Math.hypot(dx, dy) || 1;
-        B.vx = dx/dm*720 + P.vx*0.3;
-        B.vy = dy/dm*720 + P.vy*0.3;
-        addShake(3.5); hitStop(0.035); SFX.kick();
-        burst(B.x, B.y, ['#fff5d6','#ffd77a'], 8, 200, {size:4, g:200, life:0.35});
+        const fire = P.fireN > 0;
+        if(fire) P.fireN--;
+        const pw = fire ? 1020 : 720;
+        B.vx = dx/dm*pw + P.vx*0.3;
+        B.vy = dy/dm*pw + P.vy*0.3;
+        B.fireT = fire ? 0.9 : 0;
+        addShake(fire ? 6 : 3.5); hitStop(fire ? 0.06 : 0.035); SFX.kick();
+        if(fire) SFX.power();
+        burst(B.x, B.y, fire ? ['#ff6b5e','#ffb627','#fff5d6'] : ['#fff5d6','#ffd77a'], fire ? 16 : 8, fire ? 280 : 200, {size:4, g:200, life:0.35});
       } else SFX.swing();
     }
     // ---- CPU（終盤越拚；落後方加速 = 橡皮筋難度，失敗不挫折） ----
-    const cpuAcc = clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400);
+    let cpuAcc = clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400);
+    if(C.spdT > 0) cpuAcc *= 1.35;
     let cdx = B.x + 30 - C.x, cdy = B.y - C.y;
     const cdm = Math.hypot(cdx, cdy) || 1;
-    C.vx += cdx/cdm*cpuAcc*dt; C.vy += cdy/cdm*cpuAcc*dt;
+    if(C.frozT > 0){ C.vx *= Math.pow(0.0001, dt); C.vy *= Math.pow(0.0001, dt); }
+    else { C.vx += cdx/cdm*cpuAcc*dt; C.vy += cdy/cdm*cpuAcc*dt; }
     C.vx *= dampP; C.vy *= dampP;
     C.x = clamp(C.x + C.vx*dt, FIELD.x + C.r, FIELD.x + FIELD.w - C.r);
     C.y = clamp(C.y + C.vy*dt, FIELD.y + C.r, FIELD.y + FIELD.h - C.r);
     C.legT += dt * (2 + Math.hypot(C.vx, C.vy)/28);
     if(Math.abs(C.vx) > 30) C.face = C.vx > 0 ? 1 : -1;
     const cbd = dist(C.x, C.y, B.x, B.y);
-    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && Math.random() < 0.5){
+    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && C.frozT <= 0 && Math.random() < 0.5){
       C.kickCd = 0.6; C.clawT = 1; C.sx = 1.25; C.sy = 0.8;
       const a = Math.atan2(CY + (Math.random()*2-1)*70 - B.y, FIELD.x - B.x);
-      const pw = 470 + Math.random()*180 + this.elapsed*2;
+      const cFire = C.fireN > 0;
+      if(cFire) C.fireN--;
+      const pw = 470 + Math.random()*180 + this.elapsed*2 + (cFire ? 260 : 0);
       B.vx = Math.cos(a)*pw; B.vy = Math.sin(a)*pw;
+      B.fireT = cFire ? 0.9 : 0;
       SFX.kick();
-      burst(B.x, B.y, '#a8e6e2', 6, 160, {size:4, g:200, life:0.3});
+      burst(B.x, B.y, cFire ? ['#2ec4b6','#a8e6e2','#fff'] : '#a8e6e2', cFire ? 14 : 6, 160, {size:4, g:200, life:0.3});
+    }
+    // ---- v2：場中道具（雙方都能搶） ----
+    this.powT -= dt;
+    if(this.powT <= 0){
+      this.powT = 9;
+      if(this.pows.length < 2){
+        const tp = POW_TYPES[(Math.random()*POW_TYPES.length)|0];
+        this.pows.push({ tp, t:0, life:10,
+          x: FIELD.x + 140 + Math.random()*(FIELD.w - 280),
+          y: FIELD.y + 70 + Math.random()*(FIELD.h - 140) });
+        SFX.spark();
+        if(!this.powHinted){ this.powHinted = true; floater(GAME_W/2, CY - 80, '道具出現！快去搶！', '#ffd447', 26); }
+      }
+    }
+    for(let i=this.pows.length-1;i>=0;i--){
+      const pw2 = this.pows[i];
+      pw2.t += dt; pw2.life -= dt;
+      if(pw2.life <= 0){ this.pows.splice(i,1); continue; }
+      for(const c of [P, C]){
+        if(dist(c.x, c.y, pw2.x, pw2.y) < c.r + 18){
+          this.applyPow(c, c === P ? C : P, pw2.tp);
+          burst(pw2.x, pw2.y, [pw2.tp.color, '#fff5d6'], 14, 220, {size:5, g:250, life:0.45});
+          this.pows.splice(i,1);
+          break;
+        }
+      }
     }
     // ---- 螃蟹互推 ----
     const ccd = dist(P.x, P.y, C.x, C.y);
@@ -812,8 +943,12 @@ const crabGame = {
     const dampB = Math.pow(0.4, dt);
     B.vx *= dampB; B.vy *= dampB;
     B.rot += B.vx*dt/B.r;
+    B.fireT = Math.max(0, (B.fireT||0) - dt);
     const bSpd = Math.hypot(B.vx, B.vy);
-    if(bSpd > 430)
+    if(B.fireT > 0)  // 🔥火焰拖尾
+      spawnPart({x:B.x + (Math.random()*10-5), y:B.y + (Math.random()*10-5), vx:-B.vx*0.15, vy:-B.vy*0.15 - 40,
+                 life:0.35, color: Math.random()<0.5 ? '#ff6b5e' : '#ffb627', size:6, g:-100});
+    else if(bSpd > 430)
       spawnPart({x:B.x, y:B.y, vx:-B.vx*0.1, vy:-B.vy*0.1, life:0.3, color:'rgba(243,236,217,0.6)', size:4, g:0});
     if(B.y < FIELD.y + B.r){ B.y = FIELD.y + B.r; B.vy = Math.abs(B.vy)*0.65; if(bSpd>120) SFX.bounce(); }
     if(B.y > FIELD.y + FIELD.h - B.r){ B.y = FIELD.y + FIELD.h - B.r; B.vy = -Math.abs(B.vy)*0.65; if(bSpd>120) SFX.bounce(); }
@@ -827,6 +962,14 @@ const crabGame = {
       else if(!inMouth){ B.x = FIELD.x + FIELD.w - B.r; B.vx = -Math.abs(B.vx)*0.65; if(bSpd>120) SFX.bounce(); }
     }
   },
+  applyPow(c, foe, tp){   // v2：道具效果（撿到的人受益）
+    const isP = c === this.player;
+    if(tp.icon === '⚡'){ c.spdT = 5; SFX.power(); }
+    else if(tp.icon === '🔥'){ c.fireN = 3; SFX.power(); }
+    else { foe.frozT = 1.8; foe.vx = foe.vy = 0; SFX.freeze();
+           burst(foe.x, foe.y, ['#7fd8ff','#fff'], 12, 180, {size:4, g:150, life:0.5}); }
+    floater(c.x, c.y - 40, tp.icon + ' ' + tp.name + '！', isP ? '#ffd77a' : '#a8e6e2', 24);
+  },
   goalScored(byPlayer){
     if(byPlayer){ this.pScore++; SFX.goal(); this.player.hop = 1; }
     else { this.cScore++; SFX.concede(); this.cpu.hop = 1; }
@@ -834,17 +977,32 @@ const crabGame = {
     flash = byPlayer ? 0.3 : 0.15; this.goalGlow = 1;
     const gx = byPlayer ? FIELD.x + FIELD.w : FIELD.x;
     burst(gx, CY, byPlayer ? ['#ffd77a','#ff6b5e','#fff5d6'] : ['#a8e6e2','#2ec4b6'], 36, 320, {size:6, g:400, life:0.9});
+    if(this.golden){   // v2：黃金進球 = 立刻分勝負
+      this.goldenEnd = true;
+      this.msg = {txt: byPlayer ? '⚡ 黃金進球！' : '對手黃金進球…', t:0, life:1.4};
+      this.pauseT = 1.5; this.resetPositions(); SFX.whistle();
+      return;
+    }
     this.msg = {txt: byPlayer ? 'GOAL！好球！' : '被進球了！反攻！', t:0, life:1.4};
     this.pauseT = 1.4; this.resetPositions(); SFX.whistle();
   },
   finish(){
+    if(this.pScore === this.cScore && !this.golden){   // v2：平手 → 黃金進球加時 20 秒
+      this.golden = true;
+      this.time = 20; this.prevCeil = 21;
+      this.msg = {txt:'⚡ 黃金進球加時！', t:0, life:1.8};
+      this.pauseT = 1.6; this.resetPositions();
+      this.pows.length = 0; this.powT = 2;
+      SFX.whistle(); SFX.fever();
+      return;
+    }
     const best = parseInt(load('wow101v2_crab_best') || '0', 10);
     const newBest = this.pScore > best;
     if(newBest) store('wow101v2_crab_best', String(this.pScore));
     let title, color;
-    if(this.pScore > this.cScore){ title = '紅蟹奪冠！🏆'; color = '#ffd77a'; SFX.win(); }
+    if(this.pScore > this.cScore){ title = this.golden ? '黃金進球奪冠！🏆' : '紅蟹奪冠！🏆'; color = '#ffd77a'; SFX.win(); }
     else if(this.pScore < this.cScore){ title = '雖敗猶榮，再戰！'; color = '#a8e6e2'; SFX.lose(); }
-    else { title = '平手！再拚勝負！'; color = '#f3ecd9'; SFX.whistle(); }
+    else { title = '激戰平手，握手言和！'; color = '#f3ecd9'; SFX.whistle(); }
     showOver({ bg: this, replay: crabGame, title,
       lines: ['最終比分', this.pScore + ' : ' + this.cScore],
       best: Math.max(best, this.pScore), bestLabel: '單場最多進球',
@@ -874,6 +1032,23 @@ const crabGame = {
       text('→ 射這裡！', FIELD.x + FIELD.w - 90, CY - GOAL_H/2 - 18, 20, '#ffd77a', 'center', 'bold', 'rgba(4,7,15,0.7)');
       ctx.globalAlpha = 1;
     }
+    for(const pw2 of this.pows){   // v2：場中道具泡泡
+      const bob = Math.sin(pw2.t*3)*5;
+      const popIn = easeOutBack(clamp(pw2.t/0.35, 0, 1));
+      const blink = pw2.life < 2.5 ? 0.35 + 0.65*Math.abs(Math.sin(pw2.life*6)) : 1;
+      ctx.save();
+      ctx.translate(pw2.x, pw2.y + bob);
+      ctx.scale(popIn, popIn);
+      ctx.globalAlpha = blink;
+      ctx.shadowColor = pw2.tp.color; ctx.shadowBlur = 16;
+      ctx.fillStyle = 'rgba(4,7,15,0.55)';
+      ctx.beginPath(); ctx.arc(0, 0, 20, 0, 7); ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = pw2.tp.color; ctx.lineWidth = 2.5; ctx.stroke();
+      text(pw2.tp.icon, 0, 1, 20, '#fff');
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
     ctx.fillStyle = 'rgba(0,0,0,0.3)';  // 球影
     ctx.beginPath(); ctx.ellipse(this.ball.x, this.ball.y + this.ball.r + 4, this.ball.r*0.9, 4, 0, 0, 7); ctx.fill();
     this.drawCrabChar(this.player);
@@ -896,13 +1071,27 @@ const crabGame = {
     ctx.fillStyle = '#ff6b5e'; ctx.beginPath(); ctx.arc(GAME_W/2 - 80, 33, 9, 0, 7); ctx.fill();
     ctx.fillStyle = '#2ec4b6'; ctx.beginPath(); ctx.arc(GAME_W/2 + 80, 33, 9, 0, 7); ctx.fill();
     text(this.pScore + ' : ' + this.cScore, GAME_W/2, 33, 28, '#f3ecd9');
-    const tc = Math.ceil(this.time), urgent = tc <= 10;
+    const tc = Math.ceil(this.time), urgent = tc <= 10 || this.golden;
     const ts = urgent ? 1 + 0.08*Math.sin(tGlobal*10) : 1;
     ctx.save(); ctx.translate(GAME_W/2 + 190, 33); ctx.scale(ts, ts);
     pill(-58, -21, 116, 42, urgent ? 'rgba(255,107,94,0.7)' : undefined);
     text('⏱ ' + tc, 0, 0, 22, urgent ? '#ff6b5e' : '#f3ecd9');
     ctx.restore();
+    if(this.golden && !this.goldenEnd){  // v2：加時提示
+      pill(GAME_W/2 - 105, 60, 210, 32, 'rgba(255,212,71,0.8)');
+      text('⚡ 先進球者獲勝！', GAME_W/2, 76, 17, '#ffd447');
+    }
     drawMute();
+    if(TOUCH_DEV){  // v2：常駐半透明踢球鈕（右下拇指區）
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = '#ffb627';
+      ctx.beginPath(); ctx.arc(GAME_W-96, GAME_H-88, 44, 0, 7); ctx.fill();
+      ctx.globalAlpha = 0.5;
+      ctx.strokeStyle = '#ffd77a'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(GAME_W-96, GAME_H-88, 44, 0, 7); ctx.stroke();
+      text('踢！', GAME_W-96, GAME_H-88, 24, '#ffd77a');
+      ctx.globalAlpha = 1;
+    }
     if(this.joy){  // 浮動虛擬搖桿
       ctx.globalAlpha = 0.3;
       ctx.strokeStyle = '#f3ecd9'; ctx.lineWidth = 3;
@@ -943,6 +1132,8 @@ const crabGame = {
     const hopY = Math.sin(c.hop*Math.PI)*18;
     ctx.fillStyle = 'rgba(0,0,0,0.3)';  // 影子
     ctx.beginPath(); ctx.ellipse(c.x, c.y + 20, 20 - hopY*0.3, 6, 0, 0, 7); ctx.fill();
+    if(c.spdT > 0 && Math.random() < 0.4)  // ⚡加速殘影粒子
+      spawnPart({x:c.x + (Math.random()*30-15), y:c.y + 14, vx:-c.vx*0.15, vy:-20, life:0.3, color:'#ffd447', size:4, g:0});
     ctx.save();
     ctx.translate(c.x, c.y + 16 - hopY);
     ctx.scale(c.sx, c.sy);              // squash & stretch（腳底錨點）
@@ -985,6 +1176,13 @@ const crabGame = {
     }
     ctx.strokeStyle = c.colD; ctx.lineWidth = 2;  // 嘴
     ctx.beginPath(); ctx.arc(0, 4, 5, 0.3, Math.PI-0.3); ctx.stroke();
+    if(c.frozT > 0){  // ❄冰凍外殼
+      ctx.globalAlpha = 0.55;
+      ctx.fillStyle = '#7fd8ff';
+      ctx.beginPath(); ctx.ellipse(0, -2, 26, 22, 0, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+      text('❄', 0, -30, 18, '#e8f8ff');
+    }
     ctx.restore();
   },
   drawBall(){
@@ -1052,19 +1250,32 @@ const overState = {
     ctx.shadowBlur = 0;
     ctx.strokeStyle = 'rgba(255,183,39,0.35)'; ctx.lineWidth = 2; ctx.stroke();
     text(c.title, 0, -118, 36, c.color, 'center', 'bold', 'rgba(4,7,15,0.6)');
-    text(c.lines[0], 0, -62, 20, '#8fa0c9');
+    const hasStars = c.stars !== undefined;   // v2：三星評價（逐顆彈出）
+    if(hasStars){
+      for(let i=0;i<3;i++){
+        const st = clamp((this.t - 0.5 - i*0.3)/0.3, 0, 1);
+        if(st <= 0) continue;
+        ctx.save();
+        ctx.translate(-44 + i*44, -76);
+        ctx.scale(easeOutBack(st), easeOutBack(st));
+        text('★', 0, 0, 34, i < c.stars ? '#ffd447' : 'rgba(143,160,201,0.3)', 'center', 'bold', i < c.stars ? 'rgba(4,7,15,0.6)' : undefined);
+        ctx.restore();
+      }
+    }
+    text(c.lines[0], 0, hasStars ? -40 : -62, 20, '#8fa0c9');
     const pop = 1 + 0.05*Math.sin(tGlobal*3);
     ctx.save(); ctx.scale(pop, pop);
-    text(c.lines[1], 0, -14, 54, '#f3ecd9', 'center', 'bold', 'rgba(4,7,15,0.5)');
+    text(c.lines[1], 0, hasStars ? 4 : -14, 54, '#f3ecd9', 'center', 'bold', 'rgba(4,7,15,0.5)');
     ctx.restore();
     if(c.newBest){
       const bs = 1 + 0.1*Math.sin(tGlobal*6);
       ctx.save(); ctx.scale(bs, bs);
-      text('🎉 新紀錄！', 0, 40, 26, '#ffd447', 'center', 'bold', 'rgba(4,7,15,0.6)');
+      text('🎉 新紀錄！', 0, hasStars ? 54 : 40, 26, '#ffd447', 'center', 'bold', 'rgba(4,7,15,0.6)');
       ctx.restore();
     } else {
-      text((c.bestLabel || '最佳紀錄') + '：' + c.best, 0, 40, 20, '#8fa0c9');
+      text((c.bestLabel || '最佳紀錄') + '：' + c.best, 0, hasStars ? 54 : 40, 20, '#8fa0c9');
     }
+    if(hasStars && c.starHint) text(c.starHint, 0, 78, 15, '#5b6790');
     ctx.restore();
     for(const b of this.buttons) drawButton(b);
     text('空白鍵再玩 ・ ESC 回選單', GAME_W/2, GAME_H-24, 15, '#5b6790');
@@ -1191,6 +1402,12 @@ function frame(now){
   if(flash > 0){
     ctx.fillStyle = 'rgba(255,255,255,' + flash.toFixed(3) + ')';
     ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
+  if(innerHeight > innerWidth*1.15){  // v2：直向持機提示（不阻擋操作）
+    ctx.globalAlpha = 0.85;
+    pill(GAME_W/2-118, 62, 236, 34, 'rgba(255,183,39,0.5)');
+    text('↻ 轉成橫向，畫面更大！', GAME_W/2, 79, 16, '#ffd77a');
+    ctx.globalAlpha = 1;
   }
 }
 setState(menuState);

@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -95,9 +96,9 @@
   <div id="titleOverlay" class="overlay">
     <h1>格子跑酷遊戲</h1>
     <div class="sub" style="color:#4a6db4;font-weight:bold;letter-spacing:2px">～ 往畫面內跑 ～</div>
-    <div class="sub">小跑者在格子路上全速前進！<br>看準時機跳過黑色峽谷，<br>連續跳越可以疊加獎勵分數。</div>
+    <div class="sub">小跑者在格子路上全速前進！<br>跳過黑色峽谷、空中收集金幣，<br>吃到 ⭐ 獲得護盾，掉洞免死一次！</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.6">空白鍵 / ↑ / 點擊螢幕＝跳躍<br>長按跳得高、輕點跳得低</div>
+    <div class="sub" style="opacity:0.6">點擊螢幕 / 空白鍵＝跳躍（長按跳更高）<br>空中再點一下＝二段跳！</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -189,6 +190,10 @@ const sfx = {
   gap(n)  { const b = 880 + Math.min(4, n) * 110; beep(b, 0.08, 'square', 0.11); setTimeout(() => beep(b * 1.35, 0.13, 'square', 0.11), 70); },
   mile()  { [659, 880, 1109, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.11, 'triangle', 0.12), i * 80)); },
   die()   { beep(300, 0.5, 'sawtooth', 0.18, -220); noiseBurst(0.4, 0.22); },
+  coin(n) { beep(940 + Math.min(8, n) * 70, 0.07, 'square', 0.1, 300); },
+  star()  { [880, 1109, 1319, 1760].forEach((f, i) => setTimeout(() => beep(f, 0.09, 'triangle', 0.12), i * 60)); },
+  djump() { beep(330, 0.14, 'square', 0.1, 520); },
+  rescue(){ beep(180, 0.25, 'sine', 0.16, 480); setTimeout(() => beep(660, 0.15, 'square', 0.1, 220), 120); },
   start() { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
   best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); }
 };
@@ -215,13 +220,21 @@ let shake = 0, freeze = 0, flash = 0;
 let deathTimer = -1;
 let sinkDepth = 0;            // 掉進峽谷的下沉量
 let overCooldown = 0;
+let coins = 0, bonus = 0;     // 金幣數與獎勵分
+let coinChain = 0, coinChainT = 0;
+let shield = false;           // 護盾（掉洞免死一次）
+let items = [];               // {row, h, type:'coin'|'star', seed}
+let lastStarRow = 0;
+let tutorialT = 0;
+const totalScore = () => Math.floor(dist) + bonus;
 
 // 玩家（垂直跳躍物理）
 const player = {
   h: 0, vy: 0, grounded: true,
   sx: 1, sy: 1,               // squash & stretch
   runCycle: 0,
-  holdJump: false
+  holdJump: false,
+  airJumps: 1, spinT: 0       // 二段跳與翻轉動畫
 };
 const JUMP_V0 = 560, GRAVITY = 2100;
 
@@ -233,12 +246,35 @@ function ensureRows() {
   const target = Math.floor(dist) + 24;
   while (genRow < target) {
     genRow++;
-    let gap = false;
+    let gap = false, wide = false;
     if (genRow > 12 && genRow - lastGapRow >= 4) {
       const p = Math.min(0.34, 0.14 + dist * 0.0004);
-      if (Math.random() < p) { gap = true; lastGapRow = genRow; }
+      if (Math.random() < p) {
+        gap = true;
+        wide = genRow > 130 && Math.random() < 0.35;   // 寬峽谷：後期登場
+      }
     }
     rowData.set(genRow, { gap, judged: false });
+    const gapStart = genRow;
+    if (gap && wide) {
+      genRow++;
+      rowData.set(genRow, { gap: true, judged: false, partner: true });
+    }
+    if (gap) {
+      lastGapRow = genRow;
+      // 峽谷上方金幣弧線（風險換獎勵）
+      const span = wide ? 1.5 : 0.9;
+      items.push({ row: gapStart - 0.25, h: 42, type: 'coin', seed: Math.random() * 7 });
+      items.push({ row: gapStart + span * 0.45, h: wide ? 78 : 66, type: 'coin', seed: Math.random() * 7 });
+      items.push({ row: gapStart + span, h: 42, type: 'coin', seed: Math.random() * 7 });
+    } else if (genRow > 8 && Math.random() < 0.13) {
+      // 平地金幣列（跑過就吃）
+      for (let c = 0; c < 3; c++) items.push({ row: genRow + c * 0.45, h: 0, type: 'coin', seed: Math.random() * 7 });
+    }
+    if (genRow > 20 && !gap && genRow - lastStarRow > 60 && Math.random() < 0.06) {
+      lastStarRow = genRow;
+      items.push({ row: genRow, h: 55, type: 'star', seed: 0 });
+    }
     // 路旁景物
     if (Math.random() < 0.5) {
       sideProps.push({
@@ -256,6 +292,9 @@ function ensureRows() {
   }
   for (let i = sideProps.length - 1; i >= 0; i--) {
     if (sideProps[i].row < dist - 2) sideProps.splice(i, 1);
+  }
+  for (let i = items.length - 1; i >= 0; i--) {
+    if (items[i].row < dist - 2) items.splice(i, 1);
   }
 }
 let sideProps = [];
@@ -296,19 +335,36 @@ function resetGame() {
   rowData = new Map();
   genRow = 0; lastGapRow = -10;
   sideProps = [];
+  coins = 0; bonus = 0;
+  coinChain = 0; coinChainT = 0;
+  shield = false; items = []; lastStarRow = 0;
+  tutorialT = localStorage.getItem('parkour-played') ? 0 : 9;
   player.h = 0; player.vy = 0; player.grounded = true;
   player.sx = 1; player.sy = 1; player.runCycle = 0;
+  player.airJumps = 1; player.spinT = 0;
   deathTimer = -1; sinkDepth = 0;
   parts.length = 0; floats.length = 0;
   shake = 0; freeze = 0; flash = 0;
   ensureRows();
 }
 
-// ----- 輸入（一鍵：跳躍）-----
+// ----- 輸入（一鍵：跳躍＋二段跳）-----
 let jumpBuffer = 0;
 function pressJump() {
-  jumpBuffer = 0.12;
   player.holdJump = true;
+  // 空中再按一次＝二段跳（360° 翻轉）
+  if (mode === 'play' && !player.grounded && player.airJumps > 0 && deathTimer < 0) {
+    player.airJumps--;
+    player.vy = JUMP_V0 * 0.88;
+    player.spinT = 0.45;
+    player.sx = 0.75; player.sy = 1.3;
+    sfx.djump();
+    const p0 = proj(0);
+    burst(GAME_W / 2, p0.y - 40 - player.h * 0.55, '#9be7ff', 10, 180, 60);
+    jumpBuffer = 0;
+    return;
+  }
+  jumpBuffer = 0.12;
 }
 function releaseJump() {
   player.holdJump = false;
@@ -325,11 +381,18 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') releaseJump();
 });
-canvas.addEventListener('pointerdown', e => {
+// 整個舞台都是跳躍鍵（直式 letterbox 黑邊也能點）
+const stage = document.getElementById('stage');
+stage.addEventListener('pointerdown', e => {
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
   e.preventDefault();
   if (mode === 'play') pressJump();
 });
-canvas.addEventListener('pointerup', e => { e.preventDefault(); releaseJump(); });
+stage.addEventListener('pointerup', e => {
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
+  e.preventDefault();
+  releaseJump();
+});
 canvas.addEventListener('touchstart', e => e.preventDefault(), { passive: false });
 canvas.addEventListener('touchmove', e => e.preventDefault(), { passive: false });
 
@@ -346,15 +409,17 @@ function startGame() {
 function endGame() {
   mode = 'over';
   overCooldown = 0.5;
-  const score = Math.floor(dist);
+  localStorage.setItem('parkour-played', '1');
+  const score = totalScore();
   const isBest = score > best;
   if (isBest) {
     best = score;
     localStorage.setItem('parkour-best', String(best));
     setTimeout(() => sfx.best(), 400);
   }
-  document.getElementById('finalScore').textContent = score + ' 格';
-  document.getElementById('bestLine').textContent = '最佳紀錄：' + best + ' 格';
+  document.getElementById('finalScore').textContent = score + ' 分';
+  document.getElementById('bestLine').textContent =
+    '跑了 ' + Math.floor(dist) + ' 格 ＋ 🪙 ' + coins + '｜最佳紀錄：' + best + ' 分';
   document.getElementById('newBest').style.display = isBest ? 'block' : 'none';
   overOverlay.classList.add('show');
 }
@@ -362,6 +427,20 @@ document.getElementById('startBtn').addEventListener('click', startGame);
 document.getElementById('restartBtn').addEventListener('click', () => {
   if (overCooldown <= 0) startGame();
 });
+
+function rescue() {
+  // 護盾救援：從洞口自動彈起
+  shield = false;
+  player.grounded = false;
+  player.h = 16;
+  player.vy = JUMP_V0 * 1.05;
+  player.airJumps = 1;
+  flash = 0.25; shake = 6;
+  const p0 = proj(0);
+  burst(GAME_W / 2, p0.y - 30, '#7fe3ff', 18, 280, 150);
+  addFloat(GAME_W / 2, p0.y - 140, '⭐ 護盾救援！', '#7fe3ff', 30);
+  sfx.rescue();
+}
 
 function die() {
   deathTimer = 0;
@@ -383,9 +462,13 @@ function update(dt) {
   flash = Math.max(0, flash - dt * 3);
   overCooldown = Math.max(0, overCooldown - dt);
   jumpBuffer = Math.max(0, jumpBuffer - dt);
+  tutorialT = Math.max(0, tutorialT - dt);
+  player.spinT = Math.max(0, player.spinT - dt);
+  coinChainT -= dt;
+  if (coinChainT <= 0) coinChain = 0;
   player.sx += (1 - player.sx) * Math.min(1, 12 * dt);
   player.sy += (1 - player.sy) * Math.min(1, 12 * dt);
-  dispScore += (Math.floor(dist) - dispScore) * Math.min(1, 14 * dt);
+  dispScore += (totalScore() - dispScore) * Math.min(1, 14 * dt);
 
   for (const p of parts) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.life -= dt;
@@ -431,6 +514,7 @@ function update(dt) {
     if (player.h <= 0) {
       player.h = 0;
       player.grounded = true;
+      player.airJumps = 1; player.spinT = 0;
       player.sx = 1.3; player.sy = 0.68;
       sfx.land();
       const p0 = proj(0);
@@ -445,6 +529,32 @@ function update(dt) {
     }
   }
 
+  // 撿金幣與護盾星星
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    const d = it.row - dist;
+    if (d < -0.45) { items.splice(i, 1); continue; }
+    if (d < 0.42 && Math.abs(player.h - it.h) < 30) {
+      items.splice(i, 1);
+      const pI = proj(Math.max(d, 0));
+      const iy = pI.y - 24 - it.h * 0.55;
+      if (it.type === 'coin') {
+        coins++;
+        coinChain++; coinChainT = 1.4;
+        bonus += 2;
+        sfx.coin(coinChain);
+        burst(GAME_W / 2, iy, '#ffd447', 8, 200, 90);
+        addFloat(GAME_W / 2 + 60, iy, '+2', '#ffd447', 22);
+      } else {
+        shield = true;
+        bonus += 5;
+        sfx.star();
+        burst(GAME_W / 2, iy, '#7fe3ff', 16, 260, 120);
+        addFloat(GAME_W / 2, iy - 30, '⭐ 護盾！', '#7fe3ff', 28);
+      }
+    }
+  }
+
   // 峽谷判定（寬容：稍微離地就算跳起）
   const airOK = player.h > 12;
   for (const [row, data] of rowData) {
@@ -453,25 +563,32 @@ function update(dt) {
       data.judged = true;
       if (data.gap) {
         if (airOK || !player.grounded) {
-          gapStreak++;
-          const p0 = proj(0.3);
-          addFloat(GAME_W / 2, p0.y - 130, gapStreak > 1 ? '跳過 ×' + gapStreak + '！' : '跳過！', '#ffd447', 28);
-          burst(GAME_W / 2, p0.y - 60, '#ffd447', 12, 240, 120);
-          sfx.gap(gapStreak);
-          if (gapStreak > 0 && gapStreak % 5 === 0) {
-            addFloat(GAME_W / 2, p0.y - 170, '🔥 連跳 ' + gapStreak + ' 次！', '#ff7043', 30);
+          if (!data.partner) {
+            gapStreak++;
+            const p0 = proj(0.3);
+            addFloat(GAME_W / 2, p0.y - 130, gapStreak > 1 ? '跳過 ×' + gapStreak + '！' : '跳過！', '#ffd447', 28);
+            burst(GAME_W / 2, p0.y - 60, '#ffd447', 12, 240, 120);
+            sfx.gap(gapStreak);
+            if (gapStreak > 0 && gapStreak % 5 === 0) {
+              bonus += 10;
+              addFloat(GAME_W / 2, p0.y - 170, '🔥 連跳 ' + gapStreak + ' 次！+10', '#ff7043', 30);
+            }
           }
         } else {
-          if (mode === 'play') { die(); return; }
+          if (mode === 'play') {
+            if (shield) { rescue(); }
+            else { die(); return; }
+          }
           // 展示模式不死
         }
       }
     }
   }
 
-  // 里程碑
+  // 里程碑＝進入下一關（天色輪換）
   if (Math.floor(dist) >= nextMilestone) {
     addFloat(GAME_W / 2, 200, nextMilestone + ' 格！', '#fff', 40);
+    addFloat(GAME_W / 2, 246, '進入第 ' + (nextMilestone / 100 + 1) + ' 關', '#ffd447', 24);
     sfx.mile();
     shake = 4;
     nextMilestone += 100;
@@ -497,34 +614,80 @@ function rr(x, y, w, h, r) {
   ctx.closePath();
 }
 
+// ----- 關卡色票（每 100 格換一關：白天→黃昏→夜晚→清晨）-----
+const THEMES = [
+  { top:'#4a9fe8', mid:'#8ecbff', bot:'#eaf6ff', sun:'255,217,94',  m1:'110,160,200', m2:'80,130,175',  g1:'#9ed489', g2:'#4f9e4a', r1:'#e0a468', r2:'#c97a3a', night:0 },
+  { top:'#7a4f9e', mid:'#f0846a', bot:'#ffd9a0', sun:'255,156,74',  m1:'150,110,150', m2:'110,80,130',  g1:'#8cb46e', g2:'#3f7a3e', r1:'#d18e56', r2:'#a85f2e', night:0 },
+  { top:'#101a3a', mid:'#25335e', bot:'#3a4a78', sun:'232,236,255', m1:'40,60,100',   m2:'25,40,75',    g1:'#3f6e50', g2:'#22492e', r1:'#7a6248', r2:'#54402c', night:1 },
+  { top:'#4a6ea0', mid:'#a8c0e0', bot:'#ffe9d0', sun:'255,224,138', m1:'120,140,180', m2:'90,110,150',  g1:'#8cc47e', g2:'#478a44', r1:'#d99a5e', r2:'#b06a34', night:0 }
+];
+function hex2rgb(h) { return [parseInt(h.slice(1, 3), 16), parseInt(h.slice(3, 5), 16), parseInt(h.slice(5, 7), 16)]; }
+function mixHex(a, b, t) {
+  const A = hex2rgb(a), B = hex2rgb(b);
+  return 'rgb(' + Math.round(A[0] + (B[0] - A[0]) * t) + ',' + Math.round(A[1] + (B[1] - A[1]) * t) + ',' + Math.round(A[2] + (B[2] - A[2]) * t) + ')';
+}
+function mixT(a, b, t) {
+  const A = a.split(','), B = b.split(',');
+  return A.map((v, i) => Math.round(+v + (+B[i] - +v) * t)).join(',');
+}
+let theme = null;
+function updateTheme() {
+  const seg = 100;
+  const idx = Math.floor(dist / seg) % THEMES.length;
+  const nxt = (idx + 1) % THEMES.length;
+  const local = (dist % seg) / seg;
+  const t = local > 0.9 ? (local - 0.9) * 10 : 0;   // 關卡尾端 10 格漸變
+  const A = THEMES[idx], B = THEMES[nxt];
+  theme = {
+    top: mixHex(A.top, B.top, t), mid: mixHex(A.mid, B.mid, t), bot: mixHex(A.bot, B.bot, t),
+    sun: mixT(A.sun, B.sun, t),
+    m1: mixT(A.m1, B.m1, t), m2: mixT(A.m2, B.m2, t),
+    g1: mixHex(A.g1, B.g1, t), g2: mixHex(A.g2, B.g2, t),
+    r1: mixHex(A.r1, B.r1, t), r2: mixHex(A.r2, B.r2, t),
+    night: A.night + (B.night - A.night) * t
+  };
+}
+const stars = [];
+for (let i = 0; i < 44; i++) stars.push({ x: Math.random() * GAME_W, y: Math.random() * (HORIZON_Y - 24), tw: Math.random() * 6.3 });
+
 function drawSky() {
   const g = ctx.createLinearGradient(0, 0, 0, HORIZON_Y + 60);
-  g.addColorStop(0, '#4a9fe8');
-  g.addColorStop(0.6, '#8ecbff');
-  g.addColorStop(1, '#eaf6ff');
+  g.addColorStop(0, theme.top);
+  g.addColorStop(0.6, theme.mid);
+  g.addColorStop(1, theme.bot);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, GAME_W, HORIZON_Y + 60);
 
-  // 太陽（光暈 + 漸層本體）
+  // 夜空星星
+  if (theme.night > 0.05) {
+    for (const st of stars) {
+      ctx.globalAlpha = theme.night * (0.4 + 0.6 * Math.abs(Math.sin(elapsed * 1.8 + st.tw)));
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(st.x, st.y, 2.4, 2.4);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // 太陽／月亮（光暈 + 漸層本體）
   const sg = ctx.createRadialGradient(GAME_W / 2, 62, 5, GAME_W / 2, 62, 90);
   sg.addColorStop(0, 'rgba(255,246,200,1)');
-  sg.addColorStop(0.3, 'rgba(255,217,94,0.7)');
-  sg.addColorStop(1, 'rgba(255,217,94,0)');
+  sg.addColorStop(0.3, 'rgba(' + theme.sun + ',0.7)');
+  sg.addColorStop(1, 'rgba(' + theme.sun + ',0)');
   ctx.fillStyle = sg;
   ctx.beginPath();
   ctx.arc(GAME_W / 2, 62, 90, 0, Math.PI * 2);
   ctx.fill();
   const sunCore = ctx.createRadialGradient(GAME_W / 2 - 8, 54, 3, GAME_W / 2, 62, 30);
   sunCore.addColorStop(0, '#fff6c8');
-  sunCore.addColorStop(0.7, '#ffd95e');
-  sunCore.addColorStop(1, '#ffc93c');
+  sunCore.addColorStop(0.7, 'rgb(' + theme.sun + ')');
+  sunCore.addColorStop(1, 'rgb(' + theme.sun + ')');
   ctx.fillStyle = sunCore;
   ctx.beginPath();
   ctx.arc(GAME_W / 2, 62, 30, 0, Math.PI * 2);
   ctx.fill();
 
   // 遠山（兩層剪影）
-  ctx.fillStyle = 'rgba(110,160,200,0.5)';
+  ctx.fillStyle = 'rgba(' + theme.m1 + ',0.5)';
   ctx.beginPath();
   ctx.moveTo(0, HORIZON_Y);
   for (let x = 0; x <= GAME_W; x += 24) {
@@ -533,7 +696,7 @@ function drawSky() {
   ctx.lineTo(GAME_W, HORIZON_Y);
   ctx.closePath();
   ctx.fill();
-  ctx.fillStyle = 'rgba(80,130,175,0.55)';
+  ctx.fillStyle = 'rgba(' + theme.m2 + ',0.55)';
   ctx.beginPath();
   ctx.moveTo(0, HORIZON_Y);
   for (let x = 0; x <= GAME_W; x += 24) {
@@ -565,17 +728,17 @@ function roadEdgeX(d, side) {
 }
 
 function drawGround() {
-  // 兩側草地（漸層 + 遠淡近深）
+  // 兩側草地（漸層 + 遠淡近深，隨關卡變色）
   const gl = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
-  gl.addColorStop(0, '#9ed489');
-  gl.addColorStop(1, '#4f9e4a');
+  gl.addColorStop(0, theme.g1);
+  gl.addColorStop(1, theme.g2);
   ctx.fillStyle = gl;
   ctx.fillRect(0, HORIZON_Y, GAME_W, GAME_H - HORIZON_Y);
 
   // 道路本體（大梯形）
   const rg = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
-  rg.addColorStop(0, '#e0a468');
-  rg.addColorStop(1, '#c97a3a');
+  rg.addColorStop(0, theme.r1);
+  rg.addColorStop(1, theme.r2);
   ctx.fillStyle = rg;
   ctx.beginPath();
   ctx.moveTo(roadEdgeX(60, -1), proj(60).y);
@@ -764,6 +927,58 @@ function drawSideProps() {
   }
 }
 
+// ----- 金幣與護盾星星 -----
+function starShape(cx2, cy2, spikes, rOut, rIn) {
+  ctx.beginPath();
+  for (let i = 0; i < spikes * 2; i++) {
+    const r = i % 2 === 0 ? rOut : rIn;
+    const a = i * Math.PI / spikes - Math.PI / 2;
+    ctx.lineTo(cx2 + Math.cos(a) * r, cy2 + Math.sin(a) * r);
+  }
+  ctx.closePath();
+}
+function drawItems() {
+  const sorted = items.slice().sort((a, b) => b.row - a.row);
+  for (const it of sorted) {
+    const d = it.row - dist;
+    if (d < -0.5 || d > 16) continue;
+    const p = proj(d);
+    const y = p.y - (14 + it.h * 0.55) * Math.max(p.s, 0.2);
+    ctx.save();
+    ctx.translate(GAME_W / 2, y);
+    ctx.scale(p.s, p.s);
+    if (it.type === 'coin') {
+      const wob = Math.sin(elapsed * 5 + it.seed) * 2.5;
+      ctx.scale(Math.abs(Math.sin(elapsed * 3.2 + it.seed)) * 0.75 + 0.25, 1);
+      const cg = ctx.createRadialGradient(-3, -3 + wob, 2, 0, wob, 13);
+      cg.addColorStop(0, '#fff2b0');
+      cg.addColorStop(0.6, '#ffd447');
+      cg.addColorStop(1, '#d99a10');
+      ctx.fillStyle = cg;
+      ctx.beginPath(); ctx.arc(0, wob, 12, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(150,100,10,0.7)';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(0, wob, 7.5, 0, Math.PI * 2); ctx.stroke();
+    } else {
+      const pulse = 1 + Math.sin(elapsed * 6) * 0.12;
+      ctx.scale(pulse, pulse);
+      ctx.rotate(Math.sin(elapsed * 2.2) * 0.25);
+      const sg3 = ctx.createRadialGradient(0, 0, 2, 0, 0, 26);
+      sg3.addColorStop(0, 'rgba(160,240,255,0.8)');
+      sg3.addColorStop(1, 'rgba(120,220,255,0)');
+      ctx.fillStyle = sg3;
+      ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#7fe3ff';
+      starShape(0, 0, 5, 15, 6.5);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      starShape(-2, -2, 5, 7, 3);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+}
+
 // ----- 背影小跑者（多部件 + 漸層 + 跑步動畫）-----
 function drawRunner() {
   const p0 = proj(0);
@@ -785,6 +1000,12 @@ function drawRunner() {
   if (deathTimer >= 0) {
     ctx.rotate(Math.min(0.5, deathTimer * 1.2));
     // 掉進洞：用剪裁做「沉下去」效果
+  }
+  if (player.spinT > 0) {
+    // 二段跳 360° 前空翻（繞身體中心）
+    ctx.translate(0, -55);
+    ctx.rotate((1 - player.spinT / 0.45) * Math.PI * 2);
+    ctx.translate(0, 55);
   }
   ctx.scale(player.sx, player.sy);
 
@@ -953,6 +1174,18 @@ function drawRunner() {
   ctx.arc(12, -89, 3, 0, Math.PI * 2);
   ctx.fill();
 
+  // 護盾泡泡
+  if (shield) {
+    const pl = 1 + Math.sin(elapsed * 5) * 0.05;
+    ctx.beginPath();
+    ctx.ellipse(0, -55, 52 * pl, 72 * pl, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(127,227,255,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(127,227,255,' + (0.55 + Math.sin(elapsed * 5) * 0.2) + ')';
+    ctx.lineWidth = 4;
+    ctx.stroke();
+  }
+
   ctx.restore();
 }
 
@@ -1002,7 +1235,7 @@ function drawHUD() {
   ctx.fillStyle = '#2c3e50';
   ctx.textAlign = 'center';
   ctx.font = 'bold 24px "Microsoft JhengHei", sans-serif';
-  ctx.fillText('距離: ' + Math.round(dispScore) + ' 格', GAME_W / 2, 47);
+  ctx.fillText('分數: ' + Math.round(dispScore), GAME_W / 2, 47);
 
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
@@ -1011,6 +1244,18 @@ function drawHUD() {
   ctx.fillStyle = '#2c3e50';
   ctx.font = '16px "Microsoft JhengHei", sans-serif';
   ctx.fillText('🏆 最佳 ' + best, 32, 42);
+
+  // 金幣計數 ＋ 護盾指示
+  ctx.fillStyle = 'rgba(255,255,255,0.85)';
+  rr(16, 62, shield ? 196 : 112, 36, 18);
+  ctx.fill();
+  ctx.fillStyle = '#b07a10';
+  ctx.font = 'bold 17px "Microsoft JhengHei", sans-serif';
+  ctx.fillText('🪙 × ' + coins, 32, 86);
+  if (shield) {
+    ctx.fillStyle = '#1e9ec4';
+    ctx.fillText('⭐ 護盾', 126, 86);
+  }
 
   // 速度計
   ctx.fillStyle = 'rgba(255,255,255,0.85)';
@@ -1034,15 +1279,31 @@ function drawHUD() {
     ctx.fillStyle = '#ffd447';
     ctx.fillText('🔥 連跳 ×' + gapStreak, GAME_W / 2, 88);
   }
+
+  // 首次遊玩教學提示
+  if (tutorialT > 0 && mode === 'play') {
+    ctx.globalAlpha = Math.min(1, tutorialT);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 21px "Microsoft JhengHei", sans-serif';
+    const tip = '點一下＝跳　長按＝跳更高　空中再點＝二段跳';
+    ctx.strokeStyle = 'rgba(20,40,80,0.7)';
+    ctx.lineWidth = 5;
+    ctx.strokeText(tip, GAME_W / 2, GAME_H - 34);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(tip, GAME_W / 2, GAME_H - 34);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function draw() {
+  updateTheme();
   ctx.save();
   if (shake > 0) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
 
   drawSky();
   drawGround();
   drawSideProps();
+  drawItems();
   drawRunner();
   drawParts();
   drawFloats();

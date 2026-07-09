@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -31,11 +32,28 @@
    炸彈千萬別敲！連擊越高倍率越高。固定時間步進＋全套手感。
    ============================================================ */
 
-/* ===== 畫布 ===== */
-const GAME_W = 960, GAME_H = 540;
+/* ===== 畫布（v2：直向／橫向雙版面）===== */
+let GAME_W = 960, GAME_H = 540, PORTRAIT = false, HORIZON = 210;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+let HOLES = [];
+function layout(){
+  PORTRAIT = innerHeight > innerWidth;
+  GAME_W = PORTRAIT ? 540 : 960;
+  GAME_H = PORTRAIT ? 880 : 540;
+  HORIZON = PORTRAIT ? 300 : 210;
+  HOLES = [];
+  for(let row = 0; row < 3; row++){
+    for(let col = 0; col < 3; col++){
+      const s = (PORTRAIT ? [0.85, 1, 1.15] : [0.8, 0.96, 1.14])[row];
+      const spread = (PORTRAIT ? [140, 158, 176] : [180, 215, 252])[row];
+      const y = (PORTRAIT ? [460, 600, 740] : [268, 356, 452])[row];
+      HOLES.push({ x: GAME_W / 2 + (col - 1) * spread, y, s });
+    }
+  }
+}
 function resize(){
+  layout();
   const scale = Math.min((innerWidth - 18) / GAME_W, (innerHeight - 18) / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width  = Math.round(GAME_W * scale * dpr);
@@ -135,7 +153,10 @@ const sfx = {
   tick(){ beep(880, 0.05, 'square', 0.09); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   go(){ beep(523, 0.1, 'square', 0.1); setTimeout(() => beep(784, 0.16, 'square', 0.1), 110); },
-  timeup(){ [784, 659, 523, 392].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 150)); }
+  timeup(){ [784, 659, 523, 392].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 150)); },
+  clank(){ beep(1900, 0.05, 'square', 0.1, -400); noise(0.05, 0.1); setTimeout(() => beep(1400, 0.08, 'triangle', 0.08, -300), 40); },
+  fever(){ [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.11), i * 70)); },
+  sprint(){ beep(660, 0.09, 'square', 0.11); setTimeout(() => beep(660, 0.09, 'square', 0.11), 120); setTimeout(() => beep(880, 0.16, 'square', 0.12), 240); }
 };
 function toggleMute(){
   muted = !muted;
@@ -187,15 +208,6 @@ function drawFloaters(){
   ctx.globalAlpha = 1;
 }
 
-/* ===== 場地：3×3 透視地洞 ===== */
-const HOLES = [];
-for(let row = 0; row < 3; row++){
-  for(let col = 0; col < 3; col++){
-    const s = [0.8, 0.96, 1.14][row];
-    const spread = [180, 215, 252][row];
-    HOLES.push({ x: GAME_W / 2 + (col - 1) * spread, y: [268, 356, 452][row], s });
-  }
-}
 /* 鍵盤配置（同數字鍵盤方位）：789 上排、456 中排、123 下排 */
 const KEY_HOLE = { 7: 0, 8: 1, 9: 2, 4: 3, 5: 4, 6: 5, 1: 6, 2: 7, 3: 8 };
 
@@ -209,7 +221,11 @@ try{ best = parseInt(localStorage.getItem('whackpro_best') || '0', 10) || 0; }ca
 let timeLeft = GAME_TIME;
 let elapsed = 0, spawnTimer = 0;
 let combo = 0, comboFlash = 0, lastTick = 99;
-let moles = [];           // {hole,type,t,upTime,state,hitT}
+/* v2：FEVER、最後衝刺、統計 */
+let fever = 0, feverOn = false, feverT = 0;
+let sprint = false, sprintT = 0;
+let stHits = 0, stMaxCombo = 0, stGold = 0, stBombs = 0;
+let moles = [];           // {hole,type,t,upTime,state,hitT,hp}
 let swings = [];          // 鎚擊動畫
 let booms = [];           // 爆炸圖示
 let phase = 'ready', phaseT = 0;
@@ -222,6 +238,8 @@ function startGame(){
   score = 0; scoreShow = 0; timeLeft = GAME_TIME;
   elapsed = 0; spawnTimer = 0.4; combo = 0; lastTick = 99;
   moles = []; swings = []; booms = []; parts = []; floaters.length = 0;
+  fever = 0; feverOn = false; feverT = 0; sprint = false; sprintT = 0;
+  stHits = 0; stMaxCombo = 0; stGold = 0; stBombs = 0;
   newBest = false;
   phase = 'ready'; phaseT = 0;
   stateName = 'play'; stateT = 0;
@@ -251,12 +269,28 @@ function spawnMole(){
   const idx = freeHole();
   if(idx < 0) return;
   const roll = Math.random();
-  const bombChance = Math.min(0.22, 0.06 + elapsed * 0.004);
   let type = 'normal';
-  if(roll < 0.09) type = 'gold';
-  else if(roll < 0.09 + bombChance) type = 'bomb';
-  const upTime = type === 'gold' ? 0.7 : Math.max(0.55, 1.2 - elapsed * 0.013);
-  moles.push({ hole: idx, type, t: 0, upTime, state: 'up', hitT: 0 });
+  const goldChance = sprint ? 0.17 : 0.09;
+  const helmChance = elapsed > 12 ? 0.13 : 0;
+  const bombChance = feverOn ? 0 : Math.min(0.22, 0.06 + elapsed * 0.004);
+  if(roll < goldChance) type = 'gold';
+  else if(roll < goldChance + helmChance) type = 'helmet';
+  else if(roll < goldChance + helmChance + bombChance) type = 'bomb';
+  const upTime = type === 'gold' ? 0.7
+    : type === 'helmet' ? 1.5
+    : Math.max(0.55, 1.2 - elapsed * 0.013);
+  moles.push({ hole: idx, type, t: 0, upTime, state: 'up', hitT: 0, hp: type === 'helmet' ? 2 : 1 });
+}
+/* v2：FEVER 量表 */
+function addFever(v){
+  if(feverOn) return;
+  fever = Math.min(1, fever + v);
+  if(fever >= 1){
+    feverOn = true; feverT = 6;
+    addFloater(GAME_W / 2, PORTRAIT ? 380 : 200, 'FEVER！全部雙倍分！', '#ff6b35', 30);
+    shake = Math.max(shake, 8);
+    sfx.fever();
+  }
 }
 
 /* ===== 敲擊 ===== */
@@ -272,17 +306,31 @@ function whackAt(x, y){
       break;
     }
   }
+  /* v2：瞄準輔助——差一點點也算打中（但絕不會把揮空吸到炸彈上） */
   if(!hit){
-    combo = 0;
+    let bestM = null, bestD = 1;
+    for(const m of moles){
+      if(m.state !== 'up' && m.state !== 'stay' || m.type === 'bomb') continue;
+      const h = HOLES[m.hole];
+      const dx = (x - h.x) / (118 * h.s);
+      const dy = (y - (h.y - 55 * h.s)) / (125 * h.s);
+      const d = dx * dx + dy * dy;
+      if(d < 1 && d < bestD){ bestD = d; bestM = m; }
+    }
+    if(bestM){ hitMole(bestM); hit = true; }
+  }
+  if(!hit){
+    combo = Math.floor(combo / 2);   /* v2：揮空連擊砍半，不再整個歸零 */
     burst(x, y + 6, 'rgba(160,130,90,.9)', 5, 120, 0.3);
     sfx.whiff();
   }
 }
 function hitMole(m){
   const h = HOLES[m.hole];
-  m.state = 'hit'; m.hitT = 0;
   if(m.type === 'bomb'){
-    combo = 0;
+    m.state = 'hit'; m.hitT = 0;
+    combo = 0; stBombs++;
+    fever = Math.max(0, fever - 0.3);
     score = Math.max(0, score - 30);
     timeLeft = Math.max(0, timeLeft - 3);
     freeze = 0.1; shake = 12;
@@ -293,21 +341,42 @@ function hitMole(m){
     sfx.bomb();
     return;
   }
+  /* v2：安全帽地鼠第一擊只敲飛帽子 */
+  if(m.type === 'helmet' && m.hp === 2){
+    m.hp = 1; m.state = 'stay'; m.t = 0.16; m.upTime = 1.0;
+    combo++; comboFlash = 1; stHits++;
+    stMaxCombo = Math.max(stMaxCombo, combo);
+    addFever(0.06);
+    freeze = Math.max(freeze, 0.05); shake = Math.max(shake, 5);
+    burst(h.x, h.y - 95 * h.s, '#ffcc00', 9, 220, 0.45);
+    addFloater(h.x, h.y - 130 * h.s, '帽子飛了！再敲！', '#ffcc00', 20);
+    sfx.clank();
+    if(navigator.vibrate) try{ navigator.vibrate(20); }catch(e){}
+    return;
+  }
+  m.state = 'hit'; m.hitT = 0;
   combo++;
   comboFlash = 1;
+  stHits++;
+  stMaxCombo = Math.max(stMaxCombo, combo);
   const mult = 1 + Math.floor(combo / 5);
-  const gain = (m.type === 'gold' ? 30 : 10) * mult;
+  const base = m.type === 'gold' ? 30 : m.type === 'helmet' ? 40 : 10;
+  const gain = base * mult * (feverOn ? 2 : 1);
   score += gain;
-  freeze = Math.max(freeze, m.type === 'gold' ? 0.07 : 0.04);
-  shake = Math.max(shake, m.type === 'gold' ? 7 : 4);
-  burst(h.x, h.y - 60 * h.s, m.type === 'gold' ? '#ffd23f' : '#c99b6f', 12, 240, 0.45);
+  addFever(m.type === 'normal' ? 0.09 : 0.13);
+  freeze = Math.max(freeze, m.type === 'normal' ? 0.04 : 0.07);
+  shake = Math.max(shake, m.type === 'normal' ? 4 : 7);
+  const col = m.type === 'gold' ? '#ffd23f' : m.type === 'helmet' ? '#ffcc00' : '#c99b6f';
+  burst(h.x, h.y - 60 * h.s, col, 12, 240, 0.45);
   burst(h.x, h.y - 60 * h.s, '#fff', 5, 180, 0.35);
-  addFloater(h.x, h.y - 120 * h.s, '+' + gain, m.type === 'gold' ? '#ffd23f' : '#fff', m.type === 'gold' ? 26 : 22);
+  addFloater(h.x, h.y - 120 * h.s, '+' + gain, m.type === 'normal' ? '#fff' : '#ffd23f', m.type === 'normal' ? 22 : 26);
   if(m.type === 'gold'){
+    stGold++;
     timeLeft = Math.min(60, timeLeft + 2);
     addFloater(h.x, h.y - 150 * h.s, '+2秒！', '#7ef0a0', 20);
     sfx.gold();
-  }else sfx.whack();
+  }else if(m.type === 'helmet') sfx.gold();
+  else sfx.whack();
   if(navigator.vibrate) try{ navigator.vibrate(25); }catch(e){}
 }
 
@@ -341,7 +410,8 @@ canvas.addEventListener('pointerdown', e => {
   const p = evPos(e.clientX, e.clientY);
   if(e.pointerType !== 'mouse') touchMode = true;
   for(const b of uiButtons){
-    if(p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h){
+    /* v2：按鈕命中範圍外加 8px 緩衝，觸控更好按 */
+    if(p.x >= b.x - 8 && p.x <= b.x + b.w + 8 && p.y >= b.y - 8 && p.y <= b.y + b.h + 8){
       sfx.ui(); b.cb(); return;
     }
   }
@@ -361,15 +431,33 @@ function playUpdate(dt){
   if(phase === 'go'){
     elapsed += dt;
     timeLeft -= dt;
+    /* v2：FEVER 倒數 */
+    if(feverOn){
+      feverT -= dt;
+      fever = Math.max(0, feverT / 6);
+      if(feverT <= 0){ feverOn = false; fever = 0; }
+      if(Math.random() < dt * 6)
+        burst(Math.random() * GAME_W, HORIZON + Math.random() * (GAME_H - HORIZON), '#ffd23f', 2, 90, 0.5);
+    }
+    /* v2：最後 10 秒衝刺 */
+    if(!sprint && timeLeft <= 10){
+      sprint = true; sprintT = 0;
+      addFloater(GAME_W / 2, PORTRAIT ? 380 : 200, '最後衝刺！金鼠加倍出現！', '#7ef0a0', 28);
+      sfx.sprint();
+    }
+    if(sprint) sprintT += dt;
     /* 最後倒數滴答 */
     const sec = Math.ceil(timeLeft);
     if(sec <= 5 && sec >= 1 && sec !== lastTick){ lastTick = sec; sfx.tick(); }
     if(timeLeft <= 0){ timeLeft = 0; phase = 'end'; phaseT = 0; }
-    /* 生成（間隔隨時間縮短、同時在場數增加） */
+    /* 生成（間隔隨時間縮短、同時在場數增加；FEVER／衝刺再加速） */
     spawnTimer -= dt;
-    const maxOnField = 2 + Math.floor(elapsed / 12);
+    const maxOnField = 2 + Math.floor(elapsed / 12) + (feverOn ? 2 : 0) + (sprint ? 1 : 0);
     if(spawnTimer <= 0 && moles.length < maxOnField){
-      spawnTimer = Math.max(0.3, 0.82 - elapsed * 0.01);
+      let iv = Math.max(0.3, 0.82 - elapsed * 0.01);
+      if(feverOn) iv = Math.max(0.18, iv * 0.45);
+      else if(sprint) iv = Math.max(0.26, iv * 0.7);
+      spawnTimer = iv;
       spawnMole();
     }
   }
@@ -386,6 +474,10 @@ function playUpdate(dt){
     }else if(m.state === 'stay' && m.t > 0.16 + m.upTime){
       m.state = 'down'; m.t = 0;
     }else if(m.state === 'down' && m.t > 0.15){
+      if(m.type === 'gold'){
+        const h = HOLES[m.hole];
+        addFloater(h.x, h.y - 50 * h.s, '金鼠溜走了…', 'rgba(255,255,255,.9)', 15);
+      }
       moles.splice(i, 1);
     }
   }
@@ -404,16 +496,17 @@ function playUpdate(dt){
 
 /* ===== 背景（天空漸層＋視差雲丘＋柵欄＋裝飾）===== */
 function drawBG(){
-  const g = ctx.createLinearGradient(0, 0, 0, 210);
+  const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
   g.addColorStop(0, '#5fb0ff'); g.addColorStop(1, '#bfe3ff');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, 210);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, HORIZON);
   /* 太陽 */
+  const sunX = GAME_W - 130;
   ctx.fillStyle = 'rgba(255,236,150,.35)';
-  ctx.beginPath(); ctx.arc(830, 60, 58, 0, Math.PI * 2); ctx.fill();
-  const sg = ctx.createRadialGradient(822, 52, 5, 830, 60, 36);
+  ctx.beginPath(); ctx.arc(sunX, 60, 58, 0, Math.PI * 2); ctx.fill();
+  const sg = ctx.createRadialGradient(sunX - 8, 52, 5, sunX, 60, 36);
   sg.addColorStop(0, '#fff7d8'); sg.addColorStop(1, '#ffd23f');
   ctx.fillStyle = sg;
-  ctx.beginPath(); ctx.arc(830, 60, 36, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sunX, 60, 36, 0, Math.PI * 2); ctx.fill();
   /* 兩層視差雲 */
   for(const L of [[T * 10, 46, 0.75, 0.5], [T * 22, 92, 1, 0.85]]){
     ctx.fillStyle = 'rgba(255,255,255,' + L[3] + ')';
@@ -428,34 +521,34 @@ function drawBG(){
   }
   /* 遠丘（兩層） */
   ctx.fillStyle = '#4fa032';
-  ctx.beginPath(); ctx.moveTo(0, 210);
+  ctx.beginPath(); ctx.moveTo(0, HORIZON);
   for(let x = 0; x <= GAME_W; x += 30)
-    ctx.lineTo(x, 178 + Math.sin(x * 0.008 + 1) * 22);
-  ctx.lineTo(GAME_W, 210); ctx.closePath(); ctx.fill();
+    ctx.lineTo(x, HORIZON - 32 + Math.sin(x * 0.008 + 1) * 22);
+  ctx.lineTo(GAME_W, HORIZON); ctx.closePath(); ctx.fill();
   ctx.fillStyle = '#5fb43e';
-  ctx.beginPath(); ctx.moveTo(0, 214);
+  ctx.beginPath(); ctx.moveTo(0, HORIZON + 4);
   for(let x = 0; x <= GAME_W; x += 30)
-    ctx.lineTo(x, 196 + Math.cos(x * 0.011) * 14);
-  ctx.lineTo(GAME_W, 214); ctx.closePath(); ctx.fill();
+    ctx.lineTo(x, HORIZON - 14 + Math.cos(x * 0.011) * 14);
+  ctx.lineTo(GAME_W, HORIZON + 4); ctx.closePath(); ctx.fill();
   /* 木柵欄 */
   ctx.fillStyle = '#a3703c';
   for(let x = 20; x < GAME_W; x += 68){
-    rr(x, 168, 12, 46, 4); ctx.fill();
+    rr(x, HORIZON - 42, 12, 46, 4); ctx.fill();
   }
-  ctx.fillRect(0, 178, GAME_W, 7);
-  ctx.fillRect(0, 196, GAME_W, 7);
+  ctx.fillRect(0, HORIZON - 32, GAME_W, 7);
+  ctx.fillRect(0, HORIZON - 14, GAME_W, 7);
   ctx.fillStyle = 'rgba(0,0,0,.12)';
-  ctx.fillRect(0, 183, GAME_W, 2);
-  ctx.fillRect(0, 201, GAME_W, 2);
+  ctx.fillRect(0, HORIZON - 27, GAME_W, 2);
+  ctx.fillRect(0, HORIZON - 9, GAME_W, 2);
   /* 草地（上亮下深的漸層） */
-  const gg = ctx.createLinearGradient(0, 210, 0, GAME_H);
+  const gg = ctx.createLinearGradient(0, HORIZON, 0, GAME_H);
   gg.addColorStop(0, '#7ecf58'); gg.addColorStop(0.5, '#6bc44a'); gg.addColorStop(1, '#4fa032');
-  ctx.fillStyle = gg; ctx.fillRect(0, 210, GAME_W, GAME_H - 210);
+  ctx.fillStyle = gg; ctx.fillRect(0, HORIZON, GAME_W, GAME_H - HORIZON);
   /* 草叢 */
   ctx.strokeStyle = 'rgba(47,107,40,.5)'; ctx.lineWidth = 2;
   for(let i = 0; i < 22; i++){
     const gx = (i * 157 + 30) % GAME_W;
-    const gy = 235 + (i * 97) % 280;
+    const gy = HORIZON + 25 + (i * 97) % (GAME_H - HORIZON - 60);
     ctx.beginPath();
     ctx.moveTo(gx, gy); ctx.lineTo(gx - 4, gy - 9);
     ctx.moveTo(gx, gy); ctx.lineTo(gx + 1, gy - 11);
@@ -464,11 +557,11 @@ function drawBG(){
   }
   /* OpenMoji 裝飾：花與蘑菇（隨風輕擺） */
   const sway = Math.sin(T * 1.4) * 2;
-  drawImg(IMG.flower, 40 + sway, 218, 46, 46);
-  drawImg(IMG.flower, 880 - sway, 250, 40, 40);
-  drawImg(IMG.flower, 60 - sway, 470, 54, 54);
-  drawImg(IMG.mush, 890 + sway, 452, 52, 52);
-  drawImg(IMG.mush, 130 + sway, 330, 38, 38);
+  drawImg(IMG.flower, 40 + sway, HORIZON + 8, 46, 46);
+  drawImg(IMG.flower, GAME_W - 80 - sway, HORIZON + 40, 40, 40);
+  drawImg(IMG.flower, 60 - sway, GAME_H - 70, 54, 54);
+  drawImg(IMG.mush, GAME_W - 70 + sway, GAME_H - 88, 52, 52);
+  drawImg(IMG.mush, 130 + sway, HORIZON + 120, 38, 38);
 }
 
 /* ===== 地洞與地鼠 ===== */
@@ -524,6 +617,7 @@ function drawMole(m){
 }
 function drawMoleBody(m){
   const gold = m.type === 'gold';
+  const helm = m.type === 'helmet';
   const OUT = gold ? '#8a5f00' : '#4a2f18';
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   /* 身體（球面漸層） */
@@ -553,14 +647,22 @@ function drawMoleBody(m){
     ctx.moveTo(px, -13); ctx.lineTo(px, -6);
     ctx.stroke();
   }
-  /* 頭上的小草／皇冠光點 */
+  /* 頭上的小草／皇冠光點／安全帽 */
   if(gold){
     for(let i = 0; i < 3; i++){
       const a = T * 3 + i * 2.1;
       ctx.fillStyle = 'rgba(255,240,160,' + (0.5 + Math.sin(a) * 0.4).toFixed(2) + ')';
       drawStar(Math.cos(a) * 46, -60 + Math.sin(a * 1.3) * 18, 5, '#ffec9e');
     }
-  }else{
+  }else if(helm && m.hp === 2){
+    /* v2：黃色工地安全帽（要敲兩下） */
+    ctx.fillStyle = '#ffcc00'; ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(0, -78, 26, Math.PI, 0); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    rr(-33, -81, 66, 9, 4); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,.55)';
+    ctx.beginPath(); ctx.ellipse(-9, -92, 8, 4, -0.4, 0, Math.PI * 2); ctx.fill();
+  }else if(!helm){
     ctx.strokeStyle = '#4fa032'; ctx.lineWidth = 2.5;
     ctx.beginPath();
     ctx.moveTo(2, -84); ctx.quadraticCurveTo(6, -94, 12, -95);
@@ -599,6 +701,14 @@ function drawMoleBody(m){
       ctx.fillStyle = '#fff';
       ctx.beginPath(); ctx.arc(ex + 3, -56, 1.5, 0, Math.PI * 2); ctx.fill();
     }
+  }
+  /* v2：掉帽後的生氣眉毛 */
+  if(helm && m.hp === 1){
+    ctx.strokeStyle = '#2a1a0a'; ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.moveTo(-23, -68); ctx.lineTo(-8, -62);
+    ctx.moveTo(23, -68); ctx.lineTo(8, -62);
+    ctx.stroke();
   }
   /* 鼻吻＋鬍鬚＋牙齒 */
   ctx.beginPath(); ctx.ellipse(0, -38, 12, 8, 0, 0, Math.PI * 2);
@@ -654,6 +764,22 @@ function drawStar(x, y, r, color){
   ctx.closePath(); ctx.fill();
   ctx.restore();
 }
+/* v2：五角星（結算評級用） */
+function drawStar5(x, y, r, color, line){
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.beginPath();
+  for(let i = 0; i < 10; i++){
+    const rad = i % 2 === 0 ? r : r * 0.45;
+    const a = i * Math.PI / 5 - Math.PI / 2;
+    if(i === 0) ctx.moveTo(Math.cos(a) * rad, Math.sin(a) * rad);
+    else ctx.lineTo(Math.cos(a) * rad, Math.sin(a) * rad);
+  }
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = line; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.restore();
+}
 
 /* ===== 鎚子 ===== */
 function drawHammerAt(x, y, ang, size){
@@ -707,7 +833,31 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.textBaseline = 'alphabetic';
 }
 function drawMuteBtn(){
-  drawButton(GAME_W - 64, GAME_H - 46, 54, 34, muted ? '🔇' : '🔊', toggleMute, false);
+  drawButton(GAME_W - 72, GAME_H - 60, 62, 50, muted ? '🔇' : '🔊', toggleMute, false);
+}
+/* v2：FEVER 量表 */
+function drawFeverBar(){
+  const bx = GAME_W / 2 - 95, by = 66, bw = 190, bh = 16;
+  rr(bx, by, bw, bh, 8);
+  ctx.fillStyle = 'rgba(30,20,10,.5)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,.7)'; ctx.lineWidth = 2; ctx.stroke();
+  if(fever > 0.01){
+    ctx.save();
+    rr(bx + 2, by + 2, (bw - 4) * fever, bh - 4, 6);
+    ctx.clip();
+    ctx.fillStyle = feverOn
+      ? 'hsl(' + ((T * 300) % 360) + ',95%,55%)'
+      : (fever > 0.75 ? '#ff6b35' : '#ffd23f');
+    ctx.fillRect(bx, by, bw, bh);
+    ctx.restore();
+  }
+  ctx.font = 'bold 11px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(40,25,10,.8)';
+  const label = feverOn ? 'FEVER！×2 分！' : 'FEVER 量表（連續命中充能）';
+  ctx.strokeText(label, GAME_W / 2, by + 12);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(label, GAME_W / 2, by + 12);
 }
 function statCard(x, label, value, color, pulse){
   ctx.save();
@@ -728,14 +878,15 @@ function drawHUD(){
   statCard(GAME_W / 2 - 170, '分數', String(Math.round(scoreShow)), '#ff6b35', false);
   statCard(GAME_W / 2, '時間', String(Math.ceil(timeLeft)), warn ? '#e63946' : '#2b7a3f', warn);
   statCard(GAME_W / 2 + 170, '最佳', String(best), '#b8860b', false);
+  drawFeverBar();
   if(combo >= 3){
     const mult = 1 + Math.floor(combo / 5);
     ctx.font = 'bold ' + Math.round(20 + comboFlash * 6) + 'px ' + FONT;
     ctx.textAlign = 'center';
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(40,25,10,.8)';
     const txt = '連擊 ×' + combo + (mult > 1 ? '（' + mult + ' 倍分數！）' : '');
-    ctx.strokeText(txt, GAME_W / 2, 92);
-    ctx.fillStyle = '#ffd23f'; ctx.fillText(txt, GAME_W / 2, 92);
+    ctx.strokeText(txt, GAME_W / 2, 114);
+    ctx.fillStyle = '#ffd23f'; ctx.fillText(txt, GAME_W / 2, 114);
   }
   /* 鍵盤提示（桌機） */
   if(!touchMode && stateName === 'play' && elapsed < 8){
@@ -796,8 +947,8 @@ function titleDraw(){
   ctx.font = '19px ' + FONT;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#fff';
-  ctx.fillText('敲地鼠 +10 分・黃金地鼠 +30 分還加 2 秒', GAME_W / 2, 196);
-  ctx.fillText('炸彈千萬別敲（-30 分 -3 秒）！連擊越多倍率越高', GAME_W / 2, 226);
+  ctx.fillText('地鼠 +10・金鼠 +30 加 2 秒・安全帽鼠敲兩下 +40', GAME_W / 2, 196);
+  ctx.fillText('炸彈別敲！連擊充滿 FEVER 量表→全場雙倍分！', GAME_W / 2, 226);
   if(stateT > 0.35){
     drawButton(GAME_W / 2 - 120, 268, 240, 60, '開始', startGame, true);
   }
@@ -827,6 +978,14 @@ function demoUpdate(){
 }
 function playDraw(){
   drawWorld();
+  /* v2：FEVER 彩虹色調 */
+  if(feverOn){
+    ctx.fillStyle = 'hsla(' + ((T * 240) % 360) + ',100%,60%,.08)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.strokeStyle = 'hsla(' + ((T * 300) % 360) + ',95%,60%,.85)';
+    ctx.lineWidth = 10;
+    ctx.strokeRect(5, 5, GAME_W - 10, GAME_H - 10);
+  }
   drawHUD();
   if(phase === 'ready'){
     bigText('預備…', 280, 48, '#fff', easeOutBack(Math.min(1, phaseT / 0.4)));
@@ -853,25 +1012,40 @@ function overDraw(){
   ctx.fillStyle = 'rgba(255,252,244,.97)'; ctx.fill();
   ctx.strokeStyle = '#ff6b35'; ctx.lineWidth = 3; ctx.stroke();
   ctx.textAlign = 'center';
-  ctx.font = 'bold 36px ' + FONT;
+  ctx.font = 'bold 32px ' + FONT;
   ctx.fillStyle = '#5a3a1e';
-  ctx.fillText('時間到！', 0, -84);
-  ctx.font = 'bold 52px ' + FONT;
+  ctx.fillText('時間到！', 0, -100);
+  ctx.font = 'bold 48px ' + FONT;
   ctx.fillStyle = '#ff6b35';
-  ctx.fillText(String(score), 0, -18);
-  ctx.font = '18px ' + FONT;
-  ctx.fillStyle = '#7a6a55';
-  ctx.fillText('分', 0, 12);
-  ctx.font = 'bold 20px ' + FONT;
-  ctx.fillStyle = newBest ? '#2b9a4f' : '#b8860b';
-  ctx.fillText(newBest ? '★ 新紀錄！★' : '最佳紀錄　' + best + ' 分', 0, 54);
+  ctx.fillText(score + ' 分', 0, -52);
+  /* v2：星級評價（逐顆彈出） */
+  const stars = score >= 600 ? 3 : score >= 350 ? 2 : score >= 150 ? 1 : 0;
+  for(let i = 0; i < 3; i++){
+    const pop = clamp((overT - 0.6 - i * 0.28) / 0.3, 0, 1);
+    const sc = easeOutBack(pop);
+    if(pop > 0){
+      ctx.save();
+      ctx.translate((i - 1) * 56, -6);
+      ctx.scale(sc, sc);
+      drawStar5(0, 0, 24, i < stars ? '#ffd23f' : '#d8d2c4', i < stars ? '#b8860b' : '#a8a293');
+      ctx.restore();
+    }
+  }
+  /* v2：統計 */
   ctx.font = '15px ' + FONT;
   ctx.fillStyle = '#7a6a55';
-  ctx.fillText(score >= 300 ? '你是打地鼠大師！' : '再挑戰一次，手速可以更快！', 0, 88);
+  ctx.fillText('最大連擊 ' + stMaxCombo + '　命中 ' + stHits + ' 隻　金鼠 ' + stGold + ' 隻', 0, 42);
+  ctx.font = 'bold 19px ' + FONT;
+  ctx.fillStyle = newBest ? '#2b9a4f' : '#b8860b';
+  ctx.fillText(newBest ? '★ 新紀錄！★' : '最佳紀錄　' + best + ' 分', 0, 72);
+  ctx.font = '15px ' + FONT;
+  ctx.fillStyle = '#7a6a55';
+  const TITLES = ['再練練，地鼠還在笑你～', '不錯喔！地鼠開始緊張了', '很強！地鼠聞風喪膽！', '傳說級地鼠剋星！'];
+  ctx.fillText(TITLES[stars], 0, 100);
   ctx.restore();
   if(overT > 0.3){
     drawButton(GAME_W / 2 - 120, GAME_H / 2 + 130, 240, 54, '再玩一次', startGame, true);
-    drawButton(GAME_W / 2 - 80, GAME_H - 46, 160, 36, '回主選單', toTitle, false);
+    drawButton(GAME_W / 2 - 100, GAME_H / 2 + 196, 200, 48, '回主選單', toTitle, false);
   }
   drawMuteBtn();
 }

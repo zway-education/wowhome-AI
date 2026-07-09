@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -29,7 +30,10 @@
     font-family:"PingFang TC","Microsoft JhengHei","Noto Sans TC",-apple-system,"Segoe UI",sans-serif;
     -webkit-user-select:none;
     user-select:none;
+    touch-action:none;                     /* 禁止頁面滑動/雙指縮放 */
+    -webkit-tap-highlight-color:transparent;
   }
+  button{ touch-action:manipulation; }     /* 按鈕可點、不觸發縮放 */
   #stage-wrap{
     position:relative;
     line-height:0;
@@ -54,6 +58,11 @@
     padding:0 8%;
   }
   #titleCard.show{ opacity:1; transform:scale(1); }
+  #titleCard::before{
+    content:''; position:absolute; inset:-20%;
+    background:radial-gradient(58% 58% at 50% 50%, rgba(3,5,12,0.78) 0%, rgba(3,5,12,0.35) 55%, rgba(3,5,12,0) 78%);
+    z-index:-1;
+  }
   #titleCard .kicker{
     font-size:clamp(10px,1.4vw,13px);
     letter-spacing:0.42em;
@@ -99,18 +108,21 @@
 
   /* ---- 字幕（淡入淡出） ---- */
   #subtitle{
-    position:absolute; left:50%; bottom:52px;
+    position:absolute; left:50%; bottom:calc(46px + env(safe-area-inset-bottom, 0px));
     transform:translate(-50%, 12px);
     line-height:1.5;
-    background:rgba(6,9,18,0.66);
+    background:rgba(6,9,18,0.72);
     border:1px solid rgba(255,203,61,0.28);
     border-radius:10px;
-    padding:9px 24px;
-    font-size:clamp(14px,2.2vw,20px);
+    padding:9px 22px;
+    font-size:clamp(15px,2.3vw,21px);
     letter-spacing:0.1em;
     color:var(--ink);
     text-shadow:0 2px 8px rgba(0,0,0,0.9);
-    white-space:nowrap;
+    white-space:normal;
+    text-align:center;
+    max-width:min(92%, 680px);
+    width:max-content;
     opacity:0;
     transition:opacity 0.4s ease, transform 0.4s ease;
     pointer-events:none;
@@ -120,21 +132,28 @@
 
   /* ---- 聲音切換 ---- */
   #soundBtn{
-    position:absolute; top:14px; right:14px;
+    position:absolute;
+    top:calc(10px + env(safe-area-inset-top, 0px));
+    right:calc(10px + env(safe-area-inset-right, 0px));
     line-height:1.2;
     font:inherit;
-    font-size:13px;
+    font-size:14px;
     letter-spacing:0.08em;
     color:var(--ink);
-    background:rgba(8,12,24,0.55);
+    background:rgba(8,12,24,0.62);
     border:1px solid rgba(242,236,217,0.3);
     border-radius:999px;
-    padding:8px 16px;
+    padding:10px 18px;
+    min-height:48px;
+    min-width:48px;
+    display:inline-flex; align-items:center; justify-content:center;
     cursor:pointer;
     transition:background 0.2s ease, border-color 0.2s ease;
     z-index:5;
+    touch-action:manipulation;
   }
   #soundBtn:hover{ background:rgba(28,79,161,0.55); border-color:var(--gold); }
+  #soundBtn:active{ transform:scale(0.94); background:rgba(28,79,161,0.75); }
   #soundBtn.on{ border-color:var(--gold); color:var(--gold); }
 
   /* ---- 片尾 / 重新播放 ---- */
@@ -176,16 +195,19 @@
   }
   #replayBtn{
     font:inherit;
-    font-size:clamp(15px,2vw,18px);
+    font-size:clamp(16px,2.2vw,19px);
     font-weight:700;
     letter-spacing:0.2em;
     color:var(--gold);
     background:transparent;
     border:2px solid var(--gold);
     border-radius:999px;
-    padding:12px 38px;
+    padding:14px 42px;
+    min-height:52px;
+    min-width:200px;
     cursor:pointer;
     margin-top:8px;
+    touch-action:manipulation;
     transition:background 0.25s ease, color 0.25s ease, box-shadow 0.25s ease;
     animation:pulseGlow 2.2s ease-in-out infinite;
   }
@@ -193,6 +215,11 @@
     background:var(--gold);
     color:#101418;
     box-shadow:0 0 34px rgba(255,203,61,0.55);
+  }
+  #replayBtn:active{
+    transform:scale(0.95);
+    background:var(--gold);
+    color:#101418;
   }
   @keyframes pulseGlow{
     0%,100%{ box-shadow:0 0 10px rgba(255,203,61,0.25); }
@@ -307,9 +334,11 @@ let wallFlash = 0;     // 牆面招牌閃光
 let hitRT = -99;       // 擊中瞬間的真實時間（衝擊環用）
 let ended = false;
 
-/* 慢動作：擊中後子彈時間，再緩緩恢復 */
+/* 慢動作：擊中後子彈時間，再緩緩恢復；劃過明月時再一次微慢動作 */
 function timeScaleAt(t){
-  if(t > T.hit && t < 10.6) return 0.35; if(t >= 10.6 && t < 11.4) return lerp(0.35, 1, seg(t, 10.6, 11.4)); return 1;
+  if(t > T.hit && t < 10.6) return 0.35; if(t >= 10.6 && t < 11.4) return lerp(0.35, 1, seg(t, 10.6, 11.4));
+  if(t >= 11.78 && t < 12.18) return 0.5;   /* 彗星球劃過月亮 */
+  return 1;
 }
 
 /* ============================================================
@@ -535,7 +564,7 @@ function ballState(t){
 
 function updateTrail(dt){
   const b = ballState(tl); if(b && b.phase === 'fly') trail.push({ x:b.x, y:b.y, a:1 });
-  for(const p of trail) p.a -= dt * 1.1; while(trail.length && trail[0].a <= 0) trail.shift(); if(trail.length > 70) trail.shift();
+  for(const p of trail) p.a -= dt * 0.9; while(trail.length && trail[0].a <= 0) trail.shift(); if(trail.length > 90) trail.shift();
 }
 
 function drawBaseball(x, y, r, rot){
@@ -615,11 +644,13 @@ function drawSky(){
     ctx.globalAlpha = (0.3 + 0.5 * Math.abs(Math.sin(rt * 1.6 + s.tw))) * 0.8; ctx.beginPath(); ctx.arc(s.x, s.y, s.s, 0, TAU); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  /* 月亮與光暈 */
-  const mg = ctx.createRadialGradient(150, 20, 4, 150, 20, 70); mg.addColorStop(0, 'rgba(246,241,224,0.9)');
+  /* 大滿月：正好掛在球的飛行頂點上（彗星劃過明月的構圖） */
+  const MX = 610, MY = 95, MR = 25;
+  const mg = ctx.createRadialGradient(MX, MY, 6, MX, MY, 118); mg.addColorStop(0, 'rgba(246,241,224,0.95)');
   mg.addColorStop(0.15, 'rgba(246,241,224,0.5)'); mg.addColorStop(1, 'rgba(246,241,224,0)'); ctx.fillStyle = mg;
-  ctx.fillRect(60, -70, 180, 180); ctx.fillStyle = '#f6f1e0'; ctx.beginPath(); ctx.arc(150, 20, 15, 0, TAU);
-  ctx.fill(); ctx.fillStyle = 'rgba(13,27,62,0.35)'; ctx.beginPath(); ctx.arc(156, 16, 4.5, 0, TAU); ctx.arc(145, 25, 3, 0, TAU); ctx.fill();
+  ctx.fillRect(MX - 120, MY - 120, 240, 240); ctx.fillStyle = '#f6f1e0'; ctx.beginPath(); ctx.arc(MX, MY, MR, 0, TAU);
+  ctx.fill(); ctx.fillStyle = 'rgba(13,27,62,0.3)'; ctx.beginPath(); ctx.arc(MX + 9, MY - 7, 7, 0, TAU);
+  ctx.arc(MX - 8, MY + 8, 5, 0, TAU); ctx.arc(MX + 3, MY + 13, 3, 0, TAU); ctx.fill();
   /* 緩慢漂移的薄雲 */
   ctx.fillStyle = 'rgba(180,200,255,0.07)'; const cx1 = -200 + ((rt * 4) % 500); ctx.beginPath();
   ctx.ellipse(cx1 + 300, 70, 170, 22, 0, 0, TAU); ctx.ellipse(cx1 + 720, 120, 210, 26, 0, 0, TAU); ctx.fill();
@@ -680,10 +711,14 @@ function drawStands(){
     ctx.beginPath(); ctx.moveTo(-280, lerp(162, 300, r / 4));
     ctx.quadraticCurveTo(480, lerp(107, 216, r / 4), 1240, lerp(162, 300, r / 4)); ctx.stroke();
   }
-  /* 群眾：興奮時跳動 */
+  /* 群眾：興奮時跳動；第一幕加人浪（波浪橫掃看台） */
   const seatCol = ['rgba(240,235,215,0.6)', 'rgba(255,203,61,0.55)', 'rgba(126,200,255,0.5)'];
+  const doWave = tl < T.act2;
   for(const s of seats){
-    const hop = EX > 0.4 ? Math.abs(Math.sin(rt * 5 + s.ph)) * 5.5 * EX : Math.sin(rt * 1.5 + s.ph) * 0.7;
+    let hop = EX > 0.4 ? Math.abs(Math.sin(rt * 5 + s.ph)) * 5.5 * EX : Math.sin(rt * 1.5 + s.ph) * 0.7;
+    if(doWave){
+      const w = Math.sin(rt * 2.0 - s.x * 0.007); if(w > 0) hop += w * w * w * 6;
+    }
     ctx.fillStyle = seatCol[s.c]; ctx.fillRect(s.x - 2, s.y - 3 - hop, 4, 4.5);
   }
   /* 慶典時的相機閃光 */
