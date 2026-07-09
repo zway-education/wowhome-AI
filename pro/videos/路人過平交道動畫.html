@@ -1,0 +1,855 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>路人過平交道動畫</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{ height:100%; overflow:hidden; background:radial-gradient(circle at 50% 35%, #1a2c40 0%, #0d1826 60%, #060d15 100%);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;
+    -webkit-user-select:none; user-select:none; touch-action:manipulation; }
+  #stage{ position:fixed; inset:0; }
+  canvas{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+  #subtitle{ position:absolute; left:50%; bottom:7.5%; transform:translate(-50%, 14px) scale(.96); max-width:88%; padding:10px 30px;
+    font-size:clamp(15px, 2.6vw, 23px); font-weight:900; letter-spacing:2px; text-align:center; color:#fff; white-space:nowrap;
+    background:linear-gradient(180deg, rgba(16,28,44,.92), rgba(8,16,28,.72)); border:1px solid rgba(126,200,248,.6); border-radius:999px;
+    box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 18px rgba(126,200,248,.15) inset; text-shadow:0 2px 6px rgba(0,0,0,.8);
+    opacity:0; pointer-events:none; transition:opacity .38s ease, transform .38s cubic-bezier(.22,1.2,.36,1); }
+  #subtitle.show{ opacity:1; transform:translate(-50%,0) scale(1); }
+  #subtitle.warn{ border-color:rgba(255,90,80,.85); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 22px rgba(255,60,50,.35); color:#ffd9d4; }
+  #subtitle.gold{ border-color:rgba(255,205,80,.9); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 26px rgba(255,176,32,.38); color:#ffe9b0; }
+  .uibtn{ position:absolute; z-index:9; font-family:inherit; font-weight:900; letter-spacing:2px; color:#d8ecff; cursor:pointer;
+    background:linear-gradient(180deg, rgba(20,36,56,.88), rgba(10,20,32,.88)); border:1px solid rgba(126,200,248,.55); border-radius:999px;
+    text-shadow:0 1px 3px rgba(0,0,0,.7); transition:transform .18s cubic-bezier(.22,1.4,.36,1), box-shadow .18s ease, opacity .3s ease; }
+  .uibtn:hover{ transform:scale(1.06); box-shadow:0 0 18px rgba(126,200,248,.4); }
+  .uibtn:active{ transform:scale(.94); }
+  #sndBtn{ top:14px; right:14px; font-size:14px; padding:8px 16px; }
+  #replayBtn{ left:50%; top:64%; transform:translate(-50%,0) scale(.6); font-size:clamp(18px,3.2vw,26px); padding:14px 44px;
+    background:linear-gradient(180deg,#4da3e8,#2b6cb0); color:#eaf6ff; border:2px solid #d8ecff;
+    box-shadow:0 8px 30px rgba(43,108,176,.6); opacity:0; pointer-events:none; }
+  #replayBtn.show{ opacity:1; pointer-events:auto; transform:translate(-50%,0) scale(1);
+    transition:transform .5s cubic-bezier(.22,1.6,.36,1), opacity .4s ease; }
+  #replayBtn:hover{ transform:translate(-50%,0) scale(1.08); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="subtitle"></div>
+  <button id="sndBtn" class="uibtn">🔇 聲音：關</button>
+  <button id="replayBtn" class="uibtn">▶ 重新播放</button>
+</div>
+<script>
+'use strict';
+/* =====================================================================
+   路人過平交道動畫 ── 專業AI升級版
+   三幕劇：Ⅰ 走近平交道 → Ⅱ 柵欄放下・火車呼嘯而過 → Ⅲ 停看聽・安全通過
+   ===================================================================== */
+const W = 960, H = 540, CX = 480, CY = 300;
+const cv = document.getElementById('cv'), ctx = cv.getContext('2d');
+const subEl = document.getElementById('subtitle');
+const sndBtn = document.getElementById('sndBtn'), replayBtn = document.getElementById('replayBtn');
+function resize(){
+  const s = Math.min(innerWidth / W, innerHeight / H), dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width = Math.round(W*s*dpr); cv.height = Math.round(H*s*dpr);
+  cv.style.width = W*s+'px'; cv.style.height = H*s+'px';
+  cv._base = s*dpr;
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- 緩動與工具 ---------- */
+const E = {
+  inQuad:t=>t*t, outQuad:t=>1-(1-t)*(1-t), inCubic:t=>t*t*t, outCubic:t=>1-Math.pow(1-t,3),
+  inOutCubic:t=> t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2,
+  outBack:t=> 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2),
+  outBounce(t){ const n=7.5625, d=2.75;
+    if(t<1/d) return n*t*t;
+    if(t<2/d) return n*(t-=1.5/d)*t+0.75;
+    if(t<2.5/d) return n*(t-=2.25/d)*t+0.9375;
+    return n*(t-=2.625/d)*t+0.984375; },
+  outElastic:t=> t===0?0 : t===1?1 : Math.pow(2,-10*t)*Math.sin((t*10-0.75)*(Math.PI*2/3))+1
+};
+const clamp=(v,a,b)=> v<a?a : v>b?b : v, lerp=(a,b,t)=> a+(b-a)*t;
+const ss=(t,a,b)=> clamp((t-a)/(b-a),0,1), rnd=(a,b)=> a+Math.random()*(b-a), TAU=Math.PI*2;
+
+/* ---------- 時間軸 ---------- */
+const TOTAL = 35;
+let T = 0, WT = 0, freeze = 0, shake = 0, flash = 0, ended = false;
+function timeScaleAt(t){
+  if(t>15.2 && t<15.7) return 0.5;   // 火車衝入前的懸念慢動作
+  return 1;
+}
+
+/* ---------- Web Audio（預設靜音） ---------- */
+let AC=null, master=null, windGain=null, rumbleGain=null, audioOn=false;
+let nextBellT=0, nextStepT=0, nextChirpT=4;
+function initAudio(){
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain(); master.gain.value = 0; master.connect(AC.destination);
+  const mk = (freq, gv)=>{
+    const len = AC.sampleRate*2, buf = AC.createBuffer(1,len,AC.sampleRate), d = buf.getChannelData(0);
+    for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+    const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+    const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = freq;
+    const g = AC.createGain(); g.gain.value = gv;
+    src.connect(lp); lp.connect(g); g.connect(master); src.start();
+    return g;
+  };
+  windGain = mk(500, 0.02);
+  rumbleGain = mk(180, 0);
+}
+function tone(freq, dur, type, vol, slide, delay){
+  if(!audioOn || !AC) return;
+  const t0 = AC.currentTime + (delay||0);
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(28, freq+slide), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(vol, t0+0.015); g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+  o.connect(g); g.connect(master); o.start(t0); o.stop(t0+dur+0.05);
+}
+const sfx = {
+  bell(){ tone(1568,0.16,'square',0.14); },                 // 平交道警鈴（致敬原作 1600Hz 方波）
+  horn(vol){ for(const f of [440,554]) tone(f,0.75,'sawtooth',vol||0.15); },
+  motor(up){ tone(up?200:320, 0.7, 'sawtooth', 0.05, up?130:-130); },
+  step(){ tone(180,0.05,'triangle',0.05,-40); },
+  chirp(){ const f=rnd(2300,3200); tone(f,0.07,'sine',0.045,300); tone(f*1.08,0.06,'sine',0.035,-240,0.09); },
+  ok(){ tone(784,0.12,'square',0.1); tone(1046,0.2,'square',0.1,0,0.12); },
+  jingle(){ [523,659,784,1047].forEach((f,i)=> tone(f,0.3,'triangle',0.13,0,i*0.14)); }
+};
+
+/* ---------- 粒子・漫畫字 ---------- */
+let parts = [], comics = [];
+function pDust(x,y,n,dir){ for(let i=0;i<n;i++){
+  parts.push({k:'dust',x:x+rnd(-12,12),y:y+rnd(-4,4),vx:rnd(30,160)*(dir||1)+rnd(-20,20),vy:rnd(-46,-8),life:rnd(.3,.7),max:.7,s:rnd(3,8)}); } }
+function pLeaf(x,y,dir){ parts.push({k:'leaf',x,y,vx:rnd(120,320)*dir,vy:rnd(-80,20),life:rnd(.5,1.1),max:1.1,s:rnd(3,6),rot:rnd(0,TAU),spin:rnd(4,10)}); }
+function pNote(x,y){ parts.push({k:'note',x,y,vx:rnd(-8,14),vy:rnd(-46,-26),life:1.1,max:1.1,s:rnd(13,17),ph:rnd(0,TAU)}); }
+function pSpark(x,y,n){ for(let i=0;i<n;i++){ const a=rnd(0,TAU),sp=rnd(20,80);
+  parts.push({k:'star',x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp-30,life:rnd(.5,.9),max:.9,s:rnd(3,6),rot:rnd(0,TAU)}); } }
+function updateParts(dt){
+  for(const p of parts){
+    p.life -= dt; p.x += p.vx*dt; p.y += p.vy*dt;
+    if(p.k==='dust'){ p.vx*= (1-2*dt); p.vy += 30*dt; }
+    if(p.k==='leaf'){ p.vy += 90*dt; p.rot += p.spin*dt; p.vx *= (1-0.8*dt); }
+    if(p.k==='note'){ p.ph += dt*5; p.x += Math.sin(p.ph)*16*dt; }
+    if(p.k==='star'){ p.vy += 50*dt; p.rot += 4*dt; }
+  }
+  parts = parts.filter(p=> p.life>0);
+  for(const c of comics) c.t += dt;
+  comics = comics.filter(c=> c.t < c.dur);
+}
+function drawParts(){
+  for(const p of parts){
+    const a = clamp(p.life/p.max,0,1);
+    if(p.k==='dust'){ ctx.fillStyle='rgba(150,130,100,'+(a*0.4)+')';
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.s*(1.7-a),0,TAU); ctx.fill(); }
+    else if(p.k==='leaf'){ ctx.globalAlpha=a; ctx.fillStyle='#6a9a3a';
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.beginPath(); ctx.ellipse(0,0,p.s,p.s*0.5,0,0,TAU); ctx.fill(); ctx.restore(); }
+    else if(p.k==='note'){ ctx.globalAlpha=a; ctx.fillStyle='#3a6ea8';
+      ctx.font='900 '+p.s+'px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('♪', p.x, p.y); }
+    else if(p.k==='star'){ ctx.globalAlpha=a; ctx.fillStyle='#ffe27a';
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.beginPath();
+      for(let j=0;j<8;j++){ const an=j*Math.PI/4, r=j%2===0?p.s:p.s*0.42;
+        j===0?ctx.moveTo(Math.cos(an)*r,Math.sin(an)*r):ctx.lineTo(Math.cos(an)*r,Math.sin(an)*r); }
+      ctx.closePath(); ctx.fill(); ctx.restore(); }
+  }
+  ctx.globalAlpha = 1;
+}
+function comic(x,y,text,col,big){ comics.push({x,y,text,col:col||'#fff',t:0,dur:0.95,ang:rnd(-0.12,0.12),big:big||30}); }
+function drawComics(){
+  for(const c of comics){
+    const k = c.t/c.dur, sc = E.outBack(clamp(k*2.4,0,1));
+    ctx.save(); ctx.translate(c.x, c.y - k*24); ctx.rotate(c.ang); ctx.scale(sc,sc);
+    ctx.globalAlpha = 1 - E.inCubic(ss(k,0.6,1));
+    ctx.font = '900 '+c.big+'px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.lineWidth = 6; ctx.strokeStyle = '#1a2a3a'; ctx.strokeText(c.text,0,0);
+    ctx.fillStyle = c.col; ctx.fillText(c.text,0,0);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- 鏡頭 ---------- */
+const camKF = [
+  {t:0, x:480,y:296,z:1.3}, {t:3.6, x:480,y:288,z:1.06},
+  {t:4.2, x:480,y:238,z:1.32, cut:true}, {t:8.6, x:480,y:272,z:1.26},
+  {t:9.6, x:452,y:292,z:1.24}, {t:12.4, x:452,y:288,z:1.32},
+  {t:14.4, x:480,y:308,z:1.06}, {t:19.6, x:480,y:312,z:1.1},
+  {t:21.2, x:448,y:292,z:1.26}, {t:23.4, x:474,y:270,z:1.36},
+  {t:26.4, x:480,y:330,z:1.16}, {t:30.4, x:480,y:388,z:1.3},
+  {t:33.2, x:480,y:300,z:1.05}, {t:35, x:480,y:298,z:1.03}
+];
+const cam = {x:480,y:296,z:1.3,sx:0,sy:0};
+function camAt(t){
+  let i=0;
+  while(i<camKF.length-1 && camKF[i+1].t <= t) i++;
+  const a = camKF[i], b = camKF[Math.min(i+1,camKF.length-1)];
+  if(a===b || b.cut) return {x:a.x,y:a.y,z:a.z};
+  const k = E.inOutCubic(ss(t,a.t,b.t));
+  return {x:lerp(a.x,b.x,k), y:lerp(a.y,b.y,k), z:lerp(a.z,b.z,k)};
+}
+function layer(p, fn){
+  ctx.save();
+  const lz = 1 + (cam.z-1)*(0.55+0.45*p);
+  ctx.translate(W/2,H/2); ctx.scale(lz,lz);
+  ctx.translate(-(CX+(cam.x-CX)*p+cam.sx*p), -(CY+(cam.y-CY)*p+cam.sy*p));
+  fn(); ctx.restore();
+}
+
+/* ---------- 字幕 ---------- */
+const subs = [
+  {t0:0.8, t1:3.6,  cls:'',     text:'放學的路上，有一座平交道……'},
+  {t0:4.4, t1:7.4,  cls:'',     text:'小路人哼著歌，蹦蹦跳跳地走過來'},
+  {t0:9.7, t1:12.3, cls:'warn', text:'叮叮叮！警示燈亮了，柵欄慢慢放下'},
+  {t0:12.9,t1:14.7, cls:'',     text:'小路人乖乖停下來，安全等待'},
+  {t0:15.7,t1:17.6, cls:'warn', text:'轟隆轟隆──火車來了！'},
+  {t0:21.2,t1:23.2, cls:'',     text:'火車過去了，柵欄升起來囉'},
+  {t0:23.8,t1:26.2, cls:'gold', text:'先左看、再右看，確認安全！'},
+  {t0:27.0,t1:29.6, cls:'',     text:'安全通過平交道～'},
+  {t0:30.6,t1:33.6, cls:'gold', text:'停・看・聽 ── 安全最重要！'}
+];
+let curSub = null;
+function updateSubtitle(){
+  let hit = null;
+  for(const s of subs) if(T>=s.t0 && T<s.t1){ hit = s; break; }
+  if(hit !== curSub){
+    curSub = hit;
+    if(hit){ subEl.textContent = hit.text; subEl.className = hit.cls+' show'; }
+    else subEl.classList.remove('show');
+  }
+}
+
+/* ---------- 場景常數與狀態 ---------- */
+const RAIL_TOP = 300, RAIL_BOT = 368;      // 鐵道碴石帶
+function hw(y){ return 20 + Math.max(0,(y-150))*0.30; }   // 步道半寬（透視）
+function pscale(y){ return clamp(0.5 + (y-150)/390*0.95, 0.4, 1.6); }
+const ped = {y:150, step:0, walking:false, look:0, wave:0, brace:0, happy:false, blinkT:0, bob:0};
+const train = {x:-400, active:false, speed:0};
+let bellActive = false, barrier = 0;        // barrier 0=升起 1=放下
+let lightPhase = 0;
+const birds = [ {x:400,y:0,fly:false,vx:0,vy:0,ph:rnd(0,TAU)}, {x:560,y:0,fly:false,vx:0,vy:0,ph:rnd(0,TAU)} ];
+
+/* ---------- 事件 ---------- */
+let events = [];
+function ev(t, fn){ events.push({t, fn, done:false}); }
+function buildEvents(){
+  events = [];
+  ev(9.5, ()=>{ bellActive = true; comic(420, 210, '叮叮叮！', '#ff6a5a', 26); });
+  ev(10.0, ()=> sfx.motor(false));
+  ev(12.6, ()=> comic(560, 250, '叮叮叮', '#ff6a5a', 22));
+  ev(14.5, ()=>{ sfx.horn(0.06); });
+  ev(14.8, ()=>{ for(const b of birds){ b.fly = true; b.vx = rnd(-90,-40); b.vy = rnd(-120,-70); } });
+  ev(15.5, ()=>{ train.active = true; shake = 5; });
+  ev(16.3, ()=>{ sfx.horn(0.18); comic(300, 250, '轟隆隆！', '#d8ecff', 34); });
+  ev(17.8, ()=> comic(660, 250, '轟隆隆', '#d8ecff', 28));
+  ev(20.6, ()=>{ bellActive = false; });
+  ev(21.0, ()=> sfx.motor(true));
+  ev(24.0, ()=> comic(430, 200, '左看', '#ffe27a', 26));
+  ev(25.0, ()=> comic(530, 200, '右看', '#ffe27a', 26));
+  ev(25.8, ()=>{ comic(480, 180, 'OK！', '#aee239', 30); sfx.ok(); pSpark(480, 220, 8); });
+  ev(30.8, ()=>{ sfx.jingle(); pSpark(480, 420, 14); });
+  ev(31.6, ()=> pSpark(430, 400, 8));
+  ev(34.2, ()=>{ replayBtn.classList.add('show'); ended = true; });
+}
+
+/* ---------- 編舞 ---------- */
+function choreo(dt){
+  ped.walking = false; ped.brace = 0;
+  /* 路人：由遠而近走向平交道 */
+  if(T < 4.0){ ped.y = 150; }
+  else if(T < 9.8){ ped.y = lerp(132, 268, E.inOutCubic(ss(T,4.0,9.8))); ped.walking = true; }
+  else if(T < 26.0){
+    ped.y = 268 + 4*E.outBack(ss(T,9.8,10.3)) - 4;
+    if(T > 15.3 && T < 19.6) ped.brace = 1;                  // 強風吹襲，壓帽子
+    if(T > 23.4 && T < 24.6) ped.look = -E.inOutCubic(ss(T,23.4,23.9)) * (1-E.inOutCubic(ss(T,24.35,24.6)));
+    else if(T >= 24.6 && T < 25.8) ped.look = E.inOutCubic(ss(T,24.6,25.0)) * (1-E.inOutCubic(ss(T,25.5,25.8)));
+    else ped.look = 0;
+  }
+  else if(T < 30.2){ ped.y = lerp(268, 470, E.inOutCubic(ss(T,26.0,30.2))); ped.walking = true; ped.look = 0; }
+  else { ped.y = 470; ped.happy = true;
+    ped.wave = E.outBack(ss(T,30.6,31.2)) * (T<33.6 ? 1 : 1-E.inOutCubic(ss(T,33.6,34.2)));
+  }
+  if(ped.walking){ ped.step += dt*9; ped.bob = Math.abs(Math.sin(ped.step))*5; }
+  else { ped.step = 0; ped.bob = Math.sin(WT*2.2)*1.2; }
+  /* 柵欄 */
+  if(T < 10.0) barrier = 0;
+  else if(T < 12.2) barrier = E.outBounce(ss(T,10.0,12.2));
+  else if(T < 21.0) barrier = 1;
+  else if(T < 23.0) barrier = 1 - E.inOutCubic(ss(T,21.0,22.8)) * (1 + 0.06*Math.sin(ss(T,21,23)*Math.PI));
+  else barrier = 0;
+  barrier = clamp(barrier, 0, 1.05);
+  /* 火車 */
+  if(train.active){
+    train.speed = 730;
+    train.x += train.speed * dt;
+    if(T > 15.5 && T < 19.6) shake = Math.max(shake, 2.4 + Math.sin(WT*40)*0.5);
+    if(train.x > 2400) train.active = false;
+    if(Math.random() < 0.3 && train.x > -400 && train.x < 1400){
+      pDust(rnd(100,860), RAIL_BOT+6, 1, 1);
+      if(Math.random()<0.3) pLeaf(rnd(200,760), rnd(320,360), Math.random()<0.5?-1:1);
+    }
+  }
+  /* 音樂符號（哼歌） */
+  if(ped.walking && T < 9.8 && Math.random() < 0.03) pNote(500, ped.y - 90*pscale(ped.y));
+  /* 鳥 */
+  for(const b of birds){
+    if(b.fly){ b.x += b.vx*0.016; b.y += b.vy*0.016; b.vy -= 0.6; }
+  }
+  lightPhase = Math.floor(WT*2.4) % 2;
+}
+
+/* ---------- 背景 ---------- */
+function drawSky(){
+  const g = ctx.createLinearGradient(0,-80,0,300);
+  g.addColorStop(0,'#5aa8e8'); g.addColorStop(0.6,'#9ed4f8'); g.addColorStop(1,'#d9f0fc');
+  ctx.fillStyle = g; ctx.fillRect(-300,-200,1560,560);
+  const sx=170, sy=76;                        // 太陽
+  const sg = ctx.createRadialGradient(sx,sy,6, sx,sy,100);
+  sg.addColorStop(0,'rgba(255,246,190,.95)'); sg.addColorStop(0.4,'rgba(255,224,110,.4)'); sg.addColorStop(1,'rgba(255,224,110,0)');
+  ctx.fillStyle = sg; ctx.beginPath(); ctx.arc(sx,sy,100,0,TAU); ctx.fill();
+  const s2 = ctx.createRadialGradient(sx-7,sy-7,3, sx,sy,32);
+  s2.addColorStop(0,'#fffbe2'); s2.addColorStop(1,'#ffd94d');
+  ctx.fillStyle = s2; ctx.beginPath(); ctx.arc(sx,sy,32,0,TAU); ctx.fill();
+  // 雲
+  for(const [spd,yy,s,al] of [[11,70,1.05,0.92],[7,130,0.72,0.8],[4.5,40,0.55,0.7]]){
+    const x = ((WT*spd + yy*7)%1400)-240;
+    ctx.fillStyle = 'rgba(255,255,255,'+al+')';
+    for(const [ox,oy,r] of [[0,0,26],[22,6,20],[-24,7,18],[8,-12,20]]){
+      ctx.beginPath(); ctx.arc(x+ox*s, yy+oy*s, r*s, 0, TAU); ctx.fill();
+    }
+  }
+}
+function drawTownFar(){
+  ctx.fillStyle = '#9dc4d8';                  // 遠山
+  ctx.beginPath(); ctx.moveTo(-260,235);
+  for(const [px,py] of [[-60,168],[160,225],[380,150],[600,222],[830,164],[1080,228],[1260,190]]) ctx.lineTo(px,py);
+  ctx.lineTo(1260,260); ctx.lineTo(-260,260); ctx.closePath(); ctx.fill();
+  // 小鎮房屋
+  for(const [hx,hs,hc,rc] of [[60,1,'#e8d8b8','#c05a3a'],[210,0.8,'#d8e0e8','#4a6a8a'],[640,0.9,'#f0e0c8','#8a5a3a'],[790,1.1,'#e0d0c0','#a04a3a'],[900,0.75,'#d8e8d8','#5a7a4a']]){
+    const bw=64*hs, bh=52*hs, by=262;
+    ctx.fillStyle = hc; ctx.fillRect(hx-bw/2, by-bh, bw, bh);
+    ctx.fillStyle = rc;
+    ctx.beginPath(); ctx.moveTo(hx-bw/2-7, by-bh); ctx.lineTo(hx, by-bh-26*hs); ctx.lineTo(hx+bw/2+7, by-bh); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(90,140,190,.8)';
+    ctx.fillRect(hx-bw/4-6, by-bh+12*hs, 13*hs, 13*hs); ctx.fillRect(hx+bw/4-6, by-bh+12*hs, 13*hs, 13*hs);
+    ctx.fillStyle = 'rgba(0,0,0,.08)'; ctx.fillRect(hx-bw/2, by-bh, bw, 6);
+  }
+  ctx.fillStyle = '#88b868';                  // 草地帶
+  ctx.fillRect(-260, 258, 1520, 46);
+  // 樹
+  for(const [tx,s] of [[140,1],[330,0.8],[560,0.9],[730,1.05],[935,0.85]]){
+    ctx.fillStyle = '#7a5230'; ctx.fillRect(tx-3*s, 272-18*s, 6*s, 20*s);
+    for(const [ox,oy,r,c] of [[0,-24,17,'#4e8a3c'],[-12,-16,13,'#447a34'],[12,-16,13,'#568f42'],[0,-12,15,'#4e8a3c']]){
+      ctx.fillStyle = c;
+      ctx.beginPath(); ctx.arc(tx+ox*s, 272+oy*s, r*s, 0, TAU); ctx.fill();
+    }
+    ctx.fillStyle = 'rgba(255,255,255,.15)';
+    ctx.beginPath(); ctx.arc(tx-6*s, 272-28*s, 8*s, 0, TAU); ctx.fill();
+  }
+}
+function drawPolesAndWires(){
+  // 電線桿與電車線（鐵道後方）
+  const poles = [40, 320, 640, 920];
+  ctx.lineWidth = 2; ctx.strokeStyle = '#2a2a30';
+  for(let i=0;i<poles.length-1;i++){
+    const x1=poles[i], x2=poles[i+1];
+    ctx.beginPath(); ctx.moveTo(x1, 218);
+    ctx.quadraticCurveTo((x1+x2)/2, 232, x2, 218); ctx.stroke();
+  }
+  for(const px of poles){
+    const pg = ctx.createLinearGradient(px-4,0,px+4,0);
+    pg.addColorStop(0,'#5a5a62'); pg.addColorStop(0.5,'#8a8a92'); pg.addColorStop(1,'#48484e');
+    ctx.fillStyle = pg; ctx.fillRect(px-4, 212, 8, 92);
+    ctx.fillStyle = '#3a3a40'; ctx.fillRect(px-16, 216, 32, 4);
+  }
+  // 電線上的小鳥
+  for(const b of birds){
+    const bx = b.x + (b.fly? 0:0), by = b.fly ? 224 + b.y : 224 + Math.sin(WT*3+b.ph)*1.5;
+    ctx.save(); ctx.translate(b.fly ? b.x : b.x, by);
+    ctx.fillStyle = '#4a5a78';
+    ctx.beginPath(); ctx.ellipse(0, 0, 7, 5.4, 0, 0, TAU); ctx.fill();   // 身體
+    ctx.beginPath(); ctx.arc(5, -4, 3.6, 0, TAU); ctx.fill();            // 頭
+    ctx.fillStyle = '#ffb020';
+    ctx.beginPath(); ctx.moveTo(8,-4); ctx.lineTo(12,-3); ctx.lineTo(8,-2); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = '#3a4a64';                                            // 翅膀
+    const wf = b.fly ? Math.sin(WT*26+b.ph)*0.9 : Math.sin(WT*2+b.ph)*0.06;
+    ctx.save(); ctx.rotate(wf);
+    ctx.beginPath(); ctx.ellipse(-2, -2, 6, 3, -0.5, 0, TAU); ctx.fill(); ctx.restore();
+    ctx.restore();
+  }
+}
+/* ---------- 地面・步道・鐵道 ---------- */
+function drawGroundAndPath(){
+  const g = ctx.createLinearGradient(0,300,0,620);
+  g.addColorStop(0,'#7ec850'); g.addColorStop(0.6,'#5fa93e'); g.addColorStop(1,'#417a2c');
+  ctx.fillStyle = g; ctx.fillRect(-260, 300, 1520, 340);
+  ctx.fillStyle = '#8fce5e';
+  ctx.fillRect(-260, 300, 1520, 3);
+  // 草叢小花
+  for(const [fx,fy,c] of [[150,470,'#ff8ab0'],[260,520,'#fff'],[700,500,'#ffd447'],[820,462,'#fff'],[890,540,'#ff8ab0']]){
+    ctx.strokeStyle = '#3f7a2c'; ctx.lineWidth = 2;
+    const swy = Math.sin(WT*1.7+fx)*2;
+    ctx.beginPath(); ctx.moveTo(fx,fy+9); ctx.quadraticCurveTo(fx+swy,fy,fx+swy,fy-7); ctx.stroke();
+    ctx.fillStyle = c;
+    for(let i=0;i<5;i++){ const a=i/5*TAU;
+      ctx.beginPath(); ctx.arc(fx+swy+Math.cos(a)*4.4, fy-7+Math.sin(a)*4.4, 3, 0, TAU); ctx.fill(); }
+    ctx.fillStyle = '#ffb020'; ctx.beginPath(); ctx.arc(fx+swy, fy-7, 2.4, 0, TAU); ctx.fill();
+  }
+  // 人行步道（透視梯形，上窄下寬）
+  const topY = 150, botY = 640;
+  ctx.fillStyle = '#cfc8ba';
+  ctx.beginPath();
+  ctx.moveTo(480-hw(topY), topY); ctx.lineTo(480+hw(topY), topY);
+  ctx.lineTo(480+hw(botY), botY); ctx.lineTo(480-hw(botY), botY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(90,80,60,.4)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(480-hw(topY), topY); ctx.lineTo(480-hw(botY), botY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(480+hw(topY), topY); ctx.lineTo(480+hw(botY), botY); ctx.stroke();
+  // 步道橫紋（透視間距）
+  ctx.fillStyle = 'rgba(255,255,255,.75)';
+  for(let i=0;i<14;i++){
+    const yy = 160 + Math.pow(i/13,1.5)*430;
+    if(yy > RAIL_TOP-14 && yy < RAIL_BOT+16) continue;
+    const w2 = hw(yy)*0.72, hh = 3 + (yy-150)*0.016;
+    ctx.fillRect(480-w2, yy, w2*2, hh);
+  }
+}
+function drawRailway(){
+  // 碴石路基
+  const bg = ctx.createLinearGradient(0,RAIL_TOP,0,RAIL_BOT);
+  bg.addColorStop(0,'#9a7a4e'); bg.addColorStop(0.5,'#8a6d3b'); bg.addColorStop(1,'#6d5228');
+  ctx.fillStyle = bg; ctx.fillRect(-260, RAIL_TOP, 1520, RAIL_BOT-RAIL_TOP);
+  ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(-260, RAIL_TOP, 1520, 5);
+  // 碎石顆粒
+  ctx.fillStyle = 'rgba(60,44,22,.35)';
+  for(let i=0;i<60;i++){ const gx=((i*137)%1520)-260, gy=RAIL_TOP+8+((i*89)%50);
+    ctx.fillRect(gx, gy, 4, 3); }
+  // 枕木
+  for(let x=-260; x<1280; x+=46){
+    const tg = ctx.createLinearGradient(0,RAIL_TOP+8,0,RAIL_BOT-6);
+    tg.addColorStop(0,'#6a4e2a'); tg.addColorStop(1,'#4e3a1e');
+    ctx.fillStyle = tg; ctx.fillRect(x, RAIL_TOP+8, 15, RAIL_BOT-RAIL_TOP-16);
+  }
+  // 平交道鋪面（步道穿越處）
+  ctx.fillStyle = '#b8a888';
+  ctx.fillRect(480-hw(RAIL_TOP)-8, RAIL_TOP+6, (hw(RAIL_TOP)+8)*2, RAIL_BOT-RAIL_TOP-10);
+  ctx.strokeStyle = 'rgba(255,210,60,.85)'; ctx.lineWidth = 5;
+  ctx.strokeRect(480-hw(RAIL_TOP)-6, RAIL_TOP+8, (hw(RAIL_TOP)+6)*2, RAIL_BOT-RAIL_TOP-14);
+  // 兩條鋼軌（含高光）
+  for(const ry of [RAIL_TOP+14, RAIL_BOT-16]){
+    ctx.fillStyle = '#3a3a42'; ctx.fillRect(-260, ry, 1520, 7);
+    ctx.fillStyle = '#9aa2ae'; ctx.fillRect(-260, ry, 1520, 2.4);
+    ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(-260, ry+0.4, 1520, 1);
+  }
+}
+/* ---------- 平交道設備 ---------- */
+function drawCrossbuckPole(x, baseY, s, mirror){
+  ctx.save(); ctx.translate(x, baseY); ctx.scale(s*(mirror?-1:1), s);
+  // 柱
+  const pg = ctx.createLinearGradient(-5,0,5,0);
+  pg.addColorStop(0,'#8a8a92'); pg.addColorStop(0.5,'#d0d0d8'); pg.addColorStop(1,'#6a6a72');
+  ctx.fillStyle = pg; ctx.fillRect(-5, -128, 10, 128);
+  // 交叉警標
+  ctx.save(); ctx.translate(0, -118);
+  for(const a of [-0.42, 0.42]){
+    ctx.save(); ctx.rotate(a);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-34, -6, 68, 12);
+    ctx.strokeStyle = '#d22'; ctx.lineWidth = 2.4; ctx.strokeRect(-34,-6,68,12);
+    ctx.restore();
+  }
+  ctx.restore();
+  // 「停看聽」牌
+  ctx.fillStyle = '#ffd94d'; ctx.strokeStyle = '#8a6a10'; ctx.lineWidth = 2;
+  ctx.fillRect(-16, -92, 32, 40); ctx.strokeRect(-16, -92, 32, 40);
+  ctx.fillStyle = '#4a2a08';
+  ctx.font = '900 11px "Noto Sans TC",sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  if(mirror){ ctx.save(); ctx.scale(-1,1); }
+  ctx.fillText('停', mirror?0:0, -84); ctx.fillText('看', 0, -72); ctx.fillText('聽', 0, -60);
+  if(mirror) ctx.restore();
+  // 雙警示燈（交互閃爍）
+  ctx.fillStyle = '#222'; ctx.fillRect(-22, -46, 44, 18);
+  for(const [lx,on] of [[-11, lightPhase===0],[11, lightPhase===1]]){
+    const lit = bellActive && on;
+    if(lit){ ctx.save(); ctx.shadowBlur = 16; ctx.shadowColor = '#ff2222'; }
+    const lg = ctx.createRadialGradient(lx-1.6,-38.5,1, lx,-37,7);
+    lg.addColorStop(0, lit?'#ffb0a0':'#7a2020'); lg.addColorStop(1, lit?'#ff2222':'#3a0808');
+    ctx.fillStyle = lg;
+    ctx.beginPath(); ctx.arc(lx, -37, 6.4, 0, TAU); ctx.fill();
+    if(lit) ctx.restore();
+  }
+  ctx.restore();
+}
+function drawBarrier(x, baseY, s, mirror, len){
+  const ang = lerp(-Math.PI/2*0.94, 0, clamp(barrier,0,1)) + (barrier>1? (barrier-1)*0.5 : 0);
+  ctx.save(); ctx.translate(x, baseY); ctx.scale(s*(mirror?-1:1), s);
+  // 底座與配重箱
+  ctx.fillStyle = '#3a3a42'; ctx.fillRect(-10, -8, 20, 8);
+  const bg = ctx.createLinearGradient(-8,-30,8,-30);
+  bg.addColorStop(0,'#c8c8d0'); bg.addColorStop(1,'#7a7a84');
+  ctx.fillStyle = bg; ctx.fillRect(-8, -40, 16, 32);
+  ctx.save();
+  ctx.translate(0, -34); ctx.rotate(ang);
+  ctx.fillStyle = '#33333a'; ctx.fillRect(-16, -4, 16, 9);   // 配重
+  // 柵欄桿（紅白相間、圓頭）
+  const lg2 = ctx.createLinearGradient(0,-3,0,4);
+  lg2.addColorStop(0,'#fff'); lg2.addColorStop(1,'#d8d8d8');
+  ctx.fillStyle = lg2; ctx.fillRect(0, -3.6, len, 7.2);
+  ctx.fillStyle = '#e33';
+  for(let seg=0; seg<len; seg+=28) ctx.fillRect(seg+14, -3.6, 14, 7.2);
+  ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.lineWidth = 1.4; ctx.strokeRect(0,-3.6,len,7.2);
+  ctx.fillStyle = '#e33'; ctx.beginPath(); ctx.arc(len, 0, 4.4, 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+/* ---------- 火車（側視、多節車廂、車輪、乘客） ---------- */
+function drawTrain(){
+  if(!train.active) return;
+  const y = RAIL_BOT - 14;                         // 輪軌接觸線
+  const x0 = train.x - 2000;                       // 火車頭在最前（右）
+  ctx.save();
+  // 車底陰影
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  ctx.fillRect(x0+1180, y+8, 820, 8);
+  const wheelRot = train.x*0.06;
+  // 4 節客車廂（由後往前畫）
+  for(let i=0;i<4;i++){
+    const cx0 = x0 + 1180 + i*168;
+    trainCar(cx0, y, 158, i, wheelRot);
+  }
+  // 車頭（最右）
+  const lx = x0 + 1180 + 4*168;
+  const g = ctx.createLinearGradient(0, y-96, 0, y);
+  g.addColorStop(0,'#4d8ed0'); g.addColorStop(0.45,'#2b6cb0'); g.addColorStop(1,'#1a365d');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(lx, y-6); ctx.lineTo(lx, y-88);
+  ctx.quadraticCurveTo(lx+10, y-96, lx+56, y-94);
+  ctx.quadraticCurveTo(lx+118, y-88, lx+132, y-52);
+  ctx.quadraticCurveTo(lx+140, y-28, lx+136, y-6);
+  ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#122a48'; ctx.stroke();
+  // 車頭窗與塗裝
+  ctx.fillStyle = '#cfeffd';
+  ctx.beginPath(); ctx.moveTo(lx+66, y-88); ctx.quadraticCurveTo(lx+112, y-82, lx+124, y-54);
+  ctx.lineTo(lx+96, y-52); ctx.lineTo(lx+64, y-56); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#122a48'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#ffd94d'; ctx.fillRect(lx, y-40, 132, 9);
+  ctx.fillStyle = '#e33'; ctx.fillRect(lx, y-30, 132, 4);
+  // 頭燈與光錐
+  ctx.save(); ctx.shadowBlur = 14; ctx.shadowColor = '#fff3a0';
+  ctx.fillStyle = '#fff3a0';
+  ctx.beginPath(); ctx.arc(lx+133, y-22, 5.5, 0, TAU); ctx.fill(); ctx.restore();
+  ctx.fillStyle = 'rgba(255,240,170,.22)';
+  ctx.beginPath(); ctx.moveTo(lx+136, y-26); ctx.lineTo(lx+300, y-46); ctx.lineTo(lx+300, y+2); ctx.lineTo(lx+136, y-16);
+  ctx.closePath(); ctx.fill();
+  // 排障器與輪
+  ctx.fillStyle = '#33333a';
+  ctx.beginPath(); ctx.moveTo(lx+112,y-6); ctx.lineTo(lx+138,y-6); ctx.lineTo(lx+126,y+6); ctx.lineTo(lx+116,y+6); ctx.closePath(); ctx.fill();
+  trainWheel(lx+26, y, wheelRot); trainWheel(lx+58, y, wheelRot); trainWheel(lx+104, y, wheelRot);
+  // 速度線
+  ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2.4; ctx.lineCap='round';
+  for(let i=0;i<5;i++){
+    const sy = y-84+i*18, sx0 = x0+1160 - (WT*900+i*140)%320;
+    ctx.beginPath(); ctx.moveTo(sx0, sy); ctx.lineTo(sx0-64, sy); ctx.stroke();
+  }
+  ctx.restore();
+}
+function trainCar(x, y, w, idx, rot){
+  const g = ctx.createLinearGradient(0, y-92, 0, y);
+  g.addColorStop(0,'#4d8ed0'); g.addColorStop(0.45,'#2b6cb0'); g.addColorStop(1,'#1a365d');
+  ctx.fillStyle = g;
+  rrp(x, y-90, w, 84, 9); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#122a48'; ctx.stroke();
+  ctx.fillStyle = '#8ab8e0'; rrp(x+6, y-96, w-12, 8, 3); ctx.fill();  // 車頂
+  ctx.fillStyle = '#ffd94d'; ctx.fillRect(x, y-42, w, 9);             // 色帶
+  ctx.fillStyle = '#e33'; ctx.fillRect(x, y-32, w, 4);
+  // 車窗與乘客剪影
+  for(let wi=0; wi<4; wi++){
+    const wx = x + 12 + wi*36;
+    ctx.fillStyle = '#cfeffd'; rrp(wx, y-80, 26, 24, 4); ctx.fill();
+    ctx.strokeStyle = '#122a48'; ctx.lineWidth = 1.8; ctx.stroke();
+    if((idx*4+wi)%3 !== 1){
+      ctx.fillStyle = 'rgba(30,50,80,.75)';
+      ctx.beginPath(); ctx.arc(wx+13, y-62, 6.5, Math.PI, 0); ctx.fill();
+      ctx.beginPath(); ctx.arc(wx+13, y-68, 4, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.fillStyle = '#25425f'; ctx.fillRect(x+w-2, y-84, 5, 78);        // 車廂連結
+  trainWheel(x+26, y, rot); trainWheel(x+w-26, y, rot);
+}
+function trainWheel(x, y, rot){
+  ctx.fillStyle = '#22222a';
+  ctx.beginPath(); ctx.arc(x, y, 11, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#55555f';
+  ctx.beginPath(); ctx.arc(x, y, 7, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#c8c8d0'; ctx.lineWidth = 2;
+  for(let i=0;i<3;i++){
+    const a = rot + i*Math.PI/3*2;
+    ctx.beginPath(); ctx.moveTo(x-Math.cos(a)*6, y-Math.sin(a)*6); ctx.lineTo(x+Math.cos(a)*6, y+Math.sin(a)*6); ctx.stroke();
+  }
+  ctx.fillStyle = '#e8e8f0'; ctx.beginPath(); ctx.arc(x, y, 2, 0, TAU); ctx.fill();
+}
+function rrp(x,y,w,h,r){
+  ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+/* ---------- 小路人（多部件、走路循環、表情） ---------- */
+function drawPed(){
+  const s = pscale(ped.y);
+  const px = 480, py = ped.y;
+  ctx.fillStyle = 'rgba(20,30,10,.32)';
+  ctx.beginPath(); ctx.ellipse(px, py+3, 22*s, 5*s, 0, 0, TAU); ctx.fill();
+  ctx.save();
+  ctx.translate(px, py - ped.bob*s);
+  ctx.scale(s, s);
+  const skin='#ffd9b0', skinD='#c89060', shirt1='#4da3e8', shirt2='#2b6cb0', pant='#2c3e50';
+  // 腿（走路循環：前視小剪刀步）
+  const sw = ped.walking ? Math.sin(ped.step) : 0;
+  for(const side of [1,-1]){
+    const lift = ped.walking ? Math.max(0, Math.sin(ped.step)*side)*6 : 0;
+    ctx.save(); ctx.translate(side*7 + sw*side*2.4, -26);
+    ctx.fillStyle = pant;
+    rrp(-4.4, 0, 8.8, 22-lift, 4); ctx.fill();
+    ctx.strokeStyle = '#1a2733'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = '#e84a3a';                        // 紅色小鞋
+    rrp(-5.4, 18-lift, 11, 7, 3); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  // 身體（藍色上衣，漸層）
+  const bg = ctx.createLinearGradient(0,-66,0,-24);
+  bg.addColorStop(0,shirt1); bg.addColorStop(1,shirt2);
+  ctx.fillStyle = bg;
+  rrp(-15, -64, 30, 40, 10); ctx.fill();
+  ctx.lineWidth = 2.4; ctx.strokeStyle = '#1a365d'; ctx.stroke();
+  // 背包肩帶與側袋
+  ctx.fillStyle = '#e8b03a';
+  ctx.fillRect(-11, -62, 6, 34); ctx.fillRect(5, -62, 6, 34);
+  ctx.strokeStyle = 'rgba(90,60,10,.6)'; ctx.lineWidth = 1.6;
+  ctx.strokeRect(-11, -62, 6, 34); ctx.strokeRect(5, -62, 6, 34);
+  ctx.fillStyle = '#d89020';
+  rrp(-21, -56, 8, 20, 4); ctx.fill(); ctx.stroke();
+  // 手臂（走路擺動 / 揮手 / 壓帽）
+  for(const side of [1,-1]){
+    const swingA = ped.walking ? Math.sin(ped.step + (side>0?0:Math.PI))*0.55 : 0.12*side*Math.sin(WT*2);
+    let aA = 0.25*side + swingA*side;
+    if(ped.brace && side>0) aA = -2.5;                  // 右手壓住帽子
+    if(ped.wave>0 && side>0) aA = -2.2 - Math.sin(WT*9)*0.35*ped.wave;
+    ctx.save(); ctx.translate(side*14, -56); ctx.rotate(aA*(side>0?1:1));
+    ctx.fillStyle = shirt2;
+    rrp(-3.6, 0, 7.2, 19, 3.6); ctx.fill();
+    ctx.strokeStyle = '#1a365d'; ctx.lineWidth = 1.8; ctx.stroke();
+    ctx.fillStyle = skin;
+    ctx.beginPath(); ctx.arc(0, 21, 4.4, 0, TAU); ctx.fill();
+    ctx.strokeStyle = skinD; ctx.stroke();
+    ctx.restore();
+  }
+  // 頭（look 轉頭：五官偏移）
+  const lk = ped.look;
+  ctx.save(); ctx.translate(lk*3, -78);
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(0, 0, 15.5, 14.5, 0, 0, TAU); ctx.fill();
+  ctx.lineWidth = 2.2; ctx.strokeStyle = skinD; ctx.stroke();
+  // 耳朵
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(-15+lk*2, 2, 3.4, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.arc(15+lk*2, 2, 3.4, 0, TAU); ctx.fill();
+  // 瀏海
+  ctx.fillStyle = '#5a3a1a';
+  ctx.beginPath(); ctx.moveTo(-14+lk*4, -4);
+  ctx.quadraticCurveTo(-8+lk*4, -12, 0+lk*4, -9);
+  ctx.quadraticCurveTo(8+lk*4, -13, 14+lk*4, -5);
+  ctx.quadraticCurveTo(10, -16, 0, -15);
+  ctx.quadraticCurveTo(-10, -16, -14+lk*4, -4);
+  ctx.closePath(); ctx.fill();
+  // 黃色小帽（brace 時被手壓住）
+  ctx.save(); ctx.translate(lk*4, -10 + (ped.brace? 2:0)); ctx.rotate(lk*0.12);
+  const cg = ctx.createLinearGradient(0,-9,0,2);
+  cg.addColorStop(0,'#ffe14d'); cg.addColorStop(1,'#f2b312');
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.arc(0, 0, 13.5, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#a87808'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#f2b312';
+  ctx.beginPath(); ctx.ellipse(0, 0.5, 16.5, 3.6, 0, 0, Math.PI, true); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  // 眼睛（眨眼、看向 look 方向）
+  const blink = (Math.sin(WT*1.1+1) > 0.975) ? 0.15 : 1;
+  for(const sd of [1,-1]){
+    const exp = sd*6 + lk*4;
+    if(ped.happy){
+      ctx.strokeStyle = '#3a2a12'; ctx.lineWidth = 2.2;
+      ctx.beginPath(); ctx.arc(exp, 1, 3.6, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
+    }else{
+      ctx.fillStyle = '#3a2a12';
+      ctx.beginPath(); ctx.ellipse(exp, 1, 2.6, 3.4*blink*(ped.brace?0.5:1), 0, 0, TAU); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(exp+0.9, -0.4, 1, 0, TAU); ctx.fill();
+    }
+  }
+  // 腮紅與嘴
+  ctx.fillStyle = 'rgba(255,120,90,.4)';
+  ctx.beginPath(); ctx.ellipse(-9+lk*4, 6, 3, 2, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9+lk*4, 6, 3, 2, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#8a4a2a'; ctx.lineWidth = 2; ctx.lineCap='round';
+  ctx.beginPath();
+  if(ped.happy){ ctx.arc(lk*4, 7, 4.6, 0.2, Math.PI-0.2); }
+  else if(ped.brace){ ctx.ellipse(lk*4, 9, 2.6, 3.2, 0, 0, TAU); }
+  else if(bellActive && T>9.7 && T<12){ ctx.ellipse(lk*4, 9, 2.4, 3, 0, 0, TAU); }
+  else { ctx.arc(lk*4, 6, 4, 0.3, Math.PI-0.3); }
+  ctx.stroke();
+  ctx.restore();
+  ctx.restore();
+}
+/* ---------- 片頭卡 / 片尾卡 ---------- */
+function drawTitleCard(){
+  if(T > 4.4) return;
+  const a = E.outCubic(ss(T,0.4,1.3)) * (1 - E.inCubic(ss(T,3.5,4.3)));
+  if(a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a*0.58;
+  ctx.fillStyle = '#0a1622'; ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha = a;
+  // 紅白斜紋橫幅（呼應柵欄）
+  for(const yy of [H*0.24, H*0.62]){
+    ctx.save(); ctx.beginPath(); ctx.rect(W*0.18, yy, W*0.64, 12); ctx.clip();
+    for(let x=0; x<W; x+=36){
+      ctx.fillStyle = (x/36|0)%2===0 ? '#e33' : '#fff';
+      ctx.save(); ctx.translate(x, yy+6); ctx.rotate(0.6); ctx.fillRect(-9,-20,18,40); ctx.restore();
+    }
+    ctx.restore();
+  }
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const ty = lerp(H*0.42+20, H*0.42, E.outBack(ss(T,0.5,1.5)));
+  ctx.font = '900 58px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+  ctx.lineWidth = 9; ctx.strokeStyle = 'rgba(10,30,50,.9)'; ctx.strokeText('路人過平交道動畫', W/2, ty);
+  const tg = ctx.createLinearGradient(0,ty-30,0,ty+30);
+  tg.addColorStop(0,'#eaf6ff'); tg.addColorStop(0.55,'#9ed4f8'); tg.addColorStop(1,'#4da3e8');
+  ctx.fillStyle = tg; ctx.fillText('路人過平交道動畫', W/2, ty);
+  ctx.globalAlpha = a * E.outCubic(ss(T,1.2,2.0));
+  ctx.font = '700 20px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = '#ffe9b0';
+  ctx.fillText('── 停・看・聽，平安回家的每一步 ──', W/2, ty+54);
+  ctx.restore();
+}
+function drawEndCard(){
+  const a = E.outCubic(ss(T,33.4,34.3));
+  if(a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a*0.62;
+  const g = ctx.createRadialGradient(W/2,H/2,60, W/2,H/2,560);
+  g.addColorStop(0,'rgba(6,14,24,.3)'); g.addColorStop(1,'rgba(3,8,14,.95)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha = a;
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const ty = lerp(H*0.3+16, H*0.3, E.outBack(ss(T,33.5,34.4)));
+  ctx.font = '900 48px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+  const tg = ctx.createLinearGradient(0,ty-28,0,ty+28);
+  tg.addColorStop(0,'#eaf6ff'); tg.addColorStop(1,'#4da3e8');
+  ctx.save(); ctx.shadowBlur=20; ctx.shadowColor='rgba(77,163,232,.7)';
+  ctx.fillStyle = tg; ctx.fillText('平交道安全 ── 全劇終', W/2, ty); ctx.restore();
+  ctx.font = '700 20px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = 'rgba(255,233,176,.9)';
+  ctx.fillText('記得口訣：停・看・聽，確認安全再通過！', W/2, ty+52);
+  ctx.restore();
+}
+
+/* ---------- 主渲染 ---------- */
+function render(){
+  ctx.setTransform(cv._base,0,0,cv._base,0,0);
+  ctx.fillStyle = '#9ed4f8'; ctx.fillRect(0,0,W,H);
+  layer(0.06, drawSky);
+  layer(0.2, drawTownFar);
+  layer(0.55, drawPolesAndWires);
+  layer(1, ()=>{
+    drawGroundAndPath();
+    drawRailway();
+    // 遠側（軌道上方）：路人在柵欄後方
+    if(ped.y < RAIL_TOP+20) drawPed();
+    drawCrossbuckPole(388, 292, 0.86, false);
+    drawBarrier(414, 288, 0.82, false, 132);
+    drawTrain();
+    // 近側（軌道下方）設備
+    drawCrossbuckPole(600, 442, 1.12, true);
+    drawBarrier(572, 436, 1.05, true, 168);
+    if(ped.y >= RAIL_TOP+20) drawPed();
+    drawParts();
+    drawComics();
+  });
+  // 螢幕效果
+  if(flash > 0){ ctx.globalAlpha=Math.min(1,flash); ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H); ctx.globalAlpha=1; }
+  ctx.fillStyle = 'rgba(255,200,120,.05)'; ctx.fillRect(0,0,W,H);
+  const vg = ctx.createRadialGradient(W/2,H/2,H*0.44, W/2,H/2,H*0.95);
+  vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(4,10,18,.5)');
+  ctx.fillStyle = vg; ctx.fillRect(0,0,W,H);
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,W,24); ctx.fillRect(0,H-24,W,24);
+  drawTitleCard();
+  drawEndCard();
+}
+
+/* ---------- 主迴圈 ---------- */
+let last = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = Math.min((now-last)/1000, 0.05);
+  last = now;
+  WT += dt;
+  if(freeze > 0){ freeze -= dt; }
+  else{
+    const step = dt * timeScaleAt(T);
+    T = Math.min(T + step, TOTAL);
+    for(const e of events) if(!e.done && T >= e.t){ e.done = true; e.fn(); }
+    choreo(step);
+    updateParts(step);
+    // 聲音排程（鈴聲、腳步、鳥鳴、隆隆聲）
+    if(audioOn){
+      if(bellActive && WT >= nextBellT){ sfx.bell(); nextBellT = WT + 0.42; }
+      if(ped.walking && WT >= nextStepT){ sfx.step(); nextStepT = WT + 0.34; }
+      if(WT >= nextChirpT){ if(!train.active && !bellActive) sfx.chirp(); nextChirpT = WT + rnd(2.5,5.5); }
+      if(rumbleGain){
+        let target = 0;
+        if(T>14.4 && T<15.5) target = 0.1;
+        else if(T>=15.5 && T<19.6) target = 0.42;
+        else if(T>=19.6 && T<21.2) target = 0.42*(1-ss(T,19.6,21.0));
+        rumbleGain.gain.value += (target - rumbleGain.gain.value)*Math.min(1,6*dt);
+      }
+    }
+  }
+  const c = camAt(T), k = 1 - Math.pow(0.002, dt);
+  cam.x += (c.x-cam.x)*k; cam.y += (c.y-cam.y)*k; cam.z += (c.z-cam.z)*k;
+  shake *= Math.pow(0.0015, dt);
+  cam.sx = (Math.random()*2-1)*shake; cam.sy = (Math.random()*2-1)*shake;
+  flash = Math.max(0, flash - dt*2.6);
+  if(AC && windGain) windGain.gain.value = 0.015 + 0.02*(train.active?1:0.4)*Math.abs(Math.sin(WT*0.5));
+  updateSubtitle();
+  render();
+}
+buildEvents();
+requestAnimationFrame(frame);
+
+/* ---------- 控制 ---------- */
+sndBtn.addEventListener('click', ()=>{
+  if(!AC) initAudio();
+  if(AC.state === 'suspended') AC.resume();
+  audioOn = !audioOn;
+  master.gain.value = audioOn ? 0.9 : 0;
+  sndBtn.textContent = audioOn ? '🔊 聲音：開' : '🔇 聲音：關';
+});
+replayBtn.addEventListener('click', ()=>{
+  T = 0; freeze = 0; shake = 0; flash = 0; ended = false;
+  parts = []; comics = [];
+  Object.assign(ped, {y:150, step:0, walking:false, look:0, wave:0, brace:0, happy:false, bob:0});
+  Object.assign(train, {x:-400, active:false, speed:0});
+  bellActive = false; barrier = 0;
+  birds[0] && Object.assign(birds[0], {x:400, y:0, fly:false, vx:0, vy:0});
+  birds[1] && Object.assign(birds[1], {x:560, y:0, fly:false, vx:0, vy:0});
+  cam.x=480; cam.y=296; cam.z=1.3;
+  curSub = null; subEl.classList.remove('show'); replayBtn.classList.remove('show');
+  buildEvents();
+});
+</script>
+</body>
+</html>
