@@ -1,0 +1,1091 @@
+<!doctype html>
+<!-- 專業AI升級 v3 -->
+<!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<title>飯店入住體驗</title>
+<style>
+  :root{
+    --ink:#16332C; --brass:#C9A15A; --brass-deep:#a97f38; --accent:#B5493D;
+    --card:#fffdf7; --card-border:#d8c9a3; --text:#1c2420; --text-dim:#5a6b62;
+    --shadow:rgba(22,51,44,.2);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0;height:100%;overflow:hidden;touch-action:none;
+    background:var(--ink); color:var(--text);
+    font-family:-apple-system,"Segoe UI","PingFang TC","Microsoft JhengHei",sans-serif;
+    -webkit-user-select:none;user-select:none;overscroll-behavior:none}
+  .display{font-family:Georgia,"Iowan Old Style","Noto Serif TC",serif}
+  #stage{position:relative;width:100%;height:100%}
+  canvas#game{display:block;width:100%;height:100%;touch-action:none}
+
+  /* ---------- 遊戲中 HUD ---------- */
+  #hud{position:absolute;top:14px;left:14px;width:212px;background:var(--card);
+    border:1px solid var(--card-border);border-radius:12px;box-shadow:0 10px 28px var(--shadow);
+    padding:13px 16px 11px;display:none}
+  #hud .eyebrow{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass);font-weight:600}
+  #hud h1{font-size:19px;margin:2px 0 8px;color:var(--text)}
+  #tasks{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--card-border);padding-top:8px}
+  .task{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text);transition:opacity .3s}
+  .task .dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--brass);flex-shrink:0;
+    transition:background .25s, transform .25s}
+  .task.done .dot{background:var(--brass);transform:scale(1.25)}
+  .task.done .label{color:var(--text-dim);text-decoration:line-through}
+  .task .num{font-variant-numeric:tabular-nums;color:var(--brass);font-weight:600;width:1em}
+  #meta{display:flex;justify-content:space-between;margin-top:9px;padding-top:7px;
+    border-top:1px solid var(--card-border);font-size:12.5px;color:var(--text-dim);
+    font-variant-numeric:tabular-nums}
+  #meta b{color:var(--brass-deep)}
+
+  #compass{position:absolute;top:14px;right:14px;width:70px;height:70px;border-radius:50%;
+    background:var(--card);border:1px solid var(--card-border);box-shadow:0 8px 20px var(--shadow);display:none}
+  #muteBtn{position:absolute;top:94px;right:14px;width:52px;height:52px;border-radius:50%;
+    background:var(--card);border:1px solid var(--card-border);box-shadow:0 6px 16px var(--shadow);
+    font-size:20px;cursor:pointer;z-index:30;padding:0}
+  #muteBtn:active{transform:scale(.94)}
+
+  #prompt{position:absolute;bottom:118px;left:50%;transform:translateX(-50%);
+    background:var(--card);border:1.5px solid var(--brass);color:var(--text);
+    padding:9px 20px;border-radius:999px;font-size:14.5px;box-shadow:0 8px 20px var(--shadow);
+    display:none;white-space:nowrap;pointer-events:none}
+  #prompt kbd{font-family:inherit;background:var(--brass);color:var(--card);border-radius:4px;
+    padding:1px 8px;margin-right:6px;font-weight:700}
+
+  #hintBar{position:absolute;top:14px;left:50%;transform:translateX(-50%);
+    background:rgba(22,51,44,.85);color:#f6efdd;padding:9px 22px;border-radius:999px;
+    font-size:14px;display:none;pointer-events:none;transition:opacity .6s;white-space:nowrap}
+
+  /* ---------- 觸控操作 ---------- */
+  .interact-btn{position:absolute;bottom:26px;width:84px;height:84px;border-radius:50%;
+    border:2px solid var(--brass-deep);background:var(--brass);color:#fff;
+    font:700 17px inherit;box-shadow:0 8px 20px var(--shadow);display:none;
+    touch-action:none;z-index:20;padding:0}
+  .interact-btn:active{transform:scale(.92)}
+  #btnA{right:24px}
+  #btnB{left:24px;background:var(--accent);border-color:#8a3128}
+
+  /* ---------- 標題 / 結算 卡片 ---------- */
+  .ovl{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    background:radial-gradient(ellipse at 50% 30%, rgba(38,74,64,.55) 0%, rgba(10,26,22,.82) 100%);z-index:40}
+  .ovl .card{background:var(--card);border:1px solid var(--card-border);border-radius:16px;
+    padding:26px 34px 24px;text-align:center;box-shadow:0 24px 60px rgba(0,0,0,.4);
+    max-width:min(430px, 92vw);max-height:94vh;overflow:auto}
+  .plaque{font-size:11.5px;letter-spacing:.18em;text-transform:uppercase;color:var(--brass);margin-bottom:4px;font-weight:600}
+  .card h2{font-size:30px;margin:0 0 4px;color:var(--text)}
+  .card .rule{width:56px;height:2px;background:var(--brass);margin:10px auto 12px;border-radius:2px}
+  .card p{color:var(--text-dim);font-size:13.5px;margin:0 0 12px;line-height:1.7}
+  .card .keys{font-size:13px;color:var(--text);background:#f6efdd;border:1px solid var(--card-border);
+    border-radius:10px;padding:9px 12px;margin:0 0 14px;line-height:1.9;text-align:left}
+  .card .keys kbd{background:#fff;border:1px solid var(--card-border);border-radius:4px;padding:0 6px;font-family:inherit;font-size:12px}
+  .bigbtn{display:block;width:100%;margin:8px 0 0;font:600 16px inherit;min-height:54px;
+    background:var(--brass);color:#fff;border:none;padding:14px 26px;border-radius:999px;
+    cursor:pointer;box-shadow:0 6px 16px var(--shadow)}
+  .bigbtn.alt{background:#fff;color:var(--text);border:1.5px solid var(--card-border)}
+  .bigbtn:active{transform:scale(.97)}
+  .best{font-size:12.5px;color:var(--brass-deep);margin-top:10px}
+  #stars{font-size:34px;letter-spacing:8px;color:var(--brass);margin:2px 0 6px}
+  #endStats{font-size:14.5px;color:var(--text);margin:0 0 6px;line-height:1.9}
+  #newBest{color:var(--accent);font-weight:700;font-size:14px;display:none;margin:0 0 6px}
+  #bellIcon{width:64px;height:64px;margin:0 auto 2px}
+  @media (max-height:520px){ .card h2{font-size:24px} #bellIcon{display:none} .card p{margin-bottom:8px} }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="game"></canvas>
+
+  <div id="hud">
+    <div class="eyebrow">入住體驗 · Key Card</div>
+    <h1 class="display">飯店導覽</h1>
+    <div id="tasks">
+      <div class="task" data-key="checkin"><span class="num">1</span><span class="dot"></span><span class="label">到櫃檯辦理入住</span></div>
+      <div class="task" data-key="room"><span class="num">2</span><span class="dot"></span><span class="label">到房間放行李</span></div>
+      <div class="task" data-key="pool"><span class="num">3</span><span class="dot"></span><span class="label">到游泳池走走</span></div>
+      <div class="task" data-key="dining"><span class="num">4</span><span class="dot"></span><span class="label">到餐廳用餐</span></div>
+    </div>
+    <div id="meta"><span>🏷 <b id="tagCount">0</b>/8</span><span id="clock">0:00</span></div>
+  </div>
+
+  <canvas id="compass" width="70" height="70"></canvas>
+  <button id="muteBtn" aria-label="切換音效">🔊</button>
+  <div id="prompt"><kbd>E</kbd><span id="promptText"></span></div>
+  <div id="hintBar"></div>
+
+  <button class="interact-btn" id="btnA">互動</button>
+  <button class="interact-btn" id="btnB">互動</button>
+
+  <div class="ovl" id="titleOvl">
+    <div class="card">
+      <div id="bellIcon"></div>
+      <div class="plaque">Grand Wowhome Hotel</div>
+      <h2 class="display">飯店入住體驗</h2>
+      <div class="rule"></div>
+      <p>歡迎光臨！完成四項入住任務——櫃檯報到、放行李、逛泳池、上餐廳，
+        沿路蒐集 8 枚金色行李吊牌，爭取三星滿分評價。</p>
+      <div class="keys">
+        💻 電腦：<kbd>WASD</kbd> 移動、<kbd>E</kbd> 互動（二人：<kbd>方向鍵</kbd>＋<kbd>Enter</kbd>）<br>
+        📱 平板：按住螢幕拖曳移動，靠近時按「互動」大按鈕
+      </div>
+      <button class="bigbtn" id="startSolo">單人入住（夥伴會跟著你）</button>
+      <button class="bigbtn alt" id="startCoop">雙人同行（各控一人）</button>
+      <div class="best" id="bestLine"></div>
+    </div>
+  </div>
+
+  <div class="ovl" id="endOvl" style="display:none">
+    <div class="card">
+      <div class="plaque">Check-in Complete</div>
+      <h2 class="display">入住體驗完成</h2>
+      <div id="stars">★★★</div>
+      <div id="endStats"></div>
+      <div id="newBest">★ 新紀錄！</div>
+      <p id="endWord">櫃檯、房間、泳池、餐廳都走過了，祝您住宿愉快。</p>
+      <button class="bigbtn" id="replayBtn">再玩一次</button>
+      <button class="bigbtn alt" id="menuBtn">回到大廳門口</button>
+      <div class="best" id="bestLine2"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+(function(){
+/* =============================================================
+   飯店入住體驗 PRO（JOJO老師升級版）
+   保留原作核心：等角視角的飯店導覽，兩位房客完成四項任務
+   （櫃檯入住、房間放行李、游泳池、餐廳），NPC 對話、羅盤、任務清單。
+   升級：標題/結算狀態機＋單人夥伴AI＋行李吊牌蒐集與三星評價
+         ＋更豐富的等角美術（牆面、家具、水波、盆栽、彩紙）
+         ＋Web Audio 合成音效＋觸控浮動搖桿與大互動鈕
+   ============================================================= */
+
+const $ = id => document.getElementById(id);
+const stage = $('stage'), canvas = $('game'), ctx = canvas.getContext('2d');
+const compass = $('compass'), cctx = compass.getContext('2d');
+const clamp = (v,a,b)=> v<a?a:v>b?b:v;
+const rnd = (a,b)=> a + Math.random()*(b-a);
+const dist2d = (ax,ay,bx,by)=> Math.hypot(ax-bx, ay-by);
+
+/* ---------- OpenMoji 服務鈴（內嵌 SVG，CC BY-SA 4.0） ---------- */
+const XMLNS = 'ht'+'tp://www.w3.org/2000/svg';
+const SVG_BELL = '<g id="color"><path fill="#f1b31c" stroke="#f1b31c" stroke-miterlimit="10" d="M36.4,16.8A17.6687,17.6687,0,0,0,18.7,34.5H54A17.5838,17.5838,0,0,0,36.4,16.8Z"/><path fill="#f1b31c" d="M37.5,15.6a1.7713,1.7713,0,0,0,1.7-1.8,1.7524,1.7524,0,0,0-1.7-1.7,1.7713,1.7713,0,0,0-1.7,1.8A1.6855,1.6855,0,0,0,37.5,15.6Z"/><path fill="#f1b31c" d="M36.7,41.6a1.7713,1.7713,0,0,0,1.7-1.8,1.7524,1.7524,0,0,0-1.7-1.7A1.7713,1.7713,0,0,0,35,39.9,1.6275,1.6275,0,0,0,36.7,41.6Z"/><path fill="#fff" d="M40.8,23c.7-.1,1.3.5,1.9.8a4.0134,4.0134,0,0,1,1.6,1.3c1,1.6,3.6.1,2.6-1.5a7.8086,7.8086,0,0,0-2.7-2.4A6.0991,6.0991,0,0,0,40.8,20a1.5,1.5,0,0,0,0,3Z"/><line x1="14.5" x2="56.5" y1="47.5" y2="47.5" fill="none" stroke="#6a462f" stroke-miterlimit="10" stroke-width="3"/><line x1="17.9" x2="54.5" y1="43.7" y2="43.7" fill="none" stroke="#6a462f" stroke-miterlimit="10" stroke-width="2.3562"/><line x1="16.2" x2="57.4" y1="36" y2="36" fill="none" stroke="#f1b31c" stroke-miterlimit="10" stroke-width="2.3562"/></g><g id="line"><path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.3562" d="M19.1,33.3a17.65,17.65,0,0,1,35.3-.1v.1"/><path fill="none" stroke="#000" stroke-linejoin="round" stroke-width="2" d="M17.3,34.3h39A1.7524,1.7524,0,0,1,58,36v.1a1.7524,1.7524,0,0,1-1.7,1.7h-39a1.7524,1.7524,0,0,1-1.7-1.7V36A1.6275,1.6275,0,0,1,17.3,34.3Z"/><rect x="35" y="38.4" width="3.5" height="2.4" fill="none" stroke="#000" stroke-linecap="square" stroke-miterlimit="10" stroke-width="2"/><rect x="17.4" y="41.9" width="37.7" height="3.5" fill="none" stroke="#000" stroke-linecap="square" stroke-linejoin="round" stroke-width="2"/><rect x="15" y="45.5" width="42.4" height="3.5" fill="none" stroke="#000" stroke-linecap="square" stroke-linejoin="round" stroke-width="2"/><path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M35,15a2.3505,2.3505,0,1,1,4.7-.1h0"/></g>';
+$('bellIcon').innerHTML = '<svg viewBox="0 0 72 72" width="64" height="64">'+SVG_BELL+'</svg>';
+const bellImg = new Image();
+bellImg.src = URL.createObjectURL(new Blob(
+  ['<svg xmlns="'+XMLNS+'" viewBox="0 0 72 72">'+SVG_BELL+'</svg>'], {type:'image/svg+xml'}));
+
+/* ---------- 音效（Web Audio 合成 + DynamicsCompressor 母線） ---------- */
+let AC = null, master = null, muted = false;
+try{ muted = localStorage.getItem('pro飯店入住_mute') === '1'; }catch(e){}
+const muteBtn = $('muteBtn');
+function updateMuteBtn(){ muteBtn.textContent = muted ? '🔇' : '🔊'; }
+updateMuteBtn();
+muteBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  muted = !muted;
+  try{ localStorage.setItem('pro飯店入住_mute', muted?'1':'0'); }catch(err){}
+  updateMuteBtn();
+  if(!muted) sfx.blip();
+});
+function audio(){
+  if(!AC){
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -20; comp.knee.value = 26; comp.ratio.value = 8;
+      comp.attack.value = .003; comp.release.value = .22;
+      master = AC.createGain(); master.gain.value = .85;
+      master.connect(comp); comp.connect(AC.destination);
+    }catch(e){}
+  }
+  if(AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+addEventListener('pointerdown', audio);
+addEventListener('keydown', audio);
+function beep(freq, dur, type, vol, slide){
+  const ac = audio(); if(!ac || muted || !master) return;
+  freq *= .97 + Math.random()*.06;              // 隨機音高 ±3%
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol || .1, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + dur);
+  o.connect(g); g.connect(master);
+  o.start(); o.stop(ac.currentTime + dur + .02);
+}
+function noiseBurst(dur, vol, low){
+  const ac = audio(); if(!ac || muted || !master) return;
+  const len = Math.max(1, Math.floor(ac.sampleRate*dur));
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*(1-i/len);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value = low||1200;
+  const g = ac.createGain(); g.gain.value = vol||.15;
+  src.connect(f); f.connect(g); g.connect(master); src.start();
+}
+const sfx = {
+  blip(){ beep(720,.06,'triangle',.09); },
+  step(alt){ beep(alt?170:190,.035,'triangle',.035); },
+  ding(){ beep(1319,.5,'sine',.14); setTimeout(()=>beep(1976,.7,'sine',.08),60); },   // 櫃檯服務鈴
+  tag(){ beep(988,.07,'square',.08); setTimeout(()=>beep(1319,.12,'square',.08),70); },
+  splash(){ noiseBurst(.35,.22,700); beep(300,.25,'sine',.1,-120); },
+  yum(){ beep(523,.1,'triangle',.1); setTimeout(()=>beep(659,.12,'triangle',.1),90); },
+  sleep(){ beep(392,.18,'sine',.1,-60); setTimeout(()=>beep(330,.3,'sine',.08,-40),150); },
+  talk(){ beep(rnd(500,700),.05,'triangle',.05); },
+  task(){ [659,784,988].forEach((f,i)=>setTimeout(()=>beep(f,.16,'triangle',.1), i*80)); },
+  win(){ [523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.2,'triangle',.11), i*110)); }
+};
+
+/* ---------- 世界資料（沿用原作平面配置） ---------- */
+const zones = {
+  lobby:  { x:-6,  y:-6,  w:12, h:12, color:'#e9dab2', label:'大廳' },
+  room:   { x:-22, y:-22, w:12, h:12, color:'#f4ecd8', label:'客房' },
+  pool:   { x:12,  y:-22, w:13, h:13, color:'#bfdce6', label:'游泳池' },
+  dining: { x:-22, y:10,  w:12, h:12, color:'#ecd2a8', label:'餐廳' }
+};
+const corridorColor = '#d3c398';
+
+const hotspots = [
+  { key:'checkin', x:-6,  y:-3,  r:3.4, label:'向櫃檯辦理入住', done:false, icon:'bell' },
+  { key:'room',    x:-16, y:-16, r:3.6, label:'躺上床放好行李', done:false, icon:'bed' },
+  { key:'pool',    x:18,  y:-16, r:4.0, label:'在泳池邊放鬆一下', done:false, icon:'pool' },
+  { key:'dining',  x:-16, y:16,  r:3.6, label:'坐下來用餐', done:false, icon:'food' }
+];
+
+const npcs = [
+  { x:-7.6, y:-3.2, angle:.5, palette:{shirt:'#2f5d54',skin:'#caa07a',hair:'#3a2c22'}, li:0, talkT:0,
+    lines:['歡迎光臨！按鈴就能辦理入住。','您的房間在西北邊的客房區。','祝您住宿愉快！'] },
+  { x:20, y:-13, angle:2.4, palette:{shirt:'#c9a15a',skin:'#8a5a3c',hair:'#1c1712'}, li:0, talkT:0,
+    lines:['泳池水溫剛剛好～','記得先沖洗再下水喔。','救生圈借您玩！'] },
+  { x:-14, y:15, angle:1.6, palette:{shirt:'#8a4a3a',skin:'#e0b48c',hair:'#5a3c28'}, li:0, talkT:0,
+    lines:['今天主廚推薦是烤鮭魚。','幫您安排靠窗的位子嗎？','甜點是烤布蕾喔！'] },
+  { x:2, y:2, angle:3.1, palette:{shirt:'#3d5a80',skin:'#e0b48c',hair:'#2a2118'}, li:0, talkT:0,
+    patrol:[{x:2,y:2},{x:-3,y:4},{x:3,y:5}], pi:0, speed:2.2,
+    lines:['需要幫忙提行李嗎？','大廳的花是今天早上換的。','電梯在櫃檯後面。'] }
+];
+
+const TAG_SPOTS = [
+  {x:0,y:-14},{x:10,y:4},{x:-10,y:6},{x:20,y:-4},
+  {x:-20,y:-4},{x:2,y:18},{x:14,y:12},{x:-8,y:-20}
+];
+let tags = [];
+
+/* ---------- 玩家 ---------- */
+function makeGuest(idx){
+  return {
+    idx, x: idx? 1.2 : -1.2, y: 4.5+idx*.8, angle: -Math.PI/2,
+    speed: 9.5, bob: 0, moving:false, stepT:0,
+    squash: 0,                         // 互動時的彈跳
+    palette: idx ? {shirt:'#3d6ea5',skin:'#caa07a',hair:'#1c1712'}
+                 : {shirt:'#B5493D',skin:'#e0b48c',hair:'#2a2118'},
+    name: idx ? '小靛' : '小紅',
+    target: null
+  };
+}
+let player1 = makeGuest(0), player2 = makeGuest(1);
+let players = [player1, player2];
+
+/* ---------- 遊戲狀態 ---------- */
+const S = { scene:'title', coop:false, time:0, tagsGot:0, over:false, hintT:0 };
+let best = null;
+try{ best = JSON.parse(localStorage.getItem('pro飯店入住_best')||'null'); }catch(e){}
+
+function resetGame(coop){
+  S.coop = coop; S.time = 0; S.tagsGot = 0; S.over = false; S.hintT = 7;
+  hotspots.forEach(h => h.done = false);
+  document.querySelectorAll('.task').forEach(t => t.classList.remove('done'));
+  player1 = makeGuest(0); player2 = makeGuest(1);
+  players = [player1, player2];
+  tags = TAG_SPOTS.map(t => ({x:t.x, y:t.y, taken:false, phase:Math.random()*6}));
+  confetti.length = 0; floats.length = 0; crumbs.length = 0;
+  for(const id in sticks) delete sticks[id];
+  camera.x = 0; camera.y = 4.5;
+  $('tagCount').textContent = '0';
+  $('clock').textContent = '0:00';
+  showHint(coop ? '兩人分頭完成 4 個金色圓圈任務，順路撿行李吊牌！'
+                : '走到金色圓圈按互動完成任務，順路撿 8 枚行李吊牌！');
+}
+let hintFade = null;
+function showHint(text){
+  const el = $('hintBar');
+  el.textContent = text; el.style.display = 'block'; el.style.opacity = '1';
+  clearTimeout(hintFade);
+  hintFade = setTimeout(()=>{ el.style.opacity = '0';
+    setTimeout(()=>{ el.style.display='none'; }, 700); }, 5200);
+}
+
+/* ---------- 場景切換 ---------- */
+function enterTitle(){
+  S.scene = 'title';
+  $('titleOvl').style.display = 'flex'; $('endOvl').style.display = 'none';
+  $('hud').style.display = 'none'; compass.style.display = 'none';
+  $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
+  $('prompt').style.display = 'none';
+  $('bestLine').textContent = best ? ('🏆 最佳紀錄：'+fmtTime(best.time)+'（'+'★'.repeat(best.stars)+'）') : '';
+}
+function enterPlay(coop){
+  resetGame(coop);
+  S.scene = 'play';
+  $('titleOvl').style.display = 'none'; $('endOvl').style.display = 'none';
+  $('hud').style.display = 'block'; compass.style.display = 'block';
+  $('btnA').style.display = 'block';
+  $('btnB').style.display = coop ? 'block' : 'none';
+  stage.focus && stage.focus();
+}
+function fmtTime(t){ const m = Math.floor(t/60), s = Math.floor(t%60); return m+':' + (s<10?'0':'')+s; }
+
+function calcStars(){
+  let stars = 1;
+  if(S.tagsGot >= 8) stars++;
+  if(S.time <= 120) stars++;
+  return stars;
+}
+function endGame(){
+  S.over = true;
+  sfx.win();
+  const cx = stage.clientWidth/2, cy = stage.clientHeight/2;
+  for(let i=0;i<4;i++) setTimeout(()=>burstConfetti(rnd(cx-260,cx+260), rnd(cy-160,cy+40), 26), i*160);
+  setTimeout(()=>{
+    S.scene = 'end';
+    const stars = calcStars();
+    $('stars').textContent = '★'.repeat(stars) + '☆'.repeat(3-stars);
+    $('endStats').innerHTML = '入住時間 <b>'+fmtTime(S.time)+'</b> ｜ 行李吊牌 <b>'+S.tagsGot+'/8</b>';
+    $('endWord').textContent = stars===3 ? '完美三星入住！櫃檯、房間、泳池、餐廳都走遍了，您是模範房客！'
+      : stars===2 ? '很棒的入住體驗！再快一點、吊牌收齊就是三星滿分。'
+      : '四項任務都完成了！下次挑戰 2 分鐘內收齊吊牌吧。';
+    let newBest = false;
+    if(!best || stars > best.stars || (stars===best.stars && S.time < best.time)){
+      best = { time: Math.round(S.time), stars };
+      newBest = true;
+      try{ localStorage.setItem('pro飯店入住_best', JSON.stringify(best)); }catch(e){}
+    }
+    $('newBest').style.display = newBest ? 'block' : 'none';
+    $('bestLine2').textContent = '🏆 最佳紀錄：'+fmtTime(best.time)+'（'+'★'.repeat(best.stars)+'）';
+    $('endOvl').style.display = 'flex';
+    $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
+    $('prompt').style.display = 'none';
+  }, 1100);
+}
+
+$('startSolo').addEventListener('click', ()=>{ sfx.blip(); enterPlay(false); });
+$('startCoop').addEventListener('click', ()=>{ sfx.blip(); enterPlay(true); });
+$('replayBtn').addEventListener('click', ()=>{ sfx.blip(); enterPlay(S.coop); });
+$('menuBtn').addEventListener('click', ()=>{ sfx.blip(); enterTitle(); });
+
+/* ---------- 輸入：鍵盤 ---------- */
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Slash','Enter'].includes(e.code)) e.preventDefault();
+  if(S.scene === 'title' && (e.code==='Space'||e.code==='Enter')){ enterPlay(false); return; }
+  if(S.scene === 'end' && (e.code==='Space'||e.code==='Enter')){ enterPlay(S.coop); return; }
+  if(S.scene !== 'play') return;
+  if(e.code==='KeyE' || (!S.coop && (e.code==='Space'||e.code==='Enter'))) tryInteract(player1);
+  if(S.coop && (e.code==='Slash' || e.code==='Enter')) tryInteract(player2);
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+/* ---------- 輸入：觸控浮動搖桿 ---------- */
+const sticks = {};   // pointerId -> {who,bx,by,dx,dy}
+canvas.addEventListener('pointerdown', e => {
+  if(S.scene !== 'play') return;
+  if(e.pointerType === 'mouse') return;
+  e.preventDefault();
+  let who = 'p1';
+  if(S.coop) who = e.clientX < stage.clientWidth/2 ? 'p1' : 'p2';
+  for(const id in sticks) if(sticks[id].who === who) return;
+  sticks[e.pointerId] = { who, bx:e.clientX, by:e.clientY, dx:0, dy:0 };
+});
+canvas.addEventListener('pointermove', e => {
+  const st = sticks[e.pointerId]; if(!st) return;
+  e.preventDefault();
+  let dx = e.clientX - st.bx, dy = e.clientY - st.by;
+  const len = Math.hypot(dx,dy), DEAD = 9, R = 54;
+  if(len < DEAD){ st.dx = st.dy = 0; return; }
+  if(len > R){ st.bx = e.clientX - dx/len*R; st.by = e.clientY - dy/len*R; }
+  const n = Math.min(len,R)/R;
+  st.dx = dx/len*n; st.dy = dy/len*n;
+});
+function endStick(e){ delete sticks[e.pointerId]; }
+canvas.addEventListener('pointerup', endStick);
+canvas.addEventListener('pointercancel', endStick);
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+function stickDir(who){
+  for(const id in sticks){ if(sticks[id].who === who) return sticks[id]; }
+  return null;
+}
+$('btnA').addEventListener('pointerdown', e => { e.preventDefault(); tryInteract(player1); });
+$('btnB').addEventListener('pointerdown', e => { e.preventDefault(); tryInteract(player2); });
+
+/* ---------- 互動 ---------- */
+function tryInteract(p){
+  if(S.scene !== 'play' || S.over) return;
+  // NPC 對話優先於已完成的熱點
+  const npc = npcs.find(n => dist2d(p.x,p.y,n.x,n.y) < 3.4);
+  if(p.target && !p.target.done){
+    const h = p.target;
+    h.done = true;
+    p.squash = 1;
+    const el = document.querySelector('.task[data-key="'+h.key+'"]');
+    if(el) el.classList.add('done');
+    const [sx,sy] = project(h.x, h.y);
+    burstConfetti(sx, sy-30, 22);
+    floatText(h.x, h.y, taskFloatText(h.key), '#a97f38');
+    if(h.key==='checkin'){ sfx.ding(); bellAnim = 1; }
+    else if(h.key==='pool'){ sfx.splash(); splashAnim = 1; }
+    else if(h.key==='room'){ sfx.sleep(); }
+    else sfx.yum();
+    sfx.task();
+    if(hotspots.every(x => x.done) && !S.over) endGame();
+    else{
+      const left = hotspots.filter(x=>!x.done).length;
+      showHint('完成！還剩 '+left+' 項任務');
+    }
+    return;
+  }
+  if(npc){
+    npc.li = (npc.li+1) % npc.lines.length;
+    npc.talkT = 3;
+    sfx.talk();
+    p.squash = .6;
+  }
+}
+function taskFloatText(key){
+  return { checkin:'入住完成！拿到房卡', room:'行李放好了！', pool:'泳池好舒服～', dining:'吃得好飽！' }[key];
+}
+let bellAnim = 0, splashAnim = 0;
+
+/* ---------- 畫布尺寸 ---------- */
+let bgCv = null;
+function resize(){
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = stage.clientWidth * dpr;
+  canvas.height = stage.clientHeight * dpr;
+  canvas.style.width = stage.clientWidth+'px';
+  canvas.style.height = stage.clientHeight+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  bakeBackdrop();
+}
+function bakeBackdrop(){
+  // 靜態漸層背景整張預先烘焙，之後每幀 drawImage
+  const w = Math.max(2, stage.clientWidth), h = Math.max(2, stage.clientHeight);
+  bgCv = document.createElement('canvas'); bgCv.width = w; bgCv.height = h;
+  const g = bgCv.getContext('2d');
+  const grad = g.createLinearGradient(0,0,0,h);
+  grad.addColorStop(0,'#fdf6e4'); grad.addColorStop(.55,'#f4e9cd'); grad.addColorStop(1,'#e7d7b4');
+  g.fillStyle = grad; g.fillRect(0,0,w,h);
+  // 上方柔和光帶（大廳吊燈光暈感）
+  const halo = g.createRadialGradient(w/2, -h*.1, 10, w/2, -h*.1, h*.8);
+  halo.addColorStop(0,'rgba(255,244,214,.85)'); halo.addColorStop(1,'rgba(255,244,214,0)');
+  g.fillStyle = halo; g.fillRect(0,0,w,h);
+  // 角落暗角
+  const vig = g.createRadialGradient(w/2,h/2,Math.min(w,h)*.35, w/2,h/2, Math.max(w,h)*.75);
+  vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(90,60,20,.18)');
+  g.fillStyle = vig; g.fillRect(0,0,w,h);
+}
+addEventListener('resize', resize);
+resize();
+
+/* ---------- 等角投影與攝影機 ---------- */
+const TILE = 26;
+const camera = { x:0, y:4.5 };
+function project(wx, wy){
+  const cx = stage.clientWidth/2, cy = stage.clientHeight*.5;
+  const rx = wx - camera.x, ry = wy - camera.y;
+  return [ (rx-ry)*TILE*.86 + cx, (rx+ry)*TILE*.5 + cy ];
+}
+function updateCamera(dt){
+  const mx = (player1.x+player2.x)/2, my = (player1.y+player2.y)/2;
+  const e = 1 - Math.pow(.001, dt);
+  camera.x += (mx-camera.x)*e;
+  camera.y += (my-camera.y)*e;
+}
+
+function shade(col, amt){
+  let r, g, b;
+  if(col[0] === '#'){
+    const c = col.slice(1);
+    const num = parseInt(c.length===3 ? c.split('').map(x=>x+x).join('') : c, 16);
+    r = num>>16; g = (num>>8)&255; b = num&255;
+  }else{                        // 也接受 rgb(...)，可對已調色的顏色再調色
+    const m = col.match(/\d+/g);
+    r = +m[0]; g = +m[1]; b = +m[2];
+  }
+  return 'rgb('+clamp(r+amt,0,255)+','+clamp(g+amt,0,255)+','+clamp(b+amt,0,255)+')';
+}
+
+/* ---------- 等角繪圖基元 ---------- */
+function fillIsoRect(x,y,w,h,color,outline){
+  const pts = [project(x,y), project(x+w,y), project(x+w,y+h), project(x,y+h)];
+  ctx.beginPath();
+  ctx.moveTo(pts[0][0],pts[0][1]);
+  for(let i=1;i<4;i++) ctx.lineTo(pts[i][0],pts[i][1]);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  if(outline){ ctx.strokeStyle = outline; ctx.lineWidth = 1.5; ctx.stroke(); }
+}
+function drawBox(wx, wy, w, h, baseE, height, color){
+  const p0 = project(wx-w/2, wy-h/2), p1 = project(wx+w/2, wy-h/2),
+        p2 = project(wx+w/2, wy+h/2), p3 = project(wx-w/2, wy+h/2);
+  const b = baseE*TILE*.5, tp = (baseE+height)*TILE*.5;
+  const base = [p0,p1,p2,p3].map(p=>[p[0],p[1]-b]);
+  const top  = [p0,p1,p2,p3].map(p=>[p[0],p[1]-tp]);
+  ctx.beginPath();  // 左前側
+  ctx.moveTo(base[2][0],base[2][1]); ctx.lineTo(base[3][0],base[3][1]);
+  ctx.lineTo(top[3][0],top[3][1]); ctx.lineTo(top[2][0],top[2][1]);
+  ctx.closePath(); ctx.fillStyle = shade(color,-26); ctx.fill();
+  ctx.beginPath();  // 右前側
+  ctx.moveTo(base[1][0],base[1][1]); ctx.lineTo(base[2][0],base[2][1]);
+  ctx.lineTo(top[2][0],top[2][1]); ctx.lineTo(top[1][0],top[1][1]);
+  ctx.closePath(); ctx.fillStyle = shade(color,-12); ctx.fill();
+  ctx.beginPath();  // 頂面
+  ctx.moveTo(top[0][0],top[0][1]); ctx.lineTo(top[1][0],top[1][1]);
+  ctx.lineTo(top[2][0],top[2][1]); ctx.lineTo(top[3][0],top[3][1]);
+  ctx.closePath(); ctx.fillStyle = color; ctx.fill();
+  ctx.strokeStyle = 'rgba(60,40,20,.18)'; ctx.lineWidth = 1; ctx.stroke();
+}
+function groundShadow(wx, wy, rx, ry){
+  const [sx,sy] = project(wx,wy);
+  ctx.beginPath();
+  ctx.ellipse(sx, sy+4, rx, ry, 0, 0, Math.PI*2);
+  ctx.fillStyle = 'rgba(60,40,20,.22)'; ctx.fill();
+}
+
+/* ---------- 角色（多部件：腳/身/手/頭/髮/眼） ---------- */
+function drawFigure(a, t){
+  const wx = a.x, wy = a.y;
+  groundShadow(wx, wy, 10, 4);
+  const legLift = a.moving ? Math.sin(a.bob)* .1 : 0;
+  const bobUp = a.moving ? Math.abs(Math.sin(a.bob))*.06 : Math.sin(t*2+a.x)*0.02;
+  const sq = a.squash > 0 ? 1 - Math.sin(a.squash*Math.PI)*.18 : 1;
+  const facing = Math.cos(a.angle) >= 0 ? 1 : -1;
+  // 腳（交錯抬起）
+  drawBox(wx-.16, wy, .3, .3, Math.max(0,legLift)+ .0, .34, '#4a5c66');
+  drawBox(wx+.16, wy, .3, .3, Math.max(0,-legLift)+.0, .34, '#3f4f58');
+  // 身體
+  drawBox(wx, wy, .64, .5, .34+bobUp, .62*sq, a.palette.shirt);
+  // 手（隨走路前後擺）
+  const arm = a.moving ? Math.sin(a.bob)*.16 : 0;
+  drawBox(wx-.42, wy+arm*.5, .16, .2, .5+bobUp, .34, shade(a.palette.shirt,-16));
+  drawBox(wx+.42, wy-arm*.5, .16, .2, .5+bobUp, .34, shade(a.palette.shirt,-16));
+  // 頭與髮
+  drawBox(wx, wy, .42, .42, .96*sq+bobUp, .36, a.palette.skin);
+  drawBox(wx, wy, .46, .46, .96*sq+bobUp+.32, .14, a.palette.hair);
+  // 臉（朝向鏡頫時畫眼睛，看向行進方向）
+  const [hx, hy] = project(wx, wy);
+  const headY = hy - (.96*sq+bobUp)*TILE*.5 - .18*TILE*.5 - 4;
+  const lookX = clamp(Math.cos(a.angle)*2.6, -2.6, 2.6);
+  ctx.fillStyle = '#26201a';
+  ctx.beginPath(); ctx.arc(hx-3.4+lookX, headY, 1.35, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(hx+3.4+lookX, headY, 1.35, 0, Math.PI*2); ctx.fill();
+  // 微笑
+  ctx.strokeStyle = 'rgba(90,50,40,.75)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.arc(hx+lookX*.6, headY+2.4, 2.1, .25, Math.PI-.25); ctx.stroke();
+}
+function drawNameTag(p){
+  const [sx,sy] = project(p.x,p.y);
+  ctx.font = 'bold 11px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,253,247,.85)';
+  const w = ctx.measureText(p.name).width+10;
+  ctx.fillRect(sx-w/2, sy-52, w, 15);
+  ctx.fillStyle = p.palette.shirt;
+  ctx.fillText(p.name, sx, sy-40.5);
+}
+
+/* ---------- 對話泡泡與標籤 ---------- */
+function drawSpeechBubble(wx, wy, text){
+  const [sx, syRaw] = project(wx, wy);
+  const sy = syRaw - 64;
+  ctx.font = '13px -apple-system,"PingFang TC",sans-serif';
+  const w = ctx.measureText(text).width + 24, h = 28, left = sx-w/2, r = 9;
+  ctx.beginPath();
+  ctx.moveTo(left+r, sy);
+  ctx.arcTo(left+w, sy, left+w, sy+h, r);
+  ctx.arcTo(left+w, sy+h, left, sy+h, r);
+  ctx.arcTo(left, sy+h, left, sy, r);
+  ctx.arcTo(left, sy, left+w, sy, r);
+  ctx.closePath();
+  ctx.moveTo(sx-6, sy+h); ctx.lineTo(sx, sy+h+8); ctx.lineTo(sx+6, sy+h);
+  ctx.fillStyle = '#fffdf7'; ctx.fill();
+  ctx.strokeStyle = '#C9A15A'; ctx.lineWidth = 1.2; ctx.stroke();
+  ctx.fillStyle = '#1c2420'; ctx.textAlign = 'center';
+  ctx.fillText(text, sx, sy+h/2+4.5);
+}
+function drawLabel(wx, wy, text){
+  const [sx, sy] = project(wx, wy);
+  ctx.font = '600 13px Georgia,serif'; ctx.textAlign = 'center';
+  const w = ctx.measureText(text).width + 16;
+  ctx.fillStyle = 'rgba(255,253,247,.92)';
+  ctx.fillRect(sx-w/2, sy-34, w, 20);
+  ctx.strokeStyle = '#C9A15A'; ctx.lineWidth = 1;
+  ctx.strokeRect(sx-w/2, sy-34, w, 20);
+  ctx.fillStyle = '#1c2420';
+  ctx.fillText(text, sx, sy-19.5);
+}
+
+/* ---------- 粒子（彩紙、飄字、水花、塵埃）swap-pop 回收 ---------- */
+const confetti = [];
+const CONF_COLORS = ['#C9A15A','#B5493D','#3d6ea5','#7aa874','#e8b84a'];
+function burstConfetti(sx, sy, n){
+  for(let i=0;i<n;i++){
+    if(confetti.length > 260) return;
+    confetti.push({ x:sx, y:sy, vx:rnd(-140,140), vy:rnd(-260,-60),
+      rot:rnd(0,6), vr:rnd(-8,8), life:rnd(.8,1.5), max:1.5,
+      color:CONF_COLORS[i%CONF_COLORS.length], w:rnd(4,7), h:rnd(2,4) });
+  }
+}
+function updateConfetti(dt){
+  for(let i=confetti.length-1;i>=0;i--){
+    const c = confetti[i];
+    c.x += c.vx*dt; c.y += c.vy*dt; c.vy += 420*dt; c.rot += c.vr*dt; c.life -= dt;
+    if(c.life <= 0){ confetti[i] = confetti[confetti.length-1]; confetti.pop(); }
+  }
+}
+function drawConfetti(){
+  for(const c of confetti){
+    ctx.save();
+    ctx.translate(c.x, c.y); ctx.rotate(c.rot);
+    ctx.globalAlpha = clamp(c.life/c.max*1.6, 0, 1);
+    ctx.fillStyle = c.color;
+    ctx.fillRect(-c.w/2, -c.h/2, c.w, c.h);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+const floats = [];
+function floatText(wx, wy, text, color){ floats.push({wx, wy, dy:0, text, color, life:1.4}); }
+function updateFloats(dt){
+  for(let i=floats.length-1;i>=0;i--){
+    const f = floats[i]; f.dy -= 30*dt; f.life -= dt;
+    if(f.life<=0){ floats[i]=floats[floats.length-1]; floats.pop(); }
+  }
+}
+function drawFloatsAll(){
+  ctx.font = 'bold 15px "PingFang TC","Microsoft JhengHei",sans-serif'; ctx.textAlign='center';
+  for(const f of floats){
+    const [sx,sy] = project(f.wx, f.wy);
+    ctx.globalAlpha = clamp(f.life, 0, 1);
+    ctx.fillStyle = '#fffdf7'; ctx.fillText(f.text, sx+1, sy-58+f.dy+1);
+    ctx.fillStyle = f.color; ctx.fillText(f.text, sx, sy-58+f.dy);
+  }
+  ctx.globalAlpha = 1;
+}
+// 大廳漂浮塵埃（氛圍）
+const motes = [];
+for(let i=0;i<18;i++) motes.push({x:rnd(-20,20), y:rnd(-20,20), p:rnd(0,6), s:rnd(.5,1)});
+
+/* ---------- 世界更新 ---------- */
+const crumbs = [];
+function moveGuest(p, dx, dy, dt){
+  const len = Math.hypot(dx,dy);
+  p.moving = len > .05;
+  if(p.moving){
+    dx/=len; dy/=len;
+    const sp = p.speed * Math.min(len,1);
+    p.x = clamp(p.x + dx*sp*dt, -23.2, 24.6);
+    p.y = clamp(p.y + dy*sp*dt, -23.2, 23.4);
+    p.angle = Math.atan2(dy,dx);
+    p.bob += dt*9.5;
+    p.stepT -= dt;
+    if(p.stepT <= 0){ p.stepT = .27; sfx.step(p.idx); }
+  }else p.bob = 0;
+  p.squash = Math.max(0, p.squash - dt*2.2);
+}
+function updateCompanion(dt){
+  const last = crumbs[crumbs.length-1];
+  if(!last || dist2d(last.x,last.y,player1.x,player1.y) > .8) crumbs.push({x:player1.x,y:player1.y});
+  if(crumbs.length > 60) crumbs.shift();
+  let dx = 0, dy = 0;
+  if(dist2d(player2.x,player2.y,player1.x,player1.y) > 2.6 && crumbs.length){
+    let t = crumbs[0];
+    while(crumbs.length > 1 && dist2d(player2.x,player2.y,t.x,t.y) < .7){ crumbs.shift(); t = crumbs[0]; }
+    const d = dist2d(player2.x,player2.y,t.x,t.y);
+    if(d > .2){ dx = (t.x-player2.x)/d; dy = (t.y-player2.y)/d; }
+  }
+  moveGuest(player2, dx, dy, dt);
+}
+function nearestHotspot(p){
+  let bestD = Infinity, target = null;
+  for(const h of hotspots){
+    if(h.done) continue;
+    const d = dist2d(p.x,p.y,h.x,h.y);
+    if(d < h.r && d < bestD){ target = h; bestD = d; }
+  }
+  return target;
+}
+function updateNPCs(dt, t){
+  npcs.forEach(n => {
+    n.talkT = Math.max(0, n.talkT - dt);
+    if(n.patrol){
+      const tgt = n.patrol[n.pi];
+      const d = dist2d(n.x,n.y,tgt.x,tgt.y);
+      if(d < .3) n.pi = (n.pi+1)%n.patrol.length;
+      else{
+        n.x += (tgt.x-n.x)/d * n.speed*dt;
+        n.y += (tgt.y-n.y)/d * n.speed*dt;
+        n.angle = Math.atan2(tgt.y-n.y, tgt.x-n.x);
+        n.moving = true; n.bob = (n.bob||0)+dt*8;
+      }
+    }
+  });
+}
+function updateTags(){
+  tags.forEach(tag => {
+    if(tag.taken) return;
+    players.forEach(p => {
+      if(tag.taken) return;
+      if(dist2d(p.x,p.y,tag.x,tag.y) < 1.7){   // 寬容判定
+        tag.taken = true; S.tagsGot++;
+        $('tagCount').textContent = S.tagsGot;
+        sfx.tag();
+        const [sx,sy] = project(tag.x,tag.y);
+        burstConfetti(sx, sy-10, 8);
+        floatText(tag.x, tag.y, '🏷 +1', '#a97f38');
+        if(S.tagsGot === 8) showHint('吊牌收齊了！完成剩下的任務吧');
+      }
+    });
+  });
+}
+
+function update(dt, t){
+  if(S.scene !== 'play' || S.over){
+    updateConfetti(dt); updateFloats(dt);
+    return;
+  }
+  S.time += dt;
+  if((S.time|0) !== ((S.time-dt)|0)) $('clock').textContent = fmtTime(S.time);
+
+  let dx1 = 0, dy1 = 0;
+  if(keys['KeyW']) dy1--; if(keys['KeyS']) dy1++;
+  if(keys['KeyA']) dx1--; if(keys['KeyD']) dx1++;
+  if(!S.coop){
+    if(keys['ArrowUp']) dy1--; if(keys['ArrowDown']) dy1++;
+    if(keys['ArrowLeft']) dx1--; if(keys['ArrowRight']) dx1++;
+  }
+  const st1 = stickDir('p1');
+  if(st1){ dx1 += st1.dx; dy1 += st1.dy; }
+  moveGuest(player1, dx1, dy1, dt);
+
+  if(S.coop){
+    let dx2 = 0, dy2 = 0;
+    if(keys['ArrowUp']) dy2--; if(keys['ArrowDown']) dy2++;
+    if(keys['ArrowLeft']) dx2--; if(keys['ArrowRight']) dx2++;
+    const st2 = stickDir('p2');
+    if(st2){ dx2 += st2.dx; dy2 += st2.dy; }
+    moveGuest(player2, dx2, dy2, dt);
+  }else{
+    updateCompanion(dt);
+  }
+
+  player1.target = nearestHotspot(player1);
+  player2.target = S.coop ? nearestHotspot(player2) : null;
+  const active = player1.target || player2.target;
+  const promptEl = $('prompt');
+  if(active){
+    promptEl.style.display = 'block';
+    const who = player1.target ? (S.coop?'小紅：':'') : '小靛：';
+    $('promptText').textContent = who + active.label;
+    promptEl.querySelector('kbd').textContent = player1.target ? 'E' : 'Enter';
+  }else promptEl.style.display = 'none';
+
+  updateNPCs(dt, t);
+  updateTags();
+  updateConfetti(dt);
+  updateFloats(dt);
+  bellAnim = Math.max(0, bellAnim - dt*2);
+  splashAnim = Math.max(0, splashAnim - dt*1.2);
+}
+
+/* ---------- 世界繪製 ---------- */
+function drawZoneFloors(){
+  // 走廊大地坪
+  fillIsoRect(-24,-24,49,48, corridorColor, 'rgba(22,51,44,.22)');
+  // 走廊金色引導線
+  fillIsoRect(-24,-1.4,49,2.8,'rgba(201,161,90,.3)');
+  fillIsoRect(-1.4,-24,2.8,48,'rgba(201,161,90,.3)');
+  Object.values(zones).forEach(z => fillIsoRect(z.x,z.y,z.w,z.h,z.color,'rgba(22,51,44,.28)'));
+  // 大廳圓形地毯
+  const [rx,ry] = project(0,0);
+  ctx.beginPath();
+  ctx.ellipse(rx, ry, TILE*4.6, TILE*2.6, 0, 0, Math.PI*2);
+  ctx.fillStyle = '#b5493d'; ctx.fill();
+  ctx.beginPath();
+  ctx.ellipse(rx, ry, TILE*3.4, TILE*1.9, 0, 0, Math.PI*2);
+  ctx.strokeStyle = '#e8cf9a'; ctx.lineWidth = 2; ctx.stroke();
+  // 泳池水面（動態波紋另外畫）
+  const pz = zones.pool;
+  fillIsoRect(pz.x+1.5, pz.y+3, 9.5, 9.5, '#3f9cc4', 'rgba(20,60,80,.5)');
+}
+function drawPoolRipples(t){
+  const pz = zones.pool;
+  ctx.strokeStyle = 'rgba(220,245,255,.5)'; ctx.lineWidth = 1.4;
+  for(let i=0;i<3;i++){
+    const ph = (t*.5 + i/3) % 1;
+    const cxw = pz.x+6.2, cyw = pz.y+7.7;
+    const [sx,sy] = project(cxw, cyw);
+    ctx.globalAlpha = (1-ph)*.6;
+    ctx.beginPath();
+    ctx.ellipse(sx, sy-2, TILE*3.4*ph+8, TILE*1.9*ph+4, 0, 0, Math.PI*2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+  // 濺起的水花（完成泳池任務時）
+  if(splashAnim > 0){
+    const [sx,sy] = project(18,-16);
+    for(let i=0;i<7;i++){
+      const a = i/7*Math.PI*2;
+      const rr = (1-splashAnim)*36+8;
+      ctx.fillStyle = 'rgba(120,200,235,'+(splashAnim*.9)+')';
+      ctx.beginPath();
+      ctx.arc(sx+Math.cos(a)*rr, sy-14-splashAnim*24+Math.sin(a)*rr*.5, 3.4, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+}
+
+// 深度排序的立體物件清單（每幀重建參照，靜態內容輕量）
+function buildDrawables(t){
+  const D = [];
+  const add = (y, fn) => D.push({y, fn});
+  // 各區背牆（低牆，區隔空間又不擋視線）
+  Object.values(zones).forEach(z => {
+    add(z.y-.2, ()=>{ drawBox(z.x+z.w/2, z.y+.15, z.w, .3, 0, 1.15, shade(z.color,-34)); });
+    add(z.y+z.h/2, ()=>{ drawBox(z.x+.15, z.y+z.h/2, .3, z.h, 0, 1.15, shade(z.color,-40)); });
+  });
+  // ---- 大廳：櫃檯＋服務鈴＋沙發＋盆栽 ----
+  add(-3.2, ()=>{
+    drawBox(-6,-3.4, 4,1.3, 0, 1.05, '#6d4c41');
+    drawBox(-6,-3.4, 4.3,1.5, 1.05, .12, '#8a6a52');
+    // 服務鈴（OpenMoji），按鈴時跳一下
+    if(bellImg.complete && bellImg.naturalWidth){
+      const [bx,by] = project(-5.2,-3.5);
+      const jump = Math.sin(bellAnim*Math.PI)*10;
+      ctx.drawImage(bellImg, bx-11, by-42-jump, 22, 22);
+    }
+  });
+  add(2.5, ()=>{ // 沙發
+    drawBox(3.4,2.5, 2.4,1, 0, .55, '#7a5a48');
+    drawBox(3.4,2.9, 2.4,.35, .3, .55, '#93705a');
+  });
+  [[-9,-8],[9,-8],[-9,7],[8.4,8.6]].forEach(([px,py]) => add(py, ()=>{  // 盆栽
+    drawBox(px,py, .6,.6, 0, .5, '#8a5a3c');
+    const [sx,sy] = project(px,py);
+    const sway = Math.sin(t*1.5+px)*2;
+    ctx.fillStyle = '#527f39';
+    for(let i=0;i<3;i++){
+      ctx.beginPath();
+      ctx.ellipse(sx+(i-1)*7+sway, sy-24-((i===1)?8:0), 6.5, 11, (i-1)*.4, 0, Math.PI*2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#6d9a4b';
+    ctx.beginPath(); ctx.ellipse(sx+sway*.6, sy-30, 5, 9, 0, 0, Math.PI*2); ctx.fill();
+  }));
+  // ---- 客房：床＋枕頭＋浴缸＋衣櫃＋立燈 ----
+  add(-16.4, ()=>{
+    drawBox(-16,-16.6, 3.6,2.8, 0, .8, '#f2ead8');
+    drawBox(-16,-16.1, 3.4,1.8, .8, .35, '#e0808f');       // 被子
+    drawBox(-16.9,-17.3, 1.3,.7, .8, .3, '#ffffff');       // 枕頭
+  });
+  add(-15.8, ()=>{ drawBox(-19.6,-16, 2,1.5, 0, .7, '#e8f0f2');   // 浴缸
+    const [sx,sy] = project(-19.6,-16);
+    ctx.fillStyle = 'rgba(140,200,225,.8)';
+    ctx.beginPath(); ctx.ellipse(sx, sy-11, 17, 8, 0, 0, Math.PI*2); ctx.fill();
+  });
+  add(-20.6, ()=>{ drawBox(-13,-20.8, 1.4,1, 0, 1.7, '#7a5a40'); });   // 衣櫃
+  add(-13.4, ()=>{ // 立燈
+    drawBox(-12.6,-13.5, .25,.25, 0, 1.3, '#5a4632');
+    const [sx,sy] = project(-12.6,-13.5);
+    ctx.fillStyle = '#f3d98f';
+    ctx.beginPath(); ctx.moveTo(sx-8, sy-34); ctx.lineTo(sx+8, sy-34);
+    ctx.lineTo(sx+5, sy-44); ctx.lineTo(sx-5, sy-44); ctx.closePath(); ctx.fill();
+  });
+  // ---- 泳池：躺椅＋陽傘＋救生圈 ----
+  add(-11.6, ()=>{ drawBox(14,-11.8, 1.7,.8, 0, .4, '#fffdf7'); drawBox(14.6,-11.8, .5,.8, .4, .3, '#fffdf7'); });
+  add(-10.9, ()=>{ drawBox(21.5,-11, 1.7,.8, 0, .4, '#fffdf7');
+    drawBox(21.2,-12.2, .2,.2, 0, 2.1, '#8a6a52');           // 傘柱
+    const [sx,sy] = project(21.2,-12.2);
+    ctx.fillStyle = '#e0776a';
+    ctx.beginPath(); ctx.ellipse(sx, sy-56, 30, 13, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#f4ecd8';
+    ctx.beginPath(); ctx.ellipse(sx, sy-56, 30, 13, 0, Math.PI*.25, Math.PI*.55); ctx.lineTo(sx,sy-56); ctx.fill();
+  });
+  add(-14.5, ()=>{ // 漂浮救生圈
+    const bobY = Math.sin(t*1.8)*2.5;
+    const [sx,sy] = project(17,-14.5);
+    ctx.lineWidth = 7; ctx.strokeStyle = '#e85a4a';
+    ctx.beginPath(); ctx.ellipse(sx, sy-4+bobY, 14, 7, 0, 0, Math.PI*2); ctx.stroke();
+    ctx.lineWidth = 3; ctx.strokeStyle = '#fffdf7';
+    ctx.beginPath(); ctx.ellipse(sx, sy-4+bobY, 14, 7, 0, .2, .9); ctx.stroke();
+    ctx.beginPath(); ctx.ellipse(sx, sy-4+bobY, 14, 7, 0, Math.PI+.2, Math.PI+.9); ctx.stroke();
+  });
+  // ---- 餐廳：兩桌＋餐點＋吧檯 ----
+  [[-16,16],[-19,13]].forEach(([px,py],i) => add(py, ()=>{
+    drawBox(px,py, .3,.3, 0, .75, '#5d4037');
+    drawBox(px,py, 1.9,1.4, .75, .18, '#fffdf7');
+    const [sx,sy] = project(px,py);
+    ctx.fillStyle = '#e8e0d0';
+    ctx.beginPath(); ctx.ellipse(sx, sy-13, 7.5, 3.6, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = i? '#d98f4a' : '#c96a4a';
+    ctx.beginPath(); ctx.ellipse(sx, sy-14.5, 4.2, 2.2, 0, 0, Math.PI*2); ctx.fill();
+    // 熱氣
+    ctx.strokeStyle = 'rgba(255,255,255,.55)'; ctx.lineWidth = 1.4;
+    const ph = (t*.8+i*.5)%1;
+    ctx.globalAlpha = 1-ph;
+    ctx.beginPath(); ctx.moveTo(sx-3, sy-18-ph*10);
+    ctx.quadraticCurveTo(sx, sy-22-ph*10, sx-1, sy-26-ph*10); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }));
+  add(19.4, ()=>{ drawBox(-16,19.6, 5,1, 0, 1.0, '#7a5a40'); });   // 吧檯
+  // ---- 任務熱點光圈與圖示 ----
+  hotspots.forEach(h => {
+    if(h.done) return;
+    add(h.y-.01, ()=>{
+      const [sx,sy] = project(h.x,h.y);
+      const pulse = .8 + Math.sin(t*3.2)*.2;
+      ctx.strokeStyle = 'rgba(201,161,90,.9)'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.ellipse(sx, sy, TILE*1.15*pulse, TILE*.62*pulse, 0, 0, Math.PI*2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(201,161,90,.35)'; ctx.lineWidth = 6;
+      ctx.beginPath(); ctx.ellipse(sx, sy, TILE*1.35*pulse, TILE*.75*pulse, 0, 0, Math.PI*2); ctx.stroke();
+      // 浮動任務編號徽章
+      const bobY = Math.sin(t*2.4)*3;
+      const num = hotspots.indexOf(h)+1;
+      ctx.fillStyle = '#C9A15A';
+      ctx.beginPath(); ctx.arc(sx, sy-38+bobY, 11, 0, Math.PI*2); ctx.fill();
+      ctx.strokeStyle = '#fffdf7'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = 'bold 13px Georgia,serif'; ctx.textAlign='center';
+      ctx.fillText(num, sx, sy-33.6+bobY);
+      ctx.beginPath();          // 指向地面的小三角
+      ctx.moveTo(sx-4, sy-27+bobY); ctx.lineTo(sx+4, sy-27+bobY); ctx.lineTo(sx, sy-20+bobY);
+      ctx.closePath(); ctx.fillStyle = '#C9A15A'; ctx.fill();
+    });
+  });
+  // ---- 行李吊牌 ----
+  tags.forEach(tag => {
+    if(tag.taken) return;
+    add(tag.y, ()=>{
+      const [sx,sy] = project(tag.x,tag.y);
+      const bobY = Math.sin(t*2.6+tag.phase)*3.5;
+      groundShadow(tag.x, tag.y, 6, 2.5);
+      ctx.save();
+      ctx.translate(sx, sy-16+bobY);
+      ctx.rotate(Math.sin(t*1.8+tag.phase)*.2);
+      ctx.fillStyle = '#e8b84a';
+      ctx.strokeStyle = '#8a6a2a'; ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(-7,-9); ctx.lineTo(7,-9); ctx.lineTo(7,9); ctx.lineTo(0,13); ctx.lineTo(-7,9);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#fffdf7';
+      ctx.beginPath(); ctx.arc(0,-5,2.2,0,Math.PI*2); ctx.fill();
+      ctx.fillRect(-4,1,8,1.6); ctx.fillRect(-4,4.5,6,1.6);
+      ctx.restore();
+      // 閃光
+      if(Math.sin(t*3+tag.phase) > .88){
+        ctx.strokeStyle = 'rgba(255,245,200,.95)'; ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(sx+9, sy-30+bobY); ctx.lineTo(sx+9, sy-22+bobY);
+        ctx.moveTo(sx+5, sy-26+bobY); ctx.lineTo(sx+13, sy-26+bobY);
+        ctx.stroke();
+      }
+    });
+  });
+  // ---- 角色 ----
+  npcs.forEach(n => add(n.y, ()=>{ drawFigure({...n, moving:!!n.patrol, bob:n.bob||Math.PI/2, squash:0}, t); }));
+  players.forEach(p => add(p.y, ()=>{ drawFigure(p, t); drawNameTag(p); }));
+  return D;
+}
+
+function drawCompass(){
+  cctx.clearRect(0,0,70,70);
+  cctx.save();
+  cctx.translate(35,35);
+  cctx.strokeStyle = '#C9A15A'; cctx.fillStyle = '#1c2420';
+  cctx.font = '600 10px sans-serif'; cctx.textAlign = 'center';
+  cctx.beginPath(); cctx.arc(0,0,24,0,Math.PI*2); cctx.lineWidth = 1.2; cctx.stroke();
+  [['N',0,-30],['S',0,30],['E',30,0],['W',-30,0]].forEach(([tx,x,y]) => cctx.fillText(tx,x,y+3.5));
+  cctx.rotate(-player1.angle - Math.PI/4);
+  cctx.beginPath();
+  cctx.moveTo(0,-16); cctx.lineTo(5.4,7); cctx.lineTo(0,2.6); cctx.lineTo(-5.4,7);
+  cctx.closePath();
+  cctx.fillStyle = '#B5493D'; cctx.fill();
+  cctx.restore();
+}
+
+function render(t){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  if(bgCv) ctx.drawImage(bgCv, 0, 0, w, h);
+  drawZoneFloors();
+  drawPoolRipples(t);
+  // 塵埃光點
+  ctx.fillStyle = 'rgba(255,244,200,.4)';
+  motes.forEach(m => {
+    const [sx,sy] = project(m.x + Math.sin(t*.3+m.p)*1.2, m.y + Math.cos(t*.25+m.p)*1.2);
+    ctx.globalAlpha = .18 + Math.sin(t+m.p)*.12;
+    ctx.beginPath(); ctx.arc(sx, sy-30-m.p*8, m.s*2, 0, Math.PI*2); ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  // 深度排序繪製
+  const D = buildDrawables(t);
+  D.sort((a,b)=>a.y-b.y);
+  for(const d of D) d.fn();
+  // 區域標示（畫在場景之上，不被牆面遮住）
+  drawLabel(-1.5, -5, '大廳');
+  drawLabel(-16, -20.6, '客房');
+  drawLabel(18.5, -20.6, '游泳池');
+  drawLabel(-16, 11.4, '餐廳');
+  // NPC 對話泡泡（靠近的才顯示）
+  npcs.forEach(n => {
+    const near = players.some(p => dist2d(p.x,p.y,n.x,n.y) < 4);
+    if(near) drawSpeechBubble(n.x, n.y, n.lines[n.li]);
+  });
+  drawFloatsAll();
+  drawConfetti();
+  // 虛擬搖桿視覺
+  for(const id in sticks){
+    const st = sticks[id];
+    ctx.globalAlpha = .4;
+    ctx.strokeStyle = '#8a6a2a'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(st.bx, st.by, 54, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = st.who==='p1' ? '#B5493D' : '#3d6ea5';
+    ctx.beginPath(); ctx.arc(st.bx+st.dx*54, st.by+st.dy*54, 27, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  if(S.scene === 'play') drawCompass();
+}
+
+/* ---------- 主迴圈（固定時間步進） ---------- */
+const STEP = 1/60;
+let last = performance.now(), acc = 0, tGlobal = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, .1);
+  last = now;
+  while(acc >= STEP){
+    acc -= STEP;
+    tGlobal += STEP;
+    update(STEP, tGlobal);
+    if(S.scene === 'play') updateCamera(STEP);
+  }
+  render(tGlobal);
+}
+enterTitle();
+requestAnimationFrame(frame);
+
+/* ---------- QA 掛鉤（無頭瀏覽器可玩性驗證用，不影響遊戲） ---------- */
+window.__QA = {
+  snap(){ return { scene:S.scene, coop:S.coop, time:S.time,
+    p1x:player1.x, p1y:player1.y, p2x:player2.x, p2y:player2.y,
+    tasksDone:hotspots.filter(h=>h.done).length, tags:S.tagsGot }; },
+  teleport(x,y){ player1.x = x; player1.y = y; },
+  interact(){ player1.target = nearestHotspot(player1); tryInteract(player1); }
+};
+
+})();
+</script>
+</body>
+</html>

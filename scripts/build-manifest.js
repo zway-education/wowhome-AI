@@ -44,7 +44,8 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
       title: f.replace(/\.html?$/i, ''),
       thumb: thumbSlug(f),
     };
-    const author = overrides[cat + '/' + f] || metaAuthor(path.join(dir, f));
+    const baseCat = cat.replace(/^pro\//, '');
+    const author = overrides[cat + '/' + f] || overrides[baseCat + '/' + f] || metaAuthor(path.join(dir, f));
     if (author) entry.author = author;
     const pv = previews[cat + '/' + thumbSlug(f)];
     if (pv) entry.preview = pv;
