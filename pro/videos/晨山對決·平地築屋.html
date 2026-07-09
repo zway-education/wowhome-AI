@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -139,6 +139,35 @@
   #endOverlay .end-fin{
     font-size:clamp(12px,1.6vw,15px); letter-spacing:0.6em; color:var(--gold); padding-left:0.6em;
   }
+  #endOverlay .end-feature{
+    font-size:clamp(11px,1.5vw,13px); letter-spacing:0.14em; color:rgba(255,212,100,0.82);
+    margin-top:2px; line-height:1.5; max-width:88%;
+  }
+
+  /* ---- v4 章節選單（左下角・跳看任一幕） ---- */
+  #chapters{
+    position:absolute;
+    left:calc(10px + env(safe-area-inset-left, 0px));
+    bottom:calc(10px + env(safe-area-inset-bottom, 0px));
+    display:flex; gap:7px; z-index:5; opacity:0.62;
+    transition:opacity 0.3s ease;
+  }
+  #chapters:hover{ opacity:1; }
+  #chapters.gone{ opacity:0; pointer-events:none; }
+  .chapBtn{
+    font:inherit; display:inline-flex; flex-direction:column; align-items:center; justify-content:center; gap:1px;
+    min-width:48px; min-height:48px; padding:6px 10px; line-height:1.1;
+    color:var(--ink); background:rgba(20,12,26,0.62);
+    border:1px solid rgba(244,230,200,0.3); border-radius:12px; cursor:pointer;
+    transition:background 0.2s ease, border-color 0.2s ease, transform 0.12s ease;
+  }
+  .chapBtn b{ font-size:15px; font-weight:700; color:var(--gold); }
+  .chapBtn span{ font-size:10px; opacity:0.85; letter-spacing:0.1em; }
+  .chapBtn:hover{ background:rgba(181,67,46,0.5); border-color:var(--gold); }
+  .chapBtn:active{ transform:scale(0.94); background:rgba(181,67,46,0.7); }
+  .chapBtn.cur{ border-color:var(--gold); }
+  .chapBtn.cur b{ text-shadow:0 0 12px rgba(255,212,100,0.7); }
+  .chapBtn:focus-visible{ outline:3px solid var(--gold); outline-offset:2px; }
   #replayBtn{
     font:inherit; font-size:clamp(16px,2.2vw,19px); font-weight:700; letter-spacing:0.2em;
     color:var(--gold); background:transparent; border:2px solid var(--gold);
@@ -167,6 +196,11 @@
   <div id="subtitle"></div>
   <button id="soundBtn" type="button">♪ 聲音：關</button>
   <div id="hint">自動播放中 · 點「聲音」開啟音效</div>
+  <div id="chapters" aria-label="章節選單">
+    <button class="chapBtn" type="button" data-t="0"><b>一</b><span>晨光雙景</span></button>
+    <button class="chapBtn" type="button" data-t="7.2"><b>二</b><span>山頭對決</span></button>
+    <button class="chapBtn" type="button" data-t="17.2"><b>三</b><span>平地築屋</span></button>
+  </div>
   <div id="endOverlay">
     <svg class="end-icon" viewBox="0 0 72 72" aria-hidden="true">
       <rect x="4" y="4" width="64" height="64" fill="#e27022"/>
@@ -182,6 +216,7 @@
     </svg>
     <div class="end-title">晨山對決 · 平地築屋</div>
     <div class="end-fin">劇 終</div>
+    <div class="end-feature">新增 · 左下角「章節選單」可跳看任一幕</div>
     <button id="replayBtn" type="button">↻ 重新播放</button>
   </div>
 </div>
@@ -262,7 +297,7 @@ const titleCard = document.getElementById('titleCard'); const actEl = document.g
 const actNoEl = document.getElementById('actNo'); const actNameEl = document.getElementById('actName');
 const subtitleEl = document.getElementById('subtitle'); const soundBtn = document.getElementById('soundBtn');
 const endOverlay = document.getElementById('endOverlay'); const replayBtn = document.getElementById('replayBtn');
-const hintEl = document.getElementById('hint');
+const hintEl = document.getElementById('hint'); const chaptersEl = document.getElementById('chapters');
 
 /* ============================================================
    第 2 節　時間軸（秒）——三幕結構
@@ -1100,7 +1135,7 @@ const ACTS = [
   { at: 7.25, dur: 1.8, no: '第 二 幕', name: '山頭對決' },
   { at: 17.25, dur: 1.8, no: '第 三 幕', name: '平地築屋' }
 ];
-let lastSub = '';
+let lastSub = '', lastChap = -1;
 function updateOverlays(){
   titleCard.classList.toggle('show', tl > 0.15 && tl < T.titleHide);
   hintEl.classList.toggle('show', !audioOn && tl > 0.6 && tl < 5.2);
@@ -1114,6 +1149,13 @@ function updateOverlays(){
   for(const a of ACTS){ if(tl >= a.at && tl < a.at + a.dur){ act = a; break; } }
   if(act){ actNoEl.textContent = act.no; actNameEl.textContent = act.name; actEl.classList.add('show'); }
   else { actEl.classList.remove('show'); }
+  /* v4：章節選單高亮目前所在幕 */
+  const ci = tl < T.act2 ? 0 : (tl < T.act3 ? 1 : 2);
+  if(ci !== lastChap){
+    lastChap = ci;
+    const cb = chaptersEl.children;
+    for(let i = 0; i < cb.length; i++) cb[i].classList.toggle('cur', i === ci);
+  }
 }
 
 /* ============================================================
@@ -1204,7 +1246,7 @@ function frame(now){
   if(!ended){
     if(freeze > 0) freeze -= dt;
     else tl += dt * timeScaleAt(tl);
-    if(tl >= T.end){ tl = T.end; ended = true; endOverlay.classList.add('show'); }
+    if(tl >= T.end){ tl = T.end; ended = true; endOverlay.classList.add('show'); chaptersEl.classList.add('gone'); }
   } else {
     updateAudio(); return;   /* v3：片尾卡顯示時凍結世界渲染，省電不發熱 */
   }
@@ -1213,14 +1255,24 @@ function frame(now){
   shake *= Math.pow(0.001, dt); flash *= Math.pow(0.004, dt); zoomP *= Math.pow(0.03, dt);
   render();
 }
-function replay(){
-  tl = 0; freeze = 0; shake = 0; flash = 0; zoomP = 0; wobbleRT = -99;
-  ended = false; curShot = -1; lastSub = '';
+/* v4：seekTo 同時服務「重新播放」與「章節跳看」——
+   時間軸歸位、清除殘留粒子/衝擊環、把目標點之前的事件標記為已觸發，避免重複音效/閃光。 */
+function seekTo(t){
+  tl = t; freeze = 0; shake = 0; flash = 0; zoomP = 0; wobbleRT = -99;
+  ended = false; curShot = -1; lastSub = ''; lastChap = -1;
   parts.length = 0; rings.length = 0;
-  for(const e of EVENTS) e.fired = false;
-  endOverlay.classList.remove('show');
+  lastDawnK = -1; lastMornK = -1;            /* 強制天色重算 */
+  for(const e of EVENTS) e.fired = (e.t < t);
+  endOverlay.classList.remove('show'); chaptersEl.classList.remove('gone');
 }
+function replay(){ seekTo(0); }
 replayBtn.addEventListener('click', replay);
+chaptersEl.addEventListener('click', (e) => {
+  const b = e.target.closest('.chapBtn'); if(!b) return;
+  seekTo(parseFloat(b.dataset.t));
+});
+/* v4：片尾凍結渲染時若縮放視窗，補畫一次凍結畫面，避免畫布被清空留白 */
+addEventListener('resize', () => { if(ended) render(); });
 requestAnimationFrame(frame);
 </script>
 </body>
