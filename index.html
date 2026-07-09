@@ -177,6 +177,7 @@
   <div class="toolrow">
     <span class="stat">遊戲<b id="gcount">–</b></span>
     <span class="stat">動畫影片<b id="vcount">–</b></span>
+    <span class="stat" id="tplaysWrap" style="display:none">總遊玩<b id="tplays">–</b></span>
     <input class="search" id="search" type="search" placeholder="搜尋作品名稱…">
   </div>
 </header>
@@ -265,28 +266,50 @@ function render(filter) {
 
 document.getElementById('search').addEventListener('input', e => render(e.target.value));
 
-/* ===== 瀏覽 / 遊玩次數（CounterAPI 免費服務；連不上就安靜隱藏） ===== */
+/* ===== 瀏覽 / 遊玩次數（雙計數服務備援；都連不上就安靜隱藏） ===== */
 const COUNTER_NS = 'ai-future-camp';
 const countCache = {};
+const PROVIDERS = [
+  {
+    read: n => fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
+    bump: n => fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + n + '/up'),
+  },
+  {
+    read: n => fetch('https://countapi.mileshilliard.com/api/v1/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
+    bump: n => fetch('https://countapi.mileshilliard.com/api/v1/hit/' + COUNTER_NS + '/' + n),
+  },
+];
 
 async function readCount(name) {
   if (name in countCache) return countCache[name];
-  try {
-    const r = await fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + name, { signal: AbortSignal.timeout(6000) });
-    if (r.ok) {
-      const j = await r.json();
-      const n = j.count ?? j.value ?? 0;
-      countCache[name] = n;
-      return n;
-    }
-  } catch (e) {}
+  for (const p of PROVIDERS) {
+    try {
+      const r = await p.read(name);
+      if (r.ok) {
+        const j = await r.json();
+        const n = j.count ?? j.value ?? 0;
+        countCache[name] = n;
+        return n;
+      }
+    } catch (e) {}
+  }
   countCache[name] = null;
   return null;
 }
 
-function bumpCount(name) {
-  try { fetch('https://api.counterapi.dev/v1/' + COUNTER_NS + '/' + name + '/up').catch(() => {}); } catch (e) {}
+async function bumpCount(name) {
+  for (const p of PROVIDERS) {
+    try { const r = await p.bump(name); if (r.ok) return; } catch (e) {}
+  }
 }
+
+// 頁面頂部的總遊玩次數
+readCount('site-total-plays').then(n => {
+  if (n !== null) {
+    document.getElementById('tplays').textContent = n;
+    document.getElementById('tplaysWrap').style.display = '';
+  }
+});
 
 async function fillNums(el) {
   const key = el.dataset.key;
@@ -362,6 +385,7 @@ function openPlayer(title, src, key, isGame) {
   document.getElementById('popen').href = src;
   document.getElementById('player').classList.add('open');
   if (key) bumpCount(key + '-v'); // 瀏覽次數：打開作品就計一次
+  bumpCount('site-total-plays');
 }
 function closePlayer() {
   document.getElementById('player').classList.remove('open');
