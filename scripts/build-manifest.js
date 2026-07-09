@@ -15,6 +15,15 @@ if (fs.existsSync(overridePath)) {
   }
 }
 
+// 內嵌封面（避開會擋圖片檔的網路環境）
+let previews = {};
+const previewPath = path.join(ROOT, 'previews.json');
+if (fs.existsSync(previewPath)) {
+  try { previews = JSON.parse(fs.readFileSync(previewPath, 'utf8')); } catch (e) {
+    console.error('previews.json 格式錯誤，忽略：' + e.message);
+  }
+}
+
 function metaAuthor(htmlPath) {
   try {
     const head = fs.readFileSync(htmlPath, 'utf8').slice(0, 4000);
@@ -37,6 +46,8 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
     };
     const author = overrides[cat + '/' + f] || metaAuthor(path.join(dir, f));
     if (author) entry.author = author;
+    const pv = previews[cat + '/' + thumbSlug(f)];
+    if (pv) entry.preview = pv;
     manifest[cat].push(entry);
   }
 }
