@@ -63,16 +63,16 @@ async function grabFrame(page) {
     height: Math.min(target.h, vp.height - Math.max(0, target.y)),
   };
   if (clip && clip.width >= 100 && clip.height >= 100) {
-    try { return await page.screenshot({ clip }); } catch (e) {}
+    try { return await page.screenshot({ clip, type: 'jpeg', quality: 72 }); } catch (e) {}
   }
-  return await page.screenshot();
+  return await page.screenshot({ type: 'jpeg', quality: 72 });
 }
 
 // 評分：色彩變化越豐富分數越高，避免選到全黑/全白/單色畫面
 async function scoreFrame(scorer, buf) {
   return await scorer.evaluate(async (b64) => {
     const img = new Image();
-    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/png;base64,' + b64; });
+    await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = 'data:image/jpeg;base64,' + b64; });
     const c = document.createElement('canvas');
     c.width = 96; c.height = 60;
     const g = c.getContext('2d');

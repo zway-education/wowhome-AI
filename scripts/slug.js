@@ -5,7 +5,7 @@ function thumbSlug(filename) {
   const base = filename.replace(/\.html?$/i, '');
   const ascii = base.replace(/[^a-zA-Z0-9-_]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
   const hash = crypto.createHash('sha1').update(filename, 'utf8').digest('hex').slice(0, 8);
-  return (ascii ? ascii + '-' : 't-') + hash + '.png';
+  return (ascii ? ascii + '-' : 't-') + hash + '.jpg';
 }
 
 module.exports = { thumbSlug };
