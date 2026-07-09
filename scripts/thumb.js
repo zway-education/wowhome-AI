@@ -77,10 +77,23 @@ async function shootOne(ctx, scorer, htmlPath, outPath) {
     await page.waitForTimeout(1500);
     candidates.push(await grabFrame(page));
 
-    // 觸發互動（啟動需要點擊的遊戲/動畫）
+    // 觸發互動（啟動需要點擊的遊戲/動畫）：優先點「開始」類按鈕，其次點畫面中央
     try {
+      const clicked = await page.evaluate(() => {
+        const words = ['開始', 'START', 'Start', 'PLAY', 'Play', '播放', 'GO'];
+        const els = document.querySelectorAll('button, a, div, span');
+        for (const el of els) {
+          const t = (el.textContent || '').trim();
+          if (!t || t.length > 12) continue;
+          if (words.some(w => t.includes(w))) {
+            const r = el.getBoundingClientRect();
+            if (r.width > 10 && r.height > 10) { el.click(); return true; }
+          }
+        }
+        return false;
+      });
       const vp = page.viewportSize();
-      await page.mouse.click(vp.width / 2, vp.height / 2);
+      if (!clicked) await page.mouse.click(vp.width / 2, vp.height / 2);
       await page.keyboard.press('Enter');
     } catch (e) {}
 
@@ -92,11 +105,14 @@ async function shootOne(ctx, scorer, htmlPath, outPath) {
     await page.waitForTimeout(6000);
     candidates.push(await grabFrame(page));
 
+    // 加權：中後段（遊戲進行中）的畫面優先，開頭畫面（常是文字說明）權重最低
+    const WEIGHTS = [1.0, 1.35, 1.5];
     let best = null, bestScore = -1;
-    for (const c of candidates) {
+    for (let i = 0; i < candidates.length; i++) {
       let s = 0;
-      try { s = await scoreFrame(scorer, c); } catch (e) {}
-      if (s > bestScore) { bestScore = s; best = c; }
+      try { s = await scoreFrame(scorer, candidates[i]); } catch (e) {}
+      s *= WEIGHTS[i] || 1;
+      if (s > bestScore) { bestScore = s; best = candidates[i]; }
     }
     fs.writeFileSync(outPath, best);
   } finally {
