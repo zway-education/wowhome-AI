@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -102,12 +103,13 @@
     z-index: 30;
   }
   #dpad {
+    /* 右下角拇指位，畫布已保留底部空間，不會蓋到棋盤 */
     position: absolute;
-    left: 50%; bottom: max(10px, env(safe-area-inset-bottom));
-    transform: translateX(-50%);
+    right: max(12px, env(safe-area-inset-right)); left: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
     display: none;
     grid-template-columns: repeat(3, 64px);
-    grid-template-rows: repeat(2, 56px);
+    grid-template-rows: repeat(2, 60px);
     gap: 8px;
     z-index: 20;
   }
@@ -138,7 +140,8 @@
     <div class="sub" style="opacity:0.75">蛇的顏色：</div>
     <div id="colorPicker"></div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="margin-top:12px">方向鍵 / WASD 轉向・空白鍵暫停<br>手機：滑動螢幕或下方按鈕</div>
+    <div class="sub" style="margin-top:12px">🖱️ 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>👆 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
+    <div class="sub" style="opacity:0.75">每吃 8 顆收成一籃過關・🌶️ 辣椒加分但會衝刺・🐛 毛毛蟲會逃跑</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -174,12 +177,16 @@ const ctx = canvas.getContext('2d');
 
 // ----- 自適應縮放（devicePixelRatio 感知）-----
 function resize() {
-  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  // 觸控裝置：底部保留 150px 給虛擬方向鍵，避免蓋住棋盤
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const reserve = coarse ? 150 : 0;
+  const scale = Math.min(innerWidth / GAME_W, Math.max(200, innerHeight - reserve) / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.round(GAME_W * scale * dpr);
   canvas.height = Math.round(GAME_H * scale * dpr);
   canvas.style.width = GAME_W * scale + 'px';
   canvas.style.height = GAME_H * scale + 'px';
+  canvas.style.top = ((innerHeight - reserve) / 2) + 'px';
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   canvas._scale = scale;
 }
@@ -261,7 +268,10 @@ const sfx = {
   turn()  { beep(340, 0.03, 'triangle', 0.05); },
   die()   { beep(220, 0.4, 'sawtooth', 0.18, -160); noiseBurst(0.35, 0.22); },
   start() { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
-  best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); }
+  best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); },
+  harvest() { [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.13, 'triangle', 0.12), i * 80)); },
+  chili() { beep(880, 0.08, 'sawtooth', 0.1, 400); setTimeout(() => beep(1320, 0.15, 'square', 0.1), 80); },
+  bug()  { beep(740, 0.06, 'square', 0.1); setTimeout(() => beep(988, 0.08, 'square', 0.1), 60); setTimeout(() => beep(1245, 0.1, 'square', 0.1), 120); }
 };
 
 const muteBtn = document.getElementById('muteBtn');
@@ -295,6 +305,14 @@ let shake = 0, freeze = 0, flash = 0;
 let elapsed = 0;
 let grassSeeds = [];         // 背景裝飾草叢
 
+// v2：收成關卡 / 辣椒衝刺 / 毛毛蟲
+const LEVEL_GOAL = 8;
+let level = 1, levelEat = 0;
+let sprintT = 0;             // 辣椒衝刺剩餘秒數
+let chili = { active: false, x: 0, y: 0, timer: 0, age: 0 };
+let bug = { active: false, x: 0, y: 0, px: 0, py: 0, dx: 1, dy: 0, moveAcc: 0, timer: 0, age: 0 };
+let hintT = 0;               // 開場操作提示
+
 // 粒子與飄字
 const parts = [], floats = [];
 function burst(x, y, color, n, speed) {
@@ -319,10 +337,36 @@ function placeFood() {
     food.x = Math.floor(Math.random() * COLS);
     food.y = Math.floor(Math.random() * ROWS);
     tries++;
-  } while (tries < 400 && snake.some(s => s.x === food.x && s.y === food.y));
+  } while (tries < 400 && (snake.some(s => s.x === food.x && s.y === food.y)
+      || (chili.active && chili.x === food.x && chili.y === food.y)
+      || (bug.active && bug.x === food.x && bug.y === food.y)));
   food.golden = (eatCount > 0 && eatCount % 5 === 0);
   food.timer = food.golden ? 6 : 0;
   food.age = 0;
+}
+function freeCell(awayFromHead) {
+  for (let t = 0; t < 200; t++) {
+    const x = Math.floor(Math.random() * COLS), y = Math.floor(Math.random() * ROWS);
+    if (snake.some(s => s.x === x && s.y === y)) continue;
+    if (x === food.x && y === food.y) continue;
+    if (chili.active && chili.x === x && chili.y === y) continue;
+    if (bug.active && bug.x === x && bug.y === y) continue;
+    if (awayFromHead && Math.abs(x - snake[0].x) + Math.abs(y - snake[0].y) < 4) continue;
+    return { x, y };
+  }
+  return null;
+}
+function spawnChili() {
+  const c = freeCell(true);
+  if (!c) return;
+  chili = { active: true, x: c.x, y: c.y, timer: 8, age: 0 };
+}
+function spawnBug() {
+  const c = freeCell(true);
+  if (!c) return;
+  bug = { active: true, x: c.x, y: c.y, px: c.x, py: c.y, dx: 1, dy: 0, moveAcc: 0, timer: 12, age: 0 };
+  const cc = cellCenter(c.x, c.y);
+  addFloat(cc.x, cc.y - 18, '🐛 毛毛蟲！+3', '#aee239');
 }
 
 function resetGame() {
@@ -331,6 +375,8 @@ function resetGame() {
   dir = { x: 1, y: 0 };
   dirQueue = [];
   score = 0; dispScore = 0; eatCount = 0;
+  level = 1; levelEat = 0; sprintT = 0;
+  chili.active = false; bug.active = false;
   moveInterval = 0.16;
   moveTimer = 0;
   tongue = 0; headPulse = 1;
@@ -386,12 +432,26 @@ addEventListener('keydown', e => {
   }
 });
 
-// 觸控滑動
+// 觸控：滑動轉向＋「點一下」朝該方向轉（forgiving：主軸不能走就用次軸）
+function tapSteer(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const gx = (clientX - r.left) / canvas._scale, gy = (clientY - r.top) / canvas._scale;
+  const h = cellCenter(snake[0].x, snake[0].y);
+  const dx = gx - h.x, dy = gy - h.y;
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+  const horiz = Math.abs(dx) > Math.abs(dy);
+  const primary = horiz ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
+  const secondary = horiz ? { x: 0, y: Math.sign(dy) } : { x: Math.sign(dx), y: 0 };
+  const last = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+  const isReverse = d => d.x === -last.x && d.y === -last.y;
+  if ((primary.x || primary.y) && !isReverse(primary)) queueDir(primary.x, primary.y);
+  else if ((secondary.x || secondary.y) && !isReverse(secondary)) queueDir(secondary.x, secondary.y);
+}
 let touchStart = null;
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   const t = e.touches[0];
-  touchStart = { x: t.clientX, y: t.clientY };
+  touchStart = { x: t.clientX, y: t.clientY, t0: performance.now(), moved: false };
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
@@ -401,9 +461,19 @@ canvas.addEventListener('touchmove', e => {
   if (Math.abs(dx) < 26 && Math.abs(dy) < 26) return;
   if (Math.abs(dx) > Math.abs(dy)) queueDir(dx > 0 ? 1 : -1, 0);
   else queueDir(0, dy > 0 ? 1 : -1);
-  touchStart = { x: t.clientX, y: t.clientY };
+  touchStart = { x: t.clientX, y: t.clientY, t0: touchStart.t0, moved: true };
 }, { passive: false });
-canvas.addEventListener('touchend', e => { e.preventDefault(); touchStart = null; }, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (touchStart && !touchStart.moved && mode === 'play' && performance.now() - touchStart.t0 < 450) {
+    tapSteer(touchStart.x, touchStart.y);
+  }
+  touchStart = null;
+}, { passive: false });
+// 桌機滑鼠也能點擊轉向
+canvas.addEventListener('mousedown', e => {
+  if (mode === 'play') tapSteer(e.clientX, e.clientY);
+});
 
 // 虛擬方向鍵
 [['up', 0, -1], ['down', 0, 1], ['left', -1, 0], ['right', 1, 0]].forEach(([name, dx, dy]) => {
@@ -421,6 +491,7 @@ let overCooldown = 0;
 function startGame() {
   resetGame();
   mode = 'play';
+  hintT = 5;
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
@@ -508,6 +579,34 @@ function step() {
     if (bulges[i] >= snake.length) bulges.splice(i, 1);
   }
 
+  const grow = () => {
+    const tail = snake[snake.length - 1];
+    snake.push({ x: tail.px, y: tail.py, px: tail.px, py: tail.py });
+  };
+
+  // 吃辣椒：+4 分，但衝刺 3 秒（risk-reward）
+  if (mode === 'play' && chili.active && nx === chili.x && ny === chili.y) {
+    const c = cellCenter(nx, ny);
+    chili.active = false;
+    score += 4; sprintT = 3;
+    headPulse = 1.45; tongue = 0.6; shake = 4; bulges.push(1);
+    addFloat(c.x, c.y - 10, '+4 好辣！衝刺！', '#ff7043');
+    burst(c.x, c.y, '#ff5722', 18, 260);
+    sfx.chili();
+    grow();
+  }
+  // 吃毛毛蟲：+3 分（會逃跑的獎勵）
+  if (mode === 'play' && bug.active && nx === bug.x && ny === bug.y) {
+    const c = cellCenter(nx, ny);
+    bug.active = false;
+    score += 3;
+    headPulse = 1.45; tongue = 0.6; shake = 3; bulges.push(1);
+    addFloat(c.x, c.y - 10, '+3 抓到蟲蟲！', '#aee239');
+    burst(c.x, c.y, '#aee239', 16, 240);
+    sfx.bug();
+    grow();
+  }
+
   // 吃食物
   if (nx === food.x && ny === food.y) {
     const c = cellCenter(nx, ny);
@@ -515,6 +614,7 @@ function step() {
     eatCount++;
     if (mode === 'play') {
       score += gained;
+      levelEat++;
       shake = food.golden ? 6 : 2.5;
       headPulse = 1.45;
       tongue = 0.6;
@@ -524,11 +624,26 @@ function step() {
       if (food.golden) { sfx.gold(); freeze = 0.05; }
       else sfx.eat();
       // 漸進加速：吃越多越快，有下限
-      moveInterval = Math.max(0.07, 0.16 - score * 0.0016);
+      moveInterval = Math.max(0.075, moveInterval - 0.0045);
+      // 每關中段放出毛毛蟲、隨機長出辣椒
+      if (levelEat === 4 && !bug.active) spawnBug();
+      if (!chili.active && !food.golden && Math.random() < 0.25) spawnChili();
+      // 收成一籃 → 過關！速度小幅回落當喘息
+      if (levelEat >= LEVEL_GOAL) {
+        level++; levelEat = 0;
+        score += 5;
+        moveInterval = Math.min(0.16, moveInterval + 0.02);
+        freeze = 0.12; shake = 5;
+        addFloat(GAME_W / 2, BOARD_Y + 150, '🧺 豐收！進入第 ' + level + ' 關 +5', PAL.gold);
+        const confetti = [PAL.gold, '#ff8a65', '#aee239', '#ffd9e8'];
+        for (let k = 0; k < 5; k++) {
+          burst(BOARD_X + 60 + Math.random() * (COLS * CELL - 120),
+                BOARD_Y + 80 + Math.random() * 220, confetti[k % 4], 10, 280);
+        }
+        sfx.harvest();
+      }
     }
-    // 加長：尾端補一節
-    const tail = snake[snake.length - 1];
-    snake.push({ x: tail.px, y: tail.py, px: tail.px, py: tail.py });
+    grow();
     placeFood();
   }
 }
@@ -579,7 +694,51 @@ function update(dt) {
     if (food.timer <= 0) { food.golden = false; placeFood(); }
   }
 
-  const interval = mode === 'title' ? 0.14 : moveInterval;
+  // 辣椒衝刺與提示倒數
+  sprintT = Math.max(0, sprintT - dt);
+  hintT = Math.max(0, hintT - dt);
+  if (chili.active && mode === 'play') {
+    chili.age += dt; chili.timer -= dt;
+    if (chili.timer <= 0) chili.active = false;
+  }
+  // 毛毛蟲：定時往「遠離蛇頭」的方向爬
+  if (bug.active && mode === 'play') {
+    bug.age += dt; bug.timer -= dt; bug.moveAcc += dt;
+    if (bug.timer <= 0) bug.active = false;
+    else if (bug.moveAcc >= 0.5) {
+      bug.moveAcc = 0;
+      const head = snake[0];
+      const opts = [[1, 0], [-1, 0], [0, 1], [0, -1]]
+        .map(([dx, dy]) => ({ x: bug.x + dx, y: bug.y + dy, dx, dy }))
+        .filter(o => o.x >= 0 && o.x < COLS && o.y >= 0 && o.y < ROWS
+          && !snake.some(s => s.x === o.x && s.y === o.y)
+          && !(o.x === food.x && o.y === food.y)
+          && !(chili.active && o.x === chili.x && o.y === chili.y));
+      if (opts.length) {
+        let pick;
+        if (Math.random() < 0.6) {
+          opts.sort((a, b) => (Math.abs(b.x - head.x) + Math.abs(b.y - head.y))
+                            - (Math.abs(a.x - head.x) + Math.abs(a.y - head.y)));
+          pick = opts[0];
+        } else pick = opts[Math.random() * opts.length | 0];
+        bug.px = bug.x; bug.py = bug.y;
+        bug.x = pick.x; bug.y = pick.y; bug.dx = pick.dx; bug.dy = pick.dy;
+      }
+    }
+  }
+  // 衝刺火焰尾跡
+  if (sprintT > 0 && mode === 'play' && deathTimer < 0 && Math.random() < 0.55) {
+    const h = cellCenter(snake[0].x, snake[0].y);
+    parts.push({
+      x: h.x - dir.x * 10 + (Math.random() * 10 - 5),
+      y: h.y - dir.y * 10 + (Math.random() * 10 - 5),
+      vx: -dir.x * 70, vy: -dir.y * 70 - 20,
+      life: 0.3, color: Math.random() < 0.5 ? '#ff7043' : PAL.gold,
+      size: 3 + Math.random() * 3
+    });
+  }
+
+  const interval = (mode === 'title' ? 0.14 : moveInterval) * (sprintT > 0 && mode === 'play' ? 0.7 : 1);
   moveTimer += dt;
   while (moveTimer >= interval) {
     moveTimer -= interval;
@@ -813,6 +972,81 @@ function drawFood() {
 
 function lerp(a, b, t) { return a + (b - a) * t; }
 
+function drawChili() {
+  if (!chili.active) return;
+  const c = cellCenter(chili.x, chili.y);
+  const blinkA = chili.timer < 2.5 ? (Math.sin(elapsed * 12) > 0 ? 1 : 0.3) : 1;
+  ctx.save();
+  ctx.translate(c.x, c.y + Math.sin(chili.age * 5) * 2);
+  ctx.globalAlpha = blinkA;
+  // 陰影
+  ctx.fillStyle = 'rgba(32,70,49,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 13, 9, 3.2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.rotate(0.45 + Math.sin(chili.age * 3) * 0.08);
+  // 辣椒本體
+  ctx.fillStyle = '#a31515';
+  ctx.beginPath(); ctx.ellipse(0.5, 2, 6, 11.5, 0, 0, Math.PI * 2); ctx.fill();
+  const cg = ctx.createRadialGradient(-3, -3, 1, 0, 2, 12);
+  cg.addColorStop(0, '#ff6f60'); cg.addColorStop(0.6, '#e53935'); cg.addColorStop(1, '#b71c1c');
+  ctx.fillStyle = cg;
+  ctx.beginPath(); ctx.ellipse(0, 2, 4.8, 10.2, 0, 0, Math.PI * 2); ctx.fill();
+  // 高光
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  ctx.beginPath(); ctx.ellipse(-2, -3, 1.6, 4, 0.2, 0, Math.PI * 2); ctx.fill();
+  // 蒂頭
+  ctx.fillStyle = PAL.leaf;
+  ctx.beginPath(); ctx.ellipse(0, -9, 4, 2.6, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = PAL.leaf; ctx.lineWidth = 2; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, -10); ctx.quadraticCurveTo(3, -14, 5, -15); ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function drawBug() {
+  if (!bug.active) return;
+  const t = Math.min(1, bug.moveAcc / 0.22);
+  const gx = lerp(bug.px, bug.x, t), gy = lerp(bug.py, bug.y, t);
+  const cx = BOARD_X + gx * CELL + CELL / 2, cy = BOARD_Y + gy * CELL + CELL / 2;
+  const blinkA = bug.timer < 3 ? (Math.sin(elapsed * 10) > 0 ? 1 : 0.3) : 1;
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.globalAlpha = blinkA;
+  // 陰影
+  ctx.fillStyle = 'rgba(32,70,49,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 9, 11, 3, 0, 0, Math.PI * 2); ctx.fill();
+  const ang = Math.atan2(bug.dy, bug.dx);
+  ctx.rotate(ang);
+  // 三節身體（後小前大），爬行起伏
+  const wig = Math.sin(bug.age * 14);
+  for (let i = 2; i >= 0; i--) {
+    const bx = -i * 7, by = -Math.abs(Math.sin(bug.age * 14 + i * 1.2)) * 2.5;
+    const r = 6.5 - i * 0.9;
+    ctx.fillStyle = '#3f7a2e';
+    ctx.beginPath(); ctx.arc(bx, by, r + 1.5, 0, Math.PI * 2); ctx.fill();
+    const bg2 = ctx.createRadialGradient(bx - 2, by - 2, 1, bx, by, r);
+    bg2.addColorStop(0, '#c5e86c'); bg2.addColorStop(1, '#8bc34a');
+    ctx.fillStyle = bg2;
+    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+  }
+  // 觸角
+  ctx.strokeStyle = '#3f7a2e'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(4, -5); ctx.quadraticCurveTo(7, -10 + wig, 9, -11 + wig);
+  ctx.moveTo(1, -5); ctx.quadraticCurveTo(3, -11 - wig, 4, -12 - wig);
+  ctx.stroke();
+  // 眼睛（朝行進方向）
+  ctx.rotate(-ang);
+  const headX = Math.cos(ang) * 0, headY = 0;
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(headX - 2, headY - 2, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(headX + 3, headY - 2, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = PAL.ink;
+  ctx.beginPath(); ctx.arc(headX - 1.6, headY - 2, 1.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(headX + 3.4, headY - 2, 1.3, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 function drawSnake() {
   const interval = mode === 'title' ? 0.14 : moveInterval;
   const t = deathTimer >= 0 ? 1 : Math.min(1, moveTimer / interval);
@@ -1010,15 +1244,30 @@ function drawHUD() {
     ctx.fillRect(GAME_W - 148 + i * 12, 66, 8, 10);
   }
 
-  // 蛇長度
+  // 關卡與蛇長度
   ctx.textAlign = 'center';
   ctx.fillStyle = PAL.cream;
   ctx.font = '15px "Microsoft JhengHei", sans-serif';
-  ctx.fillText('🐍 長度 ' + snake.length, GAME_W / 2, 60);
+  ctx.fillText('第 ' + level + ' 關・🐍 ' + snake.length, GAME_W / 2, 52);
   if (food.golden && mode === 'play') {
     ctx.fillStyle = PAL.gold;
     ctx.font = 'bold 16px "Microsoft JhengHei", sans-serif';
-    ctx.fillText('⭐ 金星蘋果 +5！剩 ' + food.timer.toFixed(1) + 's', GAME_W / 2, 84);
+    ctx.fillText('⭐ 金星蘋果 +5！剩 ' + food.timer.toFixed(1) + 's', GAME_W / 2, 88);
+  } else if (sprintT > 0 && mode === 'play') {
+    ctx.fillStyle = '#ff8a65';
+    ctx.font = 'bold 16px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('🌶️ 衝刺中！' + sprintT.toFixed(1) + 's', GAME_W / 2, 88);
+  } else {
+    // 收成進度：吃 8 顆收一籃
+    ctx.fillStyle = PAL.cream;
+    ctx.font = '14px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('🧺 收成', GAME_W / 2 - 62, 86);
+    for (let i = 0; i < LEVEL_GOAL; i++) {
+      ctx.fillStyle = i < levelEat ? PAL.apple : 'rgba(255,245,214,0.25)';
+      ctx.beginPath();
+      ctx.arc(GAME_W / 2 - 24 + i * 14, 82, 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
 }
 

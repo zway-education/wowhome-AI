@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -9,11 +10,12 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body{ height:100%; overflow:hidden; background:radial-gradient(circle at 50% 35%, #17324a 0%, #0b1a28 60%, #060d14 100%);
     font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;
-    -webkit-user-select:none; user-select:none; touch-action:manipulation; }
+    -webkit-user-select:none; user-select:none; touch-action:manipulation; overscroll-behavior:none;
+    -webkit-tap-highlight-color:transparent; }
   #stage{ position:fixed; inset:0; }
   canvas{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
   #assets{ position:absolute; width:0; height:0; overflow:hidden; visibility:hidden; }
-  #subtitle{ position:absolute; left:50%; bottom:7.5%; transform:translate(-50%, 14px) scale(.96); max-width:88%; padding:10px 30px;
+  #subtitle{ position:absolute; left:50%; bottom:calc(var(--cvB, 7.5%) + 10px); transform:translate(-50%, 14px) scale(.96); max-width:88%; padding:10px 30px;
     font-size:clamp(15px, 2.6vw, 23px); font-weight:900; letter-spacing:2px; text-align:center; color:#fff; white-space:nowrap;
     background:linear-gradient(180deg, rgba(20,40,24,.92), rgba(10,24,14,.72)); border:1px solid rgba(174,226,57,.6); border-radius:999px;
     box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 18px rgba(174,226,57,.15) inset; text-shadow:0 2px 6px rgba(0,0,0,.8);
@@ -22,17 +24,30 @@
   #subtitle.pika{ border-color:rgba(255,225,77,.85); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 22px rgba(255,225,77,.3); color:#fff3b8; }
   #subtitle.char{ border-color:rgba(255,138,61,.85); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 22px rgba(255,122,26,.3); color:#ffd9b8; }
   .uibtn{ position:absolute; z-index:9; font-family:inherit; font-weight:900; letter-spacing:2px; color:#eaffd0; cursor:pointer;
+    min-width:48px; min-height:48px;
     background:linear-gradient(180deg, rgba(24,44,20,.88), rgba(12,24,12,.88)); border:1px solid rgba(174,226,57,.55); border-radius:999px;
     text-shadow:0 1px 3px rgba(0,0,0,.7); transition:transform .18s cubic-bezier(.22,1.4,.36,1), box-shadow .18s ease, opacity .3s ease; }
   .uibtn:hover{ transform:scale(1.06); box-shadow:0 0 18px rgba(174,226,57,.4); }
-  .uibtn:active{ transform:scale(.94); }
-  #sndBtn{ top:14px; right:14px; font-size:14px; padding:8px 16px; }
+  .uibtn:active{ transform:scale(.94); transition-duration:.05s; box-shadow:0 0 22px rgba(174,226,57,.55); }
+  #sndBtn{ top:max(14px, env(safe-area-inset-top)); right:max(14px, env(safe-area-inset-right)); font-size:15px; padding:12px 18px; }
   #replayBtn{ left:50%; top:64%; transform:translate(-50%,0) scale(.6); font-size:clamp(18px,3.2vw,26px); padding:14px 44px;
     background:linear-gradient(180deg,#aee239,#527f39); color:#12260a; border:2px solid #fff5d6;
     box-shadow:0 8px 30px rgba(82,127,57,.6); opacity:0; pointer-events:none; }
   #replayBtn.show{ opacity:1; pointer-events:auto; transform:translate(-50%,0) scale(1);
     transition:transform .5s cubic-bezier(.22,1.6,.36,1), opacity .4s ease; }
   #replayBtn:hover{ transform:translate(-50%,0) scale(1.08); }
+  #replayBtn:active{ transform:translate(-50%,0) scale(.94); transition-duration:.05s; }
+  #replayBtn:focus-visible, #sndBtn:focus-visible{ outline:3px solid #eaffd0; outline-offset:2px; }
+  @media (max-width:480px){
+    #subtitle{ padding:8px 16px; letter-spacing:1px; max-width:94%; }
+  }
+  #hint{ position:absolute; z-index:8; left:50%; top:calc(max(14px, env(safe-area-inset-top)) + 58px); transform:translateX(-50%);
+    max-width:80%; padding:10px 20px; font-size:clamp(12px,2vw,15px); font-weight:700; letter-spacing:1px; color:#eaffd0; text-align:center;
+    background:rgba(12,24,12,.85); border:1px solid rgba(174,226,57,.5); border-radius:999px;
+    box-shadow:0 4px 16px rgba(0,0,0,.5); opacity:0; pointer-events:none;
+    animation:hintFade 6.5s ease .7s 1 forwards; }
+  @keyframes hintFade{ 0%{opacity:0; transform:translateX(-50%) translateY(-10px);}
+    7%{opacity:1; transform:translateX(-50%) translateY(0);} 82%{opacity:1;} 100%{opacity:0;} }
 </style>
 </head>
 <body>
@@ -41,6 +56,7 @@
   <div id="subtitle"></div>
   <button id="sndBtn" class="uibtn">🔇 聲音：關</button>
   <button id="replayBtn" class="uibtn">▶ 重新播放</button>
+  <div id="hint">自動播放中 ─ 點右上角「聲音」鈕開啟音效 🔊</div>
 </div>
 <div id="assets">
 <svg id="svg-burger" viewBox="0 0 72 72">
@@ -130,6 +146,9 @@ function resize(){
   cv.width = Math.round(W*s*dpr); cv.height = Math.round(H*s*dpr);
   cv.style.width = W*s+'px'; cv.style.height = H*s+'px';
   cv._base = s*dpr;
+  // 畫布下緣位置 → 字幕、重播鈕貼齊畫面（直式/橫式皆然）
+  document.documentElement.style.setProperty('--cvB', Math.max(0,(innerHeight - H*s)/2) + 'px');
+  replayBtn.style.top = Math.round(innerHeight/2 + H*s*0.14) + 'px';
 }
 addEventListener('resize', resize); resize();
 
@@ -215,7 +234,7 @@ const sfx = {
 };
 
 /* ---------- 粒子・漫畫字 ---------- */
-let parts = [], comics = [];
+let parts = [], comics = [], fartWave = null;
 function pDust(x,y,n){ for(let i=0;i<n;i++){ const a=rnd(-Math.PI,0);
   parts.push({k:'dust',x:x+rnd(-14,14),y,vx:Math.cos(a)*rnd(20,80),vy:rnd(-60,-16),life:rnd(.35,.7),max:.7,s:rnd(3,8)}); } }
 function pSpark(x,y,n,col){ for(let i=0;i<n;i++){ const a=rnd(0,TAU),sp=rnd(16,70);
@@ -265,6 +284,14 @@ function drawParts(){
 }
 function comic(x,y,text,col,big){
   comics.push({x,y,text,col:col||'#fff',t:0,dur:0.9,ang:rnd(-0.15,0.15),big:big||34});
+}
+function drawFartWave(){
+  if(!fartWave) return;
+  const a = clamp(fartWave.life/fartWave.max, 0, 1);
+  ctx.strokeStyle = 'rgba(150,210,90,'+(a*0.7)+')'; ctx.lineWidth = 6*a+2;
+  ctx.beginPath(); ctx.arc(fartWave.x, fartWave.y, fartWave.r, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(210,240,150,'+(a*0.4)+')'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(fartWave.x, fartWave.y, fartWave.r*0.66, 0, TAU); ctx.stroke();
 }
 function drawComics(){
   for(const c of comics){
@@ -353,8 +380,11 @@ function buildEvents(){
   ev(15.5, ()=>{ pika.kb=-26; pika.sx=1.2; pika.sy=0.85; });
   for(const t of [19.0,19.7,20.4,21.0]) ev(t, ()=>{ pZap(pika.x+pika.dir*24, GROUND-92, 7); pZap(pika.x-pika.dir*20, GROUND-92, 5); sfx.zap(); shake=Math.max(shake,2.5); });
   ev(22.1, ()=>{ chz.dir=1; chz.sx=1.15; chz.sy=0.88; });
-  ev(24.0, ()=>{ pFart(chz.x-52, GROUND-56, 26); comic(chz.x-70, GROUND-150, '噗～', '#c8eb8c', 44);
-    sfx.fart(); shake=7; gTint=0.5; pika.kb=-90; pika.sx=1.3; pika.sy=0.7; pika.expr='dizzy'; });
+  ev(22.55, ()=>{ comic(pika.x+30, GROUND-152, '？', '#bfe6ff', 36); });          // 預兆：牠要幹嘛？
+  ev(23.45, ()=>{ comic(chz.x-46, GROUND-176, '嗯……', '#c8eb8c', 26); });
+  ev(24.0, ()=>{ pFart(chz.x-52, GROUND-56, 46); comic(chz.x-70, GROUND-150, '噗～', '#c8eb8c', 52);
+    fartWave = {x:chz.x-52, y:GROUND-56, r:12, vr:520, life:.55, max:.55};
+    freeze=0.12; sfx.fart(); shake=7; gTint=0.65; pika.kb=-90; pika.sx=1.3; pika.sy=0.7; pika.expr='dizzy'; });
   ev(25.35, ()=>{ chz.dir=1; pDust(chz.x, GROUND+6, 16); sfx.whoosh(); });
   for(const t of [25.5,25.95,26.4,26.85]) ev(t, ()=> sfx.flap());
   ev(28.0, ()=> sfx.sad());
@@ -393,6 +423,7 @@ function choreo(){
     else { pika.expr = 'angry'; pika.spark = 1;
       pika.y = -Math.abs(Math.sin((T-18.6)*5.4))*16;              // 氣得跳腳
       if(pika.y < -14 && Math.random()<0.2) pDust(pika.x, GROUND+4, 2);
+      if(T < 21.9 && Math.random() < 0.4) pZap(pika.x+rnd(-32,32), GROUND-92+rnd(-28,20), 2);  // 持續劈啪電花
     }
     pika.look = clamp(ss(T,15.6,16.0),0,1)*0.4;
   }
@@ -433,8 +464,11 @@ function choreo(){
   burger.bob = burger.held ? 0 : Math.sin(WT*2.6)*4;
   if(burger.held){
     const hx = chz.hold, raise = chz.smug ? 26 : 0;
-    burger.x = chz.x + chz.dir*(56 + 6*hx);   // 爪子位置（鏡像翻轉已考慮）
-    burger.y = GROUND + chz.y - 78 - raise*hx - (chz.y<-40 ? 12 : 0);
+    const tx = chz.x + chz.dir*(56 + 6*hx);   // 爪子位置（鏡像翻轉已考慮）
+    const ty = GROUND + chz.y - 78 - raise*hx - (chz.y<-40 ? 12 : 0);
+    const g = E.outCubic(ss(T, 15.45, 15.8)); // 搶奪補間：從草地弧線飛進爪中，不瞬移
+    burger.x = lerp(470, tx, g);
+    burger.y = lerp(GROUND-16, ty, g) - Math.sin(Math.PI*g)*24;
   }
 }
 
@@ -620,7 +654,15 @@ function drawPika(f){
   }
   // 眉（生氣）
   if(f.expr==='angry'){ ctx.strokeStyle='#5c440c'; ctx.lineWidth=3; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(6,-9); ctx.lineTo(17,-5); ctx.moveTo(-2,-9); ctx.lineTo(-13,-5); ctx.stroke(); }
+    ctx.beginPath(); ctx.moveTo(6,-9); ctx.lineTo(17,-5); ctx.moveTo(-2,-9); ctx.lineTo(-13,-5); ctx.stroke();
+    // 漫畫怒氣符號（頭頂脈動）
+    const pk = 1 + 0.18*Math.sin(WT*11);
+    ctx.save(); ctx.translate(26,-30); ctx.scale(pk,pk); ctx.rotate(0.2);
+    ctx.strokeStyle = '#e8433a'; ctx.lineWidth = 3.6; ctx.lineCap='round';
+    for(let q=0;q<4;q++){ ctx.rotate(Math.PI/2);
+      ctx.beginPath(); ctx.arc(8, 0, 5, Math.PI*0.72, Math.PI*1.28); ctx.stroke(); }
+    ctx.restore();
+  }
   // 鼻與嘴
   ctx.fillStyle = '#222';
   ctx.beginPath(); ctx.arc(2, 5, 1.6, 0, TAU); ctx.fill();
@@ -874,6 +916,7 @@ function render(){
     drawChz(chz);
     if(burger.held) drawBurger();   // 被抓住時畫在最上層（爪中）
     drawParts();
+    drawFartWave();
     drawSpeech();
     drawComics();
   });
@@ -917,6 +960,7 @@ function frame(now){
     }
     pika.x += pika.kb; pika.kb *= Math.pow(0.004, dt);
     gTint = Math.max(0, gTint - dt*0.35);
+    if(fartWave){ fartWave.r += fartWave.vr*step; fartWave.life -= step; if(fartWave.life<=0) fartWave = null; }
     // 環境音
     if(audioOn && WT > nextChirp){ nextChirp = WT + rnd(2.4,5.5); if(T<23||T>27) sfx.chirp(); }
   }
@@ -939,10 +983,11 @@ sndBtn.addEventListener('click', ()=>{
   audioOn = !audioOn;
   master.gain.value = audioOn ? 0.9 : 0;
   sndBtn.textContent = audioOn ? '🔊 聲音：開' : '🔇 聲音：關';
+  document.getElementById('hint').style.display = 'none';
 });
 replayBtn.addEventListener('click', ()=>{
   T = 0; freeze = 0; shake = 0; flash = 0; gTint = 0; ended = false;
-  parts = []; comics = [];
+  parts = []; comics = []; fartWave = null;
   Object.assign(pika, {x:-70,y:0,dir:1,sx:1,sy:1,rot:0,lean:0,reach:0,sit:0,kb:0,expr:'calm',spark:0,look:0});
   Object.assign(chz, {x:1080,y:-260,dir:-1,sx:1,sy:1,rot:0,flap:0,hold:0,squat:0,smug:0,onGround:false});
   Object.assign(burger, {x:470,y:GROUND-16,held:false,gone:false,bob:0});
