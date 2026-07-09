@@ -142,6 +142,10 @@
     border-radius: 12px; padding: 8px 18px; font-size: 14px; cursor: pointer; text-decoration: none; transition: background .2s;
   }
   #player .bar button:hover, #player .bar a:hover { background: rgba(255,255,255,.2); }
+  #player .bar button.vote { border-color: rgba(56,225,255,.4); }
+  #player .bar button.vote.hot { border-color: rgba(255,108,199,.5); }
+  #player .bar button.vote.voted { background: #2f9e63; border-color: transparent; cursor: default; }
+  #player .bar button.vote:disabled { opacity: .55; cursor: default; }
   #player .stage { flex: 1; position: relative; overflow: hidden; margin: 0 10px 10px; border-radius: 16px; background: #fff; }
   #player iframe { border: 0; width: 100%; height: 100%; display: block; }
 
@@ -199,6 +203,8 @@
 <div id="player">
   <div class="bar">
     <div class="title" id="ptitle"></div>
+    <button class="vote hot" id="pvote2">非常好玩</button>
+    <button class="vote" id="pvote1">好玩</button>
     <a id="popen" href="#" target="_blank" rel="noopener">另開視窗</a>
     <button onclick="closePlayer()">關閉 ✕</button>
   </div>
@@ -325,11 +331,14 @@ async function fillNums(el) {
   const key = el.dataset.key;
   if (!key || el.dataset.done) return;
   el.dataset.done = '1';
-  const [views, plays] = await Promise.all([readCount(key + '-v'), readCount(key + '-p')]);
+  const [views, plays, love] = await Promise.all([
+    readCount(key + '-v'), readCount(key + '-p'), readCount(key + '-love'),
+  ]);
   if (views === null && plays === null) return; // 服務連不上就不顯示
   const parts = [];
   if (views !== null) parts.push('瀏覽 ' + views);
   if (plays !== null && plays > 0) parts.push('遊玩 ' + plays);
+  if (love !== null && love > 0) parts.push('非常好玩 ' + love);
   el.textContent = parts.join(' · ');
 }
 
@@ -371,8 +380,46 @@ function scheduleFit() {
   fitTimers = [200, 700, 1500].map(ms => setTimeout(fitFrame, ms));
 }
 
+/* ===== 好玩投票（每個作品每台裝置限投一次） ===== */
+let voteKey = '';
+async function setupVotes(key) {
+  voteKey = key || '';
+  const b2 = document.getElementById('pvote2');
+  const b1 = document.getElementById('pvote1');
+  const voted = voteKey && localStorage.getItem('voted-' + voteKey);
+  for (const [btn, suffix, label] of [[b2, '-love', '非常好玩'], [b1, '-like', '好玩']]) {
+    btn.classList.remove('voted');
+    btn.disabled = !voteKey;
+    btn.textContent = label;
+    if (!voteKey) continue;
+    readCount(voteKey + suffix).then(n => {
+      if (n !== null && n > 0 && btn.dataset.key === voteKey) btn.textContent = label + ' ' + n;
+    });
+    btn.dataset.key = voteKey;
+    if (voted) {
+      btn.disabled = true;
+      if (voted === suffix) btn.classList.add('voted');
+    }
+  }
+}
+function castVote(suffix) {
+  if (!voteKey || localStorage.getItem('voted-' + voteKey)) return;
+  localStorage.setItem('voted-' + voteKey, suffix);
+  bumpCount(voteKey + suffix);
+  delete countCache[voteKey + suffix];
+  const btn = document.getElementById(suffix === '-love' ? 'pvote2' : 'pvote1');
+  const other = document.getElementById(suffix === '-love' ? 'pvote1' : 'pvote2');
+  btn.classList.add('voted');
+  btn.textContent = (suffix === '-love' ? '非常好玩' : '好玩') + '，已投！';
+  btn.disabled = true;
+  other.disabled = true;
+}
+document.getElementById('pvote2').addEventListener('click', () => castVote('-love'));
+document.getElementById('pvote1').addEventListener('click', () => castVote('-like'));
+
 function openPlayer(title, src, key, isGame) {
   document.getElementById('ptitle').textContent = title;
+  setupVotes(key);
   resetFrame();
   const f = document.getElementById('pframe');
   f.onload = () => {
