@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -513,9 +513,17 @@ let won = false, grade = 'C';
 let best = 0, newBest = false, finalScore = 0;
 let bonus = 0, spotted = false, chain = 0, treasures = [];
 try { best = parseInt(localStorage.getItem('夜襲邪教據點.best') || '0', 10) || 0; } catch (err) { best = 0; }
+// ---------- v4：無盡夜襲（通關三晚後解鎖的無盡挑戰）----------
+let mode = 'story';                    // story = 三晚劇情；endless = 無盡夜襲
+let cleared = false;                   // 是否已通關三晚（解鎖無盡模式）
+let endlessBest = 0;
+try { cleared = localStorage.getItem('夜襲邪教據點.cleared') === '1'; } catch (err) { cleared = false; }
+try { endlessBest = parseInt(localStorage.getItem('夜襲邪教據點.endless_best') || '0', 10) || 0; } catch (err) { endlessBest = 0; }
+function endlessGrade(n) { return n >= 8 ? 'S' : n >= 6 ? 'A' : n >= 4 ? 'B' : 'C'; }
 const ATK_RANGE = 52, ATK_COST = 20, ATK_CD = 0.5;
 function spawnNight() {
-  const n = Math.min(3 + nights, 7);
+  // v4：無盡模式信徒更多、上限更高
+  const n = Math.min((mode === 'endless' ? 4 : 3) + nights, mode === 'endless' ? 9 : 7);
   cultists = [];
   for (let i = 0; i < n; i++) {
     const a = (i / n) * 6.2832 + rnd(-0.3, 0.3);
@@ -532,6 +540,11 @@ function spawnNight() {
   // 第 2 晚起出現邪教頭目：更壯、視野更廣、擊殺回復 1 HP
   if (nights >= 1) {
     const c = cultists[0];
+    c.leader = true; c.hp = 3; c.range += 45; c.speed += 14; c.st = 'patrol';
+  }
+  // v4：無盡模式第 4 晚起出現第二名頭目
+  if (mode === 'endless' && nights >= 3 && cultists[1]) {
+    const c = cultists[1];
     c.leader = true; c.hp = 3; c.range += 45; c.speed += 14; c.st = 'patrol';
   }
   // 祭品金幣（風險回報：散在營地深處）
@@ -716,10 +729,12 @@ function hurtPlayer(fromX, fromY) {
   player.y += Math.sin(kb) * 42;
   if (player.hp <= 0) {
     finalScore = calcScore();
-    newBest = finalScore > best;
-    if (newBest) {
-      best = finalScore;
-      try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {}
+    if (mode === 'endless') {   // v4：無盡模式分數獨立記錄
+      newBest = finalScore > endlessBest;
+      if (newBest) { endlessBest = finalScore; try { localStorage.setItem('夜襲邪教據點.endless_best', String(endlessBest)); } catch (err) {} }
+    } else {
+      newBest = finalScore > best;
+      if (newBest) { best = finalScore; try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {} }
     }
     sfx.lose();
     setTimeout(() => setState(overState), 900);
@@ -791,7 +806,10 @@ function fogUpdate(dt) {
 const titleState = {
   enter() { this.t = 0; },
   update(dt) { this.t += dt; fogUpdate(dt); },
-  onKey(code) { if (code === 'Space' || code === 'Enter' || code === 'KeyE') startGame(); },
+  onKey(code) {
+    if (code === 'Space' || code === 'Enter' || code === 'KeyE') startGame('story');
+    else if (code === 'KeyN' && cleared) startGame('endless');
+  },
   draw() {
     uiButtons.length = 0;
     drawScene(false);
@@ -844,25 +862,43 @@ const titleState = {
       ctx.fillText('最佳戰績：' + best + ' 分', GAME_W / 2, 245);
     }
     const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
-    ctx.save();
-    ctx.translate(GAME_W / 2, 285);
-    ctx.scale(pulse, pulse);
-    ctx.translate(-GAME_W / 2, -285);
-    uiButtons.push({ x: GAME_W / 2 - 110, y: 253, w: 220, h: 64, cb: startGame });
-    const bg2 = ctx.createLinearGradient(0, 253, 0, 317);
-    bg2.addColorStop(0, '#b5432f'); bg2.addColorStop(1, '#6d1f1a');
-    ctx.fillStyle = bg2;
-    roundRect(GAME_W / 2 - 110, 253, 220, 64, 14);
-    ctx.fill();
-    ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
-    ctx.fillStyle = '#f4ece0';
-    ctx.font = 'bold 30px sans-serif';
-    ctx.fillText('開 始', GAME_W / 2, 296);
-    ctx.restore();
+    if (cleared) {
+      // v4：兩顆按鈕——劇情三晚 / 無盡夜襲
+      ctx.save();
+      ctx.translate(GAME_W / 2, 283); ctx.scale(pulse, pulse); ctx.translate(-GAME_W / 2, -283);
+      titleBtn(GAME_W / 2 - 236, 253, 224, 60, '開始 · 三晚劇情', 21, () => startGame('story'), '#b5432f', '#6d1f1a');
+      ctx.restore();
+      titleBtn(GAME_W / 2 + 12, 253, 224, 60, '🌙 無盡夜襲', 21, () => startGame('endless'), '#3a5a8f', '#1f2d55');
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.good; ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('🌙 已解鎖【無盡夜襲】：夜夜信徒更多更兇，撐越多晚分數越高！（按 N）　最佳 ' + endlessBest + ' 分', GAME_W / 2, 338);
+    } else {
+      ctx.save();
+      ctx.translate(GAME_W / 2, 285); ctx.scale(pulse, pulse); ctx.translate(-GAME_W / 2, -285);
+      titleBtn(GAME_W / 2 - 110, 253, 220, 64, '開 始', 30, () => startGame('story'), '#b5432f', '#6d1f1a');
+      ctx.restore();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.dim; ctx.font = '14px sans-serif';
+      ctx.fillText('通關三晚後解鎖【無盡夜襲】挑戰模式', GAME_W / 2, 340);
+    }
     muteButton();
   }
 };
-function startGame() {
+// v4：標題按鈕繪製＋註冊點擊區
+function titleBtn(x, y, w, h, label, size, cb, c1, c2) {
+  uiButtons.push({ x, y, w, h, cb });
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, c1); g.addColorStop(1, c2);
+  ctx.fillStyle = g;
+  roundRect(x, y, w, h, 14); ctx.fill();
+  ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#f4ece0';
+  ctx.font = 'bold ' + size + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.textBaseline = 'alphabetic';
+}
+function startGame(m) {
+  mode = (m === 'endless' && cleared) ? 'endless' : 'story';   // v4：選擇模式
   sfx.click();
   day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0; won = false;
   player.hp = 3; player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
@@ -998,8 +1034,8 @@ const playState = {
       }
       burst(player.x, player.y - 20, PAL.fireHot, 20, 200, 120);
       player.stam = Math.min(100, player.stam + 25);
-      // 三晚達成 → 勝利結算（勝利 +300、剩餘 HP 每顆 +100）
-      if (nights >= NIGHTS_GOAL) {
+      // 三晚達成 → 勝利結算（僅劇情模式；無盡模式永不結束，撐到被抓為止）
+      if (mode === 'story' && nights >= NIGHTS_GOAL) {
         won = true;
         finalScore = calcScore() + 300 + player.hp * 100;
         grade = finalScore >= 1500 ? 'S' : finalScore >= 1200 ? 'A' : finalScore >= 900 ? 'B' : 'C';
@@ -1008,6 +1044,7 @@ const playState = {
           best = finalScore;
           try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {}
         }
+        if (!cleared) { cleared = true; try { localStorage.setItem('夜襲邪教據點.cleared', '1'); } catch (err) {} }   // v4：解鎖無盡夜襲
       }
       this.nightFade = 1.2;
     }
@@ -1149,7 +1186,7 @@ function drawHUD(st) {
   // 三晚挑戰進度
   ctx.fillStyle = PAL.amber;
   ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
-  ctx.fillText('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚', 122, 58);
+  ctx.fillText(mode === 'endless' ? ('無盡 · 第 ' + (nights + 1) + ' 晚') : ('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚'), 122, 58);
   // 目標列
   const alive = cultists.filter(c => !c.dead).length;
   const atkWord = TOUCH ? '點「攻擊」鈕' : '按 E';
@@ -1220,7 +1257,7 @@ function muteButton() {
 // ===== 結算 =====
 const overState = {
   enter() { this.t = 0; },
-  onKey(code) { if (this.t > 0.5 && (code === 'Space' || code === 'Enter' || code === 'KeyE')) startGame(); },
+  onKey(code) { if (this.t > 0.5 && (code === 'Space' || code === 'Enter' || code === 'KeyE')) startGame(mode); },
   update(dt) { this.t += dt; fogUpdate(dt); },
   draw() {
     uiButtons.length = 0;
