@@ -115,7 +115,7 @@ async function shootOne(ctx, scorer, htmlPath, outPath) {
 
   let ok = 0, fail = 0;
   const wanted = new Set();
-  for (const cat of ['games', 'videos']) {
+  for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
     const dir = path.join(ROOT, cat);
     if (!fs.existsSync(dir)) continue;
     fs.mkdirSync(path.join(ROOT, 'thumbs', cat), { recursive: true });
@@ -136,7 +136,7 @@ async function shootOne(ctx, scorer, htmlPath, outPath) {
   }
 
   // 清掉孤兒縮圖（作品已刪除或改名）
-  for (const cat of ['games', 'videos']) {
+  for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
     const tdir = path.join(ROOT, 'thumbs', cat);
     if (!fs.existsSync(tdir)) continue;
     for (const t of fs.readdirSync(tdir)) {

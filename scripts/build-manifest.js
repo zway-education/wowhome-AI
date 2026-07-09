@@ -25,7 +25,7 @@ function metaAuthor(htmlPath) {
 }
 
 const manifest = {};
-for (const cat of ['games', 'videos']) {
+for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
   const dir = path.join(ROOT, cat);
   manifest[cat] = [];
   if (!fs.existsSync(dir)) continue;
