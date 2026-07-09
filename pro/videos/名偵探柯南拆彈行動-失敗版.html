@@ -1,0 +1,1149 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>名偵探柯南拆彈行動-失敗版</title>
+<style>
+  html,body{margin:0;height:100%;background:#05070d;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:'Noto Sans TC','PingFang TC','Microsoft JhengHei',sans-serif}
+  #stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block;background:#05070d}
+  .btn{position:absolute;z-index:10;border:1px solid rgba(255,255,255,.25);color:#e8ecf4;
+    background:rgba(8,12,22,.6);backdrop-filter:blur(4px);border-radius:999px;
+    font-family:inherit;font-size:14px;letter-spacing:.12em;padding:8px 18px;cursor:pointer;
+    transition:all .25s ease}
+  .btn:hover{border-color:#ff6b57;color:#ff6b57;transform:translateY(-1px)}
+  #soundBtn{top:14px;right:14px}
+  #replayBtn{left:50%;bottom:12%;transform:translate(-50%,30px);opacity:0;pointer-events:none;
+    font-size:18px;font-weight:700;padding:14px 44px;border:2px solid #ff6b57;color:#ff6b57;
+    background:rgba(8,12,22,.8);box-shadow:0 0 24px rgba(255,107,87,.3);letter-spacing:.3em}
+  #replayBtn.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+  #replayBtn:hover{background:#ff6b57;color:#1a0906}
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<button class="btn" id="soundBtn" type="button">聲音：關</button>
+<button class="btn" id="replayBtn" type="button">重新播放</button>
+<script>
+'use strict';
+/* ============================================================
+   名偵探柯南拆彈行動（失敗版・專業AI升級版）
+   同一個倉庫、同一顆炸彈——但這次，名偵探用「點兵點將」
+   選了紅線。轟——！搞笑失敗結局，別氣餒，再挑戰一次！
+   ============================================================ */
+const W = 960, H = 540, FY = 470;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+function resize(){
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = Math.max(1, Math.round(W * s * dpr)); canvas.height = Math.max(1, Math.round(H * s * dpr));
+  canvas.style.width = W * s + 'px'; canvas.style.height = H * s + 'px';
+  ctx.setTransform(s * dpr, 0, 0, s * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- 緩動 ---------- */
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const lerp = (a, b, t) => a + (b - a) * t;
+const eIO = t => t < .5 ? 4*t*t*t : 1 - Math.pow(-2*t + 2, 3) / 2, eO = t => 1 - Math.pow(1 - t, 3);
+const eI = t => t * t * t, eOB = t => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
+function seg(t, a, b, ez){ return (ez || eIO)(clamp01((t - a) / (b - a))); }
+function rnd(i){ const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+
+/* ---------- 攝影機 ---------- */
+const cam = { x: 0, y: 0, z: 1, tx: 0, ty: 0, tz: 1 };
+let shakeMag = 0, shX = 0, shY = 0, flashA = 0, flashC = '#fff';
+function camSnap(){ cam.x = cam.tx; cam.y = cam.ty; cam.z = cam.tz; }
+function camUpdate(dt){
+  const k = 1 - Math.pow(0.02, dt);
+  cam.x += (cam.tx - cam.x) * k; cam.y += (cam.ty - cam.y) * k; cam.z += (cam.tz - cam.z) * k;
+  shakeMag *= Math.pow(0.0008, dt);
+  shX = (Math.random() * 2 - 1) * shakeMag; shY = (Math.random() * 2 - 1) * shakeMag;
+  flashA = Math.max(0, flashA - dt * 2.0);
+}
+function applyCam(f){
+  ctx.save();
+  ctx.translate(W / 2 + shX * f, H / 2 + shY * f);
+  ctx.scale(cam.z, cam.z);
+  ctx.translate(-W / 2 - cam.x * f, -H / 2 - cam.y);
+}
+
+/* ---------- 音效（Web Audio 合成，預設靜音） ---------- */
+let AC = null, master = null, soundOn = false;
+function initAudio(){
+  if (AC) return;
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain(); master.gain.value = 0; master.connect(AC.destination);
+  const droneG = AC.createGain(); droneG.gain.value = 0.05; droneG.connect(master);
+  for (const f of [55, 55.7, 110.4]){
+    const o = AC.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+    const g = AC.createGain(); g.gain.value = 0.33;
+    o.connect(g); g.connect(droneG); o.start();
+  }
+}
+function setSound(on){
+  soundOn = on;
+  document.getElementById('soundBtn').textContent = on ? '聲音：開' : '聲音：關';
+  if (on){
+    initAudio();
+    if (AC.state === 'suspended') AC.resume();
+    master.gain.setTargetAtTime(0.85, AC.currentTime, 0.2);
+  } else if (AC) master.gain.setTargetAtTime(0, AC.currentTime, 0.1);
+}
+document.getElementById('soundBtn').addEventListener('click', () => setSound(!soundOn));
+function tone(freq, dur, type, vol, slide, when){
+  if (!AC || !soundOn) return;
+  const t0 = when || AC.currentTime;
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, t0);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq + slide), t0 + dur);
+  g.gain.setValueAtTime(vol || 0.1, t0);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g); g.connect(master);
+  o.start(t0); o.stop(t0 + dur);
+}
+function noiseBurst(dur, f0, f1, vol, type){
+  if (!AC || !soundOn) return;
+  const len = Math.floor(AC.sampleRate * dur);
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const bp = AC.createBiquadFilter(); bp.type = type || 'bandpass'; bp.Q.value = 0.9;
+  bp.frequency.setValueAtTime(f0, AC.currentTime);
+  bp.frequency.exponentialRampToValueAtTime(f1, AC.currentTime + dur);
+  const g = AC.createGain(); g.gain.value = vol;
+  src.connect(bp); bp.connect(g); g.connect(master); src.start();
+}
+const sfx = {
+  tick(){ tone(1900, 0.03, 'square', 0.05); tone(950, 0.04, 'sine', 0.06); },
+  sting(){ tone(220, 0.7, 'sawtooth', 0.09, -60); tone(233, 0.7, 'sawtooth', 0.09, -60); },
+  heart(){ tone(70, 0.12, 'sine', 0.3, -20); setTimeout(() => tone(60, 0.16, 'sine', 0.26, -15), 180); },
+  snip(){ noiseBurst(0.08, 2500, 5000, 0.3); tone(3200, 0.05, 'square', 0.1); },
+  boom(){ noiseBurst(1.2, 400, 60, 0.5, 'lowpass'); tone(60, 0.9, 'sine', 0.5, -40); tone(38, 1.4, 'sine', 0.4, -15); },
+  boing(){ tone(160, 0.3, 'square', 0.07, 320); },
+  fall(){ tone(1200, 0.8, 'sine', 0.08, -900); },
+  thud(){ tone(90, 0.18, 'sine', 0.35, -50); noiseBurst(0.1, 200, 90, 0.2); },
+  err(){ tone(196, 0.25, 'square', 0.1); setTimeout(() => tone(155, 0.4, 'square', 0.1), 260); },
+  trombone(){
+    [[233, 0], [220, 380], [208, 760], [196, 1140]].forEach(([f, d], i) =>
+      setTimeout(() => tone(f, i === 3 ? 1.3 : 0.34, 'sawtooth', 0.1, i === 3 ? -36 : -6), d));
+  },
+  cough(){ noiseBurst(0.12, 300, 700, 0.18); },
+  stamp(){ tone(70, 0.25, 'sine', 0.4, -30); noiseBurst(0.14, 300, 100, 0.25); },
+  step(){ tone(150, 0.05, 'triangle', 0.05, -40); },
+  question(){ tone(660, 0.16, 'sine', 0.07, 220); }
+};
+
+/* ---------- 粒子 ---------- */
+const parts = [];
+function spawnSpark(x, y, n, spd, col){
+  for (let i = 0; i < n; i++){
+    const a = Math.random() * 6.283, s = (spd || 240) * (0.3 + Math.random() * 0.8);
+    parts.push({ k: 'spark', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      life: 0.35 + Math.random() * 0.4, max: 0.75, c: col || (Math.random() < 0.5 ? '#ffd166' : '#fff') });
+  }
+}
+function spawnDust(x, y, n){
+  for (let i = 0; i < n; i++) parts.push({ k: 'dust', x: x + (Math.random() * 2 - 1) * 12, y,
+    vx: (Math.random() * 2 - 1) * 60, vy: -20 - Math.random() * 30, life: 0.5, max: 0.5, s: 3 + Math.random() * 4 });
+}
+const DEBC = ['#ff5252', '#ffa726', '#8d6e63', '#bdbdbd', '#37474f'];
+function spawnDebris(x, y, n){
+  for (let i = 0; i < n; i++){
+    const a = -Math.PI + Math.random() * Math.PI * 1.2 - 0.1;
+    const s = 180 + Math.random() * 340;
+    parts.push({ k: 'deb', x, y, vx: Math.cos(a) * s * (Math.random() < 0.5 ? -1 : 1), vy: -Math.abs(Math.sin(a)) * s - 80,
+      life: 2.2 + Math.random(), max: 3, rot: Math.random() * 6.28, vr: (Math.random() * 2 - 1) * 12,
+      c: DEBC[(Math.random() * DEBC.length) | 0], s2: 4 + Math.random() * 5 });
+  }
+}
+function spawnSmoke(x, y, n, big){
+  for (let i = 0; i < n; i++) parts.push({ k: 'smoke', x: x + (Math.random() * 2 - 1) * 40, y: y + (Math.random() * 2 - 1) * 20,
+    vx: (Math.random() * 2 - 1) * 24, vy: -26 - Math.random() * 34,
+    life: (big ? 3.2 : 1.6) + Math.random() * 1.6, max: 4.8, s: (big ? 26 : 12) + Math.random() * (big ? 34 : 10) });
+}
+function spawnTxt(x, y, txt, c, size){
+  parts.push({ k: 'txt', x, y, vx: (Math.random() * 2 - 1) * 14, vy: -30, life: 1.3, max: 1.3, txt, c, size: size || 20, ph: Math.random() * 6.28 });
+}
+function updateParts(dt){
+  for (const p of parts){
+    p.life -= dt;
+    if (p.k === 'deb'){
+      p.vy += 620 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.rot += p.vr * dt;
+      if (p.y > FY + 4 && p.vy > 0){ p.y = FY + 4; p.vy *= -0.35; p.vx *= 0.6; }
+    } else if (p.k === 'smoke'){
+      p.x += p.vx * dt; p.y += p.vy * dt; p.s += dt * 12;
+    } else if (p.k === 'spark'){
+      p.vy += 500 * dt; p.x += p.vx * dt; p.y += p.vy * dt;
+    } else if (p.k === 'txt'){
+      p.ph += dt * 4; p.x += (p.vx + Math.sin(p.ph) * 8) * dt; p.y += p.vy * dt;
+    } else { p.x += p.vx * dt; p.y += p.vy * dt; p.vx *= Math.pow(0.2, dt); }
+  }
+  for (let i = parts.length - 1; i >= 0; i--) if (parts[i].life <= 0) parts.splice(i, 1);
+  if (parts.length > 600) parts.splice(0, parts.length - 600);
+}
+function drawParts(g){
+  for (const p of parts){
+    const a = clamp01(p.life / (p.max * 0.5));
+    if (p.k === 'spark'){
+      g.globalAlpha = a; g.strokeStyle = p.c; g.lineWidth = 2; g.lineCap = 'round';
+      g.beginPath(); g.moveTo(p.x, p.y); g.lineTo(p.x - p.vx * 0.03, p.y - p.vy * 0.03); g.stroke();
+    } else if (p.k === 'deb'){
+      g.globalAlpha = Math.min(1, a * 1.3);
+      g.save(); g.translate(p.x, p.y); g.rotate(p.rot);
+      g.fillStyle = p.c; g.fillRect(-p.s2 / 2, -p.s2 / 2, p.s2, p.s2);
+      g.strokeStyle = 'rgba(0,0,0,0.4)'; g.lineWidth = 1; g.strokeRect(-p.s2 / 2, -p.s2 / 2, p.s2, p.s2);
+      g.restore();
+    } else if (p.k === 'smoke'){
+      g.globalAlpha = Math.min(0.55, a * 0.55);
+      const sg = g.createRadialGradient(p.x, p.y, 1, p.x, p.y, p.s);
+      sg.addColorStop(0, 'rgba(120,120,125,0.8)'); sg.addColorStop(1, 'rgba(80,80,85,0)');
+      g.fillStyle = sg;
+      g.beginPath(); g.arc(p.x, p.y, p.s, 0, 6.283); g.fill();
+    } else if (p.k === 'txt'){
+      g.globalAlpha = a;
+      g.fillStyle = p.c; g.font = '900 ' + p.size + 'px "Noto Sans TC",sans-serif'; g.textAlign = 'center';
+      g.fillText(p.txt, p.x, p.y);
+    } else {
+      g.globalAlpha = a * 0.4; g.fillStyle = '#8b95a8';
+      g.beginPath(); g.arc(p.x, p.y, p.s * (1.5 - a * 0.5), 0, 6.283); g.fill();
+    }
+  }
+  g.globalAlpha = 1;
+}
+
+/* ---------- 倉庫背景 ---------- */
+let wall = 0, alertLv = 0;
+function drawWarehouse(t){
+  applyCam(0.85);
+  let gr = ctx.createLinearGradient(0, 0, 0, 420);
+  gr.addColorStop(0, '#101827'); gr.addColorStop(1, '#1a2233');
+  ctx.fillStyle = gr; ctx.fillRect(-300, -80, 1560, 500);
+  ctx.strokeStyle = 'rgba(70,86,110,0.35)'; ctx.lineWidth = 3;
+  for (let x = -280; x < 1280; x += 42){ ctx.beginPath(); ctx.moveTo(x, -60); ctx.lineTo(x, 300); ctx.stroke(); }
+  for (const wx of [90, 400, 710]){
+    ctx.fillStyle = '#0c1420'; ctx.fillRect(wx - 8, 42, 216, 126);
+    gr = ctx.createLinearGradient(0, 42, 0, 168);
+    gr.addColorStop(0, '#2c3f5e'); gr.addColorStop(1, '#18253c');
+    ctx.fillStyle = gr; ctx.fillRect(wx, 50, 200, 110);
+    const sw = (Math.sin(wall * 1.8 + wx) + 1) / 2;
+    ctx.globalAlpha = 0.16 + alertLv * 0.22;
+    ctx.fillStyle = sw < 0.5 ? '#e33' : '#39f';
+    ctx.fillRect(wx + sw * 150, 50, 50, 110);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#0c1420'; ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(wx + 100, 50); ctx.lineTo(wx + 100, 160);
+    ctx.moveTo(wx, 105); ctx.lineTo(wx + 200, 105);
+    ctx.stroke();
+    gr = ctx.createLinearGradient(wx + 100, 160, wx + 30, 470);
+    gr.addColorStop(0, 'rgba(140,170,220,0.10)'); gr.addColorStop(1, 'rgba(140,170,220,0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.moveTo(wx + 8, 160); ctx.lineTo(wx + 192, 160);
+    ctx.lineTo(wx + 120, 470); ctx.lineTo(wx - 70, 470); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+  applyCam(0.93);
+  for (const [bx, by, bw, bh, tag] of [[60, 330, 120, 96, 0], [150, 366, 100, 60, 1], [806, 340, 130, 86, 0], [742, 384, 96, 42, 0]]){
+    gr = ctx.createLinearGradient(bx, by, bx, by + bh);
+    gr.addColorStop(0, '#4a3b28'); gr.addColorStop(1, '#332818');
+    ctx.fillStyle = gr; ctx.fillRect(bx, by, bw, bh);
+    ctx.strokeStyle = '#241b0f'; ctx.lineWidth = 3; ctx.strokeRect(bx, by, bw, bh);
+    ctx.strokeStyle = 'rgba(90,72,46,0.8)'; ctx.lineWidth = 2;
+    ctx.strokeRect(bx + 7, by + 7, bw - 14, bh - 14);
+    ctx.beginPath(); ctx.moveTo(bx + 7, by + 7); ctx.lineTo(bx + bw - 7, by + bh - 7);
+    ctx.moveTo(bx + bw - 7, by + 7); ctx.lineTo(bx + 7, by + bh - 7); ctx.stroke();
+    if (tag){
+      ctx.fillStyle = '#c9a227'; ctx.font = '700 14px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('危險物品', bx + bw / 2, by + bh / 2 + 5);
+    }
+  }
+  ctx.restore();
+  applyCam(1);
+  gr = ctx.createLinearGradient(0, 426, 0, 540);
+  gr.addColorStop(0, '#2b2f38'); gr.addColorStop(1, '#171b22');
+  ctx.fillStyle = gr; ctx.fillRect(-300, 426, 1560, 130);
+  ctx.strokeStyle = 'rgba(120,132,150,0.4)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(-300, 428); ctx.lineTo(1260, 428); ctx.stroke();
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.5;
+  for (let i = 0; i < 8; i++){
+    const cx0 = -200 + i * 190;
+    ctx.beginPath(); ctx.moveTo(cx0, 450 + rnd(i) * 60);
+    ctx.lineTo(cx0 + 60, 460 + rnd(i + 4) * 60); ctx.lineTo(cx0 + 110, 445 + rnd(i + 8) * 70); ctx.stroke();
+  }
+  const sw2 = Math.sin(wall * 0.8) * 0.05 + (shakeMag > 2 ? Math.sin(wall * 30) * 0.1 : 0);
+  ctx.save();
+  ctx.translate(480, 0); ctx.rotate(sw2);
+  ctx.strokeStyle = '#3a4356'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(0, 96); ctx.stroke();
+  ctx.fillStyle = '#2c3548';
+  ctx.beginPath(); ctx.moveTo(-26, 96); ctx.quadraticCurveTo(0, 76, 26, 96); ctx.lineTo(18, 108); ctx.lineTo(-18, 108); ctx.closePath(); ctx.fill();
+  ctx.save(); ctx.shadowColor = '#ffe9b0'; ctx.shadowBlur = 16;
+  ctx.fillStyle = '#ffe9b0'; ctx.beginPath(); ctx.arc(0, 104, 7, 0, 6.283); ctx.fill();
+  ctx.restore();
+  gr = ctx.createLinearGradient(0, 104, 0, 470);
+  gr.addColorStop(0, 'rgba(255,233,176,0.13)'); gr.addColorStop(1, 'rgba(255,233,176,0)');
+  ctx.fillStyle = gr;
+  ctx.beginPath(); ctx.moveTo(-14, 104); ctx.lineTo(14, 104); ctx.lineTo(150, 470); ctx.lineTo(-150, 470); ctx.closePath(); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+/* ---------- 炸彈與彈坑 ---------- */
+let timeLeft = 20, exploded = false, cutP = 0;
+function drawBomb(g, t){
+  const bx = 600, by = FY;
+  g.save();
+  g.translate(bx, by);
+  g.globalAlpha = 0.35; g.fillStyle = '#000';
+  g.beginPath(); g.ellipse(0, 2, 66, 12, 0, 0, 6.283); g.fill();
+  g.globalAlpha = 1;
+  const burn = clamp01(1 - timeLeft / 20);
+  const fx = -8, fy = -104;
+  g.strokeStyle = '#8a6d3b'; g.lineWidth = 6; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(0, -96);
+  g.quadraticCurveTo(-4, -112, fx + burn * 4, fy + burn * 16);
+  g.stroke();
+  const sx = fx + burn * 4, sy = fy + burn * 16;
+  const fl = 0.8 + 0.25 * Math.sin(wall * 22);
+  g.save(); g.shadowColor = '#ff8800'; g.shadowBlur = 18;
+  const sg = g.createRadialGradient(sx, sy, 1, sx, sy, 11 * fl);
+  sg.addColorStop(0, '#fff'); sg.addColorStop(0.4, '#ffcc00'); sg.addColorStop(0.8, '#ff5500'); sg.addColorStop(1, 'rgba(255,85,0,0)');
+  g.fillStyle = sg;
+  g.beginPath(); g.arc(sx, sy, 11 * fl, 0, 6.283); g.fill();
+  g.restore();
+  if (Math.random() < 0.3) spawnSpark(bx + sx, by + sy, 1, 90, '#ffcc00');
+  // 球體（剪錯線後會脹大）
+  const swell = cutP > 0 ? 1 + eOB(clamp01(cutP)) * 0.1 : 1;
+  g.save(); g.scale(swell, swell);
+  const bg = g.createRadialGradient(-22, -76, 8, 0, -56, 62);
+  bg.addColorStop(0, '#4a4f58'); bg.addColorStop(0.55, '#23262c'); bg.addColorStop(1, '#0c0d10');
+  g.fillStyle = bg;
+  g.beginPath(); g.arc(0, -52, 56, 0, 6.283); g.fill();
+  g.strokeStyle = '#000'; g.lineWidth = 2.5; g.stroke();
+  g.fillStyle = 'rgba(255,255,255,0.14)';
+  g.beginPath(); g.ellipse(-22, -78, 14, 8, -0.6, 0, 6.283); g.fill();
+  g.fillStyle = '#3a3f48';
+  g.beginPath(); g.roundRect(-13, -104, 26, 12, 3); g.fill();
+  g.strokeStyle = '#14161a'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#171a20';
+  g.beginPath(); g.roundRect(-38, -72, 76, 34, 5); g.fill();
+  g.strokeStyle = '#4a5568'; g.lineWidth = 2; g.stroke();
+  g.font = '700 20px monospace'; g.textAlign = 'center';
+  if (cutP > 0){
+    // 面板顯示錯誤
+    g.fillStyle = '#ff3333';
+    g.save(); g.shadowColor = '#ff3333'; g.shadowBlur = 10;
+    g.fillText(Math.floor(wall * 6) % 2 === 0 ? 'Ｘ Ｘ' : '！！', 0, -48);
+    g.restore();
+  } else {
+    const mm = Math.floor(Math.max(0, timeLeft) / 60), ss = Math.ceil(Math.max(0, timeLeft)) % 60;
+    g.fillStyle = '#ff3333';
+    g.save(); g.shadowColor = '#ff3333'; g.shadowBlur = 8;
+    g.fillText(String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0'), 0, -48);
+    g.restore();
+  }
+  for (let i = 0; i < 3; i++){
+    const on = cutP > 0 ? true : (Math.floor(wall * 4 + i) % 3 === 0);
+    g.fillStyle = on ? '#ff2222' : '#4a0d0d';
+    if (on){ g.save(); g.shadowColor = '#ff2222'; g.shadowBlur = 8; }
+    g.beginPath(); g.arc(-16 + i * 16, -30, 4, 0, 6.283); g.fill();
+    if (on) g.restore();
+  }
+  g.restore();
+  // 接線盒與導線
+  g.fillStyle = '#20242c';
+  g.beginPath(); g.roundRect(-96, -46, 26, 30, 4); g.fill();
+  g.strokeStyle = '#4a5568'; g.lineWidth = 2; g.stroke();
+  if (cutP <= 0){
+    wire(g, -70, -38, -38, -20, 0, '#e33333');
+  } else {
+    const droop = eO(clamp01(cutP)) * 14;
+    g.strokeStyle = '#e33333'; g.lineWidth = 5; g.lineCap = 'round';
+    g.save(); g.shadowColor = '#e33333'; g.shadowBlur = 6;
+    g.beginPath(); g.moveTo(-70, -38); g.quadraticCurveTo(-60, -28 + droop, -56, -22 + droop); g.stroke();
+    g.beginPath(); g.moveTo(-38, -20); g.quadraticCurveTo(-46, -14 + droop, -50, -10 + droop); g.stroke();
+    g.restore();
+  }
+  wire(g, -70, -24, -38, -12, 10, '#3399ff');
+  g.restore();
+}
+function wire(g, x0, y0, x1, y1, sag, col){
+  g.strokeStyle = col; g.lineWidth = 5; g.lineCap = 'round';
+  g.save(); g.shadowColor = col; g.shadowBlur = 7;
+  g.beginPath(); g.moveTo(x0, y0);
+  g.quadraticCurveTo((x0 + x1) / 2, Math.max(y0, y1) + 10 + sag, x1, y1);
+  g.stroke();
+  g.restore();
+}
+function drawCrater(g, t, flagUp){
+  const bx = 600;
+  g.save();
+  g.translate(bx, FY);
+  g.fillStyle = '#0e1015';
+  g.beginPath(); g.ellipse(0, 2, 92, 18, 0, 0, 6.283); g.fill();
+  g.strokeStyle = '#2c3038'; g.lineWidth = 3; g.stroke();
+  const eg = g.createRadialGradient(0, 0, 4, 0, 0, 60);
+  eg.addColorStop(0, 'rgba(255,120,40,' + (0.28 + Math.sin(wall * 5) * 0.08) + ')');
+  eg.addColorStop(1, 'rgba(255,120,40,0)');
+  g.fillStyle = eg;
+  g.beginPath(); g.ellipse(0, 0, 62, 14, 0, 0, 6.283); g.fill();
+  // 殘骸
+  for (const [dx, dy, s, r] of [[-46, -6, 10, 0.5], [30, -8, 13, -0.4], [-12, -4, 8, 1.1], [56, -2, 7, 0.2]]){
+    g.save(); g.translate(dx, dy); g.rotate(r);
+    g.fillStyle = '#23262c'; g.strokeStyle = '#000'; g.lineWidth = 1.5;
+    g.beginPath(); g.moveTo(-s, s * 0.4); g.lineTo(0, -s * 0.7); g.lineTo(s, s * 0.3); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+  }
+  // 白旗（投降）
+  if (flagUp > 0){
+    const fu = eOB(clamp01(flagUp));
+    g.save();
+    g.translate(6, 0);
+    g.strokeStyle = '#c9c2ac'; g.lineWidth = 3.5; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(0, -66 * fu); g.stroke();
+    if (fu > 0.5){
+      const wv = Math.sin(wall * 6) * 5;
+      g.fillStyle = '#f4f4f0'; g.strokeStyle = '#b8b2a0'; g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(0, -66 * fu);
+      g.quadraticCurveTo(22, -62 * fu + wv, 42, -58 * fu + wv * 1.4);
+      g.lineTo(42, -42 * fu + wv * 1.4);
+      g.quadraticCurveTo(22, -46 * fu + wv, 0, -42 * fu);
+      g.closePath(); g.fill(); g.stroke();
+    }
+    g.restore();
+  }
+  g.restore();
+  if (Math.random() < 0.12) spawnSmoke(bx, FY - 12, 1, false);
+}
+
+/* ---------- 柯南（含焦黑狼狽版） ---------- */
+const OUTC = '#141b26';
+function capC(g, x0, y0, x1, y1, w, col, colL){
+  g.lineCap = 'round';
+  g.strokeStyle = OUTC; g.lineWidth = w + 3;
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  g.strokeStyle = col; g.lineWidth = w;
+  g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  if (colL){
+    g.strokeStyle = colL; g.lineWidth = Math.max(1.4, w * 0.32);
+    g.beginPath(); g.moveTo(x0 - w * 0.15, y0 - w * 0.2); g.lineTo(x1 - w * 0.15, y1 - w * 0.2); g.stroke();
+  }
+}
+function drawConan(g, p){
+  const dir = p.dir === undefined ? 1 : p.dir, cr = p.crouch || 0, soot = p.soot || 0;
+  const skin = soot > 0.5 ? '#c9b8a8' : '#ffdcb0', skinL = soot > 0.5 ? '#d8cabb' : '#ffeacf';
+  const suit = soot > 0.5 ? '#31435f' : '#2255cc', suitL = soot > 0.5 ? '#3d5170' : '#3568e0';
+  g.save();
+  if (p.rot === undefined || Math.abs(p.rot) < 1.2){
+    g.globalAlpha = 0.3; g.fillStyle = '#000';
+    g.beginPath(); g.ellipse(p.x, FY + 5, 30, 7, 0, 0, 6.283); g.fill();
+    g.globalAlpha = 1;
+  }
+  g.translate(p.x, p.y === undefined ? FY : p.y);
+  if (p.rot) g.rotate(p.rot);
+  g.scale(dir, 1);
+  const bob = p.walk !== undefined ? -Math.abs(Math.cos(p.walk)) * 3.5 * (p.spd || 0) : 0;
+  g.translate(0, bob + cr * 32);
+  const wk = p.walk || 0, spd = p.spd || 0;
+  for (const [side, phof] of [[-1, Math.PI], [1, 0]]){
+    const swx = Math.sin(wk + phof) * 13 * spd + (p.legSpread ? side * p.legSpread : 0);
+    const lift = Math.max(0, Math.sin(wk + phof + 0.5)) * 8 * spd;
+    const kb = cr * (side < 0 ? 16 : 22);
+    capC(g, side * 7, -48 - cr * 32, side * 7 + swx * 0.4 + kb, -26 - lift * 0.4 - cr * 14, 9, '#3d4756', '#4d5a6e');
+    capC(g, side * 7 + swx * 0.4 + kb, -26 - lift * 0.4 - cr * 8, side * 7 + swx + kb * 0.4, -5 - lift, 7.5, '#e8ecf4', '#ffffff');
+    g.fillStyle = '#d33'; g.strokeStyle = OUTC; g.lineWidth = 2;
+    g.beginPath(); g.roundRect(side * 7 + swx + kb * 0.4 - 6, -9 - lift, 16, 9, 4); g.fill(); g.stroke();
+    g.fillStyle = '#fff';
+    g.beginPath(); g.roundRect(side * 7 + swx + kb * 0.4 - 6, -4 - lift, 16, 4, 2); g.fill();
+  }
+  conanArm(g, p, -1, suit, skin);
+  const jg = g.createLinearGradient(-18, -96, 20, -48);
+  jg.addColorStop(0, suitL); jg.addColorStop(0.55, suit); jg.addColorStop(1, soot > 0.5 ? '#25334a' : '#173a92');
+  g.fillStyle = jg;
+  g.beginPath();
+  g.moveTo(-15, -94);
+  g.quadraticCurveTo(-22, -70, -18, -44);
+  g.quadraticCurveTo(0, -38, 18, -44);
+  g.quadraticCurveTo(22, -70, 15, -94);
+  g.quadraticCurveTo(0, -100, -15, -94);
+  g.closePath(); g.fill();
+  g.strokeStyle = OUTC; g.lineWidth = 2.6; g.lineJoin = 'round'; g.stroke();
+  if (soot > 0.5){
+    g.fillStyle = 'rgba(30,30,34,0.5)';
+    g.beginPath(); g.ellipse(-6, -70, 7, 10, 0.4, 0, 6.283); g.fill();
+    g.beginPath(); g.ellipse(9, -54, 6, 8, -0.5, 0, 6.283); g.fill();
+  }
+  g.fillStyle = '#f4f6fa';
+  g.beginPath(); g.moveTo(-8, -92); g.lineTo(0, -78); g.lineTo(8, -92); g.quadraticCurveTo(0, -96, -8, -92); g.closePath(); g.fill();
+  g.strokeStyle = OUTC; g.lineWidth = 1.6; g.stroke();
+  g.fillStyle = '#e33333'; g.strokeStyle = OUTC; g.lineWidth = 1.8;
+  g.beginPath(); g.moveTo(-8, -82); g.lineTo(-1.5, -78); g.lineTo(-8, -74); g.closePath(); g.fill(); g.stroke();
+  g.beginPath(); g.moveTo(8, -82); g.lineTo(1.5, -78); g.lineTo(8, -74); g.closePath(); g.fill(); g.stroke();
+  g.beginPath(); g.arc(0, -78, 2.4, 0, 6.283); g.fill(); g.stroke();
+  conanArm(g, p, 1, suit, skin);
+  // 頭
+  g.save();
+  g.translate(0, -124 + cr * 4); g.rotate((p.head || 0) * 0.5);
+  const hg = g.createRadialGradient(-6, -6, 4, 0, 0, 27);
+  hg.addColorStop(0, skinL); hg.addColorStop(1, skin);
+  g.fillStyle = hg;
+  g.beginPath(); g.arc(0, 0, 24, 0, 6.283); g.fill();
+  g.strokeStyle = OUTC; g.lineWidth = 2.4; g.stroke();
+  if (soot > 0.5){
+    g.fillStyle = 'rgba(40,38,40,0.55)';
+    g.beginPath(); g.ellipse(-8, 8, 6, 4, 0.3, 0, 6.283); g.fill();
+    g.beginPath(); g.ellipse(12, -2, 5, 3.4, -0.4, 0, 6.283); g.fill();
+    g.beginPath(); g.ellipse(2, 17, 7, 3, 0, 0, 6.283); g.fill();
+  }
+  // 髮型：正常＝俐落；焦黑＝爆炸頭
+  g.fillStyle = soot > 0.5 ? '#3a3438' : '#241a10';
+  if (soot > 0.5){
+    for (let i = 0; i < 11; i++){
+      const a = Math.PI + i / 10 * Math.PI + Math.sin(i * 7) * 0.06;
+      const rr = 26 + rnd(i + 60) * 12 + Math.sin(wall * 3 + i) * 1.5;
+      g.beginPath();
+      g.arc(Math.cos(a) * 16, Math.sin(a) * 14 - 4, 9 + rnd(i) * 5, 0, 6.283);
+      g.fill();
+      g.beginPath();
+      g.arc(Math.cos(a) * rr * 0.7, Math.sin(a) * rr * 0.55 - 6, 6 + rnd(i + 20) * 4, 0, 6.283);
+      g.fill();
+    }
+    g.strokeStyle = OUTC; g.lineWidth = 2;
+    g.beginPath(); g.arc(0, -12, 25, Math.PI * 0.95, Math.PI * 2.05); g.stroke();
+  } else {
+    g.beginPath();
+    g.arc(0, -2, 24.5, Math.PI * 0.92, Math.PI * 1.98);
+    g.quadraticCurveTo(23, -14, 15, -10);
+    g.quadraticCurveTo(9, -4, 2, -10);
+    g.quadraticCurveTo(-5, -3, -13, -10);
+    g.quadraticCurveTo(-19, -6, -24, 2);
+    g.closePath(); g.fill();
+    g.beginPath();
+    g.moveTo(-22, -12); g.quadraticCurveTo(-32, -18, -34, -8);
+    g.quadraticCurveTo(-28, -8, -24, -3); g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(255,255,255,0.14)'; g.lineWidth = 2.5;
+    g.beginPath(); g.arc(0, -3, 19, Math.PI * 1.2, Math.PI * 1.55); g.stroke();
+  }
+  // 眼鏡（焦黑版歪斜＋裂痕）
+  g.save();
+  if (soot > 0.5){ g.rotate(0.18); g.translate(0, 2); }
+  for (const sx of [-10, 10]){
+    g.fillStyle = 'rgba(200,225,255,0.16)';
+    g.beginPath(); g.arc(sx, 3, 9.5, 0, 6.283); g.fill();
+    g.strokeStyle = '#10141c'; g.lineWidth = 2.8; g.stroke();
+  }
+  g.strokeStyle = '#10141c'; g.lineWidth = 2.4;
+  g.beginPath(); g.moveTo(-1.5, 3); g.lineTo(1.5, 3); g.stroke();
+  if (soot > 0.5){
+    g.strokeStyle = 'rgba(255,255,255,0.75)'; g.lineWidth = 1.3;
+    g.beginPath(); g.moveTo(6, -2); g.lineTo(11, 4); g.moveTo(11, 4); g.lineTo(8, 9); g.moveTo(11, 4); g.lineTo(15, 6); g.stroke();
+  }
+  g.restore();
+  // 眼睛
+  const exp = p.exp || 'focus';
+  g.fillStyle = '#1b2430'; g.strokeStyle = '#1b2430'; g.lineWidth = 2; g.lineCap = 'round';
+  if (exp === 'dizzy'){
+    for (const sx of [-10, 10]){
+      g.beginPath();
+      for (let a = 0; a < 4.5; a += 0.3){
+        const rr = 1 + a * 0.9;
+        const px2 = sx + Math.cos(a + wall * 4) * rr, py2 = 3 + Math.sin(a + wall * 4) * rr;
+        a === 0 ? g.moveTo(px2, py2) : g.lineTo(px2, py2);
+      }
+      g.stroke();
+    }
+  } else if (exp === 'shock'){
+    g.fillStyle = '#fff'; g.strokeStyle = '#1b2430';
+    g.beginPath(); g.arc(-10, 3, 5, 0, 6.283); g.fill(); g.stroke();
+    g.beginPath(); g.arc(10, 3, 5, 0, 6.283); g.fill(); g.stroke();
+    g.fillStyle = '#1b2430';
+    g.beginPath(); g.arc(-10, 3, 1.6, 0, 6.283); g.fill();
+    g.beginPath(); g.arc(10, 3, 1.6, 0, 6.283); g.fill();
+  } else if (exp === 'smile'){
+    g.beginPath(); g.arc(-10, 3, 4, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+    g.beginPath(); g.arc(10, 3, 4, Math.PI * 1.15, Math.PI * 1.85); g.stroke();
+  } else {
+    g.beginPath(); g.ellipse(-10, 3, 2.8, 3.6, 0, 0, 6.283); g.fill();
+    g.beginPath(); g.ellipse(10, 3, 2.8, 3.6, 0, 0, 6.283); g.fill();
+    g.fillStyle = '#fff';
+    g.beginPath(); g.arc(-9, 1.6, 1.1, 0, 6.283); g.fill();
+    g.beginPath(); g.arc(11, 1.6, 1.1, 0, 6.283); g.fill();
+  }
+  g.strokeStyle = soot > 0.5 ? '#3a3438' : '#241a10'; g.lineWidth = 2;
+  if (exp === 'shock' || exp === 'dizzy'){
+    g.beginPath(); g.moveTo(-15, -8); g.lineTo(-5, -5); g.stroke();
+    g.beginPath(); g.moveTo(5, -5); g.lineTo(15, -8); g.stroke();
+  } else {
+    g.beginPath(); g.moveTo(-15, -6); g.lineTo(-5, -8); g.stroke();
+    g.beginPath(); g.moveTo(5, -8); g.lineTo(15, -6); g.stroke();
+  }
+  g.strokeStyle = '#8a5a3a'; g.lineWidth = 2;
+  if (exp === 'shock'){
+    g.fillStyle = '#7a3a2a';
+    g.beginPath(); g.ellipse(0, 15, 4, 5.4, 0, 0, 6.283); g.fill();
+  } else if (exp === 'dizzy'){
+    g.beginPath();
+    g.moveTo(-6, 15);
+    g.quadraticCurveTo(-3, 12, 0, 15);
+    g.quadraticCurveTo(3, 18, 6, 15);
+    g.stroke();
+  } else if (exp === 'smile'){
+    g.beginPath(); g.arc(0, 12, 5.5, 0.3, Math.PI - 0.3); g.stroke();
+  } else if (exp === 'grit'){
+    g.beginPath(); g.moveTo(-5, 15); g.lineTo(5, 14); g.stroke();
+  } else {
+    g.beginPath(); g.moveTo(-4, 15); g.lineTo(4, 15); g.stroke();
+  }
+  if (p.sweat){
+    g.globalAlpha = Math.min(1, p.sweat);
+    g.fillStyle = '#7fd1ff'; g.strokeStyle = '#4fa3d7'; g.lineWidth = 1.4;
+    const n = p.sweat > 1.5 ? 3 : 1;
+    for (let i = 0; i < n; i++){
+      const sy2 = -14 + Math.sin(wall * 3 + i * 2) * 2 + i * 8;
+      const sxx = 20 + i * 3;
+      g.beginPath();
+      g.moveTo(sxx, sy2 - 7);
+      g.quadraticCurveTo(sxx + 5.5, sy2 + 2, sxx, sy2 + 5);
+      g.quadraticCurveTo(sxx - 5.5, sy2 + 2, sxx, sy2 - 7);
+      g.closePath(); g.fill(); g.stroke();
+    }
+    g.globalAlpha = 1;
+  }
+  // 頭頂冒煙／暈星
+  if (p.dizzyStars){
+    for (let i = 0; i < 3; i++){
+      const a = wall * 2.4 + i * 2.09;
+      const sx3 = Math.cos(a) * 26, sy3 = -34 + Math.sin(a) * 7;
+      g.save(); g.translate(sx3, sy3); g.rotate(a);
+      g.fillStyle = '#ffd21e'; g.strokeStyle = '#b8860b'; g.lineWidth = 1;
+      g.beginPath();
+      for (let j = 0; j < 5; j++){
+        const aa = j / 5 * 6.283 - 1.57;
+        const r1 = 6, r2 = 2.6;
+        g.lineTo(Math.cos(aa) * r1, Math.sin(aa) * r1);
+        g.lineTo(Math.cos(aa + 0.628) * r2, Math.sin(aa + 0.628) * r2);
+      }
+      g.closePath(); g.fill(); g.stroke();
+      g.restore();
+    }
+  }
+  g.restore();
+  g.restore();
+}
+function conanArm(g, p, side, suit, skin){
+  const a = side === 1 ? (p.armR === undefined ? 0.3 : p.armR) : (p.armL === undefined ? -0.25 : p.armL);
+  const fo = side === 1 ? (p.foreR === undefined ? 0.35 : p.foreR) : 0.3;
+  const sx = 13, sy = -88 + (p.crouch || 0) * 2;
+  const k1x = sx + Math.sin(a) * 17, k1y = sy + Math.cos(a) * 17;
+  const hx = k1x + Math.sin(a + fo) * 16, hy = k1y + Math.cos(a + fo) * 16;
+  capC(g, sx, sy, k1x, k1y, 8.5, suit, side === 1 ? '#3568e0' : null);
+  capC(g, k1x, k1y, hx, hy, 7.5, suit, null);
+  g.fillStyle = skin; g.strokeStyle = OUTC; g.lineWidth = 2;
+  g.beginPath(); g.arc(hx, hy, 5, 0, 6.283); g.fill(); g.stroke();
+  if (side === 1 && p.tool){
+    g.save(); g.translate(hx, hy); g.rotate(p.toolRot || 0.45);
+    g.strokeStyle = '#aab4c4'; g.lineWidth = 4; g.lineCap = 'round';
+    const open = p.toolOpen === undefined ? 0.25 : p.toolOpen;
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(16, -6 - open * 8); g.stroke();
+    g.beginPath(); g.moveTo(0, 0); g.lineTo(17, 2 + open * 6); g.stroke();
+    g.strokeStyle = '#d33'; g.lineWidth = 5;
+    g.beginPath(); g.moveTo(-2, 1); g.lineTo(-10, 6); g.stroke();
+    g.restore();
+  }
+  if (side === 1 && p.point !== undefined){
+    g.strokeStyle = skin; g.lineWidth = 5; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(hx, hy); g.lineTo(hx + Math.sin(a + fo) * 10, hy + Math.cos(a + fo) * 10); g.stroke();
+  }
+}
+
+/* ---------- 字幕與外框 ---------- */
+function subAlpha(t, a, b){ return clamp01(Math.min((t - (a - 0.35)) / 0.35, ((b + 0.35) - t) / 0.35)); }
+function drawSubs(sc, t){
+  if (!sc.subs) return;
+  for (const s of sc.subs){
+    const al = subAlpha(t, s.a, s.b);
+    if (al <= 0) continue;
+    ctx.save(); ctx.globalAlpha = al;
+    ctx.font = '700 20px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center';
+    const w2 = ctx.measureText(s.tx).width / 2 + 20;
+    const y = 478 + (1 - al) * 8;
+    ctx.fillStyle = 'rgba(8,12,22,0.82)';
+    ctx.beginPath(); ctx.roundRect(W / 2 - w2, y - 24, w2 * 2, 34, 8); ctx.fill();
+    ctx.strokeStyle = s.warn ? 'rgba(255,77,77,0.9)' : 'rgba(255,167,87,0.7)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = s.warn ? '#ff8888' : '#f4e8dc';
+    ctx.fillText(s.tx, W / 2, y);
+    ctx.restore();
+  }
+}
+let showHud = false, vg = null;
+function overlays(sc, t){
+  if (showHud){
+    const mm = Math.floor(Math.max(0, timeLeft) / 60), ss = Math.ceil(Math.max(0, timeLeft)) % 60;
+    let txt = String(mm).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+    if (exploded) txt = Math.floor(wall * 5) % 3 === 0 ? '--:--' : '00:00';
+    ctx.save();
+    ctx.textAlign = 'center';
+    const pulse = !exploded && timeLeft < 6 ? 1 + Math.abs(Math.sin(wall * 6)) * 0.1 : 1;
+    ctx.translate(W / 2 + (exploded ? (Math.random() * 2 - 1) * 2 : 0), 64); ctx.scale(pulse, pulse);
+    ctx.font = '900 46px monospace';
+    ctx.fillStyle = '#ff4d4d';
+    ctx.shadowColor = '#ff4d4d'; ctx.shadowBlur = 16;
+    ctx.fillText(txt, 0, 0);
+    ctx.shadowBlur = 0;
+    ctx.font = '700 12px "Noto Sans TC",sans-serif';
+    ctx.fillStyle = 'rgba(232,236,244,0.7)';
+    ctx.fillText(exploded ? '—— 訊號中斷 ——' : 'T I M E R', 0, 20);
+    ctx.restore();
+  }
+  if (alertLv > 0){
+    ctx.globalAlpha = alertLv * (0.14 + 0.1 * Math.abs(Math.sin(wall * 5)));
+    const ag = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H);
+    ag.addColorStop(0, 'rgba(255,0,0,0)'); ag.addColorStop(1, '#ff2222');
+    ctx.fillStyle = ag; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+  drawSubs(sc, t);
+  if (flashA > 0){
+    ctx.globalAlpha = Math.min(1, flashA);
+    ctx.fillStyle = flashC; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+  if (!vg){
+    vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.4, W / 2, H / 2, H * 0.95);
+    vg.addColorStop(0, 'rgba(5,7,13,0)'); vg.addColorStop(1, 'rgba(5,7,13,0.55)');
+  }
+  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#03040a';
+  ctx.fillRect(0, 0, W, 26); ctx.fillRect(0, H - 26, W, 26);
+  if (sc.act){
+    ctx.globalAlpha = clamp01(t / 0.8) * 0.85;
+    ctx.fillStyle = '#ffa757'; ctx.textAlign = 'left';
+    ctx.font = '700 12px "Noto Sans TC",sans-serif';
+    ctx.fillText(sc.act, 16, 17);
+    ctx.globalAlpha = 1;
+  }
+  const total = SCENES.reduce((a, s) => a + s.dur, 0);
+  let done = 0; for (let i = 0; i < sceneIdx; i++) done += SCENES[i].dur;
+  ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(0, H - 4, W, 4);
+  ctx.fillStyle = '#ff6b57'; ctx.fillRect(0, H - 4, W * clamp01((done + Math.min(t, sc.dur)) / total), 4);
+  let fade = clamp01(t / 0.45);
+  if (sceneIdx < SCENES.length - 1) fade = Math.min(fade, clamp01((sc.dur - t) / 0.45));
+  if (fade < 1){
+    ctx.globalAlpha = 1 - fade;
+    ctx.fillStyle = '#03040a'; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ============================================================ 場景 ============================================================ */
+let S = {}, lastTickSec = -1;
+function tickCheck(){
+  const s = Math.ceil(timeLeft);
+  if (s !== lastTickSec){ lastTickSec = s; if (!exploded && timeLeft > 0) sfx.tick(); }
+}
+const s0 = {
+  dur: 5, act: '第一幕・深夜倉庫',
+  subs: [{ a: 2.6, b: 4.4, tx: '同一個倉庫、同一顆炸彈……但這次——' }],
+  init(){ S = {}; timeLeft = 20; exploded = false; cutP = 0; alertLv = 0.3; showHud = false;
+    cam.tx = 120; cam.ty = -20; cam.tz = 1.35; camSnap(); },
+  evts: [{ t: 0.6, fn(){ sfx.sting(); } }],
+  update(t){ cam.tz = lerp(1.35, 1.12, eO(clamp01(t / 4.5))); cam.ty = lerp(-20, 0, eO(clamp01(t / 4.5))); },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawBomb(ctx, t);
+    drawParts(ctx);
+    ctx.restore();
+    const a1 = seg(t, 0.5, 1.4, eO);
+    ctx.save();
+    ctx.globalAlpha = a1;
+    ctx.textAlign = 'center';
+    ctx.save();
+    ctx.translate(W / 2, 165);
+    ctx.scale(lerp(1.5, 1, eOB(seg(t, 0.5, 1.5))), lerp(1.5, 1, eOB(seg(t, 0.5, 1.5))));
+    ctx.shadowColor = '#ff6b57'; ctx.shadowBlur = 28;
+    ctx.fillStyle = '#f0f4fa';
+    ctx.font = '900 50px "Noto Sans TC",sans-serif';
+    ctx.fillText('名偵探柯南：拆彈行動', 0, 0);
+    ctx.restore();
+    const a2 = seg(t, 1.3, 1.75, eOB);
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, seg(t, 1.3, 1.55)) * a1;
+    ctx.translate(W / 2 + 218, 122); ctx.rotate(0.14); ctx.scale(a2, a2);
+    ctx.fillStyle = '#ff4d4d'; ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(-64, -20, 128, 40, 8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#fff'; ctx.font = '900 22px "Noto Sans TC",sans-serif';
+    ctx.fillText('失敗版', 0, 8);
+    ctx.restore();
+    ctx.globalAlpha = a1 * seg(t, 1.6, 2.3);
+    ctx.fillStyle = '#ffa757'; ctx.font = '700 16px "Noto Sans TC",sans-serif';
+    ctx.fillText('本集結局……請看到最後。', W / 2, 208);
+    ctx.restore();
+  }
+};
+const s1 = {
+  dur: 6, act: '第一幕・慌張登場',
+  subs: [
+    { a: 1.4, b: 2.6, tx: '柯南：就、就是這裡！' },
+    { a: 3.9, b: 5.6, tx: '（急急忙忙，差點跌個狗吃屎）' }
+  ],
+  init(){ S = { stepT: 0 }; showHud = true; alertLv = 0.35; cam.tx = 0; cam.tz = 1.05; camSnap(); },
+  evts: [
+    { t: 1.35, fn(){ sfx.boing(); spawnDust(300, FY, 8); shakeMag = 3; } },
+    { t: 1.7, fn(){ sfx.thud(); spawnDust(330, FY, 10); shakeMag = 5; spawnTxt(360, FY - 90, '啪嘰！', '#ffd21e', 26); } },
+    { t: 3.4, fn(){ sfx.sting(); } }
+  ],
+  update(t, dt){
+    timeLeft = Math.max(0, timeLeft - (dt || 0)); tickCheck();
+    if (t < 1.4){ cam.tx = lerp(-80, 30, eIO(t / 1.4)); }
+    else { cam.tx = lerp(30, 110, seg(t, 2.6, 4.4)); cam.tz = lerp(1.05, 1.12, seg(t, 2.6, 4.4)); }
+    if (t < 1.3 && wall - S.stepT > 0.18){ S.stepT = wall; sfx.step(); }
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawBomb(ctx, t);
+    // 柯南跑進來→絆倒→爬起
+    let p;
+    if (t < 1.35){
+      const u = eO(t / 1.35);
+      p = { x: lerp(-60, 300, u), walk: t * 16, spd: 1, dir: 1, exp: 'focus' };
+      if (Math.sin(t * 16) > 0.95) spawnDust(p.x - 14, FY, 1);
+    } else if (t < 1.75){
+      const u = (t - 1.35) / 0.4;
+      p = { x: lerp(300, 344, u), y: FY - Math.sin(u * Math.PI) * 26, dir: 1, exp: 'shock',
+        rot: u * 1.5, armL: -2.6, armR: 2.6, foreR: 0.1 };
+    } else if (t < 2.6){
+      p = { x: 344, y: FY - 6, dir: 1, exp: 'shock', rot: 1.5, armL: -2.4, armR: 2.4, foreR: 0.1 };
+    } else if (t < 3.4){
+      const u = eIO(seg(t, 2.6, 3.3));
+      p = { x: 344, y: FY - 6 + 6 * u, dir: 1, exp: 'grit', rot: 1.5 * (1 - u), armL: -0.6, armR: 0.7, foreR: 0.3 };
+    } else {
+      p = { x: 344 + seg(t, 3.6, 4.8) * 46, dir: 1, exp: 'focus', armL: -0.3, armR: 0.5, foreR: 0.4, sweat: seg(t, 3.6, 5) };
+    }
+    drawConan(ctx, p);
+    drawParts(ctx);
+    ctx.restore();
+  }
+};
+const s2 = {
+  dur: 8, act: '第二幕・到底剪哪條？',
+  subs: [
+    { a: 0.6, b: 2.5, tx: '時間快到了……到底是哪一條線？！', warn: true },
+    { a: 3.4, b: 5.8, tx: '點兵點將、點到誰就是誰……' },
+    { a: 6.2, b: 7.7, tx: '好——就剪這條紅線！', warn: true }
+  ],
+  init(){ S = { q: 0, hb: 0 }; alertLv = 0.45; cam.tx = 150; cam.tz = 1.2; camSnap(); },
+  evts: [
+    { t: 0.6, fn(){ sfx.sting(); } },
+    { t: 6.2, fn(){ sfx.err(); shakeMag = 2; } }
+  ],
+  update(t, dt){
+    timeLeft = Math.max(0, timeLeft - (dt || 0)); tickCheck();
+    cam.tx = lerp(150, 180, seg(t, 1, 3)); cam.tz = lerp(1.2, 1.4, seg(t, 2.6, 5.4)); cam.ty = lerp(0, 26, seg(t, 2.6, 5.4));
+    alertLv = 0.45 + seg(t, 2, 6) * 0.25;
+    if (t > 1 && t < 6 && wall - S.q > 1.1){ S.q = wall; sfx.question(); spawnTxt(505 + Math.random() * 40, FY - 130, '？', '#ffd21e', 22 + Math.random() * 10); }
+    if (t > 4 && wall - S.hb > 0.9){ S.hb = wall; sfx.heart(); }
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawBomb(ctx, t);
+    // 點兵點將：手指在紅藍線之間搖擺
+    let armA;
+    if (t < 3.2) armA = 1.05 + Math.sin(t * 2.2) * 0.1;
+    else if (t < 6.2) armA = 1.05 + Math.sin((t - 3.2) * 6.5) * 0.28;
+    else armA = 0.95;
+    drawConan(ctx, { x: 486, dir: 1, crouch: 0.85, exp: t > 6 ? 'grit' : 'shock',
+      armL: -0.4, armR: armA, foreR: 0.55, point: 1,
+      sweat: t > 2 ? 2 : seg(t, 0.5, 2), head: 0.15 });
+    // 紅藍線交替閃爍光圈
+    if (t > 3.2 && t < 6.2){
+      const pick = Math.sin((t - 3.2) * 6.5) > 0;
+      ctx.save();
+      ctx.globalAlpha = 0.6;
+      ctx.strokeStyle = pick ? '#ff6666' : '#66c2ff'; ctx.lineWidth = 3;
+      ctx.shadowColor = pick ? '#e33' : '#39f'; ctx.shadowBlur = 12;
+      ctx.beginPath(); ctx.ellipse(546, pick ? FY - 34 : FY - 16, 32, 13, 0, 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
+    // 最終鎖定紅線
+    if (t > 6.2){
+      ctx.save();
+      ctx.globalAlpha = 0.75 + Math.sin(wall * 8) * 0.2;
+      ctx.strokeStyle = '#ff5555'; ctx.lineWidth = 4;
+      ctx.shadowColor = '#e33'; ctx.shadowBlur = 16;
+      ctx.beginPath(); ctx.ellipse(546, FY - 34, 34, 14, 0, 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
+    drawParts(ctx);
+    ctx.restore();
+  }
+};
+const s3 = {
+  dur: 6, act: '第二幕・喀嚓——咦？',
+  subs: [
+    { a: 0.4, b: 1.9, tx: '就決定是你了——喀嚓！', warn: true },
+    { a: 2.6, b: 4.4, tx: '咦……？這條不對……！', warn: true }
+  ],
+  init(){ S = {}; alertLv = 0.7; cam.tx = 175; cam.ty = 22; cam.tz = 1.38; camSnap(); },
+  timeScale(t){ return (t > 0.9 && t < 1.7) ? 0.4 : 1; },
+  evts: [
+    { t: 1.55, fn(){ sfx.snip(); freeze = 0.16; flashA = 0.7; flashC = '#fff'; shakeMag = 6; cutP = 0.01;
+      spawnSpark(546, FY - 34, 18, 280, '#ff9999'); } },
+    { t: 2.6, fn(){ sfx.err(); shakeMag = 3; } },
+    { t: 4.6, fn(){ sfx.sting(); alertLv = 1; } },
+    { t: 5.3, fn(){ tone(1567, 0.5, 'square', 0.06); } }
+  ],
+  update(t, dt){
+    if (cutP > 0 && cutP < 1) cutP = Math.min(1, cutP + 0.05);
+    if (!exploded && cutP <= 0){ timeLeft = Math.max(1.5, timeLeft - (dt || 0)); tickCheck(); }
+    if (t > 2.4){ cam.tz = lerp(1.38, 1.5, seg(t, 2.4, 4)); }
+    if (t > 4.6){ cam.tz = lerp(1.5, 1.3, seg(t, 4.6, 6)); cam.ty = lerp(22, 0, seg(t, 4.6, 6)); }
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawBomb(ctx, t);
+    const cutDone = t > 1.55;
+    drawConan(ctx, { x: 486, dir: 1, crouch: cutDone ? 0.6 : 0.85,
+      exp: cutDone ? 'shock' : 'grit',
+      armL: cutDone ? -1.2 : -0.4, armR: cutDone ? 0.7 : 1.12, foreR: 0.5,
+      tool: true, toolOpen: cutDone ? 0.5 : 0.3 - seg(t, 0.9, 1.55) * 0.25, toolRot: 0.45,
+      sweat: cutDone ? 3 : 1, head: cutDone ? -0.1 : 0.18 });
+    // 慢動作聚焦
+    if (t > 0.9 && t < 1.7){
+      ctx.save();
+      ctx.globalAlpha = 0.45;
+      ctx.strokeStyle = '#ffcfcf'; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 12; i++){
+        const a = i / 12 * 6.283 + 0.26;
+        ctx.beginPath();
+        ctx.moveTo(546 + Math.cos(a) * 52, FY - 34 + Math.sin(a) * 52);
+        ctx.lineTo(546 + Math.cos(a) * 86, FY - 34 + Math.sin(a) * 86);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // 炸彈冒出不祥白煙與「嗶——」
+    if (t > 3.2){
+      if (Math.random() < 0.3) spawnSmoke(600, FY - 100, 1, false);
+      const ba = subAlpha(t, 4.8, 6.2);
+      if (ba > 0){
+        ctx.save(); ctx.globalAlpha = ba;
+        ctx.fillStyle = '#ff4d4d'; ctx.font = '900 26px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('嗶——————', 600, FY - 150 - ba * 8);
+        ctx.restore();
+      }
+    }
+    drawParts(ctx);
+    ctx.restore();
+  }
+};
+const s4 = {
+  dur: 6, act: '第三幕・轟——！',
+  subs: [{ a: 1.6, b: 3.4, tx: '轟——————！！', warn: true }],
+  init(){ S = { boomed: false }; alertLv = 1; cam.tx = 120; cam.ty = 0; cam.tz = 1.2; camSnap(); },
+  evts: [
+    { t: 0.55, fn(){
+      sfx.boom(); exploded = true; timeLeft = 0;
+      flashA = 1.6; flashC = '#fff'; shakeMag = 22; freeze = 0.12;
+      spawnDebris(600, FY - 52, 40); spawnSpark(600, FY - 52, 30, 500); spawnSmoke(600, FY - 60, 14, true);
+      S.boomed = true;
+    } },
+    { t: 0.9, fn(){ sfx.fall(); } },
+    { t: 2.05, fn(){ sfx.thud(); shakeMag = 8; spawnDust(180, FY, 14); spawnTxt(180, FY - 110, '哎唷！', '#ffd21e', 28); } },
+    { t: 3.2, fn(){ sfx.trombone(); } }
+  ],
+  update(t){
+    alertLv = Math.max(0, 1 - t * 0.4);
+    cam.tz = t < 0.55 ? 1.2 : lerp(1.2, 1.02, seg(t, 0.6, 2));
+    cam.tx = lerp(120, 40, seg(t, 0.6, 2));
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    // 爆炸前的炸彈／爆炸後的彈坑
+    if (!S.boomed) drawBomb(ctx, t);
+    else {
+      drawCrater(ctx, t, 0);
+      // 火球
+      const et = t - 0.55;
+      if (et < 1.1){
+        const bp = Math.min(1, et / 0.4);
+        const r = 30 + eO(bp) * 130 + et * 30;
+        const fa = et < 0.4 ? 1 : Math.max(0, 1 - (et - 0.4) * 1.6);
+        ctx.save();
+        ctx.globalAlpha = fa;
+        const fg = ctx.createRadialGradient(600, FY - 60, 5, 600, FY - 60, r);
+        fg.addColorStop(0, '#fff'); fg.addColorStop(0.25, '#ffe066'); fg.addColorStop(0.55, '#ff8c00');
+        fg.addColorStop(0.8, '#ff2d00'); fg.addColorStop(1, 'rgba(255,45,0,0)');
+        ctx.fillStyle = fg;
+        ctx.beginPath(); ctx.arc(600, FY - 60, r, 0, 6.283); ctx.fill();
+        // 衝擊環
+        ctx.strokeStyle = 'rgba(255,220,150,' + (fa * 0.8) + ')';
+        ctx.lineWidth = 6 * (1 - bp) + 1.5;
+        ctx.beginPath(); ctx.arc(600, FY - 60, r * 1.25, 0, 6.283); ctx.stroke();
+        ctx.restore();
+      }
+    }
+    // 柯南被炸飛：旋轉拋物線飛到左邊
+    let p;
+    if (t < 0.55){
+      p = { x: 486, dir: 1, crouch: 0.5, exp: 'shock', armL: -1.2, armR: 0.7, foreR: 0.5, sweat: 3 };
+    } else if (t < 2.05){
+      const u = clamp01((t - 0.55) / 1.5);
+      p = { x: lerp(486, 180, eO(u)), y: FY - Math.sin(u * Math.PI) * 170,
+        dir: 1, exp: 'shock', rot: -u * 9.4, armL: -2.5, armR: 2.5, foreR: 0.1, legSpread: 6 };
+    } else {
+      // 倒栽蔥趴地
+      p = { x: 180, y: FY - 4, dir: 1, exp: 'dizzy', rot: -1.8, armL: -2.2, armR: 2.3, foreR: 0.1 };
+    }
+    drawConan(ctx, p);
+    drawParts(ctx);
+    ctx.restore();
+  }
+};
+const s5 = {
+  dur: 7, act: '第三幕・灰頭土臉',
+  subs: [
+    { a: 1.2, b: 3.2, tx: '咳咳……咳……' },
+    { a: 4.2, b: 6.6, tx: '真相……這次沒能趕上。', warn: true }
+  ],
+  init(){ S = { cough: 0 }; alertLv = 0; cam.tx = 0; cam.ty = 0; cam.tz = 1.1; camSnap(); },
+  evts: [
+    { t: 1.3, fn(){ sfx.cough(); spawnSmoke(216, FY - 120, 2, false); } },
+    { t: 2.2, fn(){ sfx.cough(); spawnSmoke(216, FY - 120, 2, false); } },
+    { t: 3.4, fn(){ sfx.boing(); } },
+    { t: 5.2, fn(){ sfx.trombone(); } }
+  ],
+  update(t){
+    cam.tx = lerp(0, -120, seg(t, 0.5, 2)); cam.tz = lerp(1.1, 1.22, seg(t, 0.5, 2));
+    if (Math.random() < 0.06) spawnSmoke(600, FY - 20, 1, false);
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawCrater(ctx, t, seg(t, 3.3, 4.1));
+    // 焦黑柯南坐起，暈頭轉向
+    const up = eIO(seg(t, 0.6, 1.6));
+    drawConan(ctx, {
+      x: 200, y: FY - 2,
+      dir: 1, soot: 1, exp: 'dizzy', dizzyStars: t > 1.2,
+      rot: lerp(-1.8, 0, up),
+      crouch: 0.9, legSpread: 10,
+      armL: -0.9, armR: 0.9, foreR: 0.4,
+      head: Math.sin(t * 1.8) * 0.2
+    });
+    drawParts(ctx);
+    ctx.restore();
+  }
+};
+const s6 = {
+  dur: 7, act: '終幕・任務失敗',
+  init(){ S = {}; cam.tx = 0; cam.ty = 0; cam.tz = 1; camSnap(); showHud = false; },
+  evts: [
+    { t: 0.9, fn(){ sfx.stamp(); shakeMag = 8; flashA = 0.3; flashC = '#f33'; } },
+    { t: 3.6, fn(){ tone(523, 0.3, 'triangle', 0.08); setTimeout(() => tone(659, 0.4, 'triangle', 0.08), 200); } }
+  ],
+  update(){},
+  draw(t){
+    const gr = ctx.createLinearGradient(0, 0, 0, H);
+    gr.addColorStop(0, '#1a0b0b'); gr.addColorStop(1, '#060304');
+    ctx.fillStyle = gr; ctx.fillRect(0, 0, W, H);
+    for (let i = 0; i < 24; i++){
+      const sx = rnd(i + 200) * W, sy = rnd(i + 300) * H;
+      ctx.globalAlpha = 0.1 + 0.22 * Math.abs(Math.sin(wall * 1.3 + i * 2));
+      ctx.fillStyle = '#ef9a8a'; ctx.fillRect(sx, sy, 2, 2);
+    }
+    ctx.globalAlpha = 1;
+    drawParts(ctx);
+    // 任務失敗 印章
+    const su = seg(t, 0.55, 0.95, eI);
+    if (t > 0.55){
+      ctx.save();
+      ctx.translate(W / 2, 175); ctx.rotate(-0.07);
+      ctx.scale(lerp(3, 1, su), lerp(3, 1, su));
+      ctx.globalAlpha = Math.min(1, su + 0.2);
+      ctx.textAlign = 'center';
+      ctx.shadowColor = '#ff2222'; ctx.shadowBlur = 40;
+      ctx.fillStyle = '#ff3b3b';
+      ctx.font = '900 88px "Noto Sans TC",sans-serif';
+      ctx.fillText('任務失敗', 0, 30);
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 4;
+      ctx.strokeRect(-236, -46, 472, 118);
+      ctx.restore();
+    }
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = seg(t, 1.6, 2.4);
+    ctx.fillStyle = '#f4e8dc'; ctx.font = '700 24px "Noto Sans TC",sans-serif';
+    ctx.fillText('真相……這次沒能趕上。', W / 2, 316);
+    ctx.globalAlpha = seg(t, 3.4, 4.2);
+    ctx.fillStyle = '#7fd1a3'; ctx.font = '700 18px "Noto Sans TC",sans-serif';
+    ctx.fillText('別氣餒！名偵探也需要再試一次——', W / 2, 368);
+    ctx.globalAlpha = 1;
+  }
+};
+
+const SCENES = [s0, s1, s2, s3, s4, s5, s6];
+let sceneIdx = 0, tS = 0, freeze = 0, ended = false;
+function startScene(i){
+  sceneIdx = i; tS = 0;
+  const sc = SCENES[i];
+  sc._evt = 0;
+  if (sc.init) sc.init();
+}
+document.getElementById('replayBtn').addEventListener('click', function(){
+  this.classList.remove('show');
+  parts.length = 0;
+  ended = false; freeze = 0; timeLeft = 20; exploded = false; cutP = 0; lastTickSec = -1;
+  startScene(0); camSnap();
+});
+
+let last = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dtRaw = Math.min((now - last) / 1000, 0.08);
+  last = now;
+  wall += dtRaw;
+  camUpdate(dtRaw);
+  const sc = SCENES[sceneIdx];
+  let eff = 0;
+  if (ended){
+    eff = dtRaw;
+    if (sc.update) sc.update(sc.dur, dtRaw);
+  } else if (freeze > 0){
+    freeze -= dtRaw;
+  } else {
+    const scale = sc.timeScale ? sc.timeScale(tS) : 1;
+    eff = dtRaw * scale;
+    tS += eff;
+    while (sc.evts && sc._evt < sc.evts.length && tS >= sc.evts[sc._evt].t){
+      sc.evts[sc._evt].fn(); sc._evt++;
+      if (freeze > 0) break;
+    }
+    if (sc.update) sc.update(Math.min(tS, sc.dur), eff);
+    if (tS >= sc.dur){
+      if (sceneIdx < SCENES.length - 1) startScene(sceneIdx + 1);
+      else { ended = true; tS = sc.dur; document.getElementById('replayBtn').classList.add('show'); }
+    }
+  }
+  updateParts(eff || (ended ? dtRaw : 0));
+  const scNow = SCENES[sceneIdx];
+  ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
+  scNow.draw(Math.min(tS, scNow.dur));
+  overlays(scNow, Math.min(tS, scNow.dur));
+}
+startScene(0);
+camSnap();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
