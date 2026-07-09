@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -21,8 +22,12 @@
   .ovl button:hover{background:#b30000;color:#fff;box-shadow:0 0 24px #b30000}
   #hud{position:fixed;top:12px;left:12px;color:#ccc;font-size:15px;z-index:5;text-shadow:0 0 4px #000;display:none;
     background:rgba(0,0,0,.45);border:1px solid #3a2222;border-radius:8px;padding:8px 14px;line-height:1.7}
-  #muteBtn{position:fixed;bottom:12px;left:12px;z-index:41;width:42px;height:42px;border-radius:50%;font-size:18px;
+  #muteBtn{position:fixed;bottom:12px;left:12px;z-index:41;width:50px;height:50px;border-radius:50%;font-size:20px;
     background:rgba(20,5,5,.6);border:1px solid #5a2a2a;color:#ddd;cursor:pointer;display:none}
+  /* v2：開局操作提示浮層 */
+  #playHint{position:fixed;top:18%;left:50%;transform:translateX(-50%);color:#ddd;font-size:15px;line-height:2;
+    background:rgba(0,0,0,.72);padding:12px 22px;border:1px solid #5a3a3a;border-radius:10px;display:none;z-index:8;
+    text-align:center;max-width:86vw;pointer-events:none;transition:opacity .6s}
   #interactHint{position:fixed;bottom:44px;left:50%;transform:translateX(-50%);color:#eee;font-size:15px;
     background:rgba(0,0,0,.6);padding:7px 16px;border:1px solid #776;border-radius:6px;display:none;z-index:6;
     animation:pulse 1.2s ease-in-out infinite}
@@ -36,7 +41,7 @@
   #storyText{font-size:1.08em;line-height:1.8;margin-bottom:16px;min-height:2.4em;white-space:pre-wrap}
   #storyChoices{display:flex;flex-direction:column;gap:8px}
   #storyChoices button{text-align:left;background:rgba(80,0,0,.15);border:1px solid #700;color:#eee;
-    padding:11px 16px;font-size:1em;cursor:pointer;transition:all .2s;font-family:inherit}
+    padding:14px 16px;min-height:48px;font-size:1em;cursor:pointer;transition:all .2s;font-family:inherit}
   #storyChoices button:hover{background:rgba(140,0,0,.4);border-color:#b30000;padding-left:24px}
   .hidden{display:none!important}
   #touchControls{display:none}
@@ -51,7 +56,8 @@
 </head>
 <body>
 <canvas id="gameCanvas"></canvas>
-<div id="hud"><div>🗝️ 鑰匙 <span id="keyCount">0</span> / 3</div><div style="font-size:12px;color:#887">🕯️ 已探索 <span id="explPct">0</span>%</div></div>
+<div id="hud"><div>🗝️ 鑰匙 <span id="keyCount">0</span> / 3</div><div>🧿 護身符 <span id="amuletCount">0</span></div><div style="font-size:12px;color:#887">🕯️ 已探索 <span id="explPct">0</span>%</div></div>
+<div id="playHint"></div>
 <button id="muteBtn">🔊</button>
 <div id="interactHint">按 E 互動</div>
 <div id="exitHint">🗝️ 鑰匙已集齊——前往綠色出口逃離這裡</div>
@@ -65,9 +71,11 @@
   <p>你在一棟廢棄的療養院中醒來。手電筒是你唯一的光源，也是唯一暴露你的東西。<br>
   黑暗中似乎有什麼東西在盯著你——只有當光照到它們時，你才能看見。<br>
   找到 <b style="color:#eee">3 把鑰匙</b>，再抵達綠色的出口逃出這裡。<br>
+  藏在角落的 <b style="color:#7ec8ff">🧿 護身符</b> 能在它抓住你時救你一命。<br>
   它能聽見你的腳步，也能在黑暗中看見你——你的選擇將決定你的命運。</p>
-  <p style="font-size:12px;color:#777">電腦：WASD / 方向鍵 移動　滑鼠 控制手電筒　E 互動<br>
-  平板/手機：左下浮動搖桿移動　右側拖曳瞄準　右下按鈕互動</p>
+  <p style="font-size:13px;color:#999">🖱️ <b style="color:#ccc">電腦</b>：WASD / 方向鍵 移動・滑鼠 控制手電筒方向・E 互動・M 靜音<br>
+  👆 <b style="color:#ccc">平板</b>：左下按住拖曳＝浮動搖桿移動・右半邊拖曳＝轉手電筒・右下「互動」鈕<br>
+  💡 站著不動 2 秒，直覺會指引你最近的鑰匙方向</p>
   <button id="startBtn">開始遊戲</button>
 </div>
 <script>
@@ -233,6 +241,19 @@ function reachableTiles(minD){
 /* ============ 出口 / 鑰匙 / 劇情節點 ============ */
 const exitTile={tx:MW-4,ty:MH-4};
 let items=[],keysCollected=0,storyNodes=[],storyFlags={},storyActive=false,nearNode=null,nodesRead=0;
+/* v2：護身符、怪物暈眩、直覺羅盤、白閃 */
+let amulets=[],amuletCount=0,monsterStun=0,graceT=0,idleT=0,flashW=0;
+const amuletEl=()=>document.getElementById('amuletCount');
+function placeAmulets(){
+  amulets=[];
+  const cand=reachableTiles(10);
+  for(let t=0;t<300&&amulets.length<2;t++){
+    const c=cand[Math.random()*cand.length|0];
+    if(amulets.every(a=>Math.abs(a.tx-c.tx)+Math.abs(a.ty-c.ty)>10)&&
+       items.every(i=>dist(c.tx*TILE+TILE/2,c.ty*TILE+TILE/2,i.x,i.y)>TILE*4))
+      amulets.push({tx:c.tx,ty:c.ty,x:c.tx*TILE+TILE/2,y:c.ty*TILE+TILE/2,taken:false,bob:rnd(0,6)});
+  }
+}
 function placeItems(){
   items=[];
   const cand=reachableTiles(12).sort((a,b)=>b.d-a.d);
@@ -403,6 +424,16 @@ function updatePlayer(dt){
 }
 function updateItems(){
   if(storyActive)return;
+  /* v2：撿護身符 */
+  for(const a of amulets){
+    if(!a.taken&&dist(player.x,player.y,a.x,a.y)<26){
+      a.taken=true;amuletCount++;amuletEl().textContent=amuletCount;
+      sUnlock();shake=Math.max(shake,3);
+      for(let i=0;i<14;i++){const an=Math.random()*6.28,s=rnd(30,110);
+        parts.push({x:a.x,y:a.y,vx:Math.cos(an)*s,vy:Math.sin(an)*s,life:.7,max:.7,c:'#7ec8ff',sz:3});}
+      floats.push({x:a.x,y:a.y-14,txt:'🧿 護身符 +1（抵擋一次攻擊）',life:1.4});
+    }
+  }
   for(const it of items){
     if(!it.taken&&dist(player.x,player.y,it.x,it.y)<26){
       it.taken=true;keysCollected++;
@@ -436,6 +467,15 @@ function updateNodeProximity(){
 }
 function updateMonster(dt){
   if(storyActive)return;
+  graceT=Math.max(0,graceT-dt);
+  /* v2：被護身符震退後的暈眩 */
+  if(monsterStun>0){
+    monsterStun-=dt;
+    monster.anim+=dt*2;
+    heartbeat(false);
+    if(Math.random()<dt*10)parts.push({x:monster.x+rnd(-12,12),y:monster.y-18,vx:0,vy:-20,life:.5,max:.5,c:'#7ec8ff',sz:2.5});
+    return;
+  }
   monster.anim+=dt*(monster.active?8:3);
   const d=dist(player.x,player.y,monster.x,monster.y);
   const los=hasLOS(monster.x,monster.y,player.x,player.y);
@@ -487,8 +527,25 @@ function updateMonster(dt){
   }
   if(monster.x!==prevX||monster.y!==prevY)monster.facing=Math.atan2(monster.y-prevY,monster.x-prevX);
   heartbeat(monster.active);
-  if(d<24&&state==='play'){
-    state='jumpscare';scareT=0;sJumpscare();shake=22;
+  if(d<24&&state==='play'&&graceT<=0){
+    if(amuletCount>0){
+      /* v2：護身符救命——怪物被震退暈眩 */
+      amuletCount--;amuletEl().textContent=amuletCount;
+      monsterStun=3.5;graceT=2;
+      monster.active=false;monster.wasActive=false;monster.waypoint=null;
+      const a=Math.atan2(monster.y-player.y,monster.x-player.x);
+      const kx=monster.x+Math.cos(a)*TILE*1.4,ky=monster.y+Math.sin(a)*TILE*1.4;
+      if(!blocked(kx,monster.y,monster.r))monster.x=kx;
+      if(!blocked(monster.x,ky,monster.r))monster.y=ky;
+      flashW=1;shake=18;
+      sSting();sNoise(.5,.3,'highpass',600);
+      heartbeat(false);
+      for(let i=0;i<26;i++){const an=Math.random()*6.28,s=rnd(60,220);
+        parts.push({x:player.x,y:player.y,vx:Math.cos(an)*s,vy:Math.sin(an)*s,life:.8,max:.8,c:'#7ec8ff',sz:3.5});}
+      floats.push({x:player.x,y:player.y-30,txt:'🧿 護身符碎裂了！快跑！',life:1.8});
+    }else{
+      state='jumpscare';scareT=0;sJumpscare();shake=22;
+    }
   }
 }
 function updateGlimpses(dt){

@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -8,10 +9,11 @@
   * { margin:0; padding:0; box-sizing:border-box; }
   html,body{ height:100%; overflow:hidden; background:radial-gradient(circle at 50% 35%, #1a2c40 0%, #0d1826 60%, #060d15 100%);
     font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;
-    -webkit-user-select:none; user-select:none; touch-action:manipulation; }
+    -webkit-user-select:none; user-select:none; touch-action:manipulation; overscroll-behavior:none;
+    -webkit-tap-highlight-color:transparent; }
   #stage{ position:fixed; inset:0; }
   canvas{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
-  #subtitle{ position:absolute; left:50%; bottom:7.5%; transform:translate(-50%, 14px) scale(.96); max-width:88%; padding:10px 30px;
+  #subtitle{ position:absolute; left:50%; bottom:calc(var(--cvB, 7.5%) + 10px); transform:translate(-50%, 14px) scale(.96); max-width:88%; padding:10px 30px;
     font-size:clamp(15px, 2.6vw, 23px); font-weight:900; letter-spacing:2px; text-align:center; color:#fff; white-space:nowrap;
     background:linear-gradient(180deg, rgba(16,28,44,.92), rgba(8,16,28,.72)); border:1px solid rgba(126,200,248,.6); border-radius:999px;
     box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 18px rgba(126,200,248,.15) inset; text-shadow:0 2px 6px rgba(0,0,0,.8);
@@ -20,17 +22,30 @@
   #subtitle.warn{ border-color:rgba(255,90,80,.85); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 22px rgba(255,60,50,.35); color:#ffd9d4; }
   #subtitle.gold{ border-color:rgba(255,205,80,.9); box-shadow:0 6px 24px rgba(0,0,0,.55), 0 0 26px rgba(255,176,32,.38); color:#ffe9b0; }
   .uibtn{ position:absolute; z-index:9; font-family:inherit; font-weight:900; letter-spacing:2px; color:#d8ecff; cursor:pointer;
+    min-width:48px; min-height:48px;
     background:linear-gradient(180deg, rgba(20,36,56,.88), rgba(10,20,32,.88)); border:1px solid rgba(126,200,248,.55); border-radius:999px;
     text-shadow:0 1px 3px rgba(0,0,0,.7); transition:transform .18s cubic-bezier(.22,1.4,.36,1), box-shadow .18s ease, opacity .3s ease; }
   .uibtn:hover{ transform:scale(1.06); box-shadow:0 0 18px rgba(126,200,248,.4); }
-  .uibtn:active{ transform:scale(.94); }
-  #sndBtn{ top:14px; right:14px; font-size:14px; padding:8px 16px; }
+  .uibtn:active{ transform:scale(.94); transition-duration:.05s; box-shadow:0 0 22px rgba(126,200,248,.55); }
+  #sndBtn{ top:max(14px, env(safe-area-inset-top)); right:max(14px, env(safe-area-inset-right)); font-size:15px; padding:12px 18px; }
   #replayBtn{ left:50%; top:64%; transform:translate(-50%,0) scale(.6); font-size:clamp(18px,3.2vw,26px); padding:14px 44px;
     background:linear-gradient(180deg,#4da3e8,#2b6cb0); color:#eaf6ff; border:2px solid #d8ecff;
     box-shadow:0 8px 30px rgba(43,108,176,.6); opacity:0; pointer-events:none; }
   #replayBtn.show{ opacity:1; pointer-events:auto; transform:translate(-50%,0) scale(1);
     transition:transform .5s cubic-bezier(.22,1.6,.36,1), opacity .4s ease; }
   #replayBtn:hover{ transform:translate(-50%,0) scale(1.08); }
+  #replayBtn:active{ transform:translate(-50%,0) scale(.94); transition-duration:.05s; }
+  #replayBtn:focus-visible, #sndBtn:focus-visible{ outline:3px solid #d8ecff; outline-offset:2px; }
+  @media (max-width:480px){
+    #subtitle{ padding:8px 16px; letter-spacing:1px; max-width:94%; }
+  }
+  #hint{ position:absolute; z-index:8; left:50%; top:calc(max(14px, env(safe-area-inset-top)) + 58px); transform:translateX(-50%);
+    max-width:80%; padding:10px 20px; font-size:clamp(12px,2vw,15px); font-weight:700; letter-spacing:1px; color:#d8ecff; text-align:center;
+    background:rgba(10,20,32,.85); border:1px solid rgba(126,200,248,.5); border-radius:999px;
+    box-shadow:0 4px 16px rgba(0,0,0,.5); opacity:0; pointer-events:none;
+    animation:hintFade 6.5s ease .7s 1 forwards; }
+  @keyframes hintFade{ 0%{opacity:0; transform:translateX(-50%) translateY(-10px);}
+    7%{opacity:1; transform:translateX(-50%) translateY(0);} 82%{opacity:1;} 100%{opacity:0;} }
 </style>
 </head>
 <body>
@@ -39,6 +54,7 @@
   <div id="subtitle"></div>
   <button id="sndBtn" class="uibtn">🔇 聲音：關</button>
   <button id="replayBtn" class="uibtn">▶ 重新播放</button>
+  <div id="hint">自動播放中 ─ 點右上角「聲音」鈕開啟音效 🔊</div>
 </div>
 <script>
 'use strict';
@@ -55,6 +71,9 @@ function resize(){
   cv.width = Math.round(W*s*dpr); cv.height = Math.round(H*s*dpr);
   cv.style.width = W*s+'px'; cv.style.height = H*s+'px';
   cv._base = s*dpr;
+  // 畫布下緣位置 → 字幕、重播鈕貼齊畫面（直式/橫式皆然）
+  document.documentElement.style.setProperty('--cvB', Math.max(0,(innerHeight - H*s)/2) + 'px');
+  replayBtn.style.top = Math.round(innerHeight/2 + H*s*0.14) + 'px';
 }
 addEventListener('resize', resize); resize();
 
@@ -242,8 +261,9 @@ function buildEvents(){
   ev(10.0, ()=> sfx.motor(false));
   ev(12.6, ()=> comic(560, 250, '叮叮叮', '#ff6a5a', 22));
   ev(14.5, ()=>{ sfx.horn(0.06); });
+  ev(14.55, ()=> comic(150, 262, '嗚──嗚──！', '#d8ecff', 28));   // 汽笛的「聽」有畫面
   ev(14.8, ()=>{ for(const b of birds){ b.fly = true; b.vx = rnd(-90,-40); b.vy = rnd(-120,-70); } });
-  ev(15.5, ()=>{ train.active = true; shake = 5; });
+  ev(15.5, ()=>{ train.active = true; shake = 5; flash = 0.14; });
   ev(16.3, ()=>{ sfx.horn(0.18); comic(300, 250, '轟隆隆！', '#d8ecff', 34); });
   ev(17.8, ()=> comic(660, 250, '轟隆隆', '#d8ecff', 28));
   ev(20.6, ()=>{ bellActive = false; });
@@ -506,6 +526,16 @@ function drawBarrier(x, baseY, s, mirror, len){
   ctx.restore();
 }
 /* ---------- 火車（側視、多節車廂、車輪、乘客） ---------- */
+function drawTrainGlow(){
+  // 火車進場預兆：左側車頭燈光暈由遠而近
+  if(train.active || T < 14.4 || T > 15.62) return;
+  const k = ss(T, 14.4, 15.55);
+  const gx = 30 + k*54, gy = RAIL_BOT - 36, r = 30 + k*130;
+  const g = ctx.createRadialGradient(gx,gy,4, gx,gy,r);
+  g.addColorStop(0,'rgba(255,243,160,'+(0.45+0.35*k)+')');
+  g.addColorStop(1,'rgba(255,243,160,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(gx,gy,r,0,TAU); ctx.fill();
+}
 function drawTrain(){
   if(!train.active) return;
   const y = RAIL_BOT - 14;                         // 輪軌接觸線
@@ -648,9 +678,9 @@ function drawPed(){
     ctx.strokeStyle = skinD; ctx.stroke();
     ctx.restore();
   }
-  // 頭（look 轉頭：五官偏移）
+  // 頭（look 轉頭：加大平移＋旋轉，讓「左看右看」一眼看懂）
   const lk = ped.look;
-  ctx.save(); ctx.translate(lk*3, -78);
+  ctx.save(); ctx.translate(lk*9, -78); ctx.rotate(lk*0.18);
   ctx.fillStyle = skin;
   ctx.beginPath(); ctx.ellipse(0, 0, 15.5, 14.5, 0, 0, TAU); ctx.fill();
   ctx.lineWidth = 2.2; ctx.strokeStyle = skinD; ctx.stroke();
@@ -660,14 +690,14 @@ function drawPed(){
   ctx.beginPath(); ctx.arc(15+lk*2, 2, 3.4, 0, TAU); ctx.fill();
   // 瀏海
   ctx.fillStyle = '#5a3a1a';
-  ctx.beginPath(); ctx.moveTo(-14+lk*4, -4);
-  ctx.quadraticCurveTo(-8+lk*4, -12, 0+lk*4, -9);
-  ctx.quadraticCurveTo(8+lk*4, -13, 14+lk*4, -5);
+  ctx.beginPath(); ctx.moveTo(-14+lk*6, -4);
+  ctx.quadraticCurveTo(-8+lk*6, -12, 0+lk*6, -9);
+  ctx.quadraticCurveTo(8+lk*6, -13, 14+lk*6, -5);
   ctx.quadraticCurveTo(10, -16, 0, -15);
-  ctx.quadraticCurveTo(-10, -16, -14+lk*4, -4);
+  ctx.quadraticCurveTo(-10, -16, -14+lk*6, -4);
   ctx.closePath(); ctx.fill();
   // 黃色小帽（brace 時被手壓住）
-  ctx.save(); ctx.translate(lk*4, -10 + (ped.brace? 2:0)); ctx.rotate(lk*0.12);
+  ctx.save(); ctx.translate(lk*6, -10 + (ped.brace? 2:0)); ctx.rotate(lk*0.2);
   const cg = ctx.createLinearGradient(0,-9,0,2);
   cg.addColorStop(0,'#ffe14d'); cg.addColorStop(1,'#f2b312');
   ctx.fillStyle = cg;
@@ -679,7 +709,7 @@ function drawPed(){
   // 眼睛（眨眼、看向 look 方向）
   const blink = (Math.sin(WT*1.1+1) > 0.975) ? 0.15 : 1;
   for(const sd of [1,-1]){
-    const exp = sd*6 + lk*4;
+    const exp = sd*6 + lk*7;
     if(ped.happy){
       ctx.strokeStyle = '#3a2a12'; ctx.lineWidth = 2.2;
       ctx.beginPath(); ctx.arc(exp, 1, 3.6, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
@@ -691,16 +721,30 @@ function drawPed(){
   }
   // 腮紅與嘴
   ctx.fillStyle = 'rgba(255,120,90,.4)';
-  ctx.beginPath(); ctx.ellipse(-9+lk*4, 6, 3, 2, 0, 0, TAU); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(9+lk*4, 6, 3, 2, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-9+lk*6, 6, 3, 2, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(9+lk*6, 6, 3, 2, 0, 0, TAU); ctx.fill();
   ctx.strokeStyle = '#8a4a2a'; ctx.lineWidth = 2; ctx.lineCap='round';
   ctx.beginPath();
-  if(ped.happy){ ctx.arc(lk*4, 7, 4.6, 0.2, Math.PI-0.2); }
-  else if(ped.brace){ ctx.ellipse(lk*4, 9, 2.6, 3.2, 0, 0, TAU); }
-  else if(bellActive && T>9.7 && T<12){ ctx.ellipse(lk*4, 9, 2.4, 3, 0, 0, TAU); }
-  else { ctx.arc(lk*4, 6, 4, 0.3, Math.PI-0.3); }
+  if(ped.happy){ ctx.arc(lk*6, 7, 4.6, 0.2, Math.PI-0.2); }
+  else if(ped.brace){ ctx.ellipse(lk*6, 9, 2.6, 3.2, 0, 0, TAU); }
+  else if(bellActive && T>9.7 && T<12){ ctx.ellipse(lk*6, 9, 2.4, 3, 0, 0, TAU); }
+  else { ctx.arc(lk*6, 6, 4, 0.3, Math.PI-0.3); }
   ctx.stroke();
   ctx.restore();
+  // 視線方向箭頭（左看/右看時出現，跟教育口訣同步）
+  if(Math.abs(lk) > 0.05){
+    const la = clamp(Math.abs(lk),0,1), ld = Math.sign(lk);
+    ctx.save(); ctx.globalAlpha = la;
+    ctx.translate(ld*46, -86);
+    ctx.fillStyle = '#ffe14d'; ctx.strokeStyle = '#8a6a10'; ctx.lineWidth = 2; ctx.lineJoin='round';
+    for(let i=0;i<2;i++){
+      const off = (i*15 + Math.sin(WT*8)*3) * ld;
+      ctx.beginPath();
+      ctx.moveTo(off, -9); ctx.lineTo(off+11*ld, 0); ctx.lineTo(off, 9);
+      ctx.lineTo(off+5*ld, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
   ctx.restore();
 }
 /* ---------- 片頭卡 / 片尾卡 ---------- */

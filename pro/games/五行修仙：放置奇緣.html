@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -516,7 +517,8 @@ function newGame(gender, elemIdx) {
     gender, elemIdx, level: 1, exp: 0, expNeeded: 100,
     energy: 0, totalEnergy: 0, perClick: 1, perSecond: 0,
     kills: 0, time: 0, slashCd: 0, autoT: 0, tickT: 0,
-    dispEnergy: 0, dispExp: 0, charSx: 1, charSy: 1
+    dispEnergy: 0, dispExp: 0, charSx: 1, charSy: 1,
+    comboN: 0, comboT: 0            // v2：連點連擊
   };
   const el = ELEMS[elemIdx].id;
   if (el === 'metal') G.perClick += 1;
@@ -526,12 +528,26 @@ function newGame(gender, elemIdx) {
   for (const u of upgrades) u.count = 0;
   spawnMonster(1);
 }
+// v2：五行相剋表（金剋木、木剋土、土剋水、水剋火、火剋金）
+const COUNTERS = { metal: 'wood', wood: 'earth', earth: 'water', water: 'fire', fire: 'metal' };
 function spawnMonster(mlv) {
   monster = {
     mlv, hpMax: Math.floor(30 * Math.pow(1.3, mlv - 1)), sx: 0.2, sy: 0.2,
-    flash: 0, dead: false, deathT: 0, born: 0
+    flash: 0, dead: false, deathT: 0, born: 0,
+    elemIdx: Math.floor(rnd(0, 5)), enraged: false   // v2：妖龍屬性 / 龍皇狂怒
   };
   monster.hp = monster.hpMax;
+  if (G) {
+    const pe = ELEMS[G.elemIdx].id, me = ELEMS[monster.elemIdx].id;
+    if (COUNTERS[pe] === me) addFloat(DRAG_X, DRAG_Y - 100, '五行剋制！你的' + ELEMS[G.elemIdx].name + '剋它的' + ELEMS[monster.elemIdx].name + '，傷害 +50%', PAL.good, false);
+    else if (COUNTERS[me] === pe) addFloat(DRAG_X, DRAG_Y - 100, '被剋制…它的' + ELEMS[monster.elemIdx].name + '剋你的' + ELEMS[G.elemIdx].name + '，傷害 -15%', PAL.bad, false);
+  }
+}
+function elemMulVsMonster() {
+  const pe = ELEMS[G.elemIdx].id, me = ELEMS[monster.elemIdx].id;
+  if (COUNTERS[pe] === me) return 1.5;
+  if (COUNTERS[me] === pe) return 0.85;
+  return 1;
 }
 function dragonTier(mlv) { return Math.min(5, Math.floor((mlv - 1) / 2)); }
 function realmName(lv) { return realmNames[Math.min(5, Math.floor((lv - 1) / 2))]; }
@@ -579,7 +595,7 @@ function button(x, y, w, h, label, cb, opts) {
   ctx.fillText(label, x + w / 2, y + h / 2 + 1); ctx.restore(); ctx.textBaseline = 'alphabetic';
 }
 function muteButton() {
-  const x = GAME_W - 54, y = 10, s = 40;
+  const x = GAME_W - 60, y = 10, s = 48;
   uiButtons.push({ x, y, w: s, h: s, cb: () => { setMuted(!muted); if (!muted) sfx.click(); } });
   ctx.save(); ctx.fillStyle = PAL.panel;
   roundRect(x, y, s, s, 10); ctx.fill();
@@ -661,8 +677,12 @@ const titleState = {
     ctx.save(); ctx.translate(GAME_W / 2, 312); ctx.scale(pulse, pulse);
     ctx.translate(-GAME_W / 2, -312);
     button(GAME_W / 2 - 110, 280, 220, 64, '開 始', () => { sfx.click(); setState(setupState); }, { size: 30 });
-    ctx.restore(); ctx.fillStyle = PAL.dim; ctx.font = '14px sans-serif';
-    ctx.fillText('滑鼠 / 觸控點擊　｜　鍵盤：空白鍵打坐、J 出劍、1~4 購買、M 靜音', GAME_W / 2, GAME_H - 16);
+    ctx.restore();
+    ctx.fillStyle = PAL.gold; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('📱 平板：點修士打坐 · 點妖龍出劍 · 點卡片購買升級', GAME_W / 2, GAME_H - 66);
+    ctx.fillText('💻 電腦：空白鍵打坐 · J 出劍 · 1~4 購買', GAME_W / 2, GAME_H - 40);
+    ctx.fillStyle = PAL.dim; ctx.font = '13px sans-serif';
+    ctx.fillText('全程只要點擊就能玩　·　M 鍵靜音', GAME_W / 2, GAME_H - 16);
     muteButton();
   }
 };
@@ -747,7 +767,20 @@ const CHAR_X = 160, CHAR_Y = 350;
 const ARENA = { x: 320, y: 96, w: 620, h: 208 };
 const DRAG_X = ARENA.x + 430, DRAG_Y = ARENA.y + 138;
 const playState = {
-  enter() { this.t = 0; parts.length = 0; floaters.length = 0; orbs.length = 0; },
+  enter() {
+    this.t = 0; parts.length = 0; floaters.length = 0; orbs.length = 0;
+    this.cloud = null; this.cloudT = rnd(10, 16);   // v2：幸運祥雲
+  },
+  tapCloud() {
+    const c = this.cloud;
+    const bonus = Math.max(25, Math.floor(G.perSecond * 6 + G.perClick * 8));
+    gainEnergy(bonus, c.x, c.y, true);
+    addFloat(c.x, c.y - 30, '幸運祥雲！+' + bonus + ' 靈氣', PAL.gold, true);
+    burst(c.x, c.y, PAL.gold, 18, 240, 120);
+    for (let i = 0; i < 3; i++) addOrb(c.x + rnd(-20, 20), c.y + rnd(-10, 10), PAL.gold, true);
+    sfx.burst2x();
+    this.cloud = null; this.cloudT = rnd(15, 25);
+  },
   meditate() {
     let gain = G.perClick, twice = false;
     if (ELEMS[G.elemIdx].id === 'fire' && Math.random() < 0.25) { gain *= 2; twice = true; }
@@ -760,15 +793,23 @@ const playState = {
   slash(manual) {
     if (!monster || monster.dead) return;
     if (manual && G.slashCd > 0) return;
-    if (manual) G.slashCd = 0.35;
+    if (manual) G.slashCd = 0.15;   // v2：CD 0.35→0.15，點擊不再被吞
     let dmg = playerPower();
+    let comboMul = 1;
+    if (manual) {   // v2：連點連擊（每 5 連擊 +25%，上限 x2）
+      G.comboN++; G.comboT = 1.2;
+      comboMul = Math.min(2, 1 + Math.floor(G.comboN / 5) * 0.25);
+      if (G.comboN % 5 === 0 && comboMul < 2) sfx.buy();
+    }
+    const eMul = elemMulVsMonster();   // v2：五行相剋
     const crit = ELEMS[G.elemIdx].id === 'fire' && Math.random() < 0.2;
-    if (crit) dmg *= 2;
+    dmg = Math.max(1, Math.round(dmg * comboMul * eMul * (crit ? 2 : 1)));
     monster.hp -= dmg;
     monster.flash = 0.12;
     monster.sx = 1.25; monster.sy = 0.78;
     addSlash(DRAG_X + rnd(-16, 16), DRAG_Y + rnd(-20, 6), crit);
-    addFloat(DRAG_X + rnd(-24, 24), DRAG_Y - 66, crit ? '爆擊 -' + dmg + '！' : '-' + dmg, crit ? PAL.goldDeep : '#ffe066', crit);
+    const tag = crit ? '爆擊 -' + dmg + '！' : (eMul > 1 ? '剋制 -' + dmg + '！' : '-' + dmg);
+    addFloat(DRAG_X + rnd(-24, 24), DRAG_Y - 66, tag, crit ? PAL.goldDeep : (eMul > 1 ? PAL.good : '#ffe066'), crit || eMul > 1);
     burst(DRAG_X, DRAG_Y - 10, crit ? PAL.goldDeep : '#ffd0a0', crit ? 14 : 7, 200);
     if (crit) { freeze = 0.07; shake = Math.max(shake, 5); sfx.crit(); }
     else { shake = Math.max(shake, 2); sfx.hit(); }
@@ -804,6 +845,8 @@ const playState = {
     burst(bx, by + 30, PAL.good, 8, 150, 80);
   },
   onDown(p) {
+    // v2：點幸運祥雲（優先判定，目標半徑 48）
+    if (this.cloud && Math.hypot(p.x - this.cloud.x, p.y - this.cloud.y) < 48) { this.tapCloud(); return; }
     // 點修士打坐
     if (Math.hypot(p.x - CHAR_X, p.y - (CHAR_Y - 15)) < 95) { this.meditate(); return; }
     // 點妖龍出劍
@@ -821,6 +864,20 @@ const playState = {
     updateBG(dt);
     G.slashCd = Math.max(0, G.slashCd - dt);
     hudPulse = Math.max(0, hudPulse - dt * 4);
+    // v2：連擊計時
+    if (G.comboT > 0) { G.comboT -= dt; if (G.comboT <= 0) G.comboN = 0; }
+    // v2：幸運祥雲生成與飄移
+    if (this.cloud) {
+      this.cloud.x += this.cloud.v * dt;
+      this.cloud.bob += dt;
+      if (this.cloud.x > GAME_W + 70) { this.cloud = null; this.cloudT = rnd(15, 25); }
+    } else {
+      this.cloudT -= dt;
+      if (this.cloudT <= 0) {
+        this.cloud = { x: -70, y: rnd(120, 210), v: 62, bob: 0 };
+        addFloat(GAME_W / 2, 150, '☁ 幸運祥雲飄來了，快點它！', PAL.gold, false);
+      }
+    }
     // 顯示數值緩動
     G.dispEnergy += (G.energy - G.dispEnergy) * (1 - Math.pow(0.001, dt));
     G.dispExp += (G.exp / G.expNeeded - G.dispExp) * (1 - Math.pow(0.005, dt));
@@ -851,6 +908,18 @@ const playState = {
       monster.flash = Math.max(0, monster.flash - dt);
       monster.sx += (1 - monster.sx) * 8 * dt;
       monster.sy += (1 - monster.sy) * 8 * dt;
+      // v2：龍皇狂怒（最終 Boss 血量 <50% 開始緩慢回血 → 高潮衝刺）
+      if (monster.mlv >= FINAL_MLV) {
+        if (!monster.enraged && monster.hp < monster.hpMax * 0.5) {
+          monster.enraged = true;
+          addFloat(DRAG_X, DRAG_Y - 100, '⚠ 龍皇狂怒！會慢慢回血，全力出劍！', PAL.bad, true);
+          shake = Math.max(shake, 8); freeze = 0.08;
+          burst(DRAG_X, DRAG_Y, PAL.bad, 24, 280, 140);
+          sfx.crit();
+        }
+        if (monster.enraged && monster.hp > 0 && monster.hp < monster.hpMax * 0.5)
+          monster.hp = Math.min(monster.hpMax * 0.5, monster.hp + monster.hpMax * 0.005 * dt);
+      }
       // 自動攻擊（弟子出手）
       G.autoT += dt;
       if (G.autoT >= 1) { G.autoT -= 1; this.slash(false); }
@@ -912,6 +981,13 @@ const playState = {
     const tier = dragonTier(monster.mlv);
     ctx.fillStyle = PAL.ink; ctx.font = 'bold 18px sans-serif'; ctx.textAlign = 'left';
     ctx.fillText(dragonNames[tier] + '（Lv.' + monster.mlv + '）', ARENA.x + 16, ARENA.y + 28);
+    // v2：妖龍五行屬性徽章＋相剋關係
+    const mE = ELEMS[monster.elemIdx];
+    drawElemIcon(mE.id, ARENA.x + 220, ARENA.y + 21, 0.55);
+    const eMulNow = elemMulVsMonster();
+    ctx.fillStyle = eMulNow > 1 ? PAL.good : (eMulNow < 1 ? PAL.bad : PAL.dim);
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(mE.name + '屬性' + (eMulNow > 1 ? '（你剋它 +50%）' : (eMulNow < 1 ? '（它剋你 -15%）' : '')), ARENA.x + 238, ARENA.y + 26);
     ctx.fillStyle = PAL.dim; ctx.font = '13px sans-serif'; ctx.textAlign = 'right';
     ctx.fillText('已討伐 ' + G.kills + ' 隻 · 每擊 ' + playerPower() + ' 傷害 · 點龍出劍！', ARENA.x + ARENA.w - 14, ARENA.y + 28);
     // 血條
@@ -930,8 +1006,28 @@ const playState = {
     // 擂台地面
     ctx.fillStyle = 'rgba(70,120,80,0.35)';
     ctx.beginPath(); ctx.ellipse(DRAG_X, DRAG_Y + 44, 120, 18, 0, 0, 6.29); ctx.fill();
+    if (monster.enraged && !monster.dead) {   // v2：狂怒紅色氣場
+      const pu = 1 + Math.sin(bgTime * 8) * 0.12;
+      const rg = ctx.createRadialGradient(DRAG_X, DRAG_Y, 10, DRAG_X, DRAG_Y, 95 * pu);
+      rg.addColorStop(0, 'rgba(255,60,60,0.3)'); rg.addColorStop(1, 'rgba(255,60,60,0)');
+      ctx.fillStyle = rg;
+      ctx.beginPath(); ctx.arc(DRAG_X, DRAG_Y, 95 * pu, 0, 6.29); ctx.fill();
+    }
     if (!monster.dead || monster.deathT < 0.5) {
       drawDragon(DRAG_X, DRAG_Y, 1.15, tier, bgTime, monster.flash, monster.sx, monster.sy);
+    }
+    // v2：連擊顯示（1.2 秒內連續出劍）
+    if (G.comboN >= 3) {
+      const cm = Math.min(2, 1 + Math.floor(G.comboN / 5) * 0.25);
+      const cs = 1 + Math.max(0, G.comboT - 0.9) * 0.8;
+      ctx.save();
+      ctx.translate(ARENA.x + ARENA.w - 90, ARENA.y + 84);
+      ctx.scale(cs, cs);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.goldDeep; ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('連擊 ' + G.comboN, 0, 0);
+      if (cm > 1) { ctx.fillStyle = PAL.gold; ctx.font = 'bold 15px sans-serif'; ctx.fillText('傷害 x' + cm.toFixed(2).replace(/0+$/, '').replace(/\.$/, ''), 0, 22); }
+      ctx.restore();
     }
     // 最終Boss警示
     if (tier === 5 && !monster.dead) {
@@ -940,6 +1036,31 @@ const playState = {
       ctx.fillText('⚠ 最終妖王 ⚠', DRAG_X, ARENA.y + 70); ctx.globalAlpha = 1;
     }
     drawSlashes();
+
+    // v2：幸運祥雲（點擊獲得靈氣）
+    if (this.cloud) {
+      const c = this.cloud, bobY = Math.sin(c.bob * 2.4) * 6;
+      ctx.save();
+      ctx.translate(c.x, c.y + bobY);
+      ctx.shadowColor = PAL.gold; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#fff6d8';
+      ctx.beginPath();
+      ctx.ellipse(0, 4, 40, 15, 0, 0, 6.29);
+      ctx.ellipse(-20, -4, 20, 13, 0, 0, 6.29);
+      ctx.ellipse(16, -6, 24, 14, 0, 0, 6.29);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = PAL.gold; ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = '#b8862e'; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('點我！', 0, 4);
+      const sp2 = 0.6 + Math.sin(bgTime * 5) * 0.4;
+      ctx.globalAlpha = sp2;
+      ctx.fillStyle = PAL.gold; ctx.font = 'bold 13px sans-serif';
+      ctx.fillText('✨ 幸運靈氣 ✨', 0, -24);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+    }
 
     // === 商店 ===
     for (let i = 0; i < 4; i++) {
@@ -1062,6 +1183,17 @@ function frame(now) {
     updateSlashes(STEP);
   }
   state.draw();
+  if (innerHeight > innerWidth * 1.15) {   // v2：直向持機提示（不阻擋操作）
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = PAL.panel;
+    roundRect(GAME_W / 2 - 130, 74, 260, 34, 17);
+    ctx.fill();
+    ctx.strokeStyle = PAL.gold; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = PAL.gold; ctx.font = 'bold 16px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('↻ 轉成橫向，畫面更大！', GAME_W / 2, 96);
+    ctx.restore();
+  }
 }
 setState(titleState);
 requestAnimationFrame(frame);

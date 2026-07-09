@@ -312,6 +312,7 @@ let sprintT = 0;             // 辣椒衝刺剩餘秒數
 let chili = { active: false, x: 0, y: 0, timer: 0, age: 0 };
 let bug = { active: false, x: 0, y: 0, px: 0, py: 0, dx: 1, dy: 0, moveAcc: 0, timer: 0, age: 0 };
 let hintT = 0;               // 開場操作提示
+let readyT = 0;              // 開場 預備→GO 倒數
 
 // 粒子與飄字
 const parts = [], floats = [];
@@ -492,6 +493,7 @@ function startGame() {
   resetGame();
   mode = 'play';
   hintT = 5;
+  readyT = 1.6;
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
@@ -687,6 +689,8 @@ function update(dt) {
   }
   if (mode === 'over') return;
   if (paused && mode === 'play') return;
+  // 開場倒數：先讓玩家看清楚場地再開跑
+  if (readyT > 0 && mode === 'play') { readyT -= dt; return; }
 
   // 金蘋果限時
   if (food.golden && mode === 'play') {
@@ -1277,10 +1281,39 @@ function draw() {
 
   drawBackground();
   drawBoard();
+
+  // 撞牆前紅光警示（蛇頭正朝牆、下一步就會撞上）
+  if (mode === 'play' && deathTimer < 0 && !paused) {
+    const hx = snake[0].x + dir.x, hy = snake[0].y + dir.y;
+    if (hx < 0 || hx >= COLS || hy < 0 || hy >= ROWS) {
+      const a = 0.28 + 0.2 * Math.sin(elapsed * 14);
+      ctx.fillStyle = 'rgba(217,79,69,' + a + ')';
+      if (hx < 0) ctx.fillRect(BOARD_X, BOARD_Y, 12, ROWS * CELL);
+      else if (hx >= COLS) ctx.fillRect(BOARD_X + COLS * CELL - 12, BOARD_Y, 12, ROWS * CELL);
+      else if (hy < 0) ctx.fillRect(BOARD_X, BOARD_Y, COLS * CELL, 12);
+      else ctx.fillRect(BOARD_X, BOARD_Y + ROWS * CELL - 12, COLS * CELL, 12);
+    }
+  }
+
   drawFood();
+  drawChili();
+  drawBug();
   drawSnake();
   drawParts();
   drawFloats();
+
+  // 開場操作提示
+  if (hintT > 0 && mode === 'play') {
+    ctx.globalAlpha = Math.min(1, hintT);
+    ctx.fillStyle = 'rgba(32,70,49,0.85)';
+    rr(GAME_W / 2 - 235, GAME_H - 96, 470, 40, 12);
+    ctx.fill();
+    ctx.fillStyle = PAL.cream;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 17px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('👆 往想去的方向點一下／滑動，或按方向鍵', GAME_W / 2, GAME_H - 70);
+    ctx.globalAlpha = 1;
+  }
 
   ctx.restore();
 
@@ -1292,6 +1325,23 @@ function draw() {
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
     ctx.globalAlpha = 1;
+  }
+
+  // 預備 → GO！
+  if (readyT > 0 && mode === 'play') {
+    const go = readyT <= 0.8;
+    const pop = 1 + (readyT % 0.8) * 0.25;
+    ctx.save();
+    ctx.translate(GAME_W / 2, BOARD_Y + ROWS * CELL / 2);
+    ctx.scale(pop, pop);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 64px "Microsoft JhengHei", sans-serif';
+    ctx.lineWidth = 10;
+    ctx.strokeStyle = 'rgba(32,70,49,0.9)';
+    ctx.strokeText(go ? 'GO！' : '預備～', 0, 20);
+    ctx.fillStyle = go ? PAL.gold : PAL.cream;
+    ctx.fillText(go ? 'GO！' : '預備～', 0, 20);
+    ctx.restore();
   }
 
   // 暫停畫面

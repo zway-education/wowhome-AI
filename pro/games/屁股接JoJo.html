@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -109,6 +110,9 @@ const sfx = {
   miss(){ beep(150, 0.2, 'triangle', 0.13, -80); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   ora(){ beep(440, 0.05, 'square', 0.09, 200); },
+  fever(){ noise(0.2, 0.16); [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'sawtooth', 0.11, 150), i * 80)); },
+  heart(){ beep(660, 0.1, 'triangle', 0.12, 220); setTimeout(() => beep(988, 0.16, 'triangle', 0.11), 100); },
+  rumble(){ beep(80, 0.5, 'sawtooth', 0.12, 40); noise(0.35, 0.1); },
   lose(){ [392, 330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 140)); }
 };
 function toggleMute(){
@@ -225,6 +229,10 @@ let items = [];
 let phase = 'ready', phaseT = 0;     // ready / go / dead
 let overT = 0;
 let newBest = false;
+let fever = 0, feverT = 0, feverCount = 0;   // ORA ORA 時間
+let rainT = 14, rainBanner = 0;              // 箭雨事件
+let heartT = 12;                             // 補血愛心計時
+const TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
 const MAX_LVL = 5;
 const PANTS = ['#3ddad7', '#5be8b0', '#f4c430', '#e8478b', '#b98cff'];
 const PANTS_DARK = ['#1d8f8d', '#2fa06f', '#a87a0a', '#8a1f52', '#6b48b8'];
@@ -234,6 +242,8 @@ const player = { x: GAME_W / 2, tx: GAME_W / 2, lvl: 1, sx: 1, sy: 1, hurtT: 0, 
 function startGame(){
   score = 0; scoreShow = 0; lives = 3; combo = 0;
   elapsed = 0; spawnTimer = 0; newBest = false;
+  fever = 0; feverT = 0; feverCount = 0;
+  rainT = 14; rainBanner = 0; heartT = 12;
   items = []; parts = []; floaters.length = 0;
   player.x = player.tx = GAME_W / 2;
   player.lvl = 1; player.sx = player.sy = 1;
@@ -264,6 +274,7 @@ function spawnItem(){
   let type = 'gold';
   if(roll < jojoChance) type = 'jojo';
   else if(roll < jojoChance + badChance) type = 'bad';
+  if(feverT > 0) type = 'gold';   // ORA ORA 時間：全是金箭！
   items.push({
     x: 40 + Math.random() * (GAME_W - 80),
     y: -30,
@@ -273,37 +284,74 @@ function spawnItem(){
     type, trailT: 0
   });
 }
+/* 箭雨事件：橫掃陣列（大多金箭、混入紫箭） */
+function spawnRain(){
+  const n = 9;
+  const flip = Math.random() < 0.5;
+  for(let i = 0; i < n; i++){
+    const k = flip ? n - 1 - i : i;
+    items.push({
+      x: 40 + k * (GAME_W - 80) / (n - 1),
+      y: -40 - i * 62,
+      vy: 300,
+      rot: 0, vr: (Math.random() - 0.5) * 1.5,
+      type: (i === 3 || i === 6) && feverT <= 0 ? 'bad' : 'gold',
+      trailT: 0
+    });
+  }
+}
 
 /* ===== 接住／漏接 ===== */
+function addFever(n){
+  if(feverT > 0) return;
+  fever = Math.min(100, fever + n);
+  if(fever >= 100){
+    fever = 0; feverT = 6; feverCount++;
+    freeze = Math.max(freeze, 0.1);
+    shake = Math.max(shake, 10);
+    addFloater(player.x, FEET_Y - 220, 'ORA ORA 時間！分數×2！', '#ffe08a', 30);
+    for(let i = 0; i < 10; i++) burst(player.x, FEET_Y - 100, 'hsl(' + (i * 36) + ',85%,62%)', 3, 320, 0.6);
+    sfx.fever();
+  }
+}
 function catchItem(it){
   const growth = 1 + (player.lvl - 1) * 0.1;
+  const mult = feverT > 0 ? 2 : 1;
   player.sx = 1.3; player.sy = 0.72;
-  if(it.type === 'jojo'){
+  if(it.type === 'heart'){
+    if(lives < 3){ lives++; addFloater(it.x, it.y - 12, '回復 1 顆心！', '#ff7ab0', 26); }
+    else{ score += 30; addFloater(it.x, it.y - 12, '+30', '#ff7ab0', 22); }
+    burst(it.x, it.y, '#ff7ab0', 14, 260, 0.55);
+    lifeFlash = 1;
+    sfx.heart();
+  }else if(it.type === 'jojo'){
     freeze = 0.1; shake = 10;
     burst(it.x, it.y, '#fff', 14, 300, 0.6);
     for(let i = 0; i < 12; i++)
       burst(it.x, it.y, 'hsl(' + (i * 30) + ',85%,62%)', 2, 280, 0.55);
     if(player.lvl < MAX_LVL){
       player.lvl++;
-      score += 30;
+      score += 30 * mult;
       addFloater(it.x, it.y - 12, '尻力覺醒！LV' + player.lvl, '#ffe08a', 26);
     }else{
-      score += 50;
-      addFloater(it.x, it.y - 12, '黃金精神！+50', '#ffe08a', 26);
+      score += 50 * mult;
+      addFloater(it.x, it.y - 12, '黃金精神！+' + 50 * mult, '#ffe08a', 26);
     }
     player.starT = 0.9;
     combo++;
+    addFever(16);
     sfx.jojo();
   }else if(it.type === 'gold'){
     combo++;
-    const gain = 10 + Math.min(40, (combo - 1) * 2);
+    const gain = (10 + Math.min(40, (combo - 1) * 2)) * mult;
     score += gain;
     shake = Math.max(shake, 4);
     burst(it.x, it.y, '#f4c430', 10, 240, 0.45);
     burst(it.x, it.y, '#fff6e8', 4, 180, 0.35);
-    addFloater(it.x, it.y - 8, '+' + gain, '#ffe08a', 22);
+    addFloater(it.x, it.y - 8, '+' + gain, feverT > 0 ? '#fff' : '#ffe08a', 22);
     player.happyT = 0.5;
     comboFlash = 1;
+    addFever(7);
     if(combo > 0 && combo % 10 === 0){
       addFloater(player.x, FEET_Y - 170 * growth, 'ORA ORA ORA！', '#e8478b', 30);
       sfx.jojo();
@@ -336,11 +384,38 @@ function playUpdate(dt){
     if(phaseT > 0.9) endGame();
   }else if(phase === 'go'){
     elapsed += dt;
-    /* 生成（間隔隨時間縮短） */
+    /* ORA ORA 時間倒數 */
+    if(feverT > 0){
+      feverT -= dt;
+      if(feverT <= 0){ feverT = 0; addFloater(player.x, FEET_Y - 200, '時間結束！', '#3ddad7', 22); }
+    }
+    /* 生成（間隔隨時間縮短；Fever 時更密） */
     spawnTimer -= dt;
     if(spawnTimer <= 0){
-      spawnTimer = Math.max(0.38, 1.05 - elapsed * 0.012);
+      spawnTimer = Math.max(0.38, 1.05 - elapsed * 0.012) * (feverT > 0 ? 0.55 : 1);
       spawnItem();
+    }
+    /* 箭雨事件：先預告再橫掃 */
+    if(rainBanner > 0){
+      rainBanner -= dt;
+      if(rainBanner <= 0) spawnRain();
+    }else{
+      rainT -= dt;
+      if(rainT <= 0 && feverT <= 0){
+        rainT = 20 + Math.random() * 8;
+        rainBanner = 1.3;
+        addFloater(GAME_W / 2, 250, 'ゴゴゴゴ… 箭雨來襲！', '#e8478b', 28);
+        shake = Math.max(shake, 5);
+        sfx.rumble();
+      }
+    }
+    /* 缺血時偶爾掉補血愛心 */
+    heartT -= dt;
+    if(heartT <= 0){
+      heartT = 16 + Math.random() * 8;
+      if(lives < 3 && !items.some(i => i.type === 'heart')){
+        items.push({ x: 60 + Math.random() * (GAME_W - 120), y: -30, vy: 150, rot: 0, vr: 0, type: 'heart', trailT: 0 });
+      }
     }
   }
   /* 鍵盤移動 */
@@ -368,6 +443,7 @@ function playUpdate(dt){
     if(it.trailT <= 0 && parts.length < 260){
       it.trailT = 0.06;
       const tc = it.type === 'jojo' ? 'hsl(' + ((T * 300) % 360) + ',85%,62%)'
+        : it.type === 'heart' ? 'rgba(255,122,176,.7)'
         : it.type === 'gold' ? 'rgba(244,196,48,.7)' : 'rgba(150,60,190,.6)';
       parts.push({ x: it.x + (Math.random() - 0.5) * 8, y: it.y - 14, vx: 0, vy: -30, life: 0.3, max: 0.3, color: tc });
     }
@@ -384,7 +460,14 @@ function playUpdate(dt){
         burst(it.x, FEET_Y, '#8a8a9a', 8, 160, 0.4);
       }else{
         burst(it.x, FEET_Y, 'rgba(120,90,150,.8)', 5, 120, 0.3);
-        if(it.type === 'bad') sfx.miss();
+        if(it.type === 'bad'){
+          sfx.miss();
+          /* 驚險閃避：紫箭貼身落地給獎勵 */
+          if(phase !== 'dead' && Math.abs(it.x - player.x) < catchW + 46){
+            score += 5;
+            addFloater(it.x, FEET_Y - 24, '驚險閃避 +5', '#7ad9ff', 18);
+          }
+        }
       }
       items.splice(i, 1);
     }
@@ -471,7 +554,29 @@ function drawSkyline(off, baseY, color, hScale){
 /* ===== 物件繪製 ===== */
 function drawItem(it){
   if(it.type === 'jojo') drawJojoStar(it);
+  else if(it.type === 'heart') drawHeartItem(it);
   else drawArrow(it, it.type === 'gold');
+}
+function drawHeartItem(it){
+  ctx.save();
+  ctx.translate(it.x, it.y);
+  const pulse = 1 + Math.sin(T * 8) * 0.12;
+  ctx.scale(pulse, pulse);
+  ctx.shadowColor = '#ff7ab0'; ctx.shadowBlur = 16;
+  const s = 16;
+  ctx.beginPath();
+  ctx.moveTo(0, s * 0.35);
+  ctx.bezierCurveTo(-s, -s * 0.4, -s * 0.5, -s, 0, -s * 0.35);
+  ctx.bezierCurveTo(s * 0.5, -s, s, -s * 0.4, 0, s * 0.35);
+  ctx.closePath();
+  const hg = ctx.createLinearGradient(0, -s, 0, s);
+  hg.addColorStop(0, '#ffa5c8'); hg.addColorStop(1, '#e8478b');
+  ctx.fillStyle = hg; ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.fillStyle = 'rgba(255,255,255,.6)';
+  ctx.beginPath(); ctx.arc(-s * 0.35, -s * 0.35, s * 0.18, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
 }
 function drawArrow(it, good){
   ctx.save();
@@ -747,7 +852,7 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.textBaseline = 'alphabetic';
 }
 function drawMuteBtn(){
-  drawButton(GAME_W - 62, 10, 52, 34, muted ? '🔇' : '🔊', toggleMute, false);
+  drawButton(GAME_W - 66, 8, 56, 42, muted ? '🔇' : '🔊', toggleMute, false);
 }
 function drawHUD(){
   /* 生命 */
@@ -788,6 +893,25 @@ function drawHUD(){
     ctx.fillStyle = '#e8478b';
     ctx.fillText('連擊 ×' + combo, GAME_W / 2, 60);
   }
+  /* ORA 量表（滿了觸發 ORA ORA 時間） */
+  const fw = 190, fx = GAME_W / 2 - fw / 2, fy = 84;
+  rr(fx, fy, fw, 12, 6);
+  ctx.fillStyle = 'rgba(20,5,35,.7)'; ctx.fill();
+  if(feverT > 0){
+    ctx.fillStyle = 'hsl(' + ((T * 400) % 360) + ',90%,60%)';
+    rr(fx, fy, fw * clamp(feverT / 6, 0, 1), 12, 6); ctx.fill();
+  }else{
+    const fg2 = ctx.createLinearGradient(fx, 0, fx + fw, 0);
+    fg2.addColorStop(0, '#e8478b'); fg2.addColorStop(1, '#f4c430');
+    ctx.fillStyle = fg2;
+    if(fever > 0){ rr(fx, fy, Math.max(10, fw * fever / 100), 12, 6); ctx.fill(); }
+  }
+  rr(fx, fy, fw, 12, 6);
+  ctx.strokeStyle = feverT > 0 ? '#fff' : 'rgba(255,255,255,.5)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.font = 'bold 12px ' + FONT;
+  ctx.textAlign = 'center';
+  ctx.fillStyle = feverT > 0 ? '#ffe08a' : 'rgba(255,255,255,.75)';
+  ctx.fillText(feverT > 0 ? 'ORA ORA 時間×2！' : 'ORA 量表（滿了進入狂熱）', GAME_W / 2, fy + 28);
 }
 function bigText(txt, y, size, color, scaleK, skew){
   ctx.save();
@@ -826,29 +950,51 @@ function titleDraw(){
   ctx.fillText('— 屁股接JoJo —', GAME_W / 2, 228);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = '#fff6e8';
-  ctx.fillText('左右移動屁股，接住金色替身箭！', GAME_W / 2, 296);
-  ctx.fillText('虹色 JOJO 星＝尻力覺醒，紫色邪箭＝扣生命', GAME_W / 2, 322);
-  ctx.fillText('漏接金箭也會扣生命，扣完 3 顆就結束', GAME_W / 2, 348);
+  ctx.fillText('接金箭＝得分，虹色 JOJO 星＝尻力覺醒', GAME_W / 2, 292);
+  ctx.fillText('紫色邪箭＝扣心，漏接金箭也扣心（共 3 顆）', GAME_W / 2, 316);
+  ctx.fillText('接滿 ORA 量表 → ORA ORA 時間，分數×2！', GAME_W / 2, 340);
   if(stateT > 0.35){
-    drawButton(GAME_W / 2 - 110, 396, 220, 58, '開始', startGame, true);
+    drawButton(GAME_W / 2 - 110, 380, 220, 58, '開始', startGame, true);
   }
-  ctx.font = '14px ' + FONT;
-  ctx.fillStyle = 'rgba(255,246,232,.7)';
-  ctx.fillText('←→ / A D 鍵、滑鼠移動、手指拖曳皆可操作　按 M 靜音', GAME_W / 2, 486);
+  rr(GAME_W / 2 - 210, 462, 420, 58, 10);
+  ctx.fillStyle = 'rgba(20,5,35,.6)'; ctx.fill();
+  ctx.strokeStyle = 'rgba(244,196,48,.55)'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.font = 'bold 15px ' + FONT;
+  ctx.fillStyle = '#ffe9c4';
+  ctx.fillText('電腦：← → 或 A D 移動 · 也可用滑鼠', GAME_W / 2, 486);
+  ctx.fillText('平板：手指在畫面上左右拖曳　（按 M 靜音）', GAME_W / 2, 508);
   if(best > 0){
+    ctx.font = '14px ' + FONT;
     ctx.fillStyle = '#ffe08a';
-    ctx.fillText('最佳紀錄：' + best, GAME_W / 2, 512);
+    ctx.fillText('最佳紀錄：' + best, GAME_W / 2, 540);
   }
   drawMuteBtn();
 }
 function playDraw(){
   drawWorld();
+  /* ORA ORA 時間：金色氛圍 */
+  if(feverT > 0){
+    ctx.fillStyle = 'rgba(244,196,48,' + (0.07 + Math.sin(T * 10) * 0.03) + ')';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+  }
   drawHUD();
   if(phase === 'ready'){
     bigText('準備…', 300, 46, '#3ddad7', easeOutBack(Math.min(1, phaseT / 0.4)), false);
   }else if(phase === 'go' && phaseT < 0.5 && elapsed < 2){
     ctx.globalAlpha = 1 - phaseT / 0.5;
     bigText('GO！', 300, 56, '#f4c430', 1 + phaseT, true);
+    ctx.globalAlpha = 1;
+  }
+  /* 開場操作提示 */
+  if(elapsed < 4 && phase !== 'dead'){
+    ctx.globalAlpha = elapsed > 3 ? 4 - elapsed : 1;
+    ctx.font = 'bold 18px ' + FONT;
+    ctx.textAlign = 'center';
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(20,5,35,.85)';
+    const hint = TOUCH ? '手指在畫面上左右拖曳，移動屁股接金箭！' : '← → 鍵或滑鼠左右移動，接住金箭！';
+    ctx.strokeText(hint, GAME_W / 2, 340);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(hint, GAME_W / 2, 340);
     ctx.globalAlpha = 1;
   }
   drawMuteBtn();
@@ -880,7 +1026,7 @@ function overDraw(){
   ctx.fillText(newBest ? '新紀錄！' : '最佳紀錄　' + best, 0, 28);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = 'rgba(255,255,255,.65)';
-  ctx.fillText('尻力最終等級：LV ' + player.lvl, 0, 58);
+  ctx.fillText('尻力最終等級 LV ' + player.lvl + ' · ORA ORA 時間 ×' + feverCount, 0, 58);
   ctx.restore();
   if(overT > 0.3){
     drawButton(GAME_W / 2 - 110, GAME_H / 2 + 130, 220, 54, '再玩一次', startGame, true);
@@ -888,6 +1034,9 @@ function overDraw(){
   }
   drawMuteBtn();
 }
+
+/* 測試掛鉤（自動化冒煙測試用，不影響遊戲） */
+window.__smoke = () => ({ scene: stateName, x: player.x, tx: player.tx, lives, score, fever });
 
 /* ===== 主迴圈：固定時間步進 60Hz ===== */
 const STEP = 1 / 60;

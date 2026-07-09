@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -103,12 +104,13 @@
     z-index: 30;
   }
   #dpad {
+    /* 右下角拇指位，畫布已保留底部空間，不會蓋到棋盤 */
     position: absolute;
-    left: 50%; bottom: max(10px, env(safe-area-inset-bottom));
-    transform: translateX(-50%);
+    right: max(12px, env(safe-area-inset-right)); left: auto;
+    bottom: max(10px, env(safe-area-inset-bottom));
     display: none;
     grid-template-columns: repeat(3, 64px);
-    grid-template-rows: repeat(2, 56px);
+    grid-template-rows: repeat(2, 60px);
     gap: 8px;
     z-index: 20;
   }
@@ -135,9 +137,9 @@
 
   <div id="titleOverlay" class="overlay">
     <h1>貪食蛇<span class="en">S N A K E</span></h1>
-    <div class="sub">賽博夜城版：牆壁是傳送門，穿牆自由滑行！<br>連續吃能量方塊疊高 COMBO 倍率，<br>小心亂入的紅色防火牆。</div>
+    <div class="sub">賽博夜城版：牆壁是傳送門，穿牆自由滑行！<br>連吃能量方塊疊 COMBO，疊到 <b style="color:#fff700">×5 進入幻影駭入</b>穿透一切！<br>💣 吃 EMP 可以炸光紅色防火牆。</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.65">方向鍵 / WASD 轉向・空白鍵暫停<br>手機：滑動螢幕或下方按鈕</div>
+    <div class="sub" style="opacity:0.75">🖱️ 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>👆 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -173,12 +175,16 @@ const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
 function resize() {
-  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  // 觸控裝置：底部保留 150px 給虛擬方向鍵，避免蓋住棋盤
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const reserve = coarse ? 150 : 0;
+  const scale = Math.min(innerWidth / GAME_W, Math.max(200, innerHeight - reserve) / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
   canvas.width = Math.round(GAME_W * scale * dpr);
   canvas.height = Math.round(GAME_H * scale * dpr);
   canvas.style.width = GAME_W * scale + 'px';
   canvas.style.height = GAME_H * scale + 'px';
+  canvas.style.top = ((innerHeight - reserve) / 2) + 'px';
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   canvas._scale = scale;
 }
@@ -253,7 +259,9 @@ const sfx = {
   die()   { beep(320, 0.5, 'sawtooth', 0.18, -260); noiseBurst(0.4, 0.24); },
   start() { [392, 523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'triangle', 0.1), i * 80)); },
   best()  { [784, 988, 1175, 1568, 1976].forEach((f, i) => setTimeout(() => beep(f, 0.13, 'square', 0.1), i * 100)); },
-  wall()  { beep(180, 0.1, 'square', 0.1, -60); }
+  wall()  { beep(180, 0.1, 'square', 0.1, -60); },
+  phase() { [440, 660, 880, 1320, 1760].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'sine', 0.12, 200), i * 55)); },
+  emp()   { noiseBurst(0.45, 0.26); beep(140, 0.4, 'sawtooth', 0.16, -80); setTimeout(() => beep(1046, 0.14, 'square', 0.1), 180); setTimeout(() => beep(1568, 0.16, 'square', 0.1), 300); }
 };
 const muteBtn = document.getElementById('muteBtn');
 function refreshMute() { muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -286,6 +294,15 @@ let deathTimer = -1;
 let shake = 0, freeze = 0, flash = 0;
 let elapsed = 0;
 let stars = [], skyline = [];
+
+// v2：幻影駭入 / EMP 炸彈 / 開場倒數與提示
+const OBST_LIFE = 22;        // 防火牆壽命（秒）
+const OBST_ARM = 1.2;        // 防火牆實體化前的預警時間
+let phaseT = 0;              // 幻影模式剩餘秒數（穿透牆與自己）
+let phaseUsed = false;       // 這一輪 combo 是否已觸發過幻影
+let emp = { active: false, x: 0, y: 0, timer: 0, age: 0 };
+let empCd = 6;               // EMP 生成冷卻
+let hintT = 0, readyT = 0;
 
 // 星空與城市天際線（開場生成一次）
 function seedWorld() {
@@ -352,9 +369,24 @@ function spawnObstacle() {
   } while (tries < 500 && (cellBlocked(x, y) || (food.x === x && food.y === y) ||
            (Math.abs(x - head.x) + Math.abs(y - head.y)) < 6));
   if (tries < 500) {
-    obstacles.push({ x, y, age: 0 });
+    // 先預警 1.2 秒再實體化，不會突然出現害死玩家
+    obstacles.push({ x, y, age: 0, armT: OBST_ARM, life: OBST_LIFE });
     addFloat(cellCenter(x, y).x, cellCenter(x, y).y, '⚠ 防火牆', PAL.pink);
     sfx.wall();
+  }
+}
+function spawnEmp() {
+  let tries = 0, x = 0, y = 0;
+  const head = snake[0];
+  do {
+    x = Math.floor(Math.random() * COLS);
+    y = Math.floor(Math.random() * ROWS);
+    tries++;
+  } while (tries < 500 && (cellBlocked(x, y) || (food.x === x && food.y === y) ||
+           (Math.abs(x - head.x) + Math.abs(y - head.y)) < 5));
+  if (tries < 500) {
+    emp = { active: true, x, y, timer: 9, age: 0 };
+    addFloat(cellCenter(x, y).x, cellCenter(x, y).y - 14, '💣 EMP 出現！', PAL.yellow);
   }
 }
 
@@ -366,6 +398,8 @@ function resetGame() {
   obstacles = [];
   score = 0; dispScore = 0; eatCount = 0;
   combo = 1; comboTimer = 0;
+  phaseT = 0; phaseUsed = false;
+  emp.active = false; empCd = 6;
   moveInterval = 0.15;
   moveTimer = 0;
   headPulse = 1;
@@ -407,11 +441,26 @@ addEventListener('keydown', e => {
   }
 });
 
+// 觸控：滑動轉向＋「點一下」朝該方向轉（forgiving：主軸不能走就用次軸）
+function tapSteer(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const gx = (clientX - r.left) / canvas._scale, gy = (clientY - r.top) / canvas._scale;
+  const h = cellCenter(snake[0].x, snake[0].y);
+  const dx = gx - h.x, dy = gy - h.y;
+  if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+  const horiz = Math.abs(dx) > Math.abs(dy);
+  const primary = horiz ? { x: Math.sign(dx), y: 0 } : { x: 0, y: Math.sign(dy) };
+  const secondary = horiz ? { x: 0, y: Math.sign(dy) } : { x: Math.sign(dx), y: 0 };
+  const last = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+  const isReverse = d => d.x === -last.x && d.y === -last.y;
+  if ((primary.x || primary.y) && !isReverse(primary)) queueDir(primary.x, primary.y);
+  else if ((secondary.x || secondary.y) && !isReverse(secondary)) queueDir(secondary.x, secondary.y);
+}
 let touchStart = null;
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   const t = e.touches[0];
-  touchStart = { x: t.clientX, y: t.clientY };
+  touchStart = { x: t.clientX, y: t.clientY, t0: performance.now(), moved: false };
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
@@ -421,9 +470,19 @@ canvas.addEventListener('touchmove', e => {
   if (Math.abs(dx) < 26 && Math.abs(dy) < 26) return;
   if (Math.abs(dx) > Math.abs(dy)) queueDir(dx > 0 ? 1 : -1, 0);
   else queueDir(0, dy > 0 ? 1 : -1);
-  touchStart = { x: t.clientX, y: t.clientY };
+  touchStart = { x: t.clientX, y: t.clientY, t0: touchStart.t0, moved: true };
 }, { passive: false });
-canvas.addEventListener('touchend', e => { e.preventDefault(); touchStart = null; }, { passive: false });
+canvas.addEventListener('touchend', e => {
+  e.preventDefault();
+  if (touchStart && !touchStart.moved && mode === 'play' && performance.now() - touchStart.t0 < 450) {
+    tapSteer(touchStart.x, touchStart.y);
+  }
+  touchStart = null;
+}, { passive: false });
+// 桌機滑鼠也能點擊轉向
+canvas.addEventListener('mousedown', e => {
+  if (mode === 'play') tapSteer(e.clientX, e.clientY);
+});
 
 [['up', 0, -1], ['down', 0, 1], ['left', -1, 0], ['right', 1, 0]].forEach(([name, dx, dy]) => {
   const btn = document.getElementById('btn-' + name);
@@ -440,6 +499,8 @@ let overCooldown = 0;
 function startGame() {
   resetGame();
   mode = 'play';
+  hintT = 5;
+  readyT = 1.6;
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
@@ -495,8 +556,13 @@ function step() {
   if (ny >= ROWS) { ny = 0; warped = true; }
 
   const hitSelf = snake.some((s, i) => i < snake.length - 1 && s.x === nx && s.y === ny);
-  const hitWall = obstacles.some(o => o.x === nx && o.y === ny);
-  if (hitSelf || hitWall) {
+  const hitWall = obstacles.some(o => o.armT <= 0 && o.x === nx && o.y === ny);
+  if ((hitSelf || hitWall) && phaseT > 0 && mode === 'play') {
+    // 幻影模式：直接穿透，火花四濺
+    const c = cellCenter(nx, ny);
+    burst(c.x, c.y, PAL.white, 8, 180);
+    if (hitWall) { score += 2; addFloat(c.x, c.y - 8, '穿透 +2', PAL.white); }
+  } else if (hitSelf || hitWall) {
     if (mode === 'title') { dir = { x: -dir.x, y: -dir.y }; return; }
     die();
     return;
@@ -519,6 +585,26 @@ function step() {
     sfx.warp();
   }
 
+  // 吃 EMP：全場防火牆連鎖爆破！
+  if (mode === 'play' && emp.active && nx === emp.x && ny === emp.y) {
+    emp.active = false;
+    const n = obstacles.length;
+    for (const o of obstacles) {
+      const oc = cellCenter(o.x, o.y);
+      burst(oc.x, oc.y, PAL.pink, 16, 300);
+      burst(oc.x, oc.y, PAL.yellow, 10, 220);
+    }
+    obstacles = [];
+    const gained = 5 * n;
+    score += gained;
+    const hc = cellCenter(nx, ny);
+    burst(hc.x, hc.y, PAL.yellow, 26, 340);
+    addFloat(hc.x, hc.y - 14, n > 0 ? '💣 EMP！炸掉 ' + n + ' 面牆 +' + gained : '💣 EMP！', PAL.yellow);
+    shake = 10; freeze = 0.1; flash = 0.18;
+    sfx.emp();
+    empCd = 12;
+  }
+
   if (nx === food.x && ny === food.y) {
     const c = cellCenter(nx, ny);
     eatCount++;
@@ -533,6 +619,14 @@ function step() {
       if (food.core) { sfx.core(); freeze = 0.06; }
       else sfx.eat(combo);
       combo = Math.min(5, combo + 1);
+      // COMBO 疊滿 ×5 → 幻影駭入：5 秒穿透一切！
+      if (combo >= 5 && !phaseUsed && phaseT <= 0) {
+        phaseT = 5; phaseUsed = true;
+        freeze = 0.1; shake = Math.max(shake, 7);
+        addFloat(GAME_W / 2, BOARD_Y + 150, '👻 幻影駭入！5 秒穿透一切！', PAL.white);
+        burst(c.x, c.y, PAL.white, 24, 320);
+        sfx.phase();
+      }
       moveInterval = Math.max(0.065, 0.15 - eatCount * 0.0022);
       // 每吃 6 個生一道防火牆（上限 8）
       if (eatCount % 6 === 0 && obstacles.length < 8) spawnObstacle();
@@ -565,11 +659,24 @@ function update(dt) {
   overCooldown = Math.max(0, overCooldown - dt);
   dispScore += (score - dispScore) * Math.min(1, 12 * dt);
   food.age += dt;
-  for (const o of obstacles) o.age += dt;
+  // 防火牆：預警實體化 → 壽命倒數 → 退役
+  for (let i = obstacles.length - 1; i >= 0; i--) {
+    const o = obstacles[i];
+    o.age += dt;
+    if (o.armT > 0) o.armT -= dt;
+    else if (mode === 'play') {
+      o.life -= dt;
+      if (o.life <= 0) {
+        const oc = cellCenter(o.x, o.y);
+        burst(oc.x, oc.y, 'rgba(255,41,117,0.7)', 6, 120);
+        obstacles.splice(i, 1);
+      }
+    }
+  }
 
   if (comboTimer > 0) {
     comboTimer -= dt;
-    if (comboTimer <= 0) combo = 1;
+    if (comboTimer <= 0) { combo = 1; phaseUsed = false; }
   }
 
   for (const p of parts) {
@@ -586,10 +693,37 @@ function update(dt) {
   }
   if (mode === 'over') return;
   if (paused && mode === 'play') return;
+  // 開場倒數：先看清場地再開跑
+  if (readyT > 0 && mode === 'play') { readyT -= dt; return; }
 
   if (food.core && mode === 'play') {
     food.timer -= dt;
     if (food.timer <= 0) { food.core = false; placeFood(); }
+  }
+
+  hintT = Math.max(0, hintT - dt);
+  // 幻影模式倒數＋殘影粒子
+  if (phaseT > 0 && mode === 'play') {
+    phaseT -= dt;
+    if (Math.random() < 0.4) {
+      const hc = cellCenter(snake[0].x, snake[0].y);
+      parts.push({ x: hc.x + (Math.random() * 16 - 8), y: hc.y + (Math.random() * 16 - 8),
+        vx: 0, vy: -20, life: 0.35, color: 'rgba(255,255,255,0.8)', size: 2 + Math.random() * 3, glow: true });
+    }
+    if (phaseT <= 0) addFloat(cellCenter(snake[0].x, snake[0].y).x, cellCenter(snake[0].x, snake[0].y).y - 20, '幻影結束', PAL.cyan);
+  }
+  // EMP 生成與逾時
+  if (mode === 'play') {
+    if (emp.active) {
+      emp.age += dt; emp.timer -= dt;
+      if (emp.timer <= 0) emp.active = false;
+    } else {
+      empCd -= dt;
+      if (empCd <= 0) {
+        empCd = 8;
+        if (obstacles.length >= 4) spawnEmp();
+      }
+    }
   }
 
   const interval = mode === 'title' ? 0.13 : moveInterval;
@@ -735,11 +869,33 @@ function drawBoard() {
 function drawObstacles() {
   for (const o of obstacles) {
     const c = cellCenter(o.x, o.y);
-    const appear = Math.min(1, o.age * 3);
+    // 預警階段：虛線閃爍框，還不會撞死
+    if (o.armT > 0) {
+      const warnA = Math.sin(o.age * 18) > 0 ? 0.85 : 0.25;
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.globalAlpha = warnA;
+      ctx.strokeStyle = PAL.pink;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      rr(-11, -11, 22, 22, 4);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = PAL.pink;
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('!', 0, 4);
+      ctx.restore();
+      ctx.globalAlpha = 1;
+      continue;
+    }
+    const appear = Math.min(1, (o.age - OBST_ARM) * 3 + 0.3);
     const flick = 0.75 + 0.25 * Math.sin(o.age * 12 + o.x);
     ctx.save();
     ctx.translate(c.x, c.y);
     ctx.scale(appear, appear);
+    // 壽命末段：閃爍準備退役
+    if (o.life < 3) ctx.globalAlpha = Math.sin(o.age * 14) > 0 ? 1 : 0.35;
     // 外框發光
     ctx.shadowColor = PAL.pink;
     ctx.shadowBlur = 12 * flick;

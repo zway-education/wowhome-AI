@@ -270,6 +270,10 @@ let koTimer = -1;
 let wins = { ghost: 0, teacher: 0 };
 let lightningTimer = 7;
 let lightning = 0;
+let introT = 0;               // 開場倒數
+let tutorialT = 0;            // 開場教學提示
+let candy = null, candyTimer = 6;   // 空投糖果
+let attackCount = 0;          // 測試掛鉤用
 const touchUI = matchMedia('(pointer: coarse)').matches;
 
 function makeFighter(name, emoji, x, dir, img) {
@@ -282,7 +286,8 @@ function makeFighter(name, emoji, x, dir, img) {
     sx: 1, sy: 1,
     combo: 0, comboTimer: 0,
     koFall: 0,
-    aiTimer: 0, aiMove: 0
+    aiTimer: 0, aiMove: 0,
+    blockHeld: false, blockT: 0, blocking: false
   };
 }
 let ghost, teacher, fighters = [];
@@ -326,6 +331,7 @@ function resetGame() {
   shake = 0; freeze = 0; flash = 0; slowmo = 1;
   koTimer = -1;
   lightningTimer = 7;
+  candy = null; candyTimer = 6;
 }
 
 // ----- 輸入 -----
@@ -335,7 +341,7 @@ addEventListener('keydown', e => {
   if ([' ', 'arrowleft', 'arrowright', 'arrowdown', 'arrowup', 'enter'].includes(k) ||
       ['a', 'd', 'w', 's'].includes(k)) e.preventDefault();
   keys[k] = true;
-  if (mode === 'play' && koTimer < 0) {
+  if (mode === 'play' && koTimer < 0 && introT <= 0 && !e.repeat) {
     if (k === ' ') tryAttack(ghost, teacher);
     if (k === 'w') trySpecial(ghost, teacher);
     if (!vsAI) {
@@ -347,24 +353,31 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
 // 虛擬按鍵（畫在 canvas 上，多點觸控）
-const btnR = 34;
+// 單人：左下移動、右下動作（雙拇指握持）；雙人：各自半邊
+const btnR = 36;
 function buttonDefs() {
   const y = GAME_H - 56;
-  const defs = [
-    { id: 'g-left', x: 62, y, icon: '◀', p: 'ghost' },
-    { id: 'g-right', x: 142, y, icon: '▶', p: 'ghost' },
-    { id: 'g-atk', x: 232, y, icon: '👊', p: 'ghost' },
-    { id: 'g-sp', x: 312, y, icon: '✨', p: 'ghost' }
-  ];
-  if (!vsAI) {
-    defs.push(
-      { id: 't-sp', x: GAME_W - 312, y, icon: '✨', p: 'teacher' },
-      { id: 't-atk', x: GAME_W - 232, y, icon: '👊', p: 'teacher' },
-      { id: 't-left', x: GAME_W - 142, y, icon: '◀', p: 'teacher' },
-      { id: 't-right', x: GAME_W - 62, y, icon: '▶', p: 'teacher' }
-    );
+  if (vsAI) {
+    return [
+      { id: 'g-left', x: 70, y, icon: '◀', p: 'ghost' },
+      { id: 'g-right', x: 152, y, icon: '▶', p: 'ghost' },
+      { id: 'g-blk', x: GAME_W - 234, y, icon: '🛡', p: 'ghost' },
+      { id: 'g-atk', x: GAME_W - 150, y, icon: '👊', p: 'ghost' },
+      { id: 'g-sp', x: GAME_W - 66, y, icon: '✨', p: 'ghost' }
+    ];
   }
-  return defs;
+  return [
+    { id: 'g-left', x: 54, y, icon: '◀', p: 'ghost' },
+    { id: 'g-right', x: 128, y, icon: '▶', p: 'ghost' },
+    { id: 'g-atk', x: 202, y, icon: '👊', p: 'ghost' },
+    { id: 'g-sp', x: 276, y, icon: '✨', p: 'ghost' },
+    { id: 'g-blk', x: 350, y, icon: '🛡', p: 'ghost' },
+    { id: 't-blk', x: GAME_W - 350, y, icon: '🛡', p: 'teacher' },
+    { id: 't-sp', x: GAME_W - 276, y, icon: '✨', p: 'teacher' },
+    { id: 't-atk', x: GAME_W - 202, y, icon: '👊', p: 'teacher' },
+    { id: 't-left', x: GAME_W - 128, y, icon: '◀', p: 'teacher' },
+    { id: 't-right', x: GAME_W - 54, y, icon: '▶', p: 'teacher' }
+  ];
 }
 const touchHeld = {};   // id -> true
 function touchPos(t) {
@@ -372,29 +385,36 @@ function touchPos(t) {
   return { x: (t.clientX - rect.left) / canvas._scale, y: (t.clientY - rect.top) / canvas._scale };
 }
 function handleTouches(e) {
+  if (e.target.closest('button') || e.target.closest('.overlay')) return;
   e.preventDefault();
   const defs = buttonDefs();
-  for (const d of defs) touchHeld[d.id] = false;
+  // 每根手指只認「最近的一顆」按鍵（判定半徑寬鬆但不重疊誤觸）
+  const now = {};
   for (const t of e.touches) {
     const p = touchPos(t);
+    let bestD = btnR * 1.7, bestId = null;
     for (const d of defs) {
-      if (Math.hypot(p.x - d.x, p.y - d.y) < btnR * 1.5) {  // 判定區比圖示大
-        if (!touchHeld[d.id] && (d.id.endsWith('atk') || d.id.endsWith('sp'))) {
-          // 攻擊鍵：按下瞬間觸發
-          if (mode === 'play' && koTimer < 0) {
-            if (d.id === 'g-atk') tryAttack(ghost, teacher);
-            if (d.id === 'g-sp') trySpecial(ghost, teacher);
-            if (d.id === 't-atk') tryAttack(teacher, ghost);
-            if (d.id === 't-sp') trySpecial(teacher, ghost);
-          }
-        }
-        touchHeld[d.id] = true;
-      }
+      const dd = Math.hypot(p.x - d.x, p.y - d.y);
+      if (dd < bestD) { bestD = dd; bestId = d.id; }
+    }
+    if (bestId) now[bestId] = true;
+  }
+  // 攻擊／必殺：邊緣觸發（從「沒按」變「按下」的那一刻才觸發一次）
+  if (mode === 'play' && koTimer < 0 && introT <= 0) {
+    if (now['g-atk'] && !touchHeld['g-atk']) tryAttack(ghost, teacher);
+    if (now['g-sp'] && !touchHeld['g-sp']) trySpecial(ghost, teacher);
+    if (!vsAI) {
+      if (now['t-atk'] && !touchHeld['t-atk']) tryAttack(teacher, ghost);
+      if (now['t-sp'] && !touchHeld['t-sp']) trySpecial(teacher, ghost);
     }
   }
+  for (const k in touchHeld) delete touchHeld[k];
+  Object.assign(touchHeld, now);
 }
+// 掛在整個舞台：直式 letterbox 黑邊也能按
+const stageEl = document.getElementById('stage');
 for (const ev of ['touchstart', 'touchmove', 'touchend', 'touchcancel'])
-  canvas.addEventListener(ev, handleTouches, { passive: false });
+  stageEl.addEventListener(ev, handleTouches, { passive: false });
 
 // ----- 狀態切換 -----
 const titleOverlay = document.getElementById('titleOverlay');
@@ -404,10 +424,12 @@ function startGame(ai) {
   if (typeof ai === 'boolean') vsAI = ai;
   resetGame();
   mode = 'play';
+  introT = 1.8;               // 3-2-1 倒數
+  tutorialT = localStorage.getItem('haunt-played') ? 5 : 9;
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
-  addFloat(GAME_W / 2, 240, '開戰！', '#ffea00', 44);
+  sfx.count(3);
 }
 document.getElementById('mode1').addEventListener('click', () => startGame(true));
 document.getElementById('mode2').addEventListener('click', () => startGame(false));
@@ -426,7 +448,8 @@ const ATTACK_RANGE = 130;
 const DAMAGE = [8, 10, 12, 15];
 
 function tryAttack(atk, def) {
-  if (atk.cool > 0 || atk.koFall > 0) return;
+  if (atk.cool > 0 || atk.koFall > 0 || atk.blocking) return;
+  if (atk === ghost) attackCount++;
   atk.cool = 0.5;
   atk.lunge = 1;
   atk.sx = 1.2; atk.sy = 0.9;
@@ -439,11 +462,9 @@ function tryAttack(atk, def) {
     hurt(def, dmg, atk.dir, atk);
     const mx = (atk.x + def.x) / 2;
     burst(mx, GROUND_Y - 90, atk === ghost ? '#8be9fd' : '#ffa94d', 12, 260);
-    addFloat(def.x, GROUND_Y - 170, '-' + dmg, '#ff4d6d', 30);
-    if (atk.combo >= 2) addFloat(atk.x, GROUND_Y - 210, atk.combo + ' 連擊！', '#ffea00', 22);
+    if (atk.combo >= 2 && !def.blocking) addFloat(atk.x, GROUND_Y - 210, atk.combo + ' 連擊！', '#ffea00', 22);
     freeze = Math.max(freeze, 0.05);
     shake = Math.max(shake, 5);
-    sfx.hit();
     // 集氣
     if (atk.meter < 100) {
       atk.meter = Math.min(100, atk.meter + 28);
@@ -471,10 +492,25 @@ function trySpecial(atk, def) {
   sfx.cast();
 }
 function hurt(def, dmg, dir, atk) {
-  def.hp = Math.max(0, def.hp - dmg);
-  def.vx += dir * 320;
-  def.hitFlash = 0.18;
-  def.sx = 0.82; def.sy = 1.15;
+  if (def.blocking) {
+    // 格擋：減傷 80%、擊退大減、格擋方集氣
+    dmg = Math.max(2, Math.round(dmg * 0.2));
+    def.hp = Math.max(0, def.hp - dmg);
+    def.vx += dir * 90;
+    def.meter = Math.min(100, def.meter + 8);
+    def.sx = 0.92; def.sy = 1.05;
+    addFloat(def.x, GROUND_Y - 180, '🛡 格擋！-' + dmg, def === ghost ? '#8be9fd' : '#ffa94d', 22);
+    burst(def.x + dir * -34, GROUND_Y - 100, '#fff', 8, 200);
+    sfx.block();
+  } else {
+    def.hp = Math.max(0, def.hp - dmg);
+    def.vx += dir * 320;
+    def.hitFlash = 0.18;
+    def.sx = 0.82; def.sy = 1.15;
+    def.meter = Math.min(100, def.meter + 10);   // 挨打集氣（翻盤機制）
+    addFloat(def.x, GROUND_Y - 170, '-' + dmg, '#ff4d6d', 30);
+    sfx.hit();
+  }
   if (def.hp <= 0) startKO(def, atk);
 }
 function startKO(loser, winner) {
@@ -497,6 +533,7 @@ function startKO(loser, winner) {
 function finishKO() {
   mode = 'ko';
   overCooldown = 0.6;
+  localStorage.setItem('haunt-played', '1');
   const loser = ghost.hp <= 0 ? ghost : teacher;
   const msg = loser === ghost
     ? '👩‍🏫 老師獲勝！<br>鬼屋恢復平靜…'
@@ -514,21 +551,32 @@ function updateAI(dt) {
   me.aiTimer -= dt;
   const dist = Math.abs(me.x - foe.x);
   const aggression = 0.45 + aiLevel * 0.11;
+  // 對飛來的投射物舉盾（等級越高反應越好）
+  for (const pr of projectiles) {
+    if (pr.owner === foe && Math.sign(me.x - pr.x) === Math.sign(pr.vx) &&
+        Math.abs(pr.x - me.x) < 240 && me.blockT <= 0 &&
+        Math.random() < (0.25 + aiLevel * 0.12) * dt * 12) {
+      me.blockT = 0.55;
+    }
+  }
   if (me.aiTimer <= 0) {
     me.aiTimer = 0.14 + Math.random() * 0.2 - aiLevel * 0.015;
     if (me.meter >= 100 && dist > 220 && Math.random() < 0.5) {
       trySpecial(me, foe);
       me.aiMove = 0;
+    } else if (candy && candy.y > GROUND_Y - 90 && me.hp < 70 && Math.abs(candy.x - me.x) < 300) {
+      me.aiMove = candy.x > me.x ? 1 : -1;         // 去搶糖果補血
     } else if (dist > ATTACK_RANGE * 0.8) {
       me.aiMove = foe.x > me.x ? 1 : -1;          // 追
       if (Math.random() < 0.12) me.aiMove *= -1;   // 偶爾猶豫
     } else {
-      if (Math.random() < aggression) tryAttack(me, foe);
+      if (Math.random() < 0.08 + aiLevel * 0.05) me.blockT = 0.45;  // 近身偶爾格擋
+      else if (Math.random() < aggression) tryAttack(me, foe);
       me.aiMove = Math.random() < 0.3 ? (foe.x > me.x ? -1 : 1) : 0;  // 打完拉開
     }
   }
   const spd = 195 + aiLevel * 14;
-  me.x += me.aiMove * spd * dt;
+  me.x += me.aiMove * spd * dt * (me.blocking ? 0.25 : 1);
 }
 
 // ----- 更新 -----
@@ -558,6 +606,7 @@ function update(dt) {
     f.cool = Math.max(0, f.cool - dt);
     f.lunge = Math.max(0, f.lunge - dt * 5);
     f.hitFlash = Math.max(0, f.hitFlash - dt);
+    f.blockT = Math.max(0, f.blockT - dt);
     f.comboTimer = Math.max(0, f.comboTimer - dt);
     if (f.comboTimer <= 0) f.combo = 0;
     f.sx += (1 - f.sx) * Math.min(1, 11 * dt);
@@ -585,12 +634,30 @@ function update(dt) {
     return;
   }
 
-  // 玩家移動
-  const gspd = 230;
+  // 開場 3-2-1 倒數（期間鎖住操作）
+  if (introT > 0) {
+    const before = Math.ceil(introT / 0.6);
+    introT = Math.max(0, introT - dt);
+    const after = introT > 0 ? Math.ceil(introT / 0.6) : 0;
+    if (after !== before) {
+      if (after > 0) sfx.count(after);
+      else { sfx.count(0); addFloat(GAME_W / 2, 240, '開戰！', '#ffea00', 44); }
+    }
+    return;
+  }
+  tutorialT = Math.max(0, tutorialT - dt);
+
+  // 格擋狀態（按住即格擋）
+  ghost.blockHeld = !!(keys['s'] || touchHeld['g-blk']);
+  teacher.blockHeld = !vsAI && !!(keys['arrowup'] || touchHeld['t-blk']);
+  for (const f of fighters) f.blocking = (f.blockHeld || f.blockT > 0) && f.koFall === 0;
+
+  // 玩家移動（格擋時移動變慢）
+  const gspd = 230 * (ghost.blocking ? 0.35 : 1);
   if (keys['a'] || touchHeld['g-left']) ghost.x -= gspd * dt;
   if (keys['d'] || touchHeld['g-right']) ghost.x += gspd * dt;
   if (!vsAI) {
-    const tspd = 230;
+    const tspd = 230 * (teacher.blocking ? 0.35 : 1);
     if (keys['arrowleft'] || touchHeld['t-left']) teacher.x -= tspd * dt;
     if (keys['arrowright'] || touchHeld['t-right']) teacher.x += tspd * dt;
   } else {
@@ -598,6 +665,40 @@ function update(dt) {
   }
   ghost.x = Math.max(70, Math.min(GAME_W - 70, ghost.x));
   teacher.x = Math.max(70, Math.min(GAME_W - 70, teacher.x));
+
+  // 空投糖果：撿到回血（滿血改集氣）
+  candyTimer -= dt;
+  if (!candy && candyTimer <= 0) {
+    candy = { x: 160 + Math.random() * (GAME_W - 320), y: -30, life: 7, sway: Math.random() * 6 };
+    candyTimer = 9 + Math.random() * 5;
+    addFloat(GAME_W / 2, 130, '🍬 糖果空投！', '#ff9dc9', 24);
+  }
+  if (candy) {
+    if (candy.y < GROUND_Y - 16) {
+      candy.y += 120 * dt;
+      candy.x += Math.sin(elapsed * 3 + candy.sway) * 26 * dt;
+    } else {
+      candy.life -= dt;
+      if (candy.life <= 0) candy = null;
+    }
+    if (candy && candy.y > GROUND_Y - 110) {
+      for (const f of fighters) {
+        if (f.koFall === 0 && Math.abs(f.x - candy.x) < 52) {
+          if (f.hp < 100) {
+            f.hp = Math.min(100, f.hp + 12);
+            addFloat(f.x, GROUND_Y - 190, '🍬 +12', '#7cfc9e', 26);
+          } else {
+            f.meter = Math.min(100, f.meter + 30);
+            addFloat(f.x, GROUND_Y - 190, '🍬 能量 +30', '#d8c6ff', 24);
+          }
+          burst(candy.x, candy.y, '#ff9dc9', 14, 240);
+          sfx.candy();
+          candy = null;
+          break;
+        }
+      }
+    }
+  }
 
   // 投射物
   for (let i = projectiles.length - 1; i >= 0; i--) {
@@ -609,8 +710,7 @@ function update(dt) {
     }
     const target = pr.owner === ghost ? teacher : ghost;
     if (target.koFall === 0 && Math.abs(pr.x - target.x) < 46) {
-      hurt(target, 18, pr.vx > 0 ? 1 : -1, pr.owner);
-      addFloat(target.x, GROUND_Y - 180, '-18', '#ff4d6d', 34);
+      hurt(target, 18, pr.vx > 0 ? 1 : -1, pr.owner);   // 格擋可大幅減傷
       burst(pr.x, pr.y, pr.trailC, 20, 300);
       burst(pr.x, pr.y, '#fff', 8, 200);
       freeze = Math.max(freeze, 0.1);
@@ -899,6 +999,81 @@ function drawFighter(f, foe) {
     ctx.stroke();
     ctx.restore();
   }
+
+  // 格擋護盾（面向前方的弧形光罩）
+  if (f.blocking && f.koFall === 0) {
+    ctx.save();
+    ctx.translate(f.x + f.dir * 48, GROUND_Y - 95);
+    const a = 0.55 + Math.sin(elapsed * 9) * 0.2;
+    ctx.strokeStyle = isGhost ? 'rgba(139,233,253,' + a + ')' : 'rgba(255,169,77,' + a + ')';
+    ctx.lineWidth = 6;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (f.dir > 0) ctx.arc(-20, 0, 52, -1.15, 1.15);
+    else ctx.arc(20, 0, 52, Math.PI - 1.15, Math.PI + 1.15);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,' + a * 0.8 + ')';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    if (f.dir > 0) ctx.arc(-20, 0, 44, -0.9, 0.9);
+    else ctx.arc(20, 0, 44, Math.PI - 0.9, Math.PI + 0.9);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+// 空投糖果
+function drawCandy() {
+  if (!candy) return;
+  ctx.save();
+  ctx.translate(candy.x, candy.y);
+  if (candy.life < 2) ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin(elapsed * 8));
+  if (candy.y < GROUND_Y - 16) {
+    // 小降落傘
+    ctx.strokeStyle = 'rgba(216,198,255,0.8)';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(-12, -34); ctx.lineTo(-5, -12);
+    ctx.moveTo(12, -34); ctx.lineTo(5, -12);
+    ctx.stroke();
+    ctx.fillStyle = '#b399c8';
+    ctx.beginPath();
+    ctx.arc(0, -36, 16, Math.PI, 0);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.rotate(Math.sin(elapsed * 2.5) * 0.15);
+  ctx.shadowColor = '#ff9dc9';
+  ctx.shadowBlur = 14;
+  const cg = ctx.createRadialGradient(-4, -4, 2, 0, 0, 13);
+  cg.addColorStop(0, '#ffd6e8');
+  cg.addColorStop(0.6, '#ff9dc9');
+  cg.addColorStop(1, '#e56aa2');
+  ctx.fillStyle = cg;
+  ctx.beginPath();
+  ctx.arc(0, 0, 12, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  // 包裝紙兩端
+  ctx.fillStyle = '#e56aa2';
+  for (const s of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(s * 11, 0);
+    ctx.lineTo(s * 20, -8);
+    ctx.lineTo(s * 20, 8);
+    ctx.closePath();
+    ctx.fill();
+  }
+  // 白色螺旋紋
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.arc(0, 0, 6.5, 0.4, 2.2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(0, 0, 9.5, 3.4, 5.2);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawProjectiles() {
@@ -1010,6 +1185,20 @@ function drawHUD() {
   ctx.font = '13px "Microsoft JhengHei", sans-serif';
   ctx.fillStyle = '#b3a3d9';
   ctx.fillText('👻 ' + wins.ghost + ' 勝　' + wins.teacher + ' 勝 👩‍🏫', GAME_W / 2, 74);
+
+  // 開場教學提示
+  if (tutorialT > 0 && mode === 'play' && introT <= 0) {
+    ctx.globalAlpha = Math.min(1, tutorialT);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 18px "Microsoft JhengHei", sans-serif';
+    const tip = '👊 打中對手集能量 → 滿了放 ✨ 必殺！按住 🛡 格擋防禦';
+    ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+    ctx.lineWidth = 5;
+    ctx.strokeText(tip, GAME_W / 2, 110);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(tip, GAME_W / 2, 110);
+    ctx.globalAlpha = 1;
+  }
 }
 
 function drawTouchButtons() {
@@ -1038,6 +1227,7 @@ function draw() {
   const order = fighters.slice().sort((a, b) => (a.koFall - b.koFall));
   for (const f of order) drawFighter(f, f === ghost ? teacher : ghost);
   drawProjectiles();
+  drawCandy();
   drawFog();
   drawParts();
   drawFloats();
@@ -1058,6 +1248,24 @@ function draw() {
     ctx.strokeText('K.O.!', 0, 0);
     ctx.fillStyle = '#ffea00';
     ctx.fillText('K.O.!', 0, 0);
+    ctx.restore();
+  }
+
+  // 開場倒數大字
+  if (mode === 'play' && introT > 0) {
+    const n = Math.ceil(introT / 0.6);
+    const p = (introT % 0.6) / 0.6 || 1;
+    ctx.save();
+    ctx.translate(GAME_W / 2, GAME_H * 0.4);
+    ctx.scale(0.7 + p * 0.5, 0.7 + p * 0.5);
+    ctx.globalAlpha = 0.4 + p * 0.6;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 110px "Microsoft JhengHei", sans-serif';
+    ctx.strokeStyle = '#7a3fff';
+    ctx.lineWidth = 10;
+    ctx.strokeText(String(n), 0, 40);
+    ctx.fillStyle = '#ffea00';
+    ctx.fillText(String(n), 0, 40);
     ctx.restore();
   }
 
@@ -1098,6 +1306,9 @@ resetGame();
 mode = 'title';
 titleOverlay.classList.add('show');
 requestAnimationFrame(frame);
+
+// 測試掛鉤（自動化冒煙測試用，不影響遊戲）
+window.__test = () => ({ mode, x: ghost.x, y: 0, attacked: attackCount, ghostHp: ghost.hp, teacherHp: teacher.hp, intro: introT });
 </script>
 </body>
 </html>

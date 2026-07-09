@@ -1,4 +1,5 @@
 <!doctype html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -11,21 +12,32 @@
   #stage{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);display:block;background:#05070d}
   .btn{position:absolute;z-index:10;border:1px solid rgba(255,255,255,.25);color:#e8ecf4;
     background:rgba(8,12,22,.6);backdrop-filter:blur(4px);border-radius:999px;
-    font-family:inherit;font-size:14px;letter-spacing:.12em;padding:8px 18px;cursor:pointer;
+    font-family:inherit;font-size:15px;letter-spacing:.12em;padding:12px 20px;cursor:pointer;
+    min-height:48px;min-width:48px;-webkit-tap-highlight-color:transparent;touch-action:manipulation;
     transition:all .25s ease}
   .btn:hover{border-color:#4fc3f7;color:#4fc3f7;transform:translateY(-1px)}
-  #soundBtn{top:14px;right:14px}
+  .btn:active{transform:scale(.94);background:rgba(79,195,247,.3);border-color:#4fc3f7;color:#fff;transition:all .06s}
+  #soundBtn{top:max(14px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right))}
   #replayBtn{left:50%;bottom:12%;transform:translate(-50%,30px);opacity:0;pointer-events:none;
-    font-size:18px;font-weight:700;padding:14px 44px;border:2px solid #4fc3f7;color:#4fc3f7;
+    font-size:18px;font-weight:700;padding:14px 44px;min-height:56px;border:2px solid #4fc3f7;color:#4fc3f7;
     background:rgba(8,12,22,.8);box-shadow:0 0 24px rgba(79,195,247,.3);letter-spacing:.3em}
   #replayBtn.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
   #replayBtn:hover{background:#4fc3f7;color:#06121e}
+  #replayBtn:active{transform:translate(-50%,0) scale(.94)}
+  #hint{position:absolute;z-index:9;top:max(16px,env(safe-area-inset-top));left:50%;
+    background:rgba(8,12,22,.8);border:1px solid rgba(79,195,247,.5);color:#e8ecf4;
+    border-radius:999px;padding:10px 20px;font-size:14px;letter-spacing:.06em;
+    pointer-events:none;opacity:0;transform:translate(-50%,-8px);white-space:nowrap}
+  #hint.run{animation:hintio 5.5s ease .5s 1 both}
+  @keyframes hintio{0%{opacity:0;transform:translate(-50%,-8px)}
+    9%,82%{opacity:1;transform:translate(-50%,0)}100%{opacity:0;transform:translate(-50%,-6px)}}
 </style>
 </head>
 <body>
 <canvas id="stage"></canvas>
 <button class="btn" id="soundBtn" type="button">聲音：關</button>
 <button class="btn" id="replayBtn" type="button">重新播放</button>
+<div id="hint" class="run">▶ 自動播放中 ・ 點右上「聲音」開啟音效</div>
 <script>
 'use strict';
 /* ============================================================
@@ -618,7 +630,7 @@ function drawSubs(sc, t){
     const al = subAlpha(t, s.a, s.b);
     if (al <= 0) continue;
     ctx.save(); ctx.globalAlpha = al;
-    ctx.font = '700 20px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center';
+    ctx.font = '700 22px "Noto Sans TC",sans-serif'; ctx.textAlign = 'center';
     const w2 = ctx.measureText(s.tx).width / 2 + 20;
     const y = 478 + (1 - al) * 8;
     ctx.fillStyle = 'rgba(8,12,22,0.82)';
@@ -827,12 +839,15 @@ const s2 = {
 const s3 = {
   dur: 7, act: '第二幕・最後三秒',
   subs: [
-    { a: 0.5, b: 2.2, tx: '剩下 5 秒——剪斷藍線……！', warn: true },
+    { a: 0.4, b: 1.7, tx: '等等……先剪紅線？', warn: true },
+    { a: 2.0, b: 3.3, tx: '不對！紅線是陷阱——剪藍線！', warn: true },
     { a: 4.9, b: 6.6, tx: '喀嚓！' }
   ],
   init(){ S = { hb: 0 }; alertLv = 0.7; cam.tx = 170; cam.ty = 20; cam.tz = 1.35; camSnap(); },
   timeScale(t){ return (t > 3.4 && t < 4.7) ? 0.35 : 1; },
   evts: [
+    { t: 1.0, fn(){ sfx.sting(); shakeMag = 3.5; } },
+    { t: 2.1, fn(){ sfx.pop(); } },
     { t: 4.55, fn(){ sfx.snip(); freeze = 0.18; flashA = 0.9; shakeMag = 9; cutP = 0.01; defused = true;
       spawnSpark(546, FY - 16, 22, 300, '#7fd1ff'); spawnSpark(546, FY - 16, 10, 200, '#fff'); } },
     { t: 5.4, fn(){ sfx.alarmOff(); } }
@@ -849,13 +864,32 @@ const s3 = {
     drawWarehouse(t);
     applyCam(1);
     drawBomb(ctx, t);
-    // 柯南持剪鉗、手微顫
+    // v2 fake-out：剪鉗先伸向紅線→驚覺→縮手→轉向藍線
+    const toRed = seg(t, 0.2, 1.0);       // 伸向紅線
+    const backOff = seg(t, 1.5, 2.2);     // 縮手
+    const toBlue = seg(t, 2.4, 3.3);      // 轉向藍線
     const tr = defused ? 0 : Math.sin(wall * 26) * 0.02 * seg(t, 1, 3);
+    const shakeHead = backOff > 0 && backOff < 1 ? Math.sin(t * 16) * 0.3 * (1 - backOff) : 0;
     drawConan(ctx, { x: 486, dir: 1, crouch: 0.85,
-      exp: defused ? 'smile' : 'grit',
-      armL: -0.4, armR: 1.12 + tr + (defused ? -0.2 : seg(t, 2.2, 4.4) * 0.1),
-      foreR: 0.5, tool: true, toolOpen: defused ? 0.05 : 0.3 - seg(t, 3.4, 4.5) * 0.22, toolRot: 0.45,
-      sweat: defused ? 0 : 1, head: 0.18 });
+      exp: defused ? 'smile' : (t > 0.9 && t < 2.3 ? 'shock' : 'grit'),
+      armL: -0.4,
+      armR: lerp(lerp(lerp(0.72, 0.98, toRed), 0.72, backOff), 1.12, toBlue) + tr
+        + (defused ? -0.2 : seg(t, 3.4, 4.4) * 0.1),
+      foreR: lerp(lerp(lerp(0.3, 0.3, toRed), 0.28, backOff), 0.5, toBlue),
+      tool: true, toolOpen: defused ? 0.05 : 0.3 - seg(t, 3.4, 4.5) * 0.22,
+      toolRot: lerp(0.1, 0.45, toBlue),
+      sweat: defused ? 0 : Math.max(0.5, seg(t, 0.8, 1.2)), head: 0.18 + shakeHead });
+    // 紅線上的警告 X（差點剪錯！）
+    if (t > 0.95 && t < 2.3){
+      const xa = subAlpha(t, 1.05, 2.1);
+      ctx.save(); ctx.globalAlpha = xa * (0.65 + Math.abs(Math.sin(wall * 8)) * 0.35);
+      ctx.translate(546, FY - 46);
+      ctx.strokeStyle = '#ff3333'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 12;
+      const xs = eOB(seg(t, 0.95, 1.3)) * 15;
+      ctx.beginPath(); ctx.moveTo(-xs, -xs); ctx.lineTo(xs, xs); ctx.moveTo(xs, -xs); ctx.lineTo(-xs, xs); ctx.stroke();
+      ctx.restore();
+    }
     // 慢動作聚焦線
     if (t > 3.4 && t < 4.7){
       ctx.save();
@@ -1030,6 +1064,8 @@ document.getElementById('replayBtn').addEventListener('click', function(){
   this.classList.remove('show');
   parts.length = 0;
   ended = false; freeze = 0; timeLeft = 20; defused = false; cutP = 0; lastTickSec = -1;
+  const hint = document.getElementById('hint');
+  hint.classList.remove('run'); void hint.offsetWidth; hint.classList.add('run');
   startScene(0); camSnap();
 });
 

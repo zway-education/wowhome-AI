@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v2 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -59,6 +60,20 @@
   #tJump{right:16px;bottom:110px;width:72px;height:72px}
   #tMode{right:16px;bottom:200px;font-size:22px}
   #tCar{right:104px;bottom:110px;font-size:22px;background:rgba(255,212,71,.25);border-color:#ffd447}
+  /* v2：任務列、操作說明、開局提示 */
+  #questPill{position:fixed;top:64px;left:50%;transform:translateX(-50%);padding:6px 16px;font-size:13px;
+    z-index:10;display:none;text-align:center;border-left:3px solid #ffd447;max-width:88vw}
+  .ctrl{background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.15);border-radius:10px;
+    padding:10px 18px;font-size:13px;line-height:2;margin-top:14px;max-width:88vw}
+  #ctrlHint{position:fixed;top:46%;left:50%;transform:translate(-50%,-50%);padding:14px 24px;font-size:15px;
+    line-height:2.1;z-index:40;display:none;text-align:center;pointer-events:none}
+  #swordBtn{margin-top:2px;pointer-events:auto;background:linear-gradient(#4a5170,#2a2f45);color:#cfd6e4;
+    border:1px solid #6a7290;border-radius:8px;padding:4px 12px;font-size:12px;cursor:pointer;font-family:inherit}
+  #swordBtn:active{transform:scale(.95)}
+  @media (max-width:640px){
+    .slot{width:42px;height:42px}
+    .slot .swatch{width:22px;height:22px}
+  }
 </style>
 </head>
 <body>
@@ -68,11 +83,16 @@
 <div id="dayPill" class="panel"><div id="dnIcon" style="font-size:20px">☀️</div><div id="dnLabel">第 1 天・白天</div></div>
 <div id="msgLog"></div>
 <div id="hint" class="panel">A/D 或 ◀▶ 移動・W/空白 跳躍<br>滑鼠左鍵 挖掘/攻擊・右鍵 放置/吃<br>1-0 選物品・E 上下車・M 靜音</div>
+<div id="questPill" class="panel"></div>
+<div id="ctrlHint" class="panel"></div>
 <div id="hud">
   <div class="bar-row" id="hungerRow"></div>
   <div class="bar-row" id="healthRow"></div>
   <div id="hotbar"></div>
-  <button id="craftBtn">⚒️ 合成：木頭×1 → 木板×4</button>
+  <div style="display:flex;gap:6px">
+    <button id="craftBtn">⚒️ 合成：木頭×1 → 木板×4</button>
+    <button id="swordBtn">🗡 合成：石頭×3 → 石劍</button>
+  </div>
 </div>
 <div id="tLeft" class="tbtn">◀</div><div id="tRight" class="tbtn">▶</div>
 <div id="tJump" class="tbtn">⤒</div><div id="tMode" class="tbtn">⛏️</div><div id="tCar" class="tbtn">🚗</div>
@@ -83,6 +103,10 @@
   <div>
     <button id="btnSurvival" class="modeBtn">⚔️ 開始生存<small>血量／飢餓・採集資源・夜有殭屍</small></button>
     <button id="btnCreative" class="modeBtn">🛠️ 創造模式<small>飛行・無限方塊・不會受傷</small></button>
+  </div>
+  <div class="ctrl">
+    🖱️ <b>電腦</b>：A/D 或 ←→ 移動・W/空白鍵 跳躍・滑鼠<b>左鍵按住</b>挖掘/攻擊・<b>右鍵</b>放置/吃・E 上下車<br>
+    👆 <b>平板</b>：◀▶ 移動・⤒ 跳躍・<b>手指按住方塊</b>挖掘・⛏️/🧱 鈕切換挖掘/放置・點物品格選擇
   </div>
 </div>
 <div id="deathScreen" class="ovl">
@@ -284,10 +308,42 @@ let touchMode=false;
 addEventListener('touchstart',()=>{
   if(touchMode)return;touchMode=true;
   ['tLeft','tRight','tJump','tMode'].forEach(id=>document.getElementById(id).style.display='flex');
+  /* v2：切成觸控版操作提示 */
+  document.getElementById('hint').innerHTML='◀▶ 移動・⤒ 跳躍<br>按住方塊 挖掘・⛏️/🧱 切換挖/放<br>點物品格選擇・蘋果格點兩下＝吃';
 },{passive:true});
 /* ================= 遊戲狀態 ================= */
 let state='title', creative=false, freeze=0, shake=0, dmgFlash=0;
 let score=0,mined=0,kills=0,day=1,dayTime=.05,prevNight=false;
+let bloodMoon=false;   /* v2：血月之夜 */
+/* v2：任務系統 */
+let qIdx=0,qc={wood:0,craft:0,place:0,apple:0,drive:0,visit:0},lastQTxt='';
+const quests=[
+  {txt:'砍 5 個木頭（按住樹幹）',chk:()=>qc.wood>=5,prog:()=>Math.min(qc.wood,5)+'/5',r:30},
+  {txt:'按 ⚒️ 合成一次木板',chk:()=>qc.craft>=1,prog:null,r:30},
+  {txt:'放置 5 個方塊蓋東西',chk:()=>qc.place>=5,prog:()=>Math.min(qc.place,5)+'/5',r:40},
+  {txt:'吃 1 顆蘋果（挖樹葉會掉）',chk:()=>qc.apple>=1,prog:null,r:30},
+  {txt:'擊敗 3 隻殭屍',chk:()=>kills>=3,prog:()=>Math.min(kills,3)+'/3',r:60},
+  {txt:'靠近紅色跑車按 E/🚗 兜風',chk:()=>qc.drive>=1,prog:null,r:50},
+  {txt:'往右走拜訪村莊的村民',chk:()=>qc.visit>=1,prog:null,r:60},
+  {txt:'存活到第 3 天',chk:()=>day>=3,prog:()=>'第'+day+'天',r:100}
+];
+function renderQuest(){
+  const el=document.getElementById('questPill');
+  const q=quests[qIdx];
+  const txt=q?('📜 任務 '+(qIdx+1)+'/'+quests.length+'：'+q.txt+(q.prog?('（'+q.prog()+'）'):'')):'🏆 全部任務完成！自由建造吧！';
+  if(txt!==lastQTxt){el.textContent=txt;lastQTxt=txt;}
+}
+function updateQuests(){
+  if(creative)return;
+  const q=quests[qIdx];
+  if(q&&q.chk()){
+    score+=q.r;updScore();sfx.pick();
+    logMsg('✅ 任務完成：'+q.txt+'　+'+q.r+' 分');
+    floatTxt(player.x,player.y-2.4,'✅ +'+q.r,'#a4f0a4');
+    qIdx++;
+  }
+  renderQuest();
+}
 const DAY_LEN=150;
 let best=0;try{best=+localStorage.getItem('blockworld.best')||0;}catch(e){}
 const player={x:20,y:20,vx:0,vy:0,w:.72,h:1.72,grounded:false,coyote:0,face:1,
@@ -321,7 +377,12 @@ function renderHotbar(){
       d.appendChild(document.createTextNode('🍎'));d.style.fontSize='22px';
       const c=document.createElement('div');c.className='cnt';c.textContent=creative?'∞':s.count;d.appendChild(c);
     }else{d.textContent='✋';d.style.fontSize='22px';}
-    d.addEventListener('pointerdown',e=>{e.stopPropagation();activeSlot=i;renderHotbar();});
+    d.addEventListener('pointerdown',e=>{
+      e.stopPropagation();
+      /* v2：已選中的蘋果格再點一下＝直接吃 */
+      if(i===activeSlot&&s.kind==='apple'&&state==='play')eatApple();
+      activeSlot=i;renderHotbar();
+    });
     el.appendChild(d);
   });
 }
@@ -468,7 +529,7 @@ function updateDig(dt){
     const dx=pt.wx-z.x,dy=pt.wy-(z.y-.85);
     if(Math.abs(dx)<1.1&&Math.abs(dy)<1.3&&Math.abs(z.x-player.x)<3.6&&player.attackCd<=0){
       player.attackCd=.32;player.swing=1;player.face=z.x>player.x?1:-1;
-      z.hp--;z.flash=.12;z.vx=(z.x>player.x?1:-1)*7;z.vy=-4;
+      z.hp-=player.sword?2:1;z.flash=.12;z.vx=(z.x>player.x?1:-1)*7;z.vy=-4;
       sfx.zhit();shake=Math.max(shake,3);burst(z.x,z.y-.9,'#7fd67f',6,5);
       if(z.hp<=0){
         z.dead=true;kills++;score+=20;updScore();freeze=.09;shake=8;sfx.zdie();
@@ -490,20 +551,23 @@ function updateDig(dt){
     sfx.brk();burst(pt.tx+.5,pt.ty+.5,COL[b],12,6);
     const drop=b===T.GRASS?T.DIRT:b;
     addItem('block',drop);
+    if(b===T.WOOD)qc.wood++;
     floatTxt(pt.tx+.5,pt.ty,'+1 '+(NAME[b]||'方塊'));
     if(b===T.LEAVES&&Math.random()<.3){addItem('apple');floatTxt(pt.tx+.5,pt.ty-.6,'+1 🍎','#ff9d9d');sfx.pick();}
   }
 }
+function eatApple(){
+  const s=hotbar.find(s=>s.kind==='apple');
+  if((creative||s.count>0)&&player.hunger<20){
+    if(!creative)s.count--;renderHotbar();
+    player.hunger=Math.min(20,player.hunger+5);renderBars();
+    qc.apple++;
+    sfx.eat();burst(player.x,player.y-1.4,'#ff6b6b',8,4);floatTxt(player.x,player.y-2,'🍎 好吃！','#ffb3b3');
+  }else if(!creative&&s.count<=0)logMsg('沒有蘋果了，挖樹葉有機會掉落');
+}
 function doPlace(pt){
   const s=hotbar[activeSlot];
-  if(s.kind==='apple'){
-    if((creative||s.count>0)&&player.hunger<20){
-      if(!creative)s.count--;renderHotbar();
-      player.hunger=Math.min(20,player.hunger+5);renderBars();
-      sfx.eat();burst(player.x,player.y-1.4,'#ff6b6b',8,4);floatTxt(player.x,player.y-2,'🍎 好吃！','#ffb3b3');
-    }
-    return;
-  }
+  if(s.kind==='apple'){eatApple();return;}
   if(s.kind!=='block'||(!creative&&s.count<=0))return;
   const b=getB(pt.tx,pt.ty);
   if((b!==T.AIR&&b!==T.WATER)||!inReach(pt.tx,pt.ty))return;
@@ -514,6 +578,7 @@ function doPlace(pt){
   if(!near)return;
   if(!creative)s.count--;renderHotbar();
   setB(pt.tx,pt.ty,s.t);
+  qc.place++;
   sfx.place();burst(px,py,COL[s.t],5,3);
 }
 document.getElementById('craftBtn').addEventListener('click',()=>{
@@ -521,24 +586,38 @@ document.getElementById('craftBtn').addEventListener('click',()=>{
   const plank=hotbar.find(s=>s.kind==='block'&&s.t===T.PLANK);
   if(creative||wood.count>=1){
     if(!creative)wood.count--;plank.count+=4;renderHotbar();
+    qc.craft++;
     sfx.craft();floatTxt(player.x,player.y-2.2,'⚒️ 木板×4','#ffd98e');
   }else logMsg('需要 1 個木頭才能合成');
 });
+/* v2：石劍合成——攻擊力×2 */
+document.getElementById('swordBtn').addEventListener('click',()=>{
+  if(player.sword){logMsg('已經擁有石劍了！');return;}
+  const stone=hotbar.find(s=>s.kind==='block'&&s.t===T.STONE);
+  if(creative||stone.count>=3){
+    if(!creative)stone.count-=3;renderHotbar();
+    player.sword=true;qc.craft++;
+    document.getElementById('swordBtn').textContent='🗡 已裝備石劍（攻擊×2）';
+    sfx.craft();floatTxt(player.x,player.y-2.2,'🗡 石劍 GET！攻擊×2','#cfd6e4');
+    logMsg('🗡 石劍到手！殭屍兩下就倒');
+  }else logMsg('需要 3 個石頭（往地下挖灰色方塊）');
+});
 /* ================= 殭屍 ================= */
 function spawnZombie(){
-  if(zombies.length>=Math.min(3+day,10))return;
+  if(zombies.length>=Math.min(3+day,10)+(bloodMoon?3:0))return;
   const side=Math.random()<.5?-1:1;
   const sx=clamp(Math.round(player.x+side*rnd(13,20)),2,W-2);
   const sr=surfaceRow(sx);
   if(getB(sx,sr)===T.WATER)return;
-  zombies.push({x:sx+.5,y:sr,vx:0,vy:0,w:.75,h:1.68,hp:3,flash:0,cd:0,grounded:false,walkT:0,dead:false,burn:0});
+  const hp=bloodMoon?4:3;   /* v2：血月殭屍更硬 */
+  zombies.push({x:sx+.5,y:sr,vx:0,vy:0,w:.75,h:1.68,hp,maxHp:hp,flash:0,cd:0,grounded:false,walkT:0,dead:false,burn:0});
 }
 function updateZombies(dt,isNight){
   if(isNight&&player.alive){
     zSpawnT-=dt;
-    if(zSpawnT<=0){zSpawnT=Math.max(7-day*.6,2.8);spawnZombie();}
+    if(zSpawnT<=0){zSpawnT=Math.max(7-day*.6,2.8)*(bloodMoon?.5:1);spawnZombie();}
   }
-  const zSpd=Math.min(1.7+day*.18,3.4);
+  const zSpd=Math.min(1.7+day*.18,3.4)+((bloodMoon&&isNight)?.6:0);
   for(const z of zombies){
     z.flash-=dt;z.cd-=dt;z.walkT+=dt*4;
     if(!isNight){                                  // 白天燃燒
@@ -575,7 +654,8 @@ function carToggle(){
     logMsg('離開了跑車');
   }else if(Math.abs(player.x-car.x)<3&&Math.abs(player.y-car.y)<3){
     player.driving=true;car.mode='player';car.speed=0;sfx.horn();
-    logMsg('上車了！A/D 加速，E 下車');
+    qc.drive++;
+    logMsg(touchMode?'上車了！◀▶ 加速，🚗鈕 下車':'上車了！A/D 加速，E 下車');
   }
 }
 function updateCar(dt){
@@ -645,7 +725,10 @@ function updateVillagers(dt){
     if(v.x<VILL_X0+1){v.x=VILL_X0+1;v.dir=1;}
     if(v.x>VILL_X1-1){v.x=VILL_X1-1;v.dir=-1;}
     v.y=lerp(v.y,surfaceRow(Math.round(v.x)),Math.min(1,dt*10));
-    if(Math.abs(v.x-player.x)<2.5&&v.talk<=-4&&Math.random()<dt){v.talk=2;}
+    if(Math.abs(v.x-player.x)<2.5){
+      if(state==='play')qc.visit=1;
+      if(v.talk<=-4&&Math.random()<dt)v.talk=2;
+    }
   }
 }
 /* ================= 晝夜 ================= */
@@ -663,9 +746,14 @@ function updateDay(dt){
     logMsg('🌅 第 '+day+' 天開始！+50 分');
   }
   if(prevNight!==isNight){
-    document.getElementById('dnIcon').textContent=isNight?'🌙':'☀️';
-    document.getElementById('dnLabel').textContent=isNight?('第 '+day+' 夜・小心殭屍！'):('第 '+day+' 天・白天');
-    if(isNight)logMsg('🌙 夜晚降臨，殭屍出沒…');
+    /* v2：每逢 3 的倍數天為血月之夜 */
+    if(isNight)bloodMoon=(day%3===0);else bloodMoon=false;
+    document.getElementById('dnIcon').textContent=isNight?(bloodMoon?'🔴':'🌙'):'☀️';
+    document.getElementById('dnLabel').textContent=isNight
+      ?(bloodMoon?('第 '+day+' 夜・血月！殭屍狂暴！'):('第 '+day+' 夜・小心殭屍！'))
+      :('第 '+day+' 天・白天');
+    if(isNight)logMsg(bloodMoon?'🔴 血月之夜！殭屍更多更強，快找掩護！':'🌙 夜晚降臨，殭屍出沒…');
+    if(isNight&&bloodMoon)sfx.warn();
   }
   prevNight=isNight;
   return isNight;
@@ -847,14 +935,25 @@ function drawPlayer(){
   bg.addColorStop(0,'#2fbec4');bg.addColorStop(1,'#187e84');
   ctx.fillStyle=bg;rr(-9,-42,18,22,4);ctx.fill();ctx.stroke();
   ctx.fillStyle='rgba(255,255,255,.25)';ctx.fillRect(-9,-42,4,22);
-  // 前手臂＋鎬子
+  // 前手臂＋鎬子／石劍
   ctx.save();ctx.translate(6,-38);ctx.rotate(.5-Math.sin(p.walkT)*.4-sw*1.6);
   ctx.fillStyle='#25a3a8';rr(-3,0,6,16,3);ctx.fill();ctx.stroke();
   ctx.fillStyle='#e8b57f';rr(-3,14,6,5,2);ctx.fill();
-  ctx.strokeStyle='#7a4e2b';ctx.lineWidth=3;
-  ctx.beginPath();ctx.moveTo(0,18);ctx.lineTo(10,30);ctx.stroke();
-  ctx.strokeStyle='#aab2c8';ctx.lineWidth=4;
-  ctx.beginPath();ctx.arc(10,30,7,-2.4,-.2);ctx.stroke();
+  if(p.sword){
+    /* v2：石劍 */
+    ctx.strokeStyle='#8a6d3b';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(-2,20);ctx.lineTo(4,15);ctx.stroke();
+    ctx.fillStyle='#cfd6e4';
+    ctx.beginPath();ctx.moveTo(1,19);ctx.lineTo(14,31);ctx.lineTo(10,35);ctx.lineTo(-2,22);ctx.closePath();ctx.fill();
+    ctx.strokeStyle='#8b93a8';ctx.lineWidth=1.2;ctx.stroke();
+    ctx.fillStyle='rgba(255,255,255,.5)';
+    ctx.beginPath();ctx.moveTo(3,20);ctx.lineTo(12,29);ctx.lineTo(10,31);ctx.lineTo(2,22);ctx.closePath();ctx.fill();
+  }else{
+    ctx.strokeStyle='#7a4e2b';ctx.lineWidth=3;
+    ctx.beginPath();ctx.moveTo(0,18);ctx.lineTo(10,30);ctx.stroke();
+    ctx.strokeStyle='#aab2c8';ctx.lineWidth=4;
+    ctx.beginPath();ctx.arc(10,30,7,-2.4,-.2);ctx.stroke();
+  }
   ctx.restore();
   // 頭（立體：右側暗面）
   ctx.lineWidth=2;ctx.strokeStyle='#1b1b28';
@@ -911,9 +1010,10 @@ function drawZombie(z,isNight){
   ctx.beginPath();ctx.moveTo(-4,-44);ctx.lineTo(4,-45.6);ctx.stroke();
   ctx.restore();
   // 血條
-  if(z.hp<3){
+  const mh=z.maxHp||3;
+  if(z.hp<mh){
     ctx.fillStyle='rgba(0,0,0,.5)';ctx.fillRect(px-11,py-TILE*2.35,22,4);
-    ctx.fillStyle='#e04a4a';ctx.fillRect(px-10,py-TILE*2.35+1,20*(z.hp/3),2);
+    ctx.fillStyle='#e04a4a';ctx.fillRect(px-10,py-TILE*2.35+1,20*Math.max(0,z.hp/mh),2);
   }
 }
 function drawVillager(v){
@@ -1087,6 +1187,11 @@ function draw(){
       ctx.globalCompositeOperation='source-over';
     }
   }
+  /* v2：血月紅色天幕 */
+  if(isNight&&bloodMoon&&state==='play'){
+    ctx.fillStyle='rgba(150,10,10,'+(.08+.03*Math.sin(tGlobal*2))+')';
+    ctx.fillRect(0,0,vw,vh);
+  }
   if(dmgFlash>0){
     const vg=ctx.createRadialGradient(vw/2,vh/2,vh*.3,vw/2,vh/2,vh*.75);
     vg.addColorStop(0,'rgba(200,0,0,0)');vg.addColorStop(1,'rgba(200,0,0,'+dmgFlash*.7+')');
@@ -1117,6 +1222,7 @@ function update(dt){
   updateTornado(dt);
   updateVillagers(dt);
   updateSurvival(dt);
+  updateQuests();
   renderBars();
   const fx=player.driving?car.x:player.x, fy=player.driving?car.y:player.y;
   const tx=clamp(fx*TILE-vw/view/2,0,W*TILE-vw/view);
@@ -1145,6 +1251,20 @@ function startGame(mode){
   hotbar.forEach(s=>{if(s.kind!=='hand')s.count=creative?64:0;});
   activeSlot=1;zombies.length=0;parts.length=0;floats.length=0;
   car.mode='npc';car.x=60;car.speed=0;
+  /* v2：任務、血月、石劍重置 */
+  bloodMoon=false;qIdx=0;lastQTxt='';
+  qc={wood:0,craft:0,place:0,apple:0,drive:0,visit:0};
+  player.sword=false;
+  document.getElementById('swordBtn').textContent='🗡 合成：石頭×3 → 石劍';
+  document.getElementById('questPill').style.display=creative?'none':'block';
+  renderQuest();
+  /* v2：開局操作提示浮層（依裝置顯示） */
+  const ch=document.getElementById('ctrlHint');
+  ch.innerHTML=touchMode
+    ?'👆 <b>◀ ▶</b> 移動　<b>⤒</b> 跳躍<br><b>手指按住方塊</b>＝挖掘　<b>⛏️/🧱</b> 鈕＝切換挖掘／放置'
+    :'⌨️ <b>A / D</b> 移動　<b>空白鍵</b> 跳躍<br>🖱️ <b>左鍵按住</b>＝挖掘／攻擊　<b>右鍵</b>＝放置／吃';
+  ch.style.display='block';
+  clearTimeout(ch._t);ch._t=setTimeout(()=>{ch.style.display='none';},8000);
   lastHp=-1;renderHotbar();renderBars();updScore();
   camera.x=clamp(player.x*TILE-vw/view/2,0,W*TILE-vw/view);
   camera.y=clamp((player.y-3)*TILE-vh/view*.42,0,H*TILE-vh/view);
@@ -1165,6 +1285,15 @@ car.y=surfaceRow(60,true);
 tornado.y=surfaceRow(10,true);
 document.getElementById('bestVal').textContent=best;
 requestAnimationFrame(frame);
+/* 測試掛鉤（唯讀，不影響遊戲） */
+window.__test={
+  get state(){return state;},get score(){return score;},get mined(){return mined;},
+  get px(){return player.x;},get py(){return player.y;},get hp(){return player.hp;},
+  get day(){return day;},get quest(){return qIdx;},get sword(){return !!player.sword;},
+  get placed(){return qc.place;},get wood(){return qc.wood;},
+  get cam(){return {x:camera.x,y:camera.y,view,TILE};},
+  surfAt(x){return surfaceRow(Math.round(x));}
+};
 </script>
 </body>
 </html>
