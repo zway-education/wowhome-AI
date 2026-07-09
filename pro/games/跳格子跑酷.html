@@ -894,99 +894,129 @@ function drawGround() {
   }
 }
 
+// ----- 離屏 sprite：一次繪製、每幀 drawImage（2x 超取樣近距離不糊）-----
+function makeSprite(w, h, ox, oy, paint) {
+  const c = document.createElement('canvas');
+  c.width = w * 2; c.height = h * 2;
+  const g = c.getContext('2d');
+  g.scale(2, 2);
+  g.translate(ox, oy);
+  paint(g);
+  return { c, w, h, ox, oy };
+}
+function paintFlower(g, petalC, seed) {
+  g.strokeStyle = '#3f7a2e';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(0, 0);
+  g.quadraticCurveTo(2, -12, 0, -20);
+  g.stroke();
+  g.fillStyle = petalC;
+  for (let i = 0; i < 5; i++) {
+    const a = i * Math.PI * 2 / 5 + seed;
+    g.beginPath();
+    g.arc(Math.cos(a) * 6, -20 + Math.sin(a) * 6, 4.5, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.fillStyle = '#ffd447';
+  g.beginPath();
+  g.arc(0, -20, 4, 0, Math.PI * 2);
+  g.fill();
+}
+const SPR = {
+  tree: makeSprite(104, 134, 52, 122, g => {
+    g.fillStyle = 'rgba(30,60,25,0.25)';
+    g.beginPath(); g.ellipse(6, 2, 34, 8, 0, 0, Math.PI * 2); g.fill();
+    const tg = g.createLinearGradient(-7, 0, 7, 0);
+    tg.addColorStop(0, '#8c5a3c'); tg.addColorStop(0.5, '#6b4028'); tg.addColorStop(1, '#4d2c1a');
+    g.fillStyle = tg;
+    g.fillRect(-6, -58, 12, 60);
+    const blob = (bx, by, r, light) => {
+      const lg = g.createRadialGradient(bx - r * 0.35, by - r * 0.4, r * 0.15, bx, by, r);
+      lg.addColorStop(0, light ? '#aee239' : '#7fb844');
+      lg.addColorStop(1, '#3f7a2e');
+      g.fillStyle = lg;
+      g.beginPath(); g.arc(bx, by, r, 0, Math.PI * 2); g.fill();
+    };
+    blob(-20, -66, 26, false);
+    blob(20, -68, 24, false);
+    blob(0, -88, 30, true);
+  }),
+  bush: makeSprite(62, 46, 31, 36, g => {
+    g.fillStyle = 'rgba(30,60,25,0.25)';
+    g.beginPath(); g.ellipse(3, 2, 26, 6, 0, 0, Math.PI * 2); g.fill();
+    const bg2 = g.createRadialGradient(-6, -16, 3, 0, -10, 26);
+    bg2.addColorStop(0, '#9ed46a'); bg2.addColorStop(1, '#3f7a2e');
+    g.fillStyle = bg2;
+    g.beginPath();
+    g.arc(-12, -10, 14, 0, Math.PI * 2);
+    g.arc(0, -16, 16, 0, Math.PI * 2);
+    g.arc(13, -9, 13, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#d94f45';
+    g.beginPath(); g.arc(-6, -14, 2.6, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(8, -10, 2.6, 0, Math.PI * 2); g.fill();
+  }),
+  flowerW: makeSprite(26, 38, 13, 33, g => paintFlower(g, '#fff', 2)),
+  flowerP: makeSprite(26, 38, 13, 33, g => paintFlower(g, '#ff9dc9', 6.5))
+};
+
 function drawSideProps() {
-  // 由遠到近
-  const sorted = sideProps.slice().sort((a, b) => b.row - a.row);
-  for (const sp of sorted) {
+  // 由遠到近：陣列本身按 row 遞增生成，反向迭代＝免排序免配置
+  for (let i = sideProps.length - 1; i >= 0; i--) {
+    const sp = sideProps[i];
     const d = sp.row - dist;
     if (d < -0.8 || d > 17) continue;
     const p = proj(d);
     const x = GAME_W / 2 + sp.side * ROAD_HALF * sp.off * p.s * 1.35;
-    const y = p.y;
-    const s = p.s;
     ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(s, s);
-    if (sp.type === 'tree') {
-      // 樹：陰影 + 樹幹漸層 + 三球樹冠（亮暗面）
-      ctx.fillStyle = 'rgba(30,60,25,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(6, 2, 34, 8, 0, 0, Math.PI * 2);
-      ctx.fill();
-      const tg = ctx.createLinearGradient(-7, 0, 7, 0);
-      tg.addColorStop(0, '#8c5a3c');
-      tg.addColorStop(0.5, '#6b4028');
-      tg.addColorStop(1, '#4d2c1a');
-      ctx.fillStyle = tg;
-      ctx.fillRect(-6, -58, 12, 60);
-      const blob = (bx, by, r, light) => {
-        const lg = ctx.createRadialGradient(bx - r * 0.35, by - r * 0.4, r * 0.15, bx, by, r);
-        lg.addColorStop(0, light ? '#aee239' : '#7fb844');
-        lg.addColorStop(1, '#3f7a2e');
-        ctx.fillStyle = lg;
-        ctx.beginPath();
-        ctx.arc(bx, by, r, 0, Math.PI * 2);
-        ctx.fill();
-      };
-      blob(-20, -66, 26, false);
-      blob(20, -68, 24, false);
-      blob(0, -88, 30, true);
-    } else if (sp.type === 'bush') {
-      ctx.fillStyle = 'rgba(30,60,25,0.25)';
-      ctx.beginPath();
-      ctx.ellipse(3, 2, 26, 6, 0, 0, Math.PI * 2);
-      ctx.fill();
-      const bg2 = ctx.createRadialGradient(-6, -16, 3, 0, -10, 26);
-      bg2.addColorStop(0, '#9ed46a');
-      bg2.addColorStop(1, '#3f7a2e');
-      ctx.fillStyle = bg2;
-      ctx.beginPath();
-      ctx.arc(-12, -10, 14, 0, Math.PI * 2);
-      ctx.arc(0, -16, 16, 0, Math.PI * 2);
-      ctx.arc(13, -9, 13, 0, Math.PI * 2);
-      ctx.fill();
-      // 小紅果
-      ctx.fillStyle = '#d94f45';
-      ctx.beginPath(); ctx.arc(-6, -14, 2.6, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(8, -10, 2.6, 0, Math.PI * 2); ctx.fill();
-    } else {
-      // 小花叢
-      ctx.strokeStyle = '#3f7a2e';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.moveTo(0, 0);
-      ctx.quadraticCurveTo(2, -12, 0, -20);
-      ctx.stroke();
-      const petalC = sp.seed > 5 ? '#ff9dc9' : '#fff';
-      ctx.fillStyle = petalC;
-      for (let i = 0; i < 5; i++) {
-        const a = i * Math.PI * 2 / 5 + sp.seed;
-        ctx.beginPath();
-        ctx.arc(Math.cos(a) * 6, -20 + Math.sin(a) * 6, 4.5, 0, Math.PI * 2);
-        ctx.fill();
-      }
-      ctx.fillStyle = '#ffd447';
-      ctx.beginPath();
-      ctx.arc(0, -20, 4, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    ctx.translate(x, p.y);
+    ctx.scale(p.s, p.s);
+    const spr = sp.type === 'tree' ? SPR.tree
+      : sp.type === 'bush' ? SPR.bush
+      : (sp.seed > 5 ? SPR.flowerP : SPR.flowerW);
+    ctx.drawImage(spr.c, -spr.ox, -spr.oy, spr.w, spr.h);
     ctx.restore();
   }
 }
 
-// ----- 金幣與護盾星星 -----
-function starShape(cx2, cy2, spikes, rOut, rIn) {
-  ctx.beginPath();
+// ----- 金幣與護盾星星（離屏 sprite，擺動/旋轉用 transform 保留）-----
+function starShape(g, cx2, cy2, spikes, rOut, rIn) {
+  g.beginPath();
   for (let i = 0; i < spikes * 2; i++) {
     const r = i % 2 === 0 ? rOut : rIn;
     const a = i * Math.PI / spikes - Math.PI / 2;
-    ctx.lineTo(cx2 + Math.cos(a) * r, cy2 + Math.sin(a) * r);
+    g.lineTo(cx2 + Math.cos(a) * r, cy2 + Math.sin(a) * r);
   }
-  ctx.closePath();
+  g.closePath();
 }
+SPR.coin = makeSprite(30, 30, 15, 15, g => {
+  const cg = g.createRadialGradient(-3, -3, 2, 0, 0, 13);
+  cg.addColorStop(0, '#fff2b0');
+  cg.addColorStop(0.6, '#ffd447');
+  cg.addColorStop(1, '#d99a10');
+  g.fillStyle = cg;
+  g.beginPath(); g.arc(0, 0, 12, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(150,100,10,0.7)';
+  g.lineWidth = 2.5;
+  g.beginPath(); g.arc(0, 0, 7.5, 0, Math.PI * 2); g.stroke();
+});
+SPR.star = makeSprite(56, 56, 28, 28, g => {
+  const sg3 = g.createRadialGradient(0, 0, 2, 0, 0, 26);
+  sg3.addColorStop(0, 'rgba(160,240,255,0.8)');
+  sg3.addColorStop(1, 'rgba(120,220,255,0)');
+  g.fillStyle = sg3;
+  g.beginPath(); g.arc(0, 0, 26, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#7fe3ff';
+  starShape(g, 0, 0, 5, 15, 6.5);
+  g.fill();
+  g.fillStyle = 'rgba(255,255,255,0.85)';
+  starShape(g, -2, -2, 5, 7, 3);
+  g.fill();
+});
 function drawItems() {
-  const sorted = items.slice().sort((a, b) => b.row - a.row);
-  for (const it of sorted) {
+  for (let i = items.length - 1; i >= 0; i--) {   // 反向＝由遠到近
+    const it = items[i];
     const d = it.row - dist;
     if (d < -0.5 || d > 16) continue;
     const p = proj(d);
@@ -995,38 +1025,34 @@ function drawItems() {
     ctx.translate(GAME_W / 2, y);
     ctx.scale(p.s, p.s);
     if (it.type === 'coin') {
-      const wob = Math.sin(elapsed * 5 + it.seed) * 2.5;
+      ctx.translate(0, Math.sin(elapsed * 5 + it.seed) * 2.5);
       ctx.scale(Math.abs(Math.sin(elapsed * 3.2 + it.seed)) * 0.75 + 0.25, 1);
-      const cg = ctx.createRadialGradient(-3, -3 + wob, 2, 0, wob, 13);
-      cg.addColorStop(0, '#fff2b0');
-      cg.addColorStop(0.6, '#ffd447');
-      cg.addColorStop(1, '#d99a10');
-      ctx.fillStyle = cg;
-      ctx.beginPath(); ctx.arc(0, wob, 12, 0, Math.PI * 2); ctx.fill();
-      ctx.strokeStyle = 'rgba(150,100,10,0.7)';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.arc(0, wob, 7.5, 0, Math.PI * 2); ctx.stroke();
+      ctx.drawImage(SPR.coin.c, -SPR.coin.ox, -SPR.coin.oy, SPR.coin.w, SPR.coin.h);
     } else {
       const pulse = 1 + Math.sin(elapsed * 6) * 0.12;
       ctx.scale(pulse, pulse);
       ctx.rotate(Math.sin(elapsed * 2.2) * 0.25);
-      const sg3 = ctx.createRadialGradient(0, 0, 2, 0, 0, 26);
-      sg3.addColorStop(0, 'rgba(160,240,255,0.8)');
-      sg3.addColorStop(1, 'rgba(120,220,255,0)');
-      ctx.fillStyle = sg3;
-      ctx.beginPath(); ctx.arc(0, 0, 26, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#7fe3ff';
-      starShape(0, 0, 5, 15, 6.5);
-      ctx.fill();
-      ctx.fillStyle = 'rgba(255,255,255,0.85)';
-      starShape(-2, -2, 5, 7, 3);
-      ctx.fill();
+      ctx.drawImage(SPR.star.c, -SPR.star.ox, -SPR.star.oy, SPR.star.w, SPR.star.h);
     }
     ctx.restore();
   }
 }
 
 // ----- 背影小跑者（多部件 + 漸層 + 跑步動畫）-----
+// 跑者漸層都在局部座標、顏色固定 → 啟動時建一次
+const RGRAD = (() => {
+  const legL = ctx.createLinearGradient(-8, 0, 8, 0);
+  legL.addColorStop(0, '#33538f'); legL.addColorStop(1, '#25406f');
+  const legR = ctx.createLinearGradient(-8, 0, 8, 0);
+  legR.addColorStop(0, '#4a6db4'); legR.addColorStop(1, '#33538f');
+  const torso = ctx.createLinearGradient(0, -75, 0, -25);
+  torso.addColorStop(0, '#ff9dc9'); torso.addColorStop(1, '#f9629e');
+  const arm = ctx.createLinearGradient(0, 0, 0, 30);
+  arm.addColorStop(0, '#ffd9b0'); arm.addColorStop(1, '#f2b783');
+  const hair = ctx.createRadialGradient(-6, -104, 3, 0, -98, 20);
+  hair.addColorStop(0, '#4a382a'); hair.addColorStop(1, '#2a1c14');
+  return { legL, legR, torso, arm, hair };
+})();
 function drawRunner() {
   const p0 = proj(0);
   const groundY = p0.y - 4;
@@ -1061,13 +1087,10 @@ function drawRunner() {
 
   // === 腿（牛仔褲，後視，擺動）===
   const legSwing = deathTimer >= 0 ? 20 : swing;
-  const drawLeg = (side, rot, grad0, grad1) => {
+  const drawLeg = (side, rot, lg) => {
     ctx.save();
     ctx.translate(side * 12, -30);
     ctx.rotate(rot * Math.PI / 180);
-    const lg = ctx.createLinearGradient(-8, 0, 8, 0);
-    lg.addColorStop(0, grad0);
-    lg.addColorStop(1, grad1);
     ctx.fillStyle = lg;
     ctx.beginPath();
     ctx.moveTo(-7, 0);
@@ -1096,14 +1119,11 @@ function drawRunner() {
     ctx.stroke();
     ctx.restore();
   };
-  drawLeg(-1, legSwing, '#33538f', '#25406f');
-  drawLeg(1, -legSwing, '#4a6db4', '#33538f');
+  drawLeg(-1, legSwing, RGRAD.legL);
+  drawLeg(1, -legSwing, RGRAD.legR);
 
   // === 軀幹（粉色上衣 + 立體陰影）===
-  const sg2 = ctx.createLinearGradient(0, -75, 0, -25);
-  sg2.addColorStop(0, '#ff9dc9');
-  sg2.addColorStop(1, '#f9629e');
-  ctx.fillStyle = sg2;
+  ctx.fillStyle = RGRAD.torso;
   ctx.beginPath();
   ctx.moveTo(-19, -70);
   ctx.quadraticCurveTo(0, -82, 19, -70);
@@ -1148,10 +1168,7 @@ function drawRunner() {
     ctx.save();
     ctx.translate(side * 17, -66);
     ctx.rotate(rot * Math.PI / 180 * side);
-    const ag = ctx.createLinearGradient(0, 0, 0, 30);
-    ag.addColorStop(0, '#ffd9b0');
-    ag.addColorStop(1, '#f2b783');
-    ctx.fillStyle = ag;
+    ctx.fillStyle = RGRAD.arm;
     ctx.beginPath();
     ctx.moveTo(-5 * side, 0);
     ctx.quadraticCurveTo(side * 13, 8, side * 12, 28);
@@ -1181,10 +1198,7 @@ function drawRunner() {
   ctx.fillStyle = '#eeb287';
   rr(-6, -88, 12, 12, 4);
   ctx.fill();
-  const hg = ctx.createRadialGradient(-6, -104, 3, 0, -98, 20);
-  hg.addColorStop(0, '#4a382a');
-  hg.addColorStop(1, '#2a1c14');
-  ctx.fillStyle = hg;
+  ctx.fillStyle = RGRAD.hair;
   ctx.beginPath();
   ctx.arc(0, -98, 18, 0, Math.PI * 2);
   ctx.fill();
@@ -1208,7 +1222,7 @@ function drawRunner() {
   ctx.beginPath(); ctx.arc(17, -96, 3, 0, Math.PI * 2); ctx.fill();
   // 馬尾（隨跑步/跳躍甩動）
   const tailSwing = player.grounded ? Math.sin(player.runCycle) * 6 : -player.vy * 0.02;
-  ctx.fillStyle = hg;
+  ctx.fillStyle = RGRAD.hair;
   ctx.beginPath();
   ctx.moveTo(10, -92);
   ctx.quadraticCurveTo(24 + tailSwing, -80, 16 + tailSwing * 1.4, -60);
@@ -1344,6 +1358,7 @@ function drawHUD() {
 
 function draw() {
   updateTheme();
+  refreshGrads();
   ctx.save();
   if (shake > 0) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
 

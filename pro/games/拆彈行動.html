@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -39,6 +39,8 @@ let WIRE_X1 = 264, WIRE_X2 = 686, WIRE_Y1 = 262, WIRE_Y2 = 452;
 let wires = [];
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
+/* v3：靜態背景與漸層快取 */
+let bgCanvas = null, bgDirty = true, caseGrad = null, lightGrad = null;
 function layout(){
   PORTRAIT = innerHeight > innerWidth;
   GAME_W = PORTRAIT ? 540 : 960;
@@ -66,6 +68,8 @@ function resize(){
   canvas.style.height = GAME_H * scale + 'px';
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   canvas._scale = scale;
+  canvas._q = scale * dpr;
+  bgDirty = true; caseGrad = null;   /* v3：版面變更重烘背景與快取 */
 }
 addEventListener('resize', resize);
 resize();
@@ -107,15 +111,23 @@ function drawImg(img, x, y, w, h){
 }
 
 /* ===== 音效 ===== */
-let AC = null;
+let AC = null, master = null, noiseBuf = null;
 let muted = false;
 try{ muted = localStorage.getItem('bombpro_muted') === '1'; }catch(e){}
 function initAudio(){
   if(!AC){
-    try{ AC = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      /* v3：主控音量匯流排——多事件同發也不削波 */
+      master = AC.createGain();
+      master.gain.value = 0.55;
+      master.connect(AC.destination);
+    }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
 }
+/* v3：微幅隨機音高 */
+const rp = f => f * (0.94 + Math.random() * 0.12);
 function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(muted || !AC) return;
   const o = AC.createOscillator(), g = AC.createGain();
@@ -124,31 +136,36 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g).connect(AC.destination);
+  o.connect(g).connect(master);
   o.start(); o.stop(AC.currentTime + dur);
 }
 function noise(dur = 0.15, vol = 0.2){
   if(muted || !AC) return;
-  const len = Math.floor(AC.sampleRate * dur);
-  const buf = AC.createBuffer(1, len, AC.sampleRate);
-  const d = buf.getChannelData(0);
-  for(let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  /* v3：共用一顆噪音 buffer，不每次配置 */
+  if(!noiseBuf){
+    const len = Math.floor(AC.sampleRate * 0.7);
+    noiseBuf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for(let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  }
   const src = AC.createBufferSource();
-  src.buffer = buf;
+  src.buffer = noiseBuf;
+  src.playbackRate.value = 0.7 / dur * (0.9 + Math.random() * 0.2);
   const g = AC.createGain();
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  src.connect(g).connect(AC.destination);
+  src.connect(g).connect(master);
   src.start();
 }
 const sfx = {
   tick(u){ beep(u ? 1100 : 780, 0.045, 'square', u ? 0.11 : 0.07); },
-  snip(){ noise(0.05, 0.14); beep(1500, 0.06, 'square', 0.08, -400); },
+  snip(){ noise(0.05, 0.14); beep(rp(1500), 0.06, 'square', 0.08, -400); },
   success(){ [659, 784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.1), i * 90)); },
   boom(){ noise(0.6, 0.3); beep(70, 0.7, 'sawtooth', 0.2, -35); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   chirp(){ beep(1200 + Math.random() * 500, 0.07, 'sine', 0.05, 300); },
   lose(){ [330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.24, 'triangle', 0.12), i * 160)); },
+  win(){ [523, 659, 784, 1047, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.1), i * 110)); },
   shield(){ noise(0.12, 0.16); beep(240, 0.25, 'sawtooth', 0.14, -90); setTimeout(() => beep(520, 0.14, 'triangle', 0.1), 180); }
 };
 function toggleMute(){
@@ -168,11 +185,16 @@ function burst(x, y, color, n = 12, speed = 240, life = 0.5){
   }
 }
 function updateParts(dt){
-  for(const p of parts){
+  /* v3：原地 swap-pop 回收，不每幀新建陣列 */
+  for(let i = parts.length - 1; i >= 0; i--){
+    const p = parts[i];
     p.x += p.vx * dt; p.y += p.vy * dt;
     p.vy += 620 * dt; p.life -= dt;
+    if(p.life <= 0){
+      parts[i] = parts[parts.length - 1];
+      parts.pop();
+    }
   }
-  parts = parts.filter(p => p.life > 0);
 }
 function drawParts(){
   for(const p of parts){

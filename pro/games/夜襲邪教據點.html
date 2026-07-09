@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -63,16 +63,21 @@ function audio() {
   if (!AC) {
     try {
       AC = new (window.AudioContext || window.webkitAudioContext)();
-      master = AC.createGain(); master.gain.value = muted ? 0 : 1;
-      master.connect(AC.destination);
+      master = AC.createGain(); master.gain.value = muted ? 0 : 0.85;
+      // 限制器：多音效齊發不削峰爆音
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      master.connect(comp); comp.connect(AC.destination);
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
 }
-function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 1; }
+function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 0.85; }
 function beep(freq, dur, type, vol, slide) {
   const ac = audio(); if (!ac || muted) return;
+  freq *= 1 + (Math.random() * 2 - 1) * 0.04; // ±4% 音高隨機
   type = type || 'square'; vol = vol || 0.13; slide = slide || 0;
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
@@ -125,7 +130,7 @@ function updateParts(dt) {
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i];
     p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.grav * dt; p.life -= dt;
-    if (p.life <= 0) parts.splice(i, 1);
+    if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); } // swap-pop
   }
 }
 function drawParts() {
