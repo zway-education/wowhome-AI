@@ -1,0 +1,1301 @@
+<!DOCTYPE html>
+<!-- 專業AI升級 v3 -->
+<!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>詭異飯店 - 雙人逃脫</title>
+<style>
+  html,body{margin:0;padding:0;height:100%;background:#050208;overflow:hidden;
+    font-family:'Microsoft JhengHei','PingFang TC',serif;
+    touch-action:none;-webkit-user-select:none;user-select:none;overscroll-behavior:none}
+  #cv{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
+    background:#050208;touch-action:none;display:block}
+  #muteBtn{position:fixed;top:10px;right:10px;z-index:50;width:52px;height:52px;border-radius:50%;
+    font-size:22px;line-height:1;background:rgba(25,8,10,.72);border:1px solid #5a2a2a;color:#e8d8c8;
+    cursor:pointer;padding:0}
+  #muteBtn:active{transform:scale(.94)}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+<button id="muteBtn" aria-label="切換音效">🔊</button>
+<script>
+'use strict';
+(function(){
+/* =============================================================
+   詭異飯店 PRO（JOJO老師升級版）
+   保留原作核心：兩位角色為了避雨走進廢棄飯店，
+   蒐集 2 把鑰匙、躲避黑暗中遊蕩的「它」、兩人一起逃到出口。
+   升級：即時移動＋手電筒黑暗系統＋BFS追蹤怪物＋單人夥伴AI
+         ＋觸控浮動搖桿＋粒子/震動/hit-stop＋Web Audio 合成音效
+   ============================================================= */
+
+/* ---------- 基本設定 ---------- */
+const GAME_W = 960, GAME_H = 540;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width  = Math.round(GAME_W * scale * dpr);
+  cv.height = Math.round(GAME_H * scale * dpr);
+  cv.style.width  = GAME_W * scale + 'px';
+  cv.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  cv._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+const clamp = (v,a,b)=> v<a?a:v>b?b:v;
+const rnd = (a,b)=> a + Math.random()*(b-a);
+const lerp = (a,b,t)=> a + (b-a)*t;
+const dist = (ax,ay,bx,by)=> Math.hypot(ax-bx, ay-by);
+const easeOutCubic = t => 1 - Math.pow(1-t,3);
+
+/* ---------- OpenMoji 鑰匙圖示（內嵌 SVG，CC BY-SA 4.0） ---------- */
+const XMLNS = 'ht'+'tp://www.w3.org/2000/svg';
+function svgImg(body){
+  const img = new Image();
+  img.src = URL.createObjectURL(new Blob(
+    ['<svg xmlns="'+XMLNS+'" viewBox="0 0 72 72">'+body+'</svg>'], {type:'image/svg+xml'}));
+  return img;
+}
+const SVG_KEY = '<g id="color"><path fill="#F4AA41" stroke="none" d="M33.5357,31.9911c-1.4016-4.2877-0.2247-9.41,3.4285-13.0632c5.018-5.018,12.8077-5.3639,17.3989-0.7727 s4.2452,12.381-0.7728,17.3989c-4.057,4.057-10.4347,5.5131-14.2685,2.5888"/><polyline fill="#F4AA41" stroke="#F4AA41" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" points="33.652,31.7364 31.2181,34.1872 14.6444,50.5142 14.6444,57.6603 21.0426,57.6603 21.0426,53.0835 26.0544,53.0835 26.0544,47.3024 32.04,47.3024 34.3913,44.9292 34.3913,40.6274 36.3618,40.6274 39.4524,37.5368"/><polygon fill="#E27022" stroke="none" points="15.9847,53.3457 15.9857,51.4386 31.8977,35.8744 32.8505,36.8484"/><circle cx="48.5201" cy="23.9982" r="3.9521" fill="#E27022" stroke="none"/></g><g id="line"><polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" points="30.735,34.6557 14.3026,50.6814 14.3026,57.9214 21.868,57.9214 21.868,53.2845 26.9929,53.2845 26.9929,47.4274 32.0913,47.4274 34.4957,45.023 34.4957,40.6647 36.5107,40.6647"/><circle cx="48.5201" cy="23.9982" r="3.9521" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/><path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="M34.2256,31.1781c-1.4298-4.2383-0.3466-9.2209,3.1804-12.6947c4.8446-4.7715,12.4654-4.8894,17.0216-0.2634 s4.3223,12.2441-0.5223,17.0156c-3.9169,3.8577-9.6484,4.6736-14.1079,2.3998"/></g>';
+const IMG_KEY = svgImg(SVG_KEY);
+const imgReady = im => im.complete && im.naturalWidth > 0;
+
+/* ---------- 音效（Web Audio 合成，DynamicsCompressor 母線） ---------- */
+let AC = null, master = null, muted = false;
+try{ muted = localStorage.getItem('pro詭異飯店_mute') === '1'; }catch(e){}
+const muteBtn = document.getElementById('muteBtn');
+function updateMuteBtn(){ muteBtn.textContent = muted ? '🔇' : '🔊'; }
+updateMuteBtn();
+muteBtn.addEventListener('click', e => {
+  e.stopPropagation();
+  muted = !muted;
+  try{ localStorage.setItem('pro詭異飯店_mute', muted?'1':'0'); }catch(err){}
+  updateMuteBtn();
+  if(!muted) sfx.blip();
+});
+
+function audio(){
+  if(!AC){
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = .003; comp.release.value = .2;
+      master = AC.createGain(); master.gain.value = .9;
+      master.connect(comp); comp.connect(AC.destination);
+    }catch(e){}
+  }
+  if(AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+addEventListener('pointerdown', audio);
+addEventListener('keydown', audio);
+
+function beep(freq, dur, type, vol, slide){
+  const ac = audio(); if(!ac || muted || !master) return;
+  freq *= .97 + Math.random()*.06;          // 隨機音高 ±3%
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(28, freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol || .12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + dur);
+  o.connect(g); g.connect(master);
+  o.start(); o.stop(ac.currentTime + dur + .02);
+}
+function noiseBurst(dur, vol, low){
+  const ac = audio(); if(!ac || muted || !master) return;
+  const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain(); g.gain.value = vol || .2;
+  if(low){
+    const f = ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value = low;
+    src.connect(f); f.connect(g);
+  } else src.connect(g);
+  g.connect(master); src.start();
+}
+const sfx = {
+  blip(){ beep(660, .07, 'square', .08); },
+  step(alt){ beep(alt?95:110, .045, 'triangle', .05); },
+  key(){ beep(988,.09,'square',.11); setTimeout(()=>beep(1319,.14,'square',.11), 80);
+         setTimeout(()=>beep(1568,.2,'square',.09), 160); },
+  hit(){ noiseBurst(.28,.3,900); beep(190,.35,'sawtooth',.2,-140); },
+  roar(){ beep(70,.7,'sawtooth',.24,55); noiseBurst(.5,.22,500); },
+  door(){ beep(90,.6,'sawtooth',.12,40); setTimeout(()=>beep(140,.35,'triangle',.1,-60),250); },
+  heart(){ beep(52,.1,'sine',.22); setTimeout(()=>beep(46,.12,'sine',.18), 130); },
+  whisper(){ noiseBurst(.4,.05,1800); },
+  panic(){ beep(520,.4,'sawtooth',.14,-320); },
+  win(){ [523,659,784,1047,1319].forEach((f,i)=> setTimeout(()=>beep(f,.22,'square',.11), i*110)); },
+  lose(){ beep(220,.5,'sawtooth',.15,-120); setTimeout(()=>beep(140,.8,'sawtooth',.13,-80), 300); }
+};
+
+/* ---------- 地圖 ---------- */
+const T = 36, OX = 12, OY = 18;
+const MAP = [
+  "##########################",
+  "#........................#",
+  "#.####.#####..#####.####.#",
+  "#.#K.#.#...#..#...#.#..#.#",
+  "#.#..#.#...#..#...#.#K.#.#",
+  "#.#..#.#...#..#...#.#..#.#",
+  "#.##.#.##.##..##.##.#.##.#",
+  "#........................#",
+  "#.#####.####..####.#####.#",
+  "#.#...#.#..#..#..#.#...#.#",
+  "#.#...#.#..#M.#..#.#...#.#",
+  "#.##.##.##.#..#.##.##.##.E",
+  "#P.......................E",
+  "##########################"
+];
+const ROWS = MAP.length, COLS = MAP[0].length;
+function tileAt(c,r){ if(r<0||r>=ROWS||c<0||c>=COLS) return '#'; return MAP[r][c]; }
+function solid(c,r){ return tileAt(c,r) === '#'; }
+const cx = c => OX + c*T + T/2;
+const cyy = r => OY + r*T + T/2;
+
+let keySpawns = [], exitTiles = [], monsterSpawn = {c:13,r:10}, playerSpawn = {c:1,r:12};
+const floorTiles = [];
+for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+  const ch = MAP[r][c];
+  if(ch === 'K') keySpawns.push({c,r});
+  if(ch === 'E') exitTiles.push({c,r});
+  if(ch === 'M') monsterSpawn = {c,r};
+  if(ch === 'P') playerSpawn = {c,r};
+  if(ch !== '#') floorTiles.push({c,r});
+}
+const exitRect = {
+  x: OX + 24.4*T, y: OY + 11*T - 4,
+  w: 2.2*T, h: 2*T + 8
+};
+
+/* ---------- 預先烘焙：地板圖層 / 光暈 / 暗角 ---------- */
+function makeCanvas(w,h){ const c=document.createElement('canvas'); c.width=w; c.height=h; return c; }
+
+// 手繪風飯店地面與牆面（開場烘焙一次，之後每幀只 drawImage）
+const floorCv = makeCanvas(GAME_W, GAME_H);
+(function bakeFloor(){
+  const g = floorCv.getContext('2d');
+  g.fillStyle = '#0b0608'; g.fillRect(0,0,GAME_W,GAME_H);
+  let seed = 7;
+  const srand = ()=> (seed = (seed*16807) % 2147483647) / 2147483647;
+  for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){
+    const x = OX + c*T, y = OY + r*T, ch = MAP[r][c];
+    if(ch === '#'){
+      // 牆：磚縫＋頂面高光，帶暗紅濕氣
+      g.fillStyle = '#2c1416'; g.fillRect(x,y,T,T);
+      g.fillStyle = '#38191c';
+      const off = (r%2)*T/2;
+      g.fillRect(x+2-off%T, y+3, T/2-3, T/2-5);
+      g.fillRect(x+T/2+2-off%T, y+3, T/2-3, T/2-5);
+      g.fillRect(x+4, y+T/2+2, T/2-5, T/2-5);
+      g.fillRect(x+T/2+3, y+T/2+2, T/2-5, T/2-5);
+      if(!solid(c, r+1)){ // 面向走廊的牆腳陰影
+        g.fillStyle = 'rgba(0,0,0,.5)'; g.fillRect(x, y+T-5, T, 5);
+      }
+      if(!solid(c, r-1)){ // 牆頂高光
+        g.fillStyle = 'rgba(160,80,80,.28)'; g.fillRect(x, y, T, 3);
+      }
+    }else{
+      // 地板：暗紅地毯走廊 + 木紋房間
+      const inRoom = r>=3&&r<=5 || r>=9&&r<=10;
+      if(inRoom){
+        g.fillStyle = '#241318'; g.fillRect(x,y,T,T);
+        g.strokeStyle = 'rgba(90,45,40,.35)'; g.lineWidth = 1;
+        for(let i=0;i<3;i++){ g.beginPath(); g.moveTo(x, y+6+i*12); g.lineTo(x+T, y+6+i*12); g.stroke(); }
+      }else{
+        g.fillStyle = '#1c0e14'; g.fillRect(x,y,T,T);
+        g.fillStyle = (c+r)%2 ? 'rgba(120,40,50,.12)' : 'rgba(30,10,16,.4)';
+        g.fillRect(x+3, y+3, T-6, T-6);
+      }
+      // 隨機髒污/血漬
+      if(srand() < .1){
+        g.fillStyle = 'rgba(90,10,12,'+(0.15+srand()*0.25)+')';
+        g.beginPath(); g.ellipse(x+T/2+srand()*10-5, y+T/2+srand()*10-5, 5+srand()*8, 3+srand()*5, srand()*3, 0, Math.PI*2);
+        g.fill();
+      }
+    }
+  }
+  // 中央走廊長地毯
+  g.fillStyle = 'rgba(140,30,40,.2)';
+  g.fillRect(OX+1*T, OY+7*T+6, 24*T, T-12);
+  g.fillRect(OX+1*T, OY+12*T+6, 24*T, T-12);
+  g.strokeStyle = 'rgba(220,180,90,.25)'; g.lineWidth = 2;
+  g.strokeRect(OX+1*T+4, OY+7*T+8, 24*T-8, T-16);
+  g.strokeRect(OX+1*T+4, OY+12*T+8, 24*T-8, T-16);
+  // 牆上掛畫與蛛網（環境細節）
+  const deco = [[5,0],[10,0],[15,0],[20,0],[6,7],[19,7]];
+  deco.forEach(([c,r],i)=>{
+    const x = OX+c*T, y = OY+r*T;
+    g.fillStyle = '#3a2a18'; g.fillRect(x+6, y+8, T-12, T-14);
+    g.fillStyle = i%2 ? '#141c2c' : '#1e1420';
+    g.fillRect(x+9, y+11, T-18, T-20);
+    g.fillStyle = 'rgba(200,200,220,.15)';
+    g.beginPath(); g.arc(x+T/2, y+T/2, 4, 0, Math.PI*2); g.fill();
+  });
+  // 出口門框
+  const ex = OX+25*T, ey = OY+11*T;
+  g.fillStyle = '#161c14'; g.fillRect(ex-6, ey-4, T+6, 2*T+8);
+  g.fillStyle = '#2c3a24'; g.fillRect(ex-2, ey, T+2, 2*T);
+})();
+
+// 光暈精靈（手電筒）：radial gradient 烘焙
+const lightSpr = makeCanvas(256,256);
+(function(){
+  const g = lightSpr.getContext('2d');
+  const grad = g.createRadialGradient(128,128,10,128,128,128);
+  grad.addColorStop(0,'rgba(255,255,255,1)');
+  grad.addColorStop(.45,'rgba(255,255,255,.85)');
+  grad.addColorStop(.75,'rgba(255,255,255,.3)');
+  grad.addColorStop(1,'rgba(255,255,255,0)');
+  g.fillStyle = grad; g.fillRect(0,0,256,256);
+})();
+// 小光點（鑰匙、壁燈）
+const glowSpr = makeCanvas(128,128);
+(function(){
+  const g = glowSpr.getContext('2d');
+  const grad = g.createRadialGradient(64,64,4,64,64,64);
+  grad.addColorStop(0,'rgba(255,230,160,.9)');
+  grad.addColorStop(1,'rgba(255,230,160,0)');
+  g.fillStyle = grad; g.fillRect(0,0,128,128);
+})();
+// 暗角
+const vigCv = makeCanvas(GAME_W, GAME_H);
+(function(){
+  const g = vigCv.getContext('2d');
+  const grad = g.createRadialGradient(GAME_W/2,GAME_H/2,GAME_H*.35, GAME_W/2,GAME_H/2, GAME_W*.62);
+  grad.addColorStop(0,'rgba(0,0,0,0)');
+  grad.addColorStop(1,'rgba(5,0,4,.78)');
+  g.fillStyle = grad; g.fillRect(0,0,GAME_W,GAME_H);
+})();
+// 黑暗圖層（每幀重繪，但只用 drawImage 合成）
+const darkCv = makeCanvas(GAME_W, GAME_H);
+const darkCtx = darkCv.getContext('2d');
+
+/* ---------- 粒子（swap-pop 回收） ---------- */
+const parts = [];
+const MAX_PARTS = 320;
+function spawnPart(p){ if(parts.length < MAX_PARTS) parts.push(p); }
+function burst(x,y,color,n,speed,life,grav){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = (speed||160)*(0.3+Math.random()*0.7);
+    spawnPart({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:(life||.5)*(0.6+Math.random()*0.6),
+      max:life||.5, color, size:2+Math.random()*4, grav:grav===undefined?300:grav});
+  }
+}
+function updateParts(dt){
+  for(let i=parts.length-1;i>=0;i--){
+    const p = parts[i];
+    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += p.grav*dt; p.life -= dt;
+    if(p.life <= 0){ parts[i] = parts[parts.length-1]; parts.pop(); }
+  }
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = clamp(p.life/p.max, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-p.size/2, p.y-p.size/2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+// 飄字
+const floats = [];
+function floatText(x,y,text,color){
+  floats.push({x,y,text,color,life:1.1});
+}
+function updateFloats(dt){
+  for(let i=floats.length-1;i>=0;i--){
+    const f = floats[i]; f.y -= 34*dt; f.life -= dt;
+    if(f.life<=0){ floats[i]=floats[floats.length-1]; floats.pop(); }
+  }
+}
+function drawFloats(){
+  ctx.textAlign='center'; ctx.font='bold 17px "Microsoft JhengHei",sans-serif';
+  for(const f of floats){
+    ctx.globalAlpha = clamp(f.life,0,1);
+    ctx.fillStyle = '#000'; ctx.fillText(f.text, f.x+1.5, f.y+1.5);
+    ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- 輸入 ---------- */
+const keys = {};
+addEventListener('keydown', e => {
+  keys[e.code] = true;
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space'].includes(e.code)) e.preventDefault();
+  if(state && state.key) state.key(e.code);
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+// 觸控浮動搖桿：左半＝玩家一、右半＝玩家二（單人模式任何位置皆控制玩家一）
+const sticks = {};       // pointerId -> {who, bx,by, dx,dy}
+function logicalPos(e){
+  const r = cv.getBoundingClientRect();
+  return { x:(e.clientX-r.left)/cv._scale, y:(e.clientY-r.top)/cv._scale };
+}
+cv.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  const p = logicalPos(e);
+  if(state && state.tap && state.tap(p.x, p.y)) return;
+  if(state !== playState) return;
+  if(e.pointerType === 'mouse') return;
+  let who = 'p1';
+  if(S.coop) who = p.x < GAME_W/2 ? 'p1' : 'p2';
+  // 同一角色只允許一支搖桿
+  for(const id in sticks) if(sticks[id].who === who) return;
+  sticks[e.pointerId] = { who, bx:p.x, by:p.y, dx:0, dy:0 };
+});
+cv.addEventListener('pointermove', e => {
+  const st = sticks[e.pointerId]; if(!st) return;
+  e.preventDefault();
+  const p = logicalPos(e);
+  let dx = p.x - st.bx, dy = p.y - st.by;
+  const len = Math.hypot(dx,dy);
+  const DEAD = 8, R = 52;
+  if(len < DEAD){ st.dx = 0; st.dy = 0; return; }
+  if(len > R){ // 搖桿跟隨拇指
+    st.bx = p.x - dx/len*R; st.by = p.y - dy/len*R;
+  }
+  const n = Math.min(len, R)/R;
+  st.dx = dx/len*n; st.dy = dy/len*n;
+});
+function endStick(e){ delete sticks[e.pointerId]; }
+cv.addEventListener('pointerup', endStick);
+cv.addEventListener('pointercancel', endStick);
+cv.addEventListener('contextmenu', e => e.preventDefault());
+
+function stickDir(who){
+  for(const id in sticks){ const st = sticks[id]; if(st.who === who) return {x:st.dx, y:st.dy}; }
+  return null;
+}
+
+/* ---------- 遊戲狀態資料 ---------- */
+const S = {
+  coop: false,
+  time: 0,
+  keysGot: 0,
+  doorOpen: false,
+  over: false,
+  hintT: 0,
+  msg: '', msgT: 0
+};
+let best = null;
+try{ best = JSON.parse(localStorage.getItem('pro詭異飯店_best') || 'null'); }catch(e){}
+
+function makePlayer(idx){
+  return {
+    idx, x:0, y:0, r:12,
+    vx:0, vy:0, speed:158,
+    face:1, faceY:0, bob:0, moving:false,
+    sx:1, sy:1,
+    hearts:3, san:100,
+    invT:0, stepT:0, blink:0,
+    color: idx===0 ? '#4f9fe8' : '#5cc470',
+    dark:  idx===0 ? '#28527c' : '#2d6a3c',
+    name:  idx===0 ? '小藍' : '小綠'
+  };
+}
+const p1 = makePlayer(0), p2 = makePlayer(1);
+const players = [p1, p2];
+
+const monster = {
+  x:0, y:0, r:15, speed:60,
+  awake:false, wakeT:10,
+  path:[], pathT:0, bob:0,
+  sx:1, sy:1, trailT:0
+};
+let keyItems = [];   // {x,y,taken,phase}
+const crumbs = [];   // 單人模式：玩家一足跡，供夥伴AI跟隨
+
+let shake = 0, freeze = 0, redFlash = 0, scareT = 0, winkT = 0;
+let heartbeatT = 0, whisperT = 0;
+
+function resetGame(coop){
+  S.coop = coop; S.time = 0; S.keysGot = 0; S.doorOpen = false; S.over = false;
+  S.hintT = 6.5; S.msg = ''; S.msgT = 0;
+  players.forEach((p,i)=>{
+    Object.assign(p, makePlayer(i));
+    p.x = cx(playerSpawn.c) + i*30;
+    p.y = cyy(playerSpawn.r);
+  });
+  monster.x = cx(monsterSpawn.c); monster.y = cyy(monsterSpawn.r);
+  monster.awake = false; monster.wakeT = 10; monster.speed = 60;
+  monster.path = []; monster.pathT = 0;
+  keyItems = keySpawns.map(k => ({x:cx(k.c), y:cyy(k.r), taken:false, phase:Math.random()*6}));
+  parts.length = 0; floats.length = 0; crumbs.length = 0;
+  shake = 0; freeze = 0; redFlash = 0; scareT = 0;
+  for(const id in sticks) delete sticks[id];
+  showMsg(coop ? '找到 2 把鑰匙，兩人一起逃到出口！' : '找到 2 把鑰匙，帶著夥伴逃到出口！', 4.5);
+}
+function showMsg(t, dur){ S.msg = t; S.msgT = dur || 3; }
+
+/* ---------- 移動與碰撞（圓 vs 磚，分軸） ---------- */
+function collideMove(o, dx, dy){
+  // X 軸
+  o.x += dx;
+  let c0 = Math.floor((o.x-o.r-OX)/T), c1 = Math.floor((o.x+o.r-OX)/T);
+  let r0 = Math.floor((o.y-o.r-OY)/T), r1 = Math.floor((o.y+o.r-OY)/T);
+  for(let r=r0;r<=r1;r++) for(let c=c0;c<=c1;c++){
+    if(!solid(c,r)) continue;
+    const tx = OX+c*T, ty = OY+r*T;
+    if(o.x+o.r>tx && o.x-o.r<tx+T && o.y+o.r>ty && o.y-o.r<ty+T){
+      o.x = dx>0 ? tx-o.r : tx+T+o.r;
+    }
+  }
+  // Y 軸
+  o.y += dy;
+  c0 = Math.floor((o.x-o.r-OX)/T); c1 = Math.floor((o.x+o.r-OX)/T);
+  r0 = Math.floor((o.y-o.r-OY)/T); r1 = Math.floor((o.y+o.r-OY)/T);
+  for(let r=r0;r<=r1;r++) for(let c=c0;c<=c1;c++){
+    if(!solid(c,r)) continue;
+    const tx = OX+c*T, ty = OY+r*T;
+    if(o.x+o.r>tx && o.x-o.r<tx+T && o.y+o.r>ty && o.y-o.r<ty+T){
+      o.y = dy>0 ? ty-o.r : ty+T+o.r;
+    }
+  }
+  // 邊界
+  o.x = clamp(o.x, OX+o.r, OX+COLS*T-o.r+T);  // 右側留出口空間
+  o.y = clamp(o.y, OY+o.r, OY+ROWS*T-o.r);
+}
+
+/* ---------- 怪物 BFS 追蹤 ---------- */
+function bfsPath(fromC, fromR, toC, toR){
+  if(fromC===toC && fromR===toR) return [];
+  const prev = new Int16Array(COLS*ROWS).fill(-1);
+  const q = [fromR*COLS+fromC];
+  prev[fromR*COLS+fromC] = fromR*COLS+fromC;
+  let head = 0;
+  const target = toR*COLS+toC;
+  while(head < q.length){
+    const cur = q[head++];
+    if(cur === target) break;
+    const cc = cur%COLS, rr = (cur-cc)/COLS;
+    const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+    for(const [dc,dr] of dirs){
+      const nc = cc+dc, nr = rr+dr;
+      if(nc<0||nc>=COLS||nr<0||nr>=ROWS) continue;
+      if(solid(nc,nr)) continue;
+      const ni = nr*COLS+nc;
+      if(prev[ni] !== -1) continue;
+      prev[ni] = cur; q.push(ni);
+    }
+  }
+  if(prev[target] === -1) return [];
+  const path = [];
+  let cur = target;
+  while(cur !== fromR*COLS+fromC){
+    path.push({c:cur%COLS, r:(cur-cur%COLS)/COLS});
+    cur = prev[cur];
+    if(path.length > 500) break;
+  }
+  path.reverse();
+  return path;
+}
+function teleportMonsterFar(){
+  let bestTile = null, bestD = -1;
+  for(let i=0;i<40;i++){
+    const t = floorTiles[Math.floor(Math.random()*floorTiles.length)];
+    const d = Math.min(dist(cx(t.c),cyy(t.r),p1.x,p1.y), dist(cx(t.c),cyy(t.r),p2.x,p2.y));
+    if(d > bestD){ bestD = d; bestTile = t; }
+  }
+  if(bestTile){ monster.x = cx(bestTile.c); monster.y = cyy(bestTile.r); monster.path = []; }
+}
+
+/* ---------- 更新邏輯 ---------- */
+function movePlayer(p, dirX, dirY, dt){
+  const len = Math.hypot(dirX, dirY);
+  if(len > 1){ dirX/=len; dirY/=len; }
+  const wasMoving = p.moving;
+  p.moving = len > 0.05;
+  if(p.moving){
+    const oldX = p.x, oldY = p.y;
+    collideMove(p, dirX*p.speed*dt*Math.min(len,1), dirY*p.speed*dt*Math.min(len,1));
+    if(Math.abs(dirX) > .1) p.face = dirX > 0 ? 1 : -1;
+    p.faceY = dirY;
+    p.bob += dt*10;
+    p.stepT -= dt;
+    if((p.x!==oldX || p.y!==oldY) && p.stepT <= 0){
+      p.stepT = .28;
+      sfx.step(p.idx);
+      spawnPart({x:p.x+rnd(-4,4), y:p.y+14, vx:rnd(-15,15), vy:rnd(-30,-10),
+        life:.35, max:.35, color:'rgba(120,100,90,.6)', size:3, grav:60});
+    }
+    if(!wasMoving){ p.sx = 1.15; p.sy = .85; }   // 起步 squash
+  }else{
+    if(wasMoving){ p.sx = .88; p.sy = 1.12; }    // 停步 stretch
+    p.bob = 0;
+  }
+  p.sx += (1-p.sx)*10*dt; p.sy += (1-p.sy)*10*dt;
+  p.invT = Math.max(0, p.invT - dt);
+  p.blink -= dt;
+  if(p.blink < -3) p.blink = .12;
+}
+
+function updateCompanion(dt){
+  // 單人模式：小綠跟著小藍的足跡走
+  const last = crumbs[crumbs.length-1];
+  if(!last || dist(last.x,last.y,p1.x,p1.y) > 14) crumbs.push({x:p1.x, y:p1.y});
+  if(crumbs.length > 80) crumbs.shift();
+  let dirX = 0, dirY = 0;
+  if(dist(p2.x,p2.y,p1.x,p1.y) > 44 && crumbs.length){
+    let t = crumbs[0];
+    while(crumbs.length > 1 && dist(p2.x,p2.y,t.x,t.y) < 12){ crumbs.shift(); t = crumbs[0]; }
+    const d = dist(p2.x,p2.y,t.x,t.y);
+    if(d > 4){ dirX = (t.x-p2.x)/d; dirY = (t.y-p2.y)/d; }
+  }
+  movePlayer(p2, dirX, dirY, dt);
+}
+
+function updateMonster(dt){
+  monster.bob += dt*3;
+  monster.sx += (1-monster.sx)*8*dt; monster.sy += (1-monster.sy)*8*dt;
+  if(!monster.awake){
+    monster.wakeT -= dt;
+    if(monster.wakeT <= 0){
+      monster.awake = true;
+      sfx.roar(); shake = Math.max(shake, 10);
+      showMsg('「它」醒了……快逃！', 3);
+      burst(monster.x, monster.y, '#a02030', 26, 200, .7, 40);
+    }
+    return;
+  }
+  // 隨時間變快（120 秒內 60 → 96），開門後再 +14
+  monster.speed = 60 + Math.min(1, S.time/120)*36 + (S.doorOpen?14:0);
+  // 追最近的玩家
+  monster.pathT -= dt;
+  if(monster.pathT <= 0 || !monster.path.length){
+    monster.pathT = .55;
+    const d1 = dist(monster.x,monster.y,p1.x,p1.y), d2 = dist(monster.x,monster.y,p2.x,p2.y);
+    const tgt = d1 <= d2 ? p1 : p2;
+    monster.path = bfsPath(
+      clamp(Math.floor((monster.x-OX)/T),0,COLS-1), clamp(Math.floor((monster.y-OY)/T),0,ROWS-1),
+      clamp(Math.floor((tgt.x-OX)/T),0,COLS-1), clamp(Math.floor((tgt.y-OY)/T),0,ROWS-1));
+  }
+  if(monster.path.length){
+    const n = monster.path[0];
+    const tx = cx(n.c), ty = cyy(n.r);
+    const d = dist(monster.x,monster.y,tx,ty);
+    if(d < 6) monster.path.shift();
+    else{
+      monster.x += (tx-monster.x)/d * monster.speed*dt;
+      monster.y += (ty-monster.y)/d * monster.speed*dt;
+    }
+  }
+  // 幽靈拖尾
+  monster.trailT -= dt;
+  if(monster.trailT <= 0){
+    monster.trailT = .09;
+    spawnPart({x:monster.x+rnd(-8,8), y:monster.y+rnd(-6,10), vx:rnd(-10,10), vy:rnd(-24,-8),
+      life:.6, max:.6, color:'rgba(150,30,50,.5)', size:5, grav:-20});
+  }
+  // 抓到玩家（判定比外觀小，寬容設計）
+  players.forEach(p => {
+    if(p.invT > 0) return;
+    if(dist(p.x,p.y,monster.x,monster.y) < p.r + monster.r - 9){
+      p.hearts--; p.invT = 2.6;
+      p.san = clamp(p.san - 18, 0, 100);
+      freeze = .14; shake = Math.max(shake, 13); redFlash = .55; scareT = .8;
+      sfx.hit();
+      burst(p.x, p.y, '#d04050', 22, 240, .6);
+      floatText(p.x, p.y-26, '-1 ❤', '#ff6070');
+      teleportMonsterFar();
+      if(p.hearts <= 0 && !S.over){
+        S.over = true;
+        setTimeout(()=>{ endGame(false, p.name + ' 被「它」抓住了……'); }, 600);
+      }
+    }
+  });
+}
+
+function updateSanity(dt){
+  players.forEach(p => {
+    const d = dist(p.x,p.y,monster.x,monster.y);
+    if(monster.awake && d < 150) p.san = clamp(p.san - 13*dt, 0, 100);
+    else p.san = clamp(p.san + 5.5*dt, 0, 100);
+    if(p.san <= 0){
+      p.san = 55; p.hearts--;
+      sfx.panic();
+      freeze = .12; shake = Math.max(shake, 9); redFlash = .4;
+      showMsg(p.name + ' 理智崩潰了！離「它」遠一點！', 3);
+      burst(p.x, p.y-10, '#9a6bff', 16, 180, .6);
+      if(p.hearts <= 0 && !S.over){
+        S.over = true;
+        setTimeout(()=>{ endGame(false, p.name + ' 的理智徹底崩潰了……'); }, 600);
+      }
+    }
+  });
+  // 心跳與耳語（靠近怪物時）
+  const near = Math.min(dist(p1.x,p1.y,monster.x,monster.y), dist(p2.x,p2.y,monster.x,monster.y));
+  if(monster.awake && near < 210){
+    heartbeatT -= dt;
+    if(heartbeatT <= 0){ heartbeatT = lerp(.42, 1.0, near/210); sfx.heart(); }
+  }
+  whisperT -= dt;
+  if(whisperT <= 0){ whisperT = rnd(5,11); if(Math.min(p1.san,p2.san) < 55) sfx.whisper(); }
+}
+
+function updatePickups(){
+  keyItems.forEach(k => {
+    if(k.taken) return;
+    players.forEach(p => {
+      if(k.taken) return;
+      if(dist(p.x,p.y,k.x,k.y) < 27){        // 寬容判定
+        k.taken = true; S.keysGot++;
+        sfx.key();
+        freeze = .05; shake = Math.max(shake, 4);
+        burst(k.x, k.y, '#ffd257', 18, 200, .6);
+        burst(k.x, k.y, '#fff2c0', 8, 120, .8, -60);
+        floatText(k.x, k.y-22, '鑰匙 '+S.keysGot+'/2', '#ffd257');
+        if(S.keysGot >= 2){
+          S.doorOpen = true;
+          sfx.door();
+          showMsg('大門開了！兩人一起衝向出口！', 4);
+          burst(exitRect.x+exitRect.w/2, exitRect.y+exitRect.h/2, '#7de08a', 20, 160, .9, -30);
+        }else{
+          showMsg('拿到一把鑰匙！還差 1 把', 2.5);
+        }
+      }
+    });
+  });
+}
+
+function inExit(p){
+  return p.x > exitRect.x && p.y > exitRect.y && p.y < exitRect.y + exitRect.h;
+}
+function checkWin(){
+  if(!S.doorOpen || S.over) return;
+  if(inExit(p1) && inExit(p2)){
+    S.over = true;
+    sfx.win();
+    for(let i=0;i<5;i++)
+      setTimeout(()=> burst(rnd(200,760), rnd(120,380), ['#ffd257','#7de08a','#4f9fe8','#ff6cc7'][i%4], 22, 260, 1, 120), i*130);
+    setTimeout(()=>{ endGame(true); }, 900);
+  }
+}
+
+/* ---------- 結算 ---------- */
+let endInfo = { win:false, text:'', grade:'', newBest:false };
+function endGame(win, text){
+  const heartsLeft = Math.max(0,p1.hearts) + Math.max(0,p2.hearts);
+  let grade = 'C';
+  if(win){
+    if(S.time < 80 && heartsLeft >= 5) grade = 'S';
+    else if(S.time < 110 && heartsLeft >= 3) grade = 'A';
+    else grade = 'B';
+  }
+  let newBest = false;
+  if(win){
+    if(!best || S.time < best.time){
+      best = { time: Math.round(S.time*10)/10, grade };
+      newBest = true;
+      try{ localStorage.setItem('pro詭異飯店_best', JSON.stringify(best)); }catch(e){}
+    }
+  }
+  endInfo = { win, text: text||'', grade, newBest, time:S.time, hearts:heartsLeft };
+  setState(endState);
+}
+
+/* ---------- 繪製：角色 ---------- */
+function drawPlayer(p, t){
+  if(p.invT > 0 && Math.floor(t*14)%2) return;  // 受擊閃爍
+  const bobY = p.moving ? Math.sin(p.bob)*2.5 : Math.sin(t*2.2+p.idx)*1.2;
+  const x = p.x, y = p.y + bobY;
+  // 地面影子
+  ctx.fillStyle = 'rgba(0,0,0,.45)';
+  ctx.beginPath(); ctx.ellipse(p.x, p.y+15, 11, 4, 0, 0, Math.PI*2); ctx.fill();
+  ctx.save();
+  ctx.translate(x, y+15);
+  ctx.scale(p.sx*p.face, p.sy);
+  ctx.translate(0, -15);
+  // 腳（走路擺動）
+  const leg = p.moving ? Math.sin(p.bob*2)*4 : 0;
+  ctx.fillStyle = '#1c1626';
+  ctx.fillRect(-7, 8+Math.max(0,leg*.5), 6, 8-Math.max(0,leg*.5));
+  ctx.fillRect(1, 8+Math.max(0,-leg*.5), 6, 8-Math.max(0,-leg*.5));
+  // 雨衣身體（多部件：漸層＋輪廓）
+  const bodyG = ctx.createLinearGradient(0,-14,0,10);
+  bodyG.addColorStop(0, p.color); bodyG.addColorStop(1, p.dark);
+  ctx.fillStyle = bodyG;
+  ctx.beginPath();
+  ctx.moveTo(-10, 10); ctx.lineTo(-8, -8);
+  ctx.quadraticCurveTo(0, -14, 8, -8);
+  ctx.lineTo(10, 10); ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.lineWidth = 1.6; ctx.stroke();
+  // 帽兜與頭
+  ctx.fillStyle = p.color;
+  ctx.beginPath(); ctx.arc(0, -13, 9.5, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.65)'; ctx.stroke();
+  ctx.fillStyle = '#f3d9bd';
+  ctx.beginPath(); ctx.arc(1.5, -12, 6.6, 0, Math.PI*2); ctx.fill();
+  // 眼睛（看向前方、會眨眼、緊張時瞳孔小）
+  const scared = p.san < 40;
+  if(p.blink > 0){
+    ctx.strokeStyle = '#302018'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(0,-12.5); ctx.lineTo(3,-12.5); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(4.5,-12.5); ctx.lineTo(7,-12.5); ctx.stroke();
+  }else{
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(1.6,-12.5, 2.4, scared?3.1:2.7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(6.2,-12.5, 2.4, scared?3.1:2.7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#241a14';
+    const py = -12.5 + p.faceY*1.4;
+    ctx.beginPath(); ctx.arc(2.3, py, scared?1:1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(6.9, py, scared?1:1.5, 0, Math.PI*2); ctx.fill();
+  }
+  // 嘴（緊張時抖動的小圓）
+  if(scared){
+    ctx.fillStyle = '#5a3028';
+    ctx.beginPath(); ctx.ellipse(4,-8.6, 1.6, 2.2, 0, 0, Math.PI*2); ctx.fill();
+  }
+  // 手電筒
+  ctx.fillStyle = '#3a3a44'; ctx.fillRect(8, -4, 6, 3.6);
+  ctx.fillStyle = '#ffe9a0'; ctx.fillRect(13.4, -4.4, 2.2, 4.4);
+  ctx.restore();
+  // 名牌
+  ctx.textAlign = 'center'; ctx.font = 'bold 11px "Microsoft JhengHei",sans-serif';
+  ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillText(p.name, p.x+1, p.y-27+1);
+  ctx.fillStyle = p.color; ctx.fillText(p.name, p.x, p.y-27);
+}
+
+function drawMonster(t){
+  const m = monster;
+  const bobY = Math.sin(m.bob)*4;
+  const x = m.x, y = m.y + bobY - 4;
+  ctx.fillStyle = 'rgba(0,0,0,.4)';
+  ctx.beginPath(); ctx.ellipse(m.x, m.y+16, 13, 4.5, 0, 0, Math.PI*2); ctx.fill();
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(m.sx, m.sy);
+  // 身體：飄動的裹屍布形，底部波浪
+  const g = ctx.createLinearGradient(0,-20,0,18);
+  g.addColorStop(0, '#e8e4e0'); g.addColorStop(.7, '#b8aeb2'); g.addColorStop(1, '#786470');
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-15, 12);
+  ctx.quadraticCurveTo(-17, -12, 0, -20);
+  ctx.quadraticCurveTo(17, -12, 15, 12);
+  for(let i=0;i<5;i++){
+    const wx = 15 - i*7.5;
+    ctx.quadraticCurveTo(wx-2, 12 + Math.sin(t*6+i)*4 + 5, wx-5, 12 + Math.sin(t*6+i+1)*3);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(30,10,20,.55)'; ctx.lineWidth = 1.6; ctx.stroke();
+  // 染血汙漬
+  ctx.fillStyle = 'rgba(140,20,30,.35)';
+  ctx.beginPath(); ctx.ellipse(-6, 2, 4.5, 6, .4, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(8, -6, 3, 4, -.4, 0, Math.PI*2); ctx.fill();
+  if(m.awake){
+    // 發紅的眼睛與黑洞嘴
+    ctx.fillStyle = '#1a0508';
+    ctx.beginPath(); ctx.ellipse(-5.5,-8, 3.4, 4.4, .15, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(5.5,-8, 3.4, 4.4, -.15, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ff3040';
+    const lookX = clamp((p1.x-m.x)*.01, -1.4, 1.4);
+    ctx.beginPath(); ctx.arc(-5.5+lookX,-8, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(5.5+lookX,-8, 1.5, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#150408';
+    ctx.beginPath(); ctx.ellipse(0, 1, 3.6, 5+Math.sin(t*9)*1.5, 0, 0, Math.PI*2); ctx.fill();
+  }else{
+    // 沉睡：閉眼＋Zzz
+    ctx.strokeStyle = '#241018'; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(-5.5,-8, 3, .2, Math.PI-.2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(5.5,-8, 3, .2, Math.PI-.2); ctx.stroke();
+    ctx.fillStyle = 'rgba(220,220,240,.85)';
+    ctx.font = 'bold 13px sans-serif'; ctx.textAlign='center';
+    const zb = Math.sin(t*2)*3;
+    ctx.fillText('z', 16, -18+zb);
+    ctx.fillText('Z', 22, -26+zb);
+  }
+  ctx.restore();
+}
+
+function drawKeyItem(k, t){
+  if(k.taken) return;
+  const bobY = Math.sin(t*2.5 + k.phase)*4;
+  // 光暈
+  ctx.drawImage(glowSpr, k.x-30, k.y-30+bobY, 60, 60);
+  if(imgReady(IMG_KEY)){
+    ctx.drawImage(IMG_KEY, k.x-15, k.y-16+bobY, 30, 30);
+  }else{
+    ctx.fillStyle = '#ffd257';
+    ctx.beginPath(); ctx.arc(k.x, k.y+bobY-5, 6, 0, Math.PI*2); ctx.fill();
+    ctx.fillRect(k.x-2, k.y+bobY, 4, 12);
+  }
+  // 閃光星
+  if(Math.sin(t*3+k.phase) > .85){
+    ctx.strokeStyle = 'rgba(255,240,190,.9)'; ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(k.x+10, k.y-12+bobY-5); ctx.lineTo(k.x+10, k.y-4+bobY-5);
+    ctx.moveTo(k.x+6, k.y-8+bobY-5); ctx.lineTo(k.x+14, k.y-8+bobY-5);
+    ctx.stroke();
+  }
+}
+
+function drawExit(t){
+  const e = exitRect;
+  if(S.doorOpen){
+    const pulse = .5 + Math.sin(t*4)*.25;
+    ctx.fillStyle = 'rgba(90,220,120,'+(0.18+pulse*.15)+')';
+    ctx.fillRect(e.x, e.y, e.w, e.h);
+    ctx.drawImage(glowSpr, e.x+e.w/2-46, e.y+e.h/2-46, 92, 92);
+    ctx.fillStyle = '#8fe0a0';
+  }else{
+    ctx.fillStyle = 'rgba(60,110,70,.5)';
+    // 鎖鏈
+    ctx.strokeStyle = '#6a6458'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(e.x+4, e.y+8); ctx.lineTo(e.x+e.w-14, e.y+e.h-8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(e.x+4, e.y+e.h-8); ctx.lineTo(e.x+e.w-14, e.y+8); ctx.stroke();
+  }
+  ctx.font = 'bold 15px "Microsoft JhengHei",sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('出口', e.x+e.w/2-6, e.y+e.h/2+5);
+  if(!S.doorOpen){
+    ctx.font = '11px sans-serif';
+    ctx.fillStyle = '#b8a890';
+    ctx.fillText('🔒 '+S.keysGot+'/2', e.x+e.w/2-6, e.y+e.h/2+22);
+  }
+}
+
+/* ---------- 繪製：黑暗與 HUD ---------- */
+function drawDarkness(t){
+  darkCtx.globalCompositeOperation = 'source-over';
+  darkCtx.clearRect(0,0,GAME_W,GAME_H);
+  darkCtx.fillStyle = 'rgba(2,0,6,.9)';
+  darkCtx.fillRect(0,0,GAME_W,GAME_H);
+  darkCtx.globalCompositeOperation = 'destination-out';
+  players.forEach(p => {
+    const flick = 1 + Math.sin(t*13+p.idx*7)*.03 + Math.sin(t*29)*.02;
+    const rad = (105 + 120*(p.san/100)) * flick;   // 理智＝手電筒亮度
+    darkCtx.drawImage(lightSpr, p.x-rad, p.y-rad, rad*2, rad*2);
+  });
+  keyItems.forEach(k => {
+    if(!k.taken) darkCtx.drawImage(lightSpr, k.x-55, k.y-55, 110, 110);
+  });
+  if(S.doorOpen){
+    const e = exitRect;
+    darkCtx.drawImage(lightSpr, e.x+e.w/2-85, e.y+e.h/2-85, 170, 170);
+  }
+  // 怪物本身微微透出紅光（讓玩家在黑暗中也能察覺）
+  if(monster.awake) darkCtx.drawImage(lightSpr, monster.x-46, monster.y-46, 92, 92);
+  ctx.drawImage(darkCv, 0, 0);
+  // 怪物紅暈疊加
+  if(monster.awake){
+    ctx.globalAlpha = .3 + Math.sin(t*5)*.1;
+    ctx.drawImage(glowSpr, monster.x-42, monster.y-42, 84, 84);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawHeart(x,y,filled){
+  ctx.save(); ctx.translate(x,y);
+  ctx.beginPath();
+  ctx.moveTo(0,3);
+  ctx.bezierCurveTo(-8,-5, -3.5,-9, 0,-4.5);
+  ctx.bezierCurveTo(3.5,-9, 8,-5, 0,3);
+  ctx.closePath();
+  ctx.fillStyle = filled ? '#e84860' : 'rgba(90,50,60,.5)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.restore();
+}
+
+function drawPlayerHUD(p, x, alignRight){
+  const w = 148;
+  const bx = alignRight ? x-w : x;
+  ctx.fillStyle = 'rgba(10,4,8,.72)';
+  ctx.strokeStyle = 'rgba(120,60,60,.6)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.roundRect(bx, 8, w, 52, 8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = p.color; ctx.font = 'bold 13px "Microsoft JhengHei",sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(p.name, bx+10, 25);
+  for(let i=0;i<3;i++) drawHeart(bx+58+i*20, 20, i < p.hearts);
+  // 理智條
+  ctx.fillStyle = 'rgba(40,30,60,.8)';
+  ctx.fillRect(bx+10, 36, w-20, 9);
+  const sw = (w-20) * p.san/100;
+  const sg = ctx.createLinearGradient(bx+10,0,bx+w-10,0);
+  sg.addColorStop(0,'#6a4fd0'); sg.addColorStop(1,'#38b0e8');
+  ctx.fillStyle = sg;
+  ctx.fillRect(bx+10, 36, sw, 9);
+  if(p.san < 35 && Math.floor(S.time*4)%2){
+    ctx.strokeStyle = '#ff5060'; ctx.strokeRect(bx+9, 35, w-18, 11);
+  }
+  ctx.fillStyle = 'rgba(230,220,240,.75)'; ctx.font = '10px sans-serif';
+  ctx.fillText('理智', bx+12, 44.2);
+}
+
+function drawHUD(t){
+  drawPlayerHUD(p1, 10, false);
+  drawPlayerHUD(p2, GAME_W-72, true);   // 右側留 62px 給靜音鈕
+  // 中央：鑰匙與時間
+  ctx.fillStyle = 'rgba(10,4,8,.72)';
+  ctx.beginPath(); ctx.roundRect(GAME_W/2-88, 8, 176, 30, 8); ctx.fill();
+  ctx.textAlign = 'center'; ctx.font = 'bold 15px "Microsoft JhengHei",sans-serif';
+  ctx.fillStyle = '#ffd257';
+  ctx.fillText('🗝 ' + S.keysGot + '/2', GAME_W/2-42, 29);
+  ctx.fillStyle = '#d8c9b8';
+  ctx.fillText(S.time.toFixed(0) + 's', GAME_W/2+40, 29);
+  // 訊息
+  if(S.msgT > 0){
+    ctx.globalAlpha = clamp(S.msgT, 0, 1);
+    ctx.fillStyle = 'rgba(10,4,8,.8)';
+    const msgW = ctx.measureText(S.msg).width + 44;
+    ctx.beginPath(); ctx.roundRect(GAME_W/2-msgW/2, 48, msgW, 32, 8); ctx.fill();
+    ctx.fillStyle = '#ffdca0'; ctx.font = 'bold 16px "Microsoft JhengHei",sans-serif';
+    ctx.fillText(S.msg, GAME_W/2, 70);
+    ctx.globalAlpha = 1;
+  }
+  // 開場操作提示浮層
+  if(S.hintT > 0 && S.time < 30){
+    ctx.globalAlpha = clamp(S.hintT/1.5, 0, .95);
+    ctx.fillStyle = 'rgba(8,2,6,.82)';
+    ctx.beginPath(); ctx.roundRect(GAME_W/2-235, GAME_H-118, 470, 64, 12); ctx.fill();
+    ctx.strokeStyle = 'rgba(160,80,80,.5)'; ctx.stroke();
+    ctx.fillStyle = '#e8d8c8'; ctx.font = '15px "Microsoft JhengHei",sans-serif';
+    if(S.coop){
+      ctx.fillText('💻 小藍：WASD ／ 小綠：方向鍵', GAME_W/2, GAME_H-92);
+      ctx.fillText('📱 左半邊拖曳控制小藍、右半邊控制小綠', GAME_W/2, GAME_H-68);
+    }else{
+      ctx.fillText('💻 WASD 或 方向鍵 移動，小綠會跟著你', GAME_W/2, GAME_H-92);
+      ctx.fillText('📱 按住螢幕任意處拖曳移動', GAME_W/2, GAME_H-68);
+    }
+    ctx.globalAlpha = 1;
+  }
+  // 虛擬搖桿視覺
+  for(const id in sticks){
+    const st = sticks[id];
+    ctx.globalAlpha = .35;
+    ctx.strokeStyle = '#e8d8c8'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(st.bx, st.by, 52, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = st.who==='p1' ? p1.color : p2.color;
+    ctx.beginPath(); ctx.arc(st.bx+st.dx*52, st.by+st.dy*52, 26, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ---------- 標題畫面 ---------- */
+const titleBtns = [
+  { x:GAME_W/2-270, y:388, w:250, h:64, label:'單人闖關', sub:'夥伴AI跟著你', coop:false },
+  { x:GAME_W/2+20,  y:388, w:250, h:64, label:'雙人同行', sub:'和朋友一起玩', coop:true }
+];
+const titleBgCv = makeCanvas(GAME_W, GAME_H);
+(function bakeTitleBg(){
+  const g = titleBgCv.getContext('2d');
+  // 雨夜天空
+  const sky = g.createLinearGradient(0,0,0,GAME_H);
+  sky.addColorStop(0,'#0a0614'); sky.addColorStop(.6,'#140a16'); sky.addColorStop(1,'#1c0c12');
+  g.fillStyle = sky; g.fillRect(0,0,GAME_W,GAME_H);
+  // 月亮
+  const moon = g.createRadialGradient(770,86,8,770,86,70);
+  moon.addColorStop(0,'rgba(230,220,200,.9)'); moon.addColorStop(.25,'rgba(220,200,180,.45)');
+  moon.addColorStop(1,'rgba(220,200,180,0)');
+  g.fillStyle = moon; g.beginPath(); g.arc(770,86,70,0,Math.PI*2); g.fill();
+  g.fillStyle = '#ddd2c0'; g.beginPath(); g.arc(770,86,22,0,Math.PI*2); g.fill();
+  g.fillStyle = 'rgba(160,150,140,.5)';
+  g.beginPath(); g.arc(763,80,5,0,Math.PI*2); g.fill();
+  g.beginPath(); g.arc(777,93,3.4,0,Math.PI*2); g.fill();
+  // 遠山剪影（視差感遠景）
+  g.fillStyle = '#0d0710';
+  g.beginPath(); g.moveTo(0,300);
+  for(let x=0;x<=GAME_W;x+=60) g.lineTo(x, 290+Math.sin(x*.013)*26);
+  g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
+  // 飯店建築剪影（中景）
+  g.fillStyle = '#160a12';
+  g.fillRect(310,150,340,330);
+  g.fillRect(280,190,30,290); g.fillRect(650,190,30,290);
+  // 尖屋頂
+  g.beginPath(); g.moveTo(300,152); g.lineTo(480,86); g.lineTo(660,152); g.closePath(); g.fill();
+  g.fillRect(455,60,50,100);
+  g.beginPath(); g.moveTo(448,64); g.lineTo(480,34); g.lineTo(512,64); g.closePath(); g.fill();
+  // 窗（少數幾扇亮著詭異的光）
+  for(let r=0;r<5;r++) for(let c=0;c<7;c++){
+    const wx = 335+c*45, wy = 180+r*54;
+    const lit = (r*7+c)%9 === 4;
+    g.fillStyle = lit ? 'rgba(220,140,60,.75)' : '#0a0409';
+    g.fillRect(wx, wy, 22, 30);
+    g.strokeStyle = 'rgba(80,50,50,.6)'; g.lineWidth = 1.5;
+    g.strokeRect(wx, wy, 22, 30);
+    if(lit){
+      g.fillStyle = 'rgba(20,5,8,.9)';
+      g.beginPath(); g.arc(wx+11, wy+18, 5, Math.PI, 0); g.fill(); // 窗裡的人影
+      g.fillRect(wx+7, wy+18, 8, 12);
+    }
+  }
+  // 大門
+  g.fillStyle = '#0c0508'; g.fillRect(452,410,56,70);
+  g.fillStyle = 'rgba(200,60,50,.5)'; g.fillRect(456,414,48,4);
+  // 前景圍籬（近景）
+  g.fillStyle = '#0a0509';
+  for(let x=0;x<GAME_W;x+=26){ g.fillRect(x, 470+Math.sin(x)*3, 8, 70); }
+  g.fillRect(0,500,GAME_W,40);
+})();
+const rain = [];
+for(let i=0;i<90;i++) rain.push({x:rnd(0,GAME_W), y:rnd(0,GAME_H), s:rnd(300,520), l:rnd(9,20)});
+function updateRain(dt){
+  for(const d of rain){
+    d.y += d.s*dt; d.x -= d.s*dt*.18;
+    if(d.y > GAME_H){ d.y = -20; d.x = rnd(0,GAME_W+120); }
+  }
+}
+function drawRain(alpha){
+  ctx.strokeStyle = 'rgba(150,170,210,'+(alpha||.34)+')'; ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  for(const d of rain){ ctx.moveTo(d.x, d.y); ctx.lineTo(d.x-d.l*.18, d.y+d.l); }
+  ctx.stroke();
+}
+
+/* ---------- 狀態機 ---------- */
+let state = null, stateT = 0;
+function setState(s){ state = s; stateT = 0; if(s.enter) s.enter(); }
+
+const titleState = {
+  enter(){},
+  update(dt){ updateRain(dt); },
+  draw(t){
+    ctx.drawImage(titleBgCv, 0, 0);
+    drawRain(.34);
+    // 標題（血色，隨呼吸明滅）
+    const flick = .85 + Math.sin(t*1.6)*.12 + (Math.random()<.02 ? -.3 : 0);
+    ctx.textAlign = 'center';
+    ctx.globalAlpha = flick;
+    ctx.font = 'bold 64px "Microsoft JhengHei",serif';
+    ctx.fillStyle = '#2a0508';
+    ctx.fillText('詭 異 飯 店', GAME_W/2+3, 153);
+    ctx.fillStyle = '#b81a22';
+    ctx.fillText('詭 異 飯 店', GAME_W/2, 150);
+    ctx.globalAlpha = 1;
+    ctx.font = '17px "Microsoft JhengHei",serif';
+    ctx.fillStyle = '#a89078';
+    ctx.fillText('避雨誤入廢棄飯店……找到 2 把鑰匙，兩人一起活著出去', GAME_W/2, 192);
+    // 操作說明
+    ctx.font = '15px "Microsoft JhengHei",sans-serif';
+    ctx.fillStyle = '#c8b8a8';
+    ctx.fillText('💻 電腦：WASD（小藍）＋ 方向鍵（小綠）移動', GAME_W/2, 300);
+    ctx.fillText('📱 平板：按住螢幕拖曳移動（雙人＝左右半邊各控一人）', GAME_W/2, 328);
+    if(best){
+      ctx.fillStyle = '#ffd257';
+      ctx.fillText('🏆 最快逃脫紀錄：' + best.time + ' 秒（' + best.grade + ' 級）', GAME_W/2, 358);
+    }
+    // 按鈕
+    titleBtns.forEach((b,i) => {
+      const hover = Math.sin(t*3+i)*2;
+      ctx.fillStyle = i===0 ? 'rgba(40,80,130,.85)' : 'rgba(110,30,36,.85)';
+      ctx.strokeStyle = i===0 ? '#4f9fe8' : '#d84850';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(b.x, b.y+hover, b.w, b.h, 12); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = '#f0e4d4'; ctx.font = 'bold 23px "Microsoft JhengHei",sans-serif';
+      ctx.fillText(b.label, b.x+b.w/2, b.y+hover+29);
+      ctx.font = '13px "Microsoft JhengHei",sans-serif';
+      ctx.fillStyle = 'rgba(230,215,200,.75)';
+      ctx.fillText(b.sub + (i===0?'（按 1）':'（按 2）'), b.x+b.w/2, b.y+hover+50);
+    });
+    ctx.fillStyle = 'rgba(160,140,120,.5)';
+    ctx.font = '12px sans-serif';
+    ctx.fillText('AI未來創作營隊 · JOJO老師專業升級版', GAME_W/2, GAME_H-14);
+  },
+  tap(x,y){
+    for(const b of titleBtns){
+      if(x>=b.x && x<=b.x+b.w && y>=b.y-6 && y<=b.y+b.h+6){
+        sfx.blip(); resetGame(b.coop); setState(playState); return true;
+      }
+    }
+    return false;
+  },
+  key(code){
+    if(code==='Digit1' || code==='Numpad1' || code==='Space' || code==='Enter'){
+      sfx.blip(); resetGame(false); setState(playState);
+    }else if(code==='Digit2' || code==='Numpad2'){
+      sfx.blip(); resetGame(true); setState(playState);
+    }
+  }
+};
+
+const playState = {
+  enter(){},
+  update(dt){
+    if(S.over) { updateParts(dt); updateFloats(dt); return; }
+    S.time += dt;
+    S.hintT = Math.max(0, S.hintT - dt);
+    S.msgT = Math.max(0, S.msgT - dt);
+    scareT = Math.max(0, scareT - dt);
+
+    // 玩家一：鍵盤（單人模式時 WASD 與方向鍵都控制小藍）＋觸控
+    let dx1 = 0, dy1 = 0;
+    if(keys['KeyW']) dy1--; if(keys['KeyS']) dy1++;
+    if(keys['KeyA']) dx1--; if(keys['KeyD']) dx1++;
+    if(!S.coop){
+      if(keys['ArrowUp']) dy1--; if(keys['ArrowDown']) dy1++;
+      if(keys['ArrowLeft']) dx1--; if(keys['ArrowRight']) dx1++;
+    }
+    const st1 = stickDir('p1');
+    if(st1){ dx1 += st1.x; dy1 += st1.y; }
+    movePlayer(p1, dx1, dy1, dt);
+
+    if(S.coop){
+      let dx2 = 0, dy2 = 0;
+      if(keys['ArrowUp']) dy2--; if(keys['ArrowDown']) dy2++;
+      if(keys['ArrowLeft']) dx2--; if(keys['ArrowRight']) dx2++;
+      const st2 = stickDir('p2');
+      if(st2){ dx2 += st2.x; dy2 += st2.y; }
+      movePlayer(p2, dx2, dy2, dt);
+    }else{
+      updateCompanion(dt);
+    }
+
+    updateMonster(dt);
+    updateSanity(dt);
+    updatePickups();
+    checkWin();
+    updateParts(dt);
+    updateFloats(dt);
+  },
+  draw(t){
+    ctx.fillStyle = '#050208'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.save();
+    if(shake > .2) ctx.translate(rnd(-shake,shake), rnd(-shake,shake));
+    ctx.drawImage(floorCv, 0, 0);
+    drawExit(t);
+    keyItems.forEach(k => drawKeyItem(k, t));
+    // 依 y 排序繪製角色，前後遮擋正確
+    const actors = [p1, p2, monster].sort((a,b)=>a.y-b.y);
+    actors.forEach(a => { if(a === monster) drawMonster(t); else drawPlayer(a, t); });
+    drawParts();
+    drawDarkness(t);
+    ctx.drawImage(vigCv, 0, 0);
+    drawFloats();
+    ctx.restore();
+    // 低理智紅色脈動
+    const lowSan = Math.min(p1.san, p2.san);
+    if(lowSan < 40){
+      ctx.globalAlpha = (40-lowSan)/40 * (.16 + Math.sin(t*6)*.08);
+      ctx.fillStyle = '#900010'; ctx.fillRect(0,0,GAME_W,GAME_H);
+      ctx.globalAlpha = 1;
+    }
+    // 受擊驚嚇畫面
+    if(redFlash > 0){
+      ctx.globalAlpha = clamp(redFlash*1.6, 0, .85);
+      ctx.fillStyle = '#3a0008'; ctx.fillRect(0,0,GAME_W,GAME_H);
+      ctx.globalAlpha = clamp(scareT, 0, 1);
+      ctx.fillStyle = '#ff2030'; ctx.textAlign = 'center';
+      ctx.font = 'bold 46px "Microsoft JhengHei",serif';
+      ctx.fillText('它 抓 住 了 你', GAME_W/2, GAME_H/2+10);
+      ctx.globalAlpha = 1;
+    }
+    drawHUD(t);
+  }
+};
+
+const endState = {
+  enter(){ winkT = 0; },
+  update(dt){ winkT += dt; updateParts(dt); updateRain(dt); },
+  draw(t){
+    playState.draw(t);
+    const a = clamp(winkT*1.8, 0, .86);
+    ctx.fillStyle = 'rgba(4,0,6,'+a+')'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    if(winkT < .25) return;
+    const ea = easeOutCubic(clamp((winkT-.2)/.5, 0, 1));
+    ctx.save();
+    ctx.translate(0, (1-ea)*40);
+    ctx.globalAlpha = ea;
+    ctx.textAlign = 'center';
+    if(endInfo.win){
+      ctx.font = 'bold 54px "Microsoft JhengHei",serif';
+      ctx.fillStyle = '#7de08a';
+      ctx.fillText('生 還！', GAME_W/2, 150);
+      ctx.font = '17px "Microsoft JhengHei",sans-serif';
+      ctx.fillStyle = '#d8c9b8';
+      ctx.fillText('你們一起衝出了大門。回頭望去，飯店靜靜地矗立在雨夜中……', GAME_W/2, 196);
+      ctx.font = 'bold 30px "Microsoft JhengHei",sans-serif';
+      ctx.fillStyle = '#ffd257';
+      ctx.fillText('評級 ' + endInfo.grade, GAME_W/2, 258);
+      ctx.font = '19px "Microsoft JhengHei",sans-serif';
+      ctx.fillStyle = '#e8d8c8';
+      ctx.fillText('逃脫時間 ' + endInfo.time.toFixed(1) + ' 秒 ｜ 剩餘 ❤ ' + endInfo.hearts, GAME_W/2, 296);
+      if(endInfo.newBest){
+        ctx.fillStyle = '#ff6cc7';
+        ctx.fillText('★ 新紀錄！', GAME_W/2, 330);
+      }else if(best){
+        ctx.fillStyle = 'rgba(216,201,184,.7)';
+        ctx.fillText('最快紀錄 ' + best.time + ' 秒', GAME_W/2, 330);
+      }
+    }else{
+      ctx.font = 'bold 50px "Microsoft JhengHei",serif';
+      ctx.fillStyle = '#c83040';
+      ctx.fillText('被 抓 住 了……', GAME_W/2, 160);
+      ctx.font = '17px "Microsoft JhengHei",sans-serif';
+      ctx.fillStyle = '#d8c9b8';
+      ctx.fillText(endInfo.text, GAME_W/2, 208);
+      ctx.fillStyle = '#a8c8a8';
+      ctx.fillText('沒關係！記住「它」走的路線，再挑戰一次一定行！', GAME_W/2, 244);
+      ctx.fillText('已拿到鑰匙 ' + S.keysGot + '/2 ｜ 存活 ' + S.time.toFixed(0) + ' 秒', GAME_W/2, 278);
+    }
+    // 再玩一次按鈕
+    const b = endState.btn;
+    ctx.fillStyle = 'rgba(110,30,36,.9)';
+    ctx.strokeStyle = '#d84850'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 12); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#f0e4d4'; ctx.font = 'bold 23px "Microsoft JhengHei",sans-serif';
+    ctx.fillText('再玩一次', GAME_W/2, b.y+37);
+    ctx.font = '13px "Microsoft JhengHei",sans-serif';
+    ctx.fillStyle = 'rgba(230,215,200,.7)';
+    ctx.fillText('點擊 或 按空白鍵 ｜ 按 M 回到標題', GAME_W/2, b.y+b.h+24);
+    ctx.restore();
+  },
+  btn: { x:GAME_W/2-120, y:392, w:240, h:58 },
+  tap(x,y){
+    if(winkT < .5) return true;      // 防誤觸冷卻
+    const b = this.btn;
+    if(x>=b.x-10 && x<=b.x+b.w+10 && y>=b.y-10 && y<=b.y+b.h+10){
+      sfx.blip(); resetGame(S.coop); setState(playState);
+    }
+    return true;
+  },
+  key(code){
+    if(winkT < .5) return;
+    if(code==='Space' || code==='Enter'){ sfx.blip(); resetGame(S.coop); setState(playState); }
+    if(code==='KeyM' || code==='Escape'){ setState(titleState); }
+  }
+};
+
+/* ---------- 主迴圈（固定時間步進） ---------- */
+const STEP = 1/60;
+let last = performance.now(), acc = 0, tGlobal = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, .1);
+  last = now;
+  while(acc >= STEP){
+    acc -= STEP;
+    if(freeze > 0){ freeze -= STEP; continue; }   // hit-stop：暫停邏輯照常渲染
+    shake *= Math.pow(.001, STEP);
+    redFlash = Math.max(0, redFlash - STEP);
+    tGlobal += STEP;
+    state.update(STEP);
+  }
+  state.draw(tGlobal);
+}
+setState(titleState);
+requestAnimationFrame(frame);
+
+/* ---------- QA 掛鉤（無頭瀏覽器可玩性驗證用，不影響遊戲） ---------- */
+window.__QA = {
+  snap(){ return { scene: state===titleState?'title':(state===playState?'play':'end'),
+    p1x:p1.x, p1y:p1.y, p2x:p2.x, keys:S.keysGot, time:S.time, coop:S.coop,
+    hearts:p1.hearts, monsterAwake:monster.awake }; },
+  forceEnd(win){ S.over = true; endGame(!!win, 'QA'); }
+};
+
+})();
+</script>
+</body>
+</html>
