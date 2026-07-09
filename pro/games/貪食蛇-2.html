@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -139,7 +139,7 @@
     <h1>貪食蛇<span class="en">S N A K E</span></h1>
     <div class="sub">賽博夜城版：牆壁是傳送門，穿牆自由滑行！<br>連吃能量方塊疊 COMBO，疊到 <b style="color:#fff700">×5 進入幻影駭入</b>穿透一切！<br>💣 吃 EMP 可以炸光紅色防火牆。</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.75">🖱️ 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>👆 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
+    <div class="sub" style="opacity:0.75">💻 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>📱 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -208,11 +208,18 @@ function shade(hex, f) {
 }
 
 // ----- Web Audio 合成音效 -----
-let AC = null;
+let AC = null, master = null;
 let muted = localStorage.getItem('snake2-muted') === '1';
 function audio() {
   if (!AC) {
-    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      master = AC.createGain(); master.gain.value = 0.85;
+      master.connect(comp); comp.connect(AC.destination);
+    } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
@@ -223,13 +230,14 @@ addEventListener('keydown', audio, { once: true });
 function beep(freq, dur, type, vol, slide) {
   if (muted) return;
   const ac = audio(); if (!ac) return;
+  freq *= 0.98 + Math.random() * 0.04;  // ±2% 音高隨機，連發不呆板
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(freq, ac.currentTime);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(master);
   o.start();
   o.stop(ac.currentTime + dur);
 }
@@ -244,7 +252,7 @@ function noiseBurst(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.2, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(ac.destination);
+  src.connect(g).connect(master);
   src.start();
 }
 const sfx = {
@@ -1197,6 +1205,7 @@ function drawSnake() {
   ctx.moveTo(-10, 0); ctx.lineTo(-2, 0);
   ctx.stroke();
   ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawParts() {
@@ -1276,6 +1285,19 @@ function drawHUD() {
     ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
     ctx.fillText('⚡ 電漿核心 +30！剩 ' + Math.max(0, food.timer).toFixed(1) + 's', GAME_W / 2, 84);
   }
+  // 幻影模式倒數條
+  if (phaseT > 0 && mode === 'play') {
+    ctx.fillStyle = '#ffffff';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur = 8;
+    ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('👻 幻影駭入 ' + Math.max(0, phaseT).toFixed(1) + 's', GAME_W / 2, 110);
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
+    ctx.fillRect(GAME_W / 2 - 70, 114, 140, 5);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(GAME_W / 2 - 70, 114, 140 * Math.max(0, phaseT / 5), 5);
+  }
 }
 
 function draw() {
@@ -1286,9 +1308,44 @@ function draw() {
   drawBoard();
   drawObstacles();
   drawFood();
+  drawEmp();
   drawSnake();
   drawParts();
   drawFloats();
+
+  // 開場操作提示
+  if (hintT > 0 && mode === 'play' && readyT <= 0) {
+    ctx.globalAlpha = Math.min(1, hintT);
+    ctx.fillStyle = 'rgba(13,2,33,0.85)';
+    rr(GAME_W / 2 - 235, GAME_H - 96, 470, 40, 12);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,240,255,0.5)';
+    ctx.lineWidth = 1.5;
+    rr(GAME_W / 2 - 235, GAME_H - 96, 470, 40, 12);
+    ctx.stroke();
+    ctx.fillStyle = PAL.white;
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 17px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('👆 往想去的方向點一下／滑動，或按方向鍵', GAME_W / 2, GAME_H - 70);
+    ctx.globalAlpha = 1;
+  }
+
+  // 準備連線 → GO！
+  if (readyT > 0 && mode === 'play') {
+    const go = readyT <= 0.8;
+    const pop = 1 + (readyT % 0.8) * 0.25;
+    ctx.save();
+    ctx.translate(GAME_W / 2, BOARD_Y + ROWS * CELL / 2);
+    ctx.scale(pop, pop);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold ' + (go ? 64 : 44) + 'px "Microsoft JhengHei", sans-serif';
+    ctx.shadowColor = go ? PAL.yellow : PAL.cyan;
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = go ? PAL.yellow : PAL.cyan;
+    ctx.fillText(go ? 'GO！' : '準備連線…', 0, 16);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+  }
 
   ctx.restore();
 
