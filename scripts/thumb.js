@@ -10,10 +10,33 @@ const { thumbSlug } = require('./slug');
 const ROOT = path.resolve(__dirname, '..');
 const CHROME = process.argv[2];
 const FORCE = process.argv.includes('--force');
+const pickIdx = process.argv.indexOf('--pick'); // 搭配 --only 使用：強制取第 N 個時間點的畫面（0/1/2）
+const PICK = pickIdx > -1 ? parseInt(process.argv[pickIdx + 1], 10) : null;
 const onlyIdx = process.argv.indexOf('--only');
-const only = onlyIdx > -1 ? process.argv.slice(onlyIdx + 1) : null;
+const only = onlyIdx > -1 ? process.argv.slice(onlyIdx + 1).filter(a => a !== '--pick' && a !== String(PICK)) : null;
 
 async function grabFrame(page) {
+  // 文章式頁面的動畫常在下方：先把最大的主畫面元素捲進視窗中央
+  const scrolled = await page.evaluate(() => {
+    function area(el) {
+      const r = el.getBoundingClientRect();
+      return Math.max(0, r.width) * Math.max(0, r.height);
+    }
+    let best = null, bestArea = 0;
+    for (const el of document.querySelectorAll('canvas, svg, video')) {
+      const a = area(el);
+      if (a > bestArea) { bestArea = a; best = el; }
+    }
+    if (!best) return false;
+    const r = best.getBoundingClientRect();
+    if (r.top > innerHeight * 0.7 || r.bottom < innerHeight * 0.3) {
+      best.scrollIntoView({ block: 'center', behavior: 'instant' });
+      return true;
+    }
+    return false;
+  });
+  if (scrolled) await page.waitForTimeout(400);
+
   // 找最大的 canvas/svg/video，只截主畫面
   const target = await page.evaluate(() => {
     function area(el) {
@@ -25,8 +48,11 @@ async function grabFrame(page) {
       const a = area(el);
       if (a > bestArea) { bestArea = a; best = el; }
     }
-    if (!best || bestArea < innerWidth * innerHeight * 0.15) return null;
+    // 夠大的主畫面才裁切：占視窗 8% 以上，或本身至少 300x180
+    if (!best) return null;
     const r = best.getBoundingClientRect();
+    const bigEnough = bestArea >= innerWidth * innerHeight * 0.08 || (r.width >= 300 && r.height >= 180);
+    if (!bigEnough) return null;
     return { x: r.x, y: r.y, w: r.width, h: r.height };
   });
   const vp = page.viewportSize();
@@ -105,6 +131,10 @@ async function shootOne(ctx, scorer, htmlPath, outPath) {
     await page.waitForTimeout(6000);
     candidates.push(await grabFrame(page));
 
+    if (PICK !== null && candidates[PICK]) {
+      fs.writeFileSync(outPath, candidates[PICK]);
+      return;
+    }
     // 加權：中後段（遊戲進行中）的畫面優先，開頭畫面（常是文字說明）權重最低
     const WEIGHTS = [1.0, 1.35, 1.5];
     let best = null, bestScore = -1;
