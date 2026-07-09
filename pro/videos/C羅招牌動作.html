@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -168,12 +168,12 @@ function noiseBurst(dur, f0, f1, vol){
   src.start();
 }
 const sfx = {
-  thump(){ tone(95, 0.16, 'sine', 0.4, -60); },
+  thump(){ tone(95, 0.16, 'sine', 0.3, -60); },
   swoosh(){ noiseBurst(0.28, 500, 2400, 0.22); },
   ping(){ tone(1180, 0.09, 'triangle', 0.14); setTimeout(() => tone(1580, 0.14, 'triangle', 0.1), 60); },
   whistle(){ tone(2350, 0.14, 'square', 0.045); setTimeout(() => tone(2350, 0.3, 'square', 0.045), 200); },
   roar(k){ exciteBoost = Math.max(exciteBoost, k); noiseBurst(0.9, 200, 700, 0.12 * k); },
-  chant(){ tone(210, 0.45, 'sawtooth', 0.16, -110); noiseBurst(0.5, 300, 900, 0.14); },
+  chant(){ tone(210, 0.45, 'sawtooth', 0.12, -110); noiseBurst(0.5, 300, 900, 0.12); },
   pop(){ noiseBurst(0.12, 900, 2600, 0.18); },
   jump(){ tone(220, 0.18, 'square', 0.06, 340); }
 };
@@ -222,7 +222,7 @@ function updateParts(dt){
     }
   }
   for (let i = parts.length - 1; i >= 0; i--) if (parts[i].life <= 0) parts.splice(i, 1);
-  if (parts.length > 700) parts.splice(0, parts.length - 700);
+  if (parts.length > 400) parts.splice(0, parts.length - 400);
 }
 function drawParts(g){
   for (const p of parts){
@@ -249,12 +249,30 @@ function drawParts(g){
 /* ---------- 球場背景（多層視差） ---------- */
 let wall = 0;
 const bulbs = [];
+/* v3：靜態漸層快取（避免每幀重建 ~10 個 gradient） */
+let G_sky = null, G_ad = null, G_grass = null, G_pool = null, G_band = null;
+const G_cone = {};
+function gradInit(){
+  if (G_sky) return;
+  G_sky = ctx.createLinearGradient(0, 0, 0, 240);
+  G_sky.addColorStop(0, '#05070f'); G_sky.addColorStop(1, '#101a33');
+  G_ad = ctx.createLinearGradient(0, 372, 0, 402);
+  G_ad.addColorStop(0, '#0f2e1d'); G_ad.addColorStop(1, '#0a2013');
+  G_grass = ctx.createLinearGradient(0, 430, 0, 540);
+  G_grass.addColorStop(0, '#1e6338'); G_grass.addColorStop(1, '#123f26');
+  G_pool = ctx.createRadialGradient(480, 470, 40, 480, 470, 460);
+  G_pool.addColorStop(0, 'rgba(255,246,214,0.07)'); G_pool.addColorStop(1, 'rgba(255,246,214,0)');
+  for (const lx of [-140, 320, 760, 1220]){
+    const cg = ctx.createLinearGradient(lx, 30, lx, 430);
+    cg.addColorStop(0, 'rgba(255,243,196,0.10)'); cg.addColorStop(1, 'rgba(255,243,196,0)');
+    G_cone[lx] = cg;
+  }
+}
 function drawStadium(t){
+  gradInit();
   // 天空
   applyCam(0.05);
-  let gr = ctx.createLinearGradient(0, 0, 0, 240);
-  gr.addColorStop(0, '#05070f'); gr.addColorStop(1, '#101a33');
-  ctx.fillStyle = gr; ctx.fillRect(-600, -200, 2200, 460);
+  ctx.fillStyle = G_sky; ctx.fillRect(-600, -200, 2200, 460);
   for (let i = 0; i < 40; i++){
     const sx = -500 + rnd(i) * 1900, sy = -80 + rnd(i + 50) * 200;
     ctx.globalAlpha = 0.25 + 0.5 * Math.abs(Math.sin(wall * 1.5 + i));
@@ -268,13 +286,11 @@ function drawStadium(t){
     ctx.strokeStyle = '#1d2740'; ctx.lineWidth = 7;
     ctx.beginPath(); ctx.moveTo(lx, 152); ctx.lineTo(lx, 36); ctx.stroke();
     ctx.fillStyle = '#2a3752'; ctx.fillRect(lx - 30, 18, 60, 22);
-    ctx.save(); ctx.shadowColor = '#fff3c4'; ctx.shadowBlur = 18;
+    ctx.fillStyle = 'rgba(255,243,196,0.35)';
+    ctx.fillRect(lx - 30, 18, 60, 14);
     ctx.fillStyle = '#fff3c4';
     for (let i = 0; i < 4; i++) ctx.fillRect(lx - 26 + i * 14, 22, 9, 6);
-    ctx.restore();
-    const cg = ctx.createLinearGradient(lx, 30, lx, 430);
-    cg.addColorStop(0, 'rgba(255,243,196,0.10)'); cg.addColorStop(1, 'rgba(255,243,196,0)');
-    ctx.fillStyle = cg;
+    ctx.fillStyle = G_cone[lx];
     ctx.beginPath(); ctx.moveTo(lx - 28, 30); ctx.lineTo(lx + 28, 30);
     ctx.lineTo(lx + 130, 430); ctx.lineTo(lx - 130, 430); ctx.closePath(); ctx.fill();
   }
@@ -287,9 +303,7 @@ function drawStadium(t){
   ctx.restore();
   // 廣告看板
   applyCam(0.6);
-  gr = ctx.createLinearGradient(0, 372, 0, 402);
-  gr.addColorStop(0, '#0f2e1d'); gr.addColorStop(1, '#0a2013');
-  ctx.fillStyle = gr; ctx.fillRect(-500, 372, 2000, 30);
+  ctx.fillStyle = G_ad; ctx.fillRect(-500, 372, 2000, 30);
   ctx.fillStyle = 'rgba(255,209,102,0.75)';
   ctx.font = 'bold 15px "Noto Sans TC",sans-serif'; ctx.textAlign = 'left';
   for (let x = -480; x < 1500; x += 250) ctx.fillText('SIUUU ・ 招牌動作圖鑑', x, 393);
@@ -302,24 +316,24 @@ function drawStadium(t){
   ctx.restore();
   // 草皮
   applyCam(1);
-  gr = ctx.createLinearGradient(0, 430, 0, 540);
-  gr.addColorStop(0, '#1e6338'); gr.addColorStop(1, '#123f26');
-  ctx.fillStyle = gr; ctx.fillRect(-500, 430, 2000, 230);
+  ctx.fillStyle = G_grass; ctx.fillRect(-500, 430, 2000, 230);
   for (let x = -500; x < 1500; x += 96){
     if (((x / 96) | 0) % 2 === 0) continue;
     ctx.fillStyle = 'rgba(255,255,255,0.035)'; ctx.fillRect(x, 430, 96, 220);
   }
   ctx.strokeStyle = 'rgba(244,244,244,0.55)'; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.moveTo(-500, 434); ctx.lineTo(1500, 434); ctx.stroke();
-  const pool = ctx.createRadialGradient(480, 470, 40, 480, 470, 460);
-  pool.addColorStop(0, 'rgba(255,246,214,0.07)'); pool.addColorStop(1, 'rgba(255,246,214,0)');
-  ctx.fillStyle = pool; ctx.fillRect(-500, 420, 2000, 240);
+  ctx.fillStyle = G_pool; ctx.fillRect(-500, 420, 2000, 240);
   ctx.restore();
 }
 function crowdBand(y0, y1, rows, sd, cols, layer, t){
-  const g = ctx.createLinearGradient(0, y0, 0, y1);
-  g.addColorStop(0, '#141b2e'); g.addColorStop(1, '#1b2338');
-  ctx.fillStyle = g; ctx.fillRect(-500, y0, 2000, y1 - y0);
+  if (!G_band) G_band = {};
+  if (!G_band[y0]){
+    const g = ctx.createLinearGradient(0, y0, 0, y1);
+    g.addColorStop(0, '#141b2e'); g.addColorStop(1, '#1b2338');
+    G_band[y0] = g;
+  }
+  ctx.fillStyle = G_band[y0]; ctx.fillRect(-500, y0, 2000, y1 - y0);
   const ex = Math.min(1, excite + exciteBoost);
   for (let r = 0; r < rows; r++){
     const y = lerp(y0 + 10, y1 - 12, r / (rows - 1));
@@ -337,11 +351,12 @@ function crowdBand(y0, y1, rows, sd, cols, layer, t){
     bulbs.push({ x: -450 + Math.random() * 1850, y: y0 + Math.random() * (y1 - y0), l: layer, life: 0.3 });
   for (const b of bulbs){
     if (b.l !== layer) continue;
-    ctx.globalAlpha = clamp01(b.life / 0.3);
-    ctx.save(); ctx.shadowColor = '#ffffff'; ctx.shadowBlur = 14;
+    const ba = clamp01(b.life / 0.3);
     ctx.fillStyle = '#ffffff';
+    ctx.globalAlpha = ba * 0.3;
+    ctx.beginPath(); ctx.arc(b.x, b.y, 6.5, 0, 6.283); ctx.fill();
+    ctx.globalAlpha = ba;
     ctx.beginPath(); ctx.arc(b.x, b.y, 2.4, 0, 6.283); ctx.fill();
-    ctx.restore();
   }
   ctx.globalAlpha = 1;
 }
@@ -684,11 +699,11 @@ function overlays(sc, t){
    ============================================================ */
 let S = {};
 const s0 = {
-  dur: 5, act: '第一幕・傳奇登場',
-  subs: [{ a: 1.6, b: 4.2, tx: '二十年，他把幾個瞬間，變成全世界的暗號。' }],
+  dur: 3.6, act: '第一幕・傳奇登場',
+  subs: [{ a: 1.0, b: 3.2, tx: '二十年，他把幾個瞬間，變成全世界的暗號。' }],
   init(){ cam.tx = 0; cam.ty = 0; cam.tz = 1.14; excite = 0.3; },
   evts: [{ t: 0.3, fn(){ sfx.whistle(); } }],
-  update(t){ cam.tz = lerp(1.14, 1.0, eO(clamp01(t / 4.5))); },
+  update(t){ cam.tz = lerp(1.14, 1.0, eO(clamp01(t / 3.0))); },
   draw(t){
     drawStadium(t);
     applyCam(1);
@@ -718,26 +733,26 @@ const s0 = {
 };
 /* --- 電梯球 --- */
 const s1 = {
-  dur: 8, act: '第二幕・電梯球',
+  dur: 6.3, act: '第二幕・電梯球',
   subs: [
     { a: 0.7, b: 2.7, zh: '電梯球', en: 'The Knuckleball Free Kick' },
     { a: 3.6, b: 5.1, tx: '幾乎不旋轉的球，會在空中突然下墜——' },
-    { a: 5.5, b: 7.5, tx: '守門員，只能目送。' }
+    { a: 5.2, b: 6.0, tx: '守門員，只能目送。' }
   ],
   init(){
     S = { hist: [] };
     cam.tx = 60; cam.ty = 0; cam.tz = 1.04; camSnap(); excite = 0.3;
   },
-  timeScale(t){ return (t > 4.0 && t < 4.6) ? 0.4 : 1; },
+  timeScale(t){ if (t < 1.9) return 1.7; return (t > 4.0 && t < 4.6) ? 0.45 : 1; },
   evts: [
     { t: 3.24, fn(){ sfx.swoosh(); sfx.thump(); shakeMag = 6; flashA = 0.35; freeze = 0.09; } },
     { t: 5.0, fn(){ netHit = wall; sfx.ping(); sfx.roar(1); shakeMag = 8; spawnSpark(846, GY - 118, 14, 200); } },
-    { t: 5.9, fn(){ collectBadge(); } }
+    { t: 5.5, fn(){ collectBadge(); } }
   ],
   update(t){
     if (t < 3){ cam.tx = 60 + t * 14; cam.tz = 1.04 + t * 0.02; }
     else if (t < 5){ cam.tx = lerp(100, 320, eIO(seg(t, 3.2, 4.9))); cam.tz = lerp(1.1, 1.12, seg(t, 3.6, 4.6)); cam.ty = lerp(0, -22, seg(t, 3.8, 4.7)); }
-    else { cam.tx = lerp(320, 180, seg(t, 5.2, 7)); cam.tz = lerp(1.12, 1.02, seg(t, 5.2, 7)); cam.ty = lerp(-22, 0, seg(t, 5.2, 7)); }
+    else { cam.tx = lerp(320, 180, seg(t, 5.1, 6.2)); cam.tz = lerp(1.12, 1.02, seg(t, 5.1, 6.2)); cam.ty = lerp(-22, 0, seg(t, 5.1, 6.2)); }
     excite = t > 5 ? 0.85 : 0.3;
   },
   draw(t){
@@ -812,13 +827,13 @@ const s1 = {
 };
 /* --- 滯空頭槌 --- */
 const s2 = {
-  dur: 7, act: '第二幕・滯空頭槌',
+  dur: 5.6, act: '第二幕・滯空頭槌',
   subs: [
     { a: 0.5, b: 2.3, zh: '滯空頭槌', en: 'The Hang-Time Header' },
-    { a: 4.3, b: 6.5, tx: '起跳之後，時間為他慢了半秒。' }
+    { a: 3.9, b: 5.3, tx: '起跳之後，時間為他慢了半秒。' }
   ],
   init(){ S = {}; cam.tx = 160; cam.ty = 0; cam.tz = 1.02; camSnap(); excite = 0.35; },
-  timeScale(t){ return (t > 2.45 && t < 2.95) ? 0.35 : 1; },
+  timeScale(t){ if (t < 1.1) return 1.5; return (t > 2.45 && t < 2.95) ? 0.4 : 1; },
   evts: [
     { t: 0.3, fn(){ sfx.swoosh(); } },
     { t: 2.15, fn(){ sfx.jump(); spawnDust(520, GY, 6); } },
@@ -889,13 +904,13 @@ const s2 = {
 };
 /* --- 倒掛金鈎 --- */
 const s3 = {
-  dur: 8, act: '第二幕・倒掛金鈎',
+  dur: 6.2, act: '第二幕・倒掛金鈎',
   subs: [
     { a: 0.5, b: 2.1, zh: '倒掛金鈎', en: 'The Bicycle Kick' },
-    { a: 5.4, b: 7.5, tx: '連對手的球迷，都起立鼓掌。' }
+    { a: 4.9, b: 5.9, tx: '連對手的球迷，都起立鼓掌。' }
   ],
   init(){ S = { hist: [] }; cam.tx = 180; cam.ty = 0; cam.tz = 1.02; camSnap(); excite = 0.4; },
-  timeScale(t){ return (t > 3.0 && t < 3.9) ? 0.32 : 1; },
+  timeScale(t){ if (t < 1.3) return 1.6; return (t > 3.0 && t < 3.7) ? 0.45 : 1; },
   evts: [
     { t: 0.5, fn(){ sfx.swoosh(); } },
     { t: 2.05, fn(){ sfx.jump(); spawnDust(600, GY, 7); } },
@@ -970,10 +985,10 @@ const s3 = {
 };
 /* --- Chop 變向 --- */
 const s4 = {
-  dur: 6, act: '第二幕・Chop 變向',
+  dur: 4.6, act: '第二幕・Chop 變向',
   subs: [
     { a: 0.4, b: 2.2, zh: 'Chop 變向切球', en: 'The Chop Turn' },
-    { a: 3.4, b: 5.5, tx: '重心，是可以被偷走的。' }
+    { a: 3.2, b: 4.3, tx: '重心，是可以被偷走的。' }
   ],
   init(){ S = { px: 120 }; cam.tx = -60; cam.ty = 0; cam.tz = 1.06; camSnap(); excite = 0.35; },
   evts: [
@@ -1060,21 +1075,21 @@ const s4 = {
 };
 /* --- SIUUU 慶祝 --- */
 const s5 = {
-  dur: 9, act: '第三幕・SIUUU',
+  dur: 6.8, act: '第三幕・SIUUU',
   subs: [
     { a: 0.4, b: 1.7, tx: '然後，是那個全世界都認得的瞬間——' },
-    { a: 4.6, b: 7.0, zh: '囌兜慶祝式', en: 'Su-Siu Celebration' },
-    { a: 7.2, b: 8.6, tx: '全場，同一個聲音。' }
+    { a: 4.2, b: 5.5, zh: '囌兜慶祝式', en: 'Su-Siu Celebration' },
+    { a: 5.7, b: 6.5, tx: '全場，同一個聲音。' }
   ],
   init(){ S = {}; cam.tx = 40; cam.ty = 0; cam.tz = 1.04; camSnap(); excite = 0.5; },
-  timeScale(t){ return (t > 2.25 && t < 2.95) ? 0.42 : 1; },
+  timeScale(t){ return (t > 2.25 && t < 2.95) ? 0.55 : 1; },
   evts: [
     { t: 2.0, fn(){ sfx.jump(); spawnDust(608, GY, 8); } },
     { t: 3.05, fn(){ sfx.thump(); sfx.chant(); sfx.roar(1.4); freeze = 0.11; shakeMag = 11; flashA = 0.55; spawnDust(608, GY, 16, 130); } },
     { t: 3.2, fn(){ sfx.pop(); spawnConfetti(400, 545, 46, 1); spawnConfetti(860, 545, 46, -1); } },
     { t: 3.7, fn(){ sfx.pop(); spawnConfetti(560, 545, 40, 0.2); } },
     { t: 4.2, fn(){ collectBadge(); } },
-    { t: 4.6, fn(){ sfx.chant(); } }
+    { t: 4.4, fn(){ sfx.chant(); } }
   ],
   update(t){
     if (t < 2) { cam.tx = lerp(40, 210, eIO(t / 2)); excite = 0.5 + t * 0.1; }
@@ -1082,8 +1097,8 @@ const s5 = {
     cam.tz = lerp(1.04, 1.18, seg(t, 2.0, 2.9));
     cam.ty = lerp(0, -28, seg(t, 2.0, 2.9));
     if (t > 3.05){
-      // v2：落地瞬間鏡頭猛推近主角，再緩慢拉回
-      const pu = seg(t, 3.05, 3.5, eO), back = seg(t, 4.8, 6.6, eIO);
+      // v3：落地瞬間鏡頭猛推近主角，再緩慢拉回
+      const pu = seg(t, 3.05, 3.5, eO), back = seg(t, 4.3, 5.7, eIO);
       cam.tz = lerp(lerp(1.18, 1.34, pu), 1.08, back);
       cam.tx = lerp(lerp(250, 165, pu), 230, back);
       cam.ty = lerp(lerp(-28, 92, pu), -4, back);
@@ -1140,9 +1155,9 @@ const s5 = {
     drawParts(ctx);
     ctx.restore();
     // SIUUU 大字
-    if (t > 3.1 && t < 8.6){
+    if (t > 3.1 && t < 6.7){
       const su = seg(t, 3.1, 3.55, eOB);
-      const fa = Math.min(1, seg(t, 3.1, 3.3), clamp01((8.6 - t) / 0.8));
+      const fa = Math.min(1, seg(t, 3.1, 3.3), clamp01((6.7 - t) / 0.8));
       ctx.save();
       ctx.globalAlpha = fa;
       ctx.translate(W / 2, 150);
@@ -1164,7 +1179,7 @@ const s5 = {
 };
 /* --- 終幕 --- */
 const s6 = {
-  dur: 6, act: '終幕',
+  dur: 4.0, act: '終幕',
   init(){
     S = {}; cam.tx = 0; cam.ty = 0; cam.tz = 1; camSnap(); excite = 0.35;
     spawnConfetti(200, -20, 16, 0.3); spawnConfetti(720, -20, 16, -0.3);

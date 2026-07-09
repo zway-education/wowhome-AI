@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -126,11 +126,18 @@ const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2)
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 
 // ---------- 音效：Web Audio 合成（零音檔）----------
-let AC = null;
+let AC = null, MASTER = null;
 let muted = localStorage.getItem('conie_africa_muted') === '1';
 function audio(){
   if(!AC){
-    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){ return null; }
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      // v3：壓縮器主匯流排——受擊＋雷聲齊發不削波
+      MASTER = AC.createDynamicsCompressor();
+      MASTER.threshold.value = -18; MASTER.knee.value = 24; MASTER.ratio.value = 8;
+      const mg = AC.createGain(); mg.gain.value = 0.9;
+      MASTER.connect(mg); mg.connect(AC.destination);
+    } catch(e){ return null; }
   }
   if(AC && AC.state === 'suspended') AC.resume();
   return AC;
@@ -142,6 +149,7 @@ function beep(freq, dur, type, vol, slide, delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
   dur = dur || 0.1; type = type || 'square'; vol = vol || 0.12; slide = slide || 0; delay = delay || 0;
+  freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，聽感不機械
   const t0 = ac.currentTime + delay;
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
@@ -150,7 +158,7 @@ function beep(freq, dur, type, vol, slide, delay){
   g.gain.setValueAtTime(0.0001, t0);
   g.gain.exponentialRampToValueAtTime(vol, t0 + 0.008);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(MASTER);
   o.start(t0); o.stop(t0 + dur + 0.02);
 }
 function noiseBurst(dur, vol, cutoff, delay){
@@ -167,7 +175,7 @@ function noiseBurst(dur, vol, cutoff, delay){
   const t0 = ac.currentTime + delay;
   g.gain.setValueAtTime(vol, t0);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
-  src.connect(f).connect(g).connect(ac.destination);
+  src.connect(f).connect(g).connect(MASTER);
   src.start(t0);
 }
 const sfx = {
@@ -179,8 +187,8 @@ const sfx = {
     beep(base * 1.335, 0.12, 'square', 0.1, 0, 0.07);
   },
   heart(){ beep(660, 0.1, 'sine', 0.16); beep(880, 0.16, 'sine', 0.16, 0, 0.1); },
-  hit(){ beep(200, 0.25, 'sawtooth', 0.2, -140); noiseBurst(0.22, 0.28, 650); },
-  thunder(){ noiseBurst(0.45, 0.3, 320); beep(90, 0.3, 'sawtooth', 0.14, -40); },
+  hit(){ beep(200, 0.25, 'sawtooth', 0.2, -140); noiseBurst(0.22, 0.22, 650); },   // v3：音量修整
+  thunder(){ noiseBurst(0.45, 0.24, 320); beep(90, 0.3, 'sawtooth', 0.14, -40); },
   milestone(){ beep(523, 0.09, 'square', 0.11); beep(659, 0.09, 'square', 0.11, 0, 0.1); beep(784, 0.16, 'square', 0.11, 0, 0.2); },
   win(){
     const notes = [523, 659, 784, 1047, 1319, 1568];
@@ -316,8 +324,11 @@ function confetti(){
   }
 }
 function updateParts(dt){
-  for(const p of parts){ p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.g * dt; p.life -= dt; }
-  for(let i = parts.length - 1; i >= 0; i--) if(parts[i].life <= 0) parts.splice(i, 1);
+  for(let i = parts.length - 1; i >= 0; i--){   // v3：swap-pop 零搬移
+    const p = parts[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.g * dt; p.life -= dt;
+    if(p.life <= 0){ parts[i] = parts[parts.length - 1]; parts.pop(); }
+  }
 }
 function drawParts(){
   for(const p of parts){
@@ -707,26 +718,36 @@ function stageWeights(p){
   return { sea, desert, savanna };
 }
 
+// v3：天空/太陽漸層快取——進度量化 150 格，跨格才重建（原本每幀重建）
+const skyCache = { key: -1, g: null, sg: null, sy: 0 };
 function drawBackground(){
   const p = progress();
-  const c = skyAt(p);
-  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
-  g.addColorStop(0, rgb(c.top));
-  g.addColorStop(1, rgb(c.bot));
-  ctx.fillStyle = g;
+  const key = Math.round(p * 150);
+  if(key !== skyCache.key){
+    skyCache.key = key;
+    const c = skyAt(p);
+    const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+    g.addColorStop(0, rgb(c.top));
+    g.addColorStop(1, rgb(c.bot));
+    skyCache.g = g;
+    const sa = clamp((p - 0.3) / 0.2, 0, 1);
+    skyCache.sy = lerp(150, 90, sa);
+    const sg = ctx.createRadialGradient(GAME_W - 170, skyCache.sy, 10, GAME_W - 170, skyCache.sy, 90);
+    sg.addColorStop(0, 'rgba(255,236,170,0.95)');
+    sg.addColorStop(0.4, 'rgba(255,210,110,0.55)');
+    sg.addColorStop(1, 'rgba(255,210,110,0)');
+    skyCache.sg = sg;
+  }
+  ctx.fillStyle = skyCache.g;
   ctx.fillRect(0, 0, GAME_W, GAME_H);
 
   // 太陽（沙漠段升起）
   if(p > 0.3){
     const sa = clamp((p - 0.3) / 0.2, 0, 1);
-    const sy = lerp(150, 90, sa);
+    const sy = skyCache.sy;
     ctx.save();
     ctx.globalAlpha = sa * 0.9;
-    const sg = ctx.createRadialGradient(GAME_W - 170, sy, 10, GAME_W - 170, sy, 90);
-    sg.addColorStop(0, 'rgba(255,236,170,0.95)');
-    sg.addColorStop(0.4, 'rgba(255,210,110,0.55)');
-    sg.addColorStop(1, 'rgba(255,210,110,0)');
-    ctx.fillStyle = sg;
+    ctx.fillStyle = skyCache.sg;
     ctx.fillRect(GAME_W - 280, sy - 110, 240, 220);
     ctx.fillStyle = '#fff3c8';
     ctx.beginPath(); ctx.arc(GAME_W - 170, sy, 34, 0, TAU); ctx.fill();
@@ -944,10 +965,7 @@ function drawObstacles(){
       }
       if(bolt){
         ctx.save();
-        ctx.strokeStyle = '#fff35c';
-        ctx.lineWidth = 5;
         ctx.lineJoin = 'round';
-        ctx.shadowColor = '#fff35c'; ctx.shadowBlur = 14;
         ctx.beginPath();
         let bx = o.x, by = y + o.r * 0.5;
         ctx.moveTo(bx, by);
@@ -957,7 +975,9 @@ function drawObstacles(){
           by = y + o.r * 0.5 + (o.boltLen / seg) * i;
           ctx.lineTo(bx, by);
         }
-        ctx.stroke();
+        // v3：光暈改雙筆畫（原 shadowBlur 14 每幀成本高）
+        ctx.strokeStyle = 'rgba(255,243,92,0.35)'; ctx.lineWidth = 12; ctx.stroke();
+        ctx.strokeStyle = '#fff35c'; ctx.lineWidth = 5; ctx.stroke();
         ctx.restore();
       }
     } else if(o.kind === 'vulture'){
@@ -1025,10 +1045,12 @@ function drawPows(){   // v2：道具（發光圓泡＋圖示）
     const col = pw.kind === 'shield' ? '#7fd1ff' : '#ffd23f';
     ctx.save();
     ctx.translate(pw.x, y);
-    ctx.shadowColor = col; ctx.shadowBlur = 16;
+    ctx.globalAlpha = 0.3;   // v3：外圈色暈取代 shadowBlur
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(0, 0, pw.r + 11, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = 'rgba(12,18,40,0.5)';
     ctx.beginPath(); ctx.arc(0, 0, pw.r + 5, 0, TAU); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.strokeStyle = col; ctx.lineWidth = 2.5;
     ctx.beginPath(); ctx.arc(0, 0, pw.r + 5, 0, TAU); ctx.stroke();
     ctx.font = '20px sans-serif';

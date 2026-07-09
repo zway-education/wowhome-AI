@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -17,7 +17,7 @@
 <script>
 'use strict';
 /* 101 夜釣戰隊 × 蟹將盃足球 —— 專業AI升級版
-   雙遊戲街機櫃：🎣 大樓夜釣（鐵皮特工在 101 頂樓夜釣）＋ ⚽ 螃蟹足球（紅蟹 vs 藍蟹 60 秒對決）
+   雙遊戲街機櫃：🎣 大樓夜釣（鐵皮特工在 101 頂樓夜釣）＋ ⚽ 螃蟹足球（紅蟹 vs 藍蟹 75 秒對決）
    固定時間步進、狀態機、粒子/震動/hit-stop、Web Audio 音效 */
 const GAME_W = 960, GAME_H = 540, WATER_Y = 300;
 const canvas = document.getElementById('game');
@@ -89,7 +89,7 @@ function updateParts(dt){
   for(let i=parts.length-1;i>=0;i--){
     const p = parts[i];
     p.x += p.vx*dt; p.y += p.vy*dt; p.vy += p.g*dt; p.life -= dt;
-    if(p.life <= 0) parts.splice(i,1);
+    if(p.life <= 0){ parts[i] = parts[parts.length-1]; parts.pop(); }  // v3：swap-pop 零搬移
   }
 }
 function drawParts(){
@@ -120,23 +120,33 @@ function drawFloaters(){
 }
 
 /* ---------------- 音效：Web Audio 合成（零音檔） ---------------- */
-let AC = null;
+let AC = null, MASTER = null;
 let muted = load('wow101v2_mute') === '1';
 function audio(){
-  if(!AC){ try{ AC = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){} }
+  if(!AC){
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      // v3：壓縮器主匯流排——多事件齊發不爆音
+      MASTER = AC.createDynamicsCompressor();
+      MASTER.threshold.value = -18; MASTER.knee.value = 24; MASTER.ratio.value = 8;
+      const mg = AC.createGain(); mg.gain.value = 0.9;
+      MASTER.connect(mg); mg.connect(AC.destination);
+    }catch(e){}
+  }
   if(AC && AC.state === 'suspended') AC.resume();
   return AC;
 }
 function beep(freq,dur,type,vol,slide,delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
+  freq *= 0.975 + Math.random()*0.05;   // v3：±2.5% 隨機音高，聽感不機械
   const t0 = ac.currentTime + (delay||0);
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(freq, t0);
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), t0+dur);
   g.gain.setValueAtTime(vol || 0.14, t0); g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
-  o.connect(g).connect(ac.destination); o.start(t0); o.stop(t0+dur+0.03);
+  o.connect(g).connect(MASTER); o.start(t0); o.stop(t0+dur+0.03);
 }
 function noise(dur,vol,delay){
   if(muted) return;
@@ -149,7 +159,7 @@ function noise(dur,vol,delay){
   const s = ac.createBufferSource(); s.buffer = buf;
   const g = ac.createGain();
   g.gain.setValueAtTime(vol || 0.12, t0); g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
-  s.connect(g).connect(ac.destination); s.start(t0);
+  s.connect(g); g.connect(MASTER); s.start(t0);
 }
 const SFX = {
   click(){ beep(660,0.05,'square',0.1); },
@@ -158,13 +168,13 @@ const SFX = {
   catchFish(){ beep(880,0.07,'square',0.13); beep(1175,0.12,'square',0.13,0,0.07); },
   golden(){ beep(880,0.08,'square',0.14); beep(1109,0.08,'square',0.14,0,0.08); beep(1319,0.2,'square',0.14,0,0.16); },
   whiff(){ beep(240,0.1,'triangle',0.07,-80); },
-  jelly(){ beep(190,0.3,'sawtooth',0.16,-120); noise(0.15,0.1); },
+  jelly(){ beep(190,0.3,'sawtooth',0.13,-120); noise(0.15,0.09); },
   kick(){ beep(150,0.07,'square',0.15,60); noise(0.05,0.1); },
   swing(){ noise(0.06,0.05); },
   bounce(){ beep(220,0.05,'triangle',0.07); },
   goal(){ beep(523,0.1,'square',0.14); beep(659,0.1,'square',0.14,0,0.1); beep(784,0.1,'square',0.14,0,0.2); beep(1047,0.25,'square',0.15,0,0.3); },
   concede(){ beep(330,0.15,'sawtooth',0.12,-60); beep(220,0.3,'sawtooth',0.12,-70,0.15); },
-  whistle(){ beep(2350,0.12,'square',0.08); beep(2350,0.3,'square',0.08,0,0.18); },
+  whistle(){ beep(2350,0.12,'square',0.055); beep(2350,0.3,'square',0.055,0,0.18); },
   tick(){ beep(1320,0.04,'square',0.07); },
   win(){ [523,659,784,1047,1319].forEach((f,i)=> beep(f,0.16,'square',0.13,0,i*0.11)); },
   lose(){ beep(392,0.2,'triangle',0.12,-40); beep(294,0.35,'triangle',0.12,-40,0.2); },
@@ -278,6 +288,17 @@ const VIGN = (function(){
   return g;
 })();
 function drawVignette(){ ctx.fillStyle = VIGN; ctx.fillRect(0,0,GAME_W,GAME_H); }
+/* v3：靜態漸層預先計算一次（原本每幀重建，平板掉幀主因之一） */
+const SKY_G = (function(){ const g = ctx.createLinearGradient(0,0,0,WATER_Y);
+  g.addColorStop(0,'#050915'); g.addColorStop(0.6,'#0b1730'); g.addColorStop(1,'#14224e'); return g; })();
+const WATER_G = (function(){ const g = ctx.createLinearGradient(0, WATER_Y, 0, GAME_H);
+  g.addColorStop(0,'#14476b'); g.addColorStop(0.5,'#0b2c48'); g.addColorStop(1,'#04101c'); return g; })();
+const TURF_G = (function(){ const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0,'#0a2e1e'); g.addColorStop(1,'#123f2a'); return g; })();
+const FEVER_G = (function(){ const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0,'#ffb627'); g.addColorStop(1,'rgba(255,107,94,0)'); return g; })();
+const MOON_G = (function(){ const g = ctx.createRadialGradient(110,70,20,110,70,64);
+  g.addColorStop(0,'rgba(245,239,224,0.5)'); g.addColorStop(1,'rgba(245,239,224,0)'); return g; })();
 
 /* ---------------- 夜空 / 城市 素材（預先生成，避免每幀閃爍） ---------------- */
 const rand0 = makeRand(20260709);
@@ -305,22 +326,19 @@ for(let r=0;r<14;r++)
     if(rand0() < 0.82) towerWins.push({x:TX-30+c*18, y:TOWER_TOP+10+r*13, ph:rand0()*7, sp:0.3+rand0()*1.2});
 
 function drawSky(t){
-  const sky = ctx.createLinearGradient(0,0,0,WATER_Y);
-  sky.addColorStop(0,'#050915'); sky.addColorStop(0.6,'#0b1730'); sky.addColorStop(1,'#14224e');
-  ctx.fillStyle = sky; ctx.fillRect(0,0,GAME_W,WATER_Y+4);
+  ctx.fillStyle = SKY_G; ctx.fillRect(0,0,GAME_W,WATER_Y+4);
   for(const s of stars){
     ctx.globalAlpha = 0.35 + 0.55*Math.abs(Math.sin(t*s.sp + s.ph));
     ctx.fillStyle = '#f3ecd9'; ctx.fillRect(s.x, s.y, s.r*2, s.r*2);
   }
   ctx.globalAlpha = 1;
-  ctx.save();  // 月亮
-  ctx.shadowColor = '#f5efe0'; ctx.shadowBlur = 30;
+  // 月亮（v3：光暈改預計算漸層，取代每幀 shadowBlur 30）
+  ctx.fillStyle = MOON_G;
+  ctx.fillRect(46, 6, 128, 128);
   ctx.fillStyle = '#f5efe0';
   ctx.beginPath(); ctx.arc(110, 70, 28, 0, 7); ctx.fill();
-  ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(11,23,48,0.25)';
   ctx.beginPath(); ctx.arc(102, 62, 7, 0, 7); ctx.arc(122, 80, 5, 0, 7); ctx.fill();
-  ctx.restore();
 }
 function drawCity(t){
   ctx.fillStyle = '#0c1735';
@@ -362,9 +380,7 @@ function drawTower(t){
   ctx.beginPath(); ctx.arc(TX, TOWER_TOP-54, 3.5 + bl*2.5, 0, 7); ctx.fill();
 }
 function drawWater(t){
-  const water = ctx.createLinearGradient(0, WATER_Y, 0, GAME_H);
-  water.addColorStop(0,'#14476b'); water.addColorStop(0.5,'#0b2c48'); water.addColorStop(1,'#04101c');
-  ctx.fillStyle = water; ctx.fillRect(0, WATER_Y, GAME_W, GAME_H-WATER_Y);
+  ctx.fillStyle = WATER_G; ctx.fillRect(0, WATER_Y, GAME_W, GAME_H-WATER_Y);
   ctx.strokeStyle = 'rgba(168,230,226,0.5)'; ctx.lineWidth = 2.5;  // 波浪表面
   ctx.beginPath();
   for(let x=0;x<=GAME_W;x+=16){
@@ -430,13 +446,13 @@ const FISH_KINDS = [
 ];
 const GOLD_KIND = {r:13, color:'#ffd447', belly:'#fff5d6', pts:50, sp:195, dMin:430, dMax:505, gold:true};
 const BOSS_KIND = {r:33, color:'#ff9f1c', belly:'#ffe3b0', pts:150, sp:150, dMin:395, dMax:480, boss:true};
-const FISH_STARS = [250, 500, 800];
+const FISH_STARS = [300, 600, 950];   // v3：配合 75 秒場次調整門檻
 const IDLE_Y = 168, HOOK_MAX_Y = 512, AIM_MIN = 50, AIM_MAX = 655;
 
 const fishGame = {
   buttons: [],
   enter(){
-    this.score = 0; this.dispScore = 0; this.time = 60; this.elapsed = 0; this.prevCeil = 61;
+    this.score = 0; this.dispScore = 0; this.time = 75; this.elapsed = 0; this.prevCeil = 76;  // v3：60→75 秒
     this.combo = 0; this.comboPop = 0;
     this.fever = 0; this.bossCalled = false;   // v2：FEVER 狂熱＋魚王
     this.cast = 'idle';                 // idle → drop → reel
@@ -549,19 +565,19 @@ const fishGame = {
       const goldChance = Math.min(0.06 + this.elapsed*0.004, 0.25);
       this.spawnFish(Math.random() < goldChance, false);
     }
-    // v2：最後 22 秒魚王登場（高潮時刻）
-    if(!this.bossCalled && this.time <= 22){
+    // v3：最後 25 秒魚王登場（高潮時刻），逗留 16 秒
+    if(!this.bossCalled && this.time <= 25){
       this.bossCalled = true;
       const dir = Math.random() < 0.5 ? 1 : -1;
       this.fishes.push({ k: BOSS_KIND, dir,
         x: dir===1 ? -60 : GAME_W+60,
         y: BOSS_KIND.dMin + Math.random()*(BOSS_KIND.dMax-BOSS_KIND.dMin),
-        sp: BOSS_KIND.sp, wig: 0, sx:1, sy:1, bossT: 14 });
+        sp: BOSS_KIND.sp, wig: 0, sx:1, sy:1, bossT: 16 });
       addShake(6); SFX.boss();
       floater(GAME_W/2, 230, '👑 魚王出現！150 分！', '#ff9f1c', 34);
     }
-    // 水母（15 秒後 1 隻、35 秒後 2 隻）
-    const jellyCount = this.elapsed > 35 ? 2 : (this.elapsed > 15 ? 1 : 0);
+    // 水母（15 秒後 1 隻、35 秒後 2 隻、v3：58 秒後 3 隻收尾張力）
+    const jellyCount = this.elapsed > 58 ? 3 : (this.elapsed > 35 ? 2 : (this.elapsed > 15 ? 1 : 0));
     while(this.jellies.length < jellyCount){
       this.jellies.push({x: 150+Math.random()*450, baseY: 380+Math.random()*90, y:0, t:Math.random()*7, drift:(Math.random()<0.5?-1:1)*22, stun:0});
       floater(GAME_W/2, 200, '⚠ 小心水母！', '#c77dff', 24);
@@ -644,18 +660,17 @@ const fishGame = {
     ctx.beginPath(); ctx.moveTo(ROD_TIP.x, ROD_TIP.y);
     ctx.quadraticCurveTo((ROD_TIP.x+this.hookX)/2, (ROD_TIP.y+this.hookY)/2 + sag, this.hookX, this.hookY);
     ctx.stroke();
-    ctx.save();
-    ctx.shadowColor = '#ffd77a'; ctx.shadowBlur = 8;
-    ctx.strokeStyle = '#ffd77a'; ctx.lineWidth = 3; ctx.lineCap='round';
+    // v3：魚鉤光暈改雙筆畫（原 shadowBlur 每幀成本高）
+    ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.3; ctx.strokeStyle = '#ffd77a'; ctx.lineWidth = 8;
     ctx.beginPath(); ctx.arc(this.hookX, this.hookY+6, 6, -0.5, Math.PI*1.1); ctx.stroke();
-    ctx.restore();
+    ctx.globalAlpha = 1; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(this.hookX, this.hookY+6, 6, -0.5, Math.PI*1.1); ctx.stroke();
     if(this.carry) this.drawFish(this.carry, true);
     drawParts(); drawFloaters(); drawVignette();
-    if(this.fever > 0){  // v2：FEVER 金色氛圍
+    if(this.fever > 0){  // FEVER 金色氛圍（v3：預計算漸層）
       ctx.globalAlpha = 0.1 + 0.05*Math.sin(tGlobal*8);
-      const fg = ctx.createLinearGradient(0,0,0,GAME_H);
-      fg.addColorStop(0,'#ffb627'); fg.addColorStop(1,'rgba(255,107,94,0)');
-      ctx.fillStyle = fg; ctx.fillRect(0,0,GAME_W,GAME_H);
+      ctx.fillStyle = FEVER_G; ctx.fillRect(0,0,GAME_W,GAME_H);
       ctx.globalAlpha = 1;
     }
     endShake();
@@ -711,11 +726,14 @@ const fishGame = {
     ctx.translate(f.x, yy);
     if(hang) ctx.rotate(Math.sin(f.wig)*0.35);
     ctx.scale(f.dir * f.sx, f.sy);
-    if(f.k.gold){ ctx.shadowColor = '#ffd447'; ctx.shadowBlur = 14; }
-    if(f.k.boss){ ctx.shadowColor = '#ff9f1c'; ctx.shadowBlur = 18; }
+    if(f.k.gold || f.k.boss){  // v3：光暈改半透明色暈（取代每幀 shadowBlur）
+      ctx.globalAlpha = 0.3 + 0.12*Math.sin(f.wig*2);
+      ctx.fillStyle = f.k.boss ? '#ff9f1c' : '#ffd447';
+      ctx.beginPath(); ctx.ellipse(0, 0, f.k.r*1.5, f.k.r*1.05, 0, 0, 7); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
     ctx.fillStyle = f.k.color;
     ctx.beginPath(); ctx.ellipse(0, 0, f.k.r, f.k.r*0.62, 0, 0, 7); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = f.k.belly;
     ctx.beginPath(); ctx.ellipse(1, f.k.r*0.2, f.k.r*0.7, f.k.r*0.32, 0, 0, 7); ctx.fill();
     const tw = Math.sin(f.wig)*0.5;  // 尾巴擺動
@@ -738,10 +756,12 @@ const fishGame = {
     const puls = 1 + Math.sin(j.t*3)*0.08;
     ctx.globalAlpha = j.stun > 0 ? 0.4 + 0.3*Math.sin(tGlobal*20) : 0.9;
     ctx.scale(puls, 2-puls);
-    ctx.shadowColor = '#c77dff'; ctx.shadowBlur = 12;
+    ctx.save(); ctx.globalAlpha *= 0.3;  // v3：色暈取代 shadowBlur
+    ctx.fillStyle = '#c77dff';
+    ctx.beginPath(); ctx.arc(0, -2, 24, 0, 7); ctx.fill();
+    ctx.restore();
     ctx.fillStyle = '#8b5cf6';
     ctx.beginPath(); ctx.arc(0, 0, 17, Math.PI, 0); ctx.closePath(); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = '#c77dff';
     ctx.beginPath(); ctx.arc(0, -4, 10, Math.PI, 0); ctx.closePath(); ctx.fill();
     ctx.strokeStyle = '#c77dff'; ctx.lineWidth = 2.5; ctx.lineCap = 'round';
@@ -770,7 +790,7 @@ const POW_TYPES = [
 const crabGame = {
   buttons: [],
   enter(){
-    this.pScore = 0; this.cScore = 0; this.time = 60; this.elapsed = 0; this.prevCeil = 61;
+    this.pScore = 0; this.cScore = 0; this.time = 75; this.elapsed = 0; this.prevCeil = 76;  // v3：60→75 秒
     this.player = makeCrab(FIELD.x + FIELD.w*0.28, '#ff6b5e', '#c94b3f');
     this.cpu    = makeCrab(FIELD.x + FIELD.w*0.72, '#2ec4b6', '#1a8a80');
     this.ball = {x:GAME_W/2, y:CY, vx:0, vy:0, r:13, rot:0};
@@ -873,7 +893,8 @@ const crabGame = {
       } else SFX.swing();
     }
     // ---- CPU（終盤越拚；落後方加速 = 橡皮筋難度，失敗不挫折） ----
-    let cpuAcc = clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400);
+    const learn = this.elapsed < 8 ? 0.55 : 1;   // v3：前 8 秒 CPU 放水 = 開場安全學習期
+    let cpuAcc = clamp(700 + this.elapsed*7 + (this.pScore - this.cScore)*55, 560, 1400) * learn;
     if(C.spdT > 0) cpuAcc *= 1.35;
     let cdx = B.x + 30 - C.x, cdy = B.y - C.y;
     const cdm = Math.hypot(cdx, cdy) || 1;
@@ -885,7 +906,7 @@ const crabGame = {
     C.legT += dt * (2 + Math.hypot(C.vx, C.vy)/28);
     if(Math.abs(C.vx) > 30) C.face = C.vx > 0 ? 1 : -1;
     const cbd = dist(C.x, C.y, B.x, B.y);
-    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && C.frozT <= 0 && Math.random() < 0.5){
+    if(cbd < C.r + B.r + 20 && C.kickCd <= 0 && C.frozT <= 0 && Math.random() < 0.5*learn){
       C.kickCd = 0.6; C.clawT = 1; C.sx = 1.25; C.sy = 0.8;
       const a = Math.atan2(CY + (Math.random()*2-1)*70 - B.y, FIELD.x - B.x);
       const cFire = C.fireN > 0;
@@ -1010,9 +1031,7 @@ const crabGame = {
   },
   draw(){
     beginShake();
-    const turf = ctx.createLinearGradient(0,0,0,GAME_H);  // 夜間球場草皮
-    turf.addColorStop(0,'#0a2e1e'); turf.addColorStop(1,'#123f2a');
-    ctx.fillStyle = turf; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.fillStyle = TURF_G; ctx.fillRect(0,0,GAME_W,GAME_H);  // 夜間球場草皮（v3：預計算漸層）
     ctx.fillStyle = 'rgba(255,255,255,0.035)';
     for(let s=0;s<GAME_W;s+=80) if((s/80)%2===0) ctx.fillRect(s,0,80,GAME_H);
     ctx.globalAlpha = 0.05; ctx.fillStyle = '#fff5d6';  // 探照燈光束
@@ -1039,11 +1058,12 @@ const crabGame = {
       ctx.save();
       ctx.translate(pw2.x, pw2.y + bob);
       ctx.scale(popIn, popIn);
+      ctx.globalAlpha = blink * 0.35;  // v3：外圈色暈取代 shadowBlur
+      ctx.fillStyle = pw2.tp.color;
+      ctx.beginPath(); ctx.arc(0, 0, 27, 0, 7); ctx.fill();
       ctx.globalAlpha = blink;
-      ctx.shadowColor = pw2.tp.color; ctx.shadowBlur = 16;
       ctx.fillStyle = 'rgba(4,7,15,0.55)';
       ctx.beginPath(); ctx.arc(0, 0, 20, 0, 7); ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.strokeStyle = pw2.tp.color; ctx.lineWidth = 2.5; ctx.stroke();
       text(pw2.tp.icon, 0, 1, 20, '#fff');
       ctx.restore();

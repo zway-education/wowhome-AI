@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -40,12 +40,11 @@
 <div id="titleOvl" class="ovl">
   <div class="card">
     <h1>🪙 蒐集金幣</h1>
-    <p>限時 30 秒，幫小藍撿起滿地的金幣！<br>
+    <p>限時 60 秒，幫小藍撿起滿地的金幣！<br>
     連續快撿疊 <b style="color:#d9480f">COMBO</b>，疊到 8 進入 <b style="color:#e8590c">FEVER 金幣雨</b>！<br>
-    💎 寶石大加分・⏰ 加時間・🧲 吸金幣・⭐ 無敵撞爆炸彈，<br>
-    🟡 黃金幣會逃跑快追！小心 💣 炸彈炸掉分數。</p>
+    ⏰ 撿時鐘加時間，小心 💣 炸彈會扣分。</p>
     <button id="startBtn" class="mainBtn">開始遊戲</button>
-    <div class="hint">電腦：WASD / 方向鍵，或按住滑鼠移動<br>手機：手指按住畫面，小藍會跟著跑
+    <div class="hint">💻 電腦：WASD / 方向鍵，或按住滑鼠移動<br>📱 平板：手指按住畫面，小藍會跟著跑
     <span id="rotHint"><br>📱 把平板轉成橫向，畫面更大更好玩！</span></div>
   </div>
 </div>
@@ -91,17 +90,28 @@ const SVG_BOMB='<g id="color"><rect x="42.9998" y="15.7214" width="10.9999" heig
 const IMG={coin:svgImg(SVG_COIN),gem:svgImg(SVG_GEM),clock:svgImg(SVG_CLOCK),magnet:svgImg(SVG_MAGNET),bomb:svgImg(SVG_BOMB)};
 function ready(img){return img.complete&&img.naturalWidth>0;}
 /* ================= 音效 ================= */
-let AC=null,muted=false;
-function audio(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}return AC;}
+let AC=null,muted=false,master=null;
+function audio(){
+  if(!AC){try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    const comp=AC.createDynamicsCompressor();
+    comp.threshold.value=-18;comp.knee.value=24;comp.ratio.value=8;
+    comp.attack.value=.003;comp.release.value=.2;
+    master=AC.createGain();master.gain.value=.85;
+    master.connect(comp);comp.connect(AC.destination);
+  }catch(e){}}
+  return AC;
+}
 addEventListener('pointerdown',audio,{once:true});addEventListener('keydown',audio,{once:true});
 function beep(f,d,type,vol,slide){
   const ac=audio();if(!ac||muted)return;
+  f*= .98+Math.random()*.04; /* ±2% 音高隨機，連發不呆板 */
   const o=ac.createOscillator(),g=ac.createGain();
   o.type=type||'square';o.frequency.setValueAtTime(f,ac.currentTime);
   if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide),ac.currentTime+d);
   g.gain.setValueAtTime(vol||.12,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
-  o.connect(g).connect(ac.destination);o.start();o.stop(ac.currentTime+d);
+  o.connect(g).connect(master);o.start();o.stop(ac.currentTime+d);
 }
 function boom(){
   const ac=audio();if(!ac||muted)return;
@@ -110,7 +120,7 @@ function boom(){
   const src=ac.createBufferSource(),g=ac.createGain(),f=ac.createBiquadFilter();
   src.buffer=buf;f.type='lowpass';f.frequency.value=800;
   g.gain.setValueAtTime(.3,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+.4);
-  src.connect(f).connect(g).connect(ac.destination);src.start();
+  src.connect(f).connect(g).connect(master);src.start();
   beep(90,.3,'sawtooth',.2,-50);
 }
 const sfx={
@@ -152,12 +162,12 @@ addEventListener('pointercancel',()=>ptr.down=false);
 cv.addEventListener('contextmenu',e=>e.preventDefault());
 /* ================= 遊戲狀態 ================= */
 let state='title';
-const COMBO_WIN=2.0;
-let score=0,timeLeft=30,elapsed=0,combo=0,comboT=0,maxCombo=0,coinsGot=0,gemsGot=0;
-let shake=0,freeze=0,tGlobal=0,tickAcc=0,hintT=0;
+const COMBO_WIN=2.0,BASE_TIME=60,TIME_CAP=90;
+let score=0,timeLeft=BASE_TIME,elapsed=0,combo=0,comboT=0,maxCombo=0,coinsGot=0,gemsGot=0;
+let shake=0,freeze=0,tGlobal=0,tickAcc=0,hintT=0,bombWarned=false;
 let feverT=0,feverRain=0,feverCount=0;
-let best=0;try{best=+localStorage.getItem('coincollect.best')||0;}catch(e){}
-let dispScore=0,dispTime=30;
+let best=0;try{best=+localStorage.getItem('coincollect.best3')||0;}catch(e){}
+let dispScore=0,dispTime=BASE_TIME;
 const player={x:GAME_W/2,y:GAME_H/2,vx:0,vy:0,r:20,face:1,sx:1,sy:1,blink:rnd(1,3),
   bobT:0,magnetT:0,stunT:0,trailT:0,starT:0};
 let items=[],bombs=[],parts=[],floats=[],sparkles=[];
@@ -172,6 +182,52 @@ const flowers=[],tufts=[],cloudsBG=[];
   for(let i=0;i<40;i++)tufts.push({x:sr()*GAME_W,y:50+sr()*(GAME_H-60),s:.6+sr()*.9,ph:sr()*6});
   for(let i=0;i<5;i++)cloudsBG.push({x:sr()*GAME_W,y:20+sr()*70,s:.7+sr()*.9,v:6+sr()*10});
 })();
+/* 靜態背景預渲染（效能：天空/太陽/山丘/割草紋只畫一次） */
+const bgCv=document.createElement('canvas');bgCv.width=GAME_W;bgCv.height=GAME_H;
+(function(){
+  const c=bgCv.getContext('2d');
+  const g=c.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0,'#8ed3f2');g.addColorStop(.16,'#bde8f7');
+  g.addColorStop(.17,'#8fca5c');g.addColorStop(1,'#5a9e3e');
+  c.fillStyle=g;c.fillRect(0,0,GAME_W,GAME_H);
+  const sg=c.createRadialGradient(860,46,6,860,46,60);
+  sg.addColorStop(0,'rgba(255,240,160,.95)');sg.addColorStop(.4,'rgba(255,220,110,.5)');sg.addColorStop(1,'rgba(255,220,110,0)');
+  c.fillStyle=sg;c.fillRect(800,-14,120,120);
+  c.fillStyle='#ffe9a3';c.beginPath();c.arc(860,46,20,0,7);c.fill();
+  c.fillStyle='#79b94f';
+  c.beginPath();c.moveTo(0,95);
+  c.quadraticCurveTo(160,58,340,92);c.quadraticCurveTo(520,120,700,84);
+  c.quadraticCurveTo(840,60,960,92);c.lineTo(960,140);c.lineTo(0,140);c.closePath();c.fill();
+  c.fillStyle='rgba(255,255,255,.05)';
+  for(let i=-1;i<8;i++){
+    c.beginPath();
+    c.moveTo(i*160,GAME_H);c.lineTo(i*160+120,92);c.lineTo(i*160+200,92);c.lineTo(i*160+80,GAME_H);
+    c.closePath();c.fill();
+  }
+})();
+/* 光暈 sprite 快取（效能：不每幀 createRadialGradient） */
+function makeGlow(r,c0,c1){
+  const cnv=document.createElement('canvas');cnv.width=cnv.height=r*2;
+  const x=cnv.getContext('2d');
+  const g=x.createRadialGradient(r,r,3,r,r,r);
+  g.addColorStop(0,c0);g.addColorStop(1,c1);
+  x.fillStyle=g;x.fillRect(0,0,r*2,r*2);
+  return cnv;
+}
+const GLOW={
+  coin:makeGlow(22,'rgba(255,225,120,.55)','rgba(255,225,120,0)'),
+  gem:makeGlow(26,'rgba(130,210,255,.6)','rgba(130,210,255,0)'),
+  gold:makeGlow(30,'rgba(255,180,0,.8)','rgba(255,180,0,0)'),
+  star:makeGlow(28,'rgba(255,235,80,.75)','rgba(255,235,80,0)')
+};
+/* HUD 時間條與 FEVER 暈影漸層快取 */
+const TIMEBAR_W=300,TIMEBAR_X=GAME_W/2-TIMEBAR_W/2;
+const barGreen=ctx.createLinearGradient(TIMEBAR_X,0,TIMEBAR_X+TIMEBAR_W,0);
+barGreen.addColorStop(0,'#7bd346');barGreen.addColorStop(1,'#4caf50');
+const barRed=ctx.createLinearGradient(TIMEBAR_X,0,TIMEBAR_X+TIMEBAR_W,0);
+barRed.addColorStop(0,'#ff8a65');barRed.addColorStop(1,'#ff5252');
+const FEVER_VG=ctx.createRadialGradient(GAME_W/2,GAME_H/2,GAME_H*.35,GAME_W/2,GAME_H/2,GAME_H*.75);
+FEVER_VG.addColorStop(0,'rgba(255,180,0,0)');FEVER_VG.addColorStop(1,'rgba(255,150,0,1)');
 /* ================= 生成 ================= */
 function spawnItem(kind){
   const margin=44;
@@ -193,11 +249,17 @@ function spawnBomb(){
   bombs.push({x,y,vx:Math.cos(a)*rnd(28,55),vy:Math.sin(a)*rnd(28,55),r:16,wob:rnd(0,6),fuse:0});
 }
 /* ================= 粒子 / 飄字 ================= */
+const partPool=[];
+function addPart(x,y,vx,vy,life,max,c,sz){
+  if(parts.length>=260)return; /* 上限直接略過，不做 shift 搬移 */
+  const p=partPool.pop()||{};
+  p.x=x;p.y=y;p.vx=vx;p.vy=vy;p.life=life;p.max=max;p.c=c;p.sz=sz;
+  parts.push(p);
+}
 function burst(x,y,color,n,sp){
   for(let i=0;i<(n||10);i++){
-    if(parts.length>260)parts.shift();
     const a=Math.random()*Math.PI*2,s=(sp||160)*(.3+Math.random()*.7);
-    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-40,life:rnd(.35,.6),max:.6,c:color,sz:rnd(3,6)});
+    addPart(x,y,Math.cos(a)*s,Math.sin(a)*s-40,rnd(.35,.6),.6,color,rnd(3,6));
   }
 }
 function floatTxt(x,y,txt,color,size){
@@ -205,12 +267,12 @@ function floatTxt(x,y,txt,color,size){
 }
 /* ================= 更新 ================= */
 function resetGame(){
-  score=0;timeLeft=30;elapsed=0;combo=0;comboT=0;maxCombo=0;coinsGot=0;gemsGot=0;
-  dispScore=0;dispTime=30;hintT=4;feverT=0;feverRain=0;feverCount=0;
+  score=0;timeLeft=BASE_TIME;elapsed=0;combo=0;comboT=0;maxCombo=0;coinsGot=0;gemsGot=0;
+  dispScore=0;dispTime=BASE_TIME;hintT=4;feverT=0;feverRain=0;feverCount=0;bombWarned=false;
   player.x=GAME_W/2;player.y=GAME_H/2;player.vx=0;player.vy=0;
   player.magnetT=0;player.stunT=0;player.sx=1;player.sy=1;player.starT=0;
   items=[];bombs=[];parts=[];floats=[];sparkles=[];
-  bombT=12;clockT=10;magnetT2=16;goldT=8;starT2=14;tickAcc=0;
+  bombT=10;clockT=12;magnetT2=16;goldT=8;starT2=14;tickAcc=0;
   for(let i=0;i<8;i++)spawnItem('coin');
 }
 function startPlay(){
@@ -221,9 +283,9 @@ function startPlay(){
 function gameOver(){
   state='over';sfx.end();
   const isNew=score>best;
-  if(isNew){best=score;try{localStorage.setItem('coincollect.best',best);}catch(e){}
+  if(isNew){best=score;try{localStorage.setItem('coincollect.best3',best);}catch(e){}
     setTimeout(()=>sfx.best(),600);}
-  const medals=[[600,'🏆','傳說金幣王'],[450,'🥇','金牌收藏家'],[300,'🥈','銀牌收藏家'],[150,'🥉','銅牌收藏家'],[0,'🌱','見習撿幣員']];
+  const medals=[[1000,'🏆','傳說金幣王'],[700,'🥇','金牌收藏家'],[450,'🥈','銀牌收藏家'],[200,'🥉','銅牌收藏家'],[0,'🌱','見習撿幣員']];
   let mi=medals.findIndex(m=>score>=m[0]);
   document.getElementById('medalIcon').textContent=medals[mi][1];
   document.getElementById('medalName').textContent=medals[mi][2];
@@ -241,7 +303,8 @@ function update(dt){
   tGlobal+=dt;
   shake*=Math.pow(.001,dt);if(shake<.1)shake=0;
   for(let i=parts.length-1;i>=0;i--){const p=parts[i];
-    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=500*dt;p.life-=dt;if(p.life<=0)parts.splice(i,1);}
+    p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=500*dt;p.life-=dt;
+    if(p.life<=0){parts[i]=parts[parts.length-1];parts.pop();partPool.push(p);}}
   for(let i=floats.length-1;i>=0;i--){const f=floats[i];f.y-=55*dt;f.life-=dt;if(f.life<=0)floats.splice(i,1);}
   for(let i=sparkles.length-1;i>=0;i--){const s=sparkles[i];s.life-=dt;if(s.life<=0)sparkles.splice(i,1);}
   for(const c of cloudsBG){c.x+=c.v*dt;if(c.x>GAME_W+120)c.x=-120;}
@@ -289,8 +352,8 @@ function update(dt){
     p.bobT+=dt*sp*.05;
     p.trailT-=dt;
     if(p.trailT<=0){p.trailT=.05;
-      parts.push({x:p.x-p.vx*.02,y:p.y+p.r*.6,vx:-p.vx*.15+rnd(-15,15),vy:rnd(-20,-5),
-        life:.35,max:.35,c:'rgba(140,200,255,.7)',sz:5});}
+      addPart(p.x-p.vx*.02,p.y+p.r*.6,-p.vx*.15+rnd(-15,15),rnd(-20,-5),
+        .35,.35,'rgba(140,200,255,.7)',5);}
   }
   p.magnetT-=dt;p.starT-=dt;
   /* --- Combo 倒數 --- */
@@ -355,7 +418,7 @@ function update(dt){
         floatTxt(it.x,it.y-18,'⭐ 無敵 5 秒！去撞炸彈！','#ffe74c',22);
         freeze=.08;shake=Math.max(shake,4);
       }else if(it.kind==='clock'){
-        timeLeft=Math.min(timeLeft+5,60);
+        timeLeft=Math.min(timeLeft+5,TIME_CAP);
         sfx.clock();burst(it.x,it.y,'#a6e26f',12,160);
         floatTxt(it.x,it.y-18,'+5 秒','#7bd346',22);
       }else if(it.kind==='magnet'){
@@ -365,10 +428,12 @@ function update(dt){
       }
     }
   }
-  /* --- 炸彈 --- */
+  /* --- 炸彈（開場10秒安全學習期，之後隨時間增多） --- */
+  if(!bombWarned&&elapsed>8.5){bombWarned=true;
+    floatTxt(GAME_W/2,130,'💣 小心！炸彈要來了','#ff5252',22);}
   bombT-=dt;
-  const maxBombs=Math.min(1+Math.floor(elapsed/16),5);
-  if(bombT<=0&&bombs.length<maxBombs){bombT=Math.max(7-elapsed*.08,3.5);spawnBomb();}
+  const maxBombs=Math.min(1+Math.floor(elapsed/15),6);
+  if(bombT<=0&&bombs.length<maxBombs){bombT=Math.max(7-elapsed*.05,3);spawnBomb();}
   for(let i=bombs.length-1;i>=0;i--){
     const b=bombs[i];
     b.x+=b.vx*dt;b.y+=b.vy*dt;b.wob+=dt*5;b.fuse+=dt;
@@ -412,7 +477,7 @@ function update(dt){
   /* --- 定時生成 --- */
   clockT-=dt;
   if(clockT<=0){clockT=11;
-    if(!items.some(i=>i.kind==='clock')&&timeLeft<35)spawnItem('clock');}
+    if(!items.some(i=>i.kind==='clock')&&timeLeft<45)spawnItem('clock');}
   magnetT2-=dt;
   if(magnetT2<=0){magnetT2=17;
     if(!items.some(i=>i.kind==='magnet'))spawnItem('magnet');}
@@ -426,15 +491,7 @@ function update(dt){
 }
 /* ================= 繪圖 ================= */
 function drawBG(){
-  const g=ctx.createLinearGradient(0,0,0,GAME_H);
-  g.addColorStop(0,'#8ed3f2');g.addColorStop(.16,'#bde8f7');
-  g.addColorStop(.17,'#8fca5c');g.addColorStop(1,'#5a9e3e');
-  ctx.fillStyle=g;ctx.fillRect(0,0,GAME_W,GAME_H);
-  // 太陽
-  const sg=ctx.createRadialGradient(860,46,6,860,46,60);
-  sg.addColorStop(0,'rgba(255,240,160,.95)');sg.addColorStop(.4,'rgba(255,220,110,.5)');sg.addColorStop(1,'rgba(255,220,110,0)');
-  ctx.fillStyle=sg;ctx.fillRect(800,-14,120,120);
-  ctx.fillStyle='#ffe9a3';ctx.beginPath();ctx.arc(860,46,20,0,7);ctx.fill();
+  ctx.drawImage(bgCv,0,0); /* 靜態層一次搞定 */
   // 雲
   ctx.fillStyle='rgba(255,255,255,.9)';
   for(const c of cloudsBG){
@@ -443,18 +500,6 @@ function drawBG(){
     ctx.ellipse(c.x-24*c.s,c.y+5,20*c.s,9*c.s,0,0,7);
     ctx.ellipse(c.x+26*c.s,c.y+4,24*c.s,10*c.s,0,0,7);
     ctx.fill();
-  }
-  // 遠丘
-  ctx.fillStyle='#79b94f';
-  ctx.beginPath();ctx.moveTo(0,95);
-  ctx.quadraticCurveTo(160,58,340,92);ctx.quadraticCurveTo(520,120,700,84);
-  ctx.quadraticCurveTo(840,60,960,92);ctx.lineTo(960,140);ctx.lineTo(0,140);ctx.closePath();ctx.fill();
-  // 草地斜紋（割草紋）
-  ctx.fillStyle='rgba(255,255,255,.05)';
-  for(let i=-1;i<8;i++){
-    ctx.beginPath();
-    ctx.moveTo(i*160,GAME_H);ctx.lineTo(i*160+120,92);ctx.lineTo(i*160+200,92);ctx.lineTo(i*160+80,GAME_H);
-    ctx.closePath();ctx.fill();
   }
   // 草叢與花
   for(const t of tufts){
@@ -488,17 +533,15 @@ function drawItem(it){
   if(it.kind==='coin'){
     const spin=Math.cos(it.ang);
     ctx.scale(Math.max(.15,Math.abs(spin))*pop,pop);
-    const gl=ctx.createRadialGradient(0,0,3,0,0,22);
-    gl.addColorStop(0,'rgba(255,225,120,.55)');gl.addColorStop(1,'rgba(255,225,120,0)');
-    ctx.fillStyle=gl;ctx.fillRect(-22,-22,44,44);
+    ctx.drawImage(GLOW.coin,-22,-22);
     if(ready(IMG.coin))ctx.drawImage(IMG.coin,-17,-17,34,34);
     else{ctx.fillStyle='#ffd700';ctx.beginPath();ctx.arc(0,0,13,0,7);ctx.fill();
       ctx.strokeStyle='#b8860b';ctx.lineWidth=2;ctx.stroke();}
   }else if(it.kind==='gem'){
     ctx.scale(pop,pop);ctx.rotate(Math.sin(tGlobal*2+it.bob)*.15);
-    const gl=ctx.createRadialGradient(0,0,3,0,0,26);
-    gl.addColorStop(0,'rgba(130,210,255,'+(.4+.2*Math.sin(tGlobal*5))+')');gl.addColorStop(1,'rgba(130,210,255,0)');
-    ctx.fillStyle=gl;ctx.fillRect(-26,-26,52,52);
+    ctx.globalAlpha=blink*(.66+.34*Math.sin(tGlobal*5));
+    ctx.drawImage(GLOW.gem,-26,-26);
+    ctx.globalAlpha=blink;
     if(ready(IMG.gem))ctx.drawImage(IMG.gem,-19,-19,38,38);
     else{ctx.fillStyle='#61b2e4';ctx.beginPath();ctx.moveTo(-14,-6);ctx.lineTo(14,-6);ctx.lineTo(0,14);ctx.closePath();ctx.fill();}
     ctx.fillStyle='rgba(255,255,255,'+(.5+.5*Math.sin(tGlobal*6+it.bob))+')';
@@ -506,18 +549,18 @@ function drawItem(it){
   }else if(it.kind==='gold'){
     const spin=Math.cos(it.ang*.8);
     ctx.scale(Math.max(.2,Math.abs(spin))*pop*1.35,pop*1.35);
-    const gl=ctx.createRadialGradient(0,0,4,0,0,30);
-    gl.addColorStop(0,'rgba(255,180,0,'+(.6+.2*Math.sin(tGlobal*7))+')');gl.addColorStop(1,'rgba(255,180,0,0)');
-    ctx.fillStyle=gl;ctx.fillRect(-30,-30,60,60);
+    ctx.globalAlpha=blink*(.75+.25*Math.sin(tGlobal*7));
+    ctx.drawImage(GLOW.gold,-30,-30);
+    ctx.globalAlpha=blink;
     if(ready(IMG.coin))ctx.drawImage(IMG.coin,-17,-17,34,34);
     else{ctx.fillStyle='#ffab00';ctx.beginPath();ctx.arc(0,0,15,0,7);ctx.fill();}
     ctx.fillStyle='rgba(255,255,255,'+(.5+.5*Math.sin(tGlobal*8+it.bob))+')';
     ctx.beginPath();ctx.arc(-7,-9,2.5,0,7);ctx.fill();
   }else if(it.kind==='star'){
     ctx.rotate(Math.sin(tGlobal*3+it.bob)*.25);ctx.scale(pop,pop);
-    const gl=ctx.createRadialGradient(0,0,3,0,0,28);
-    gl.addColorStop(0,'rgba(255,235,80,'+(.5+.25*Math.sin(tGlobal*6))+')');gl.addColorStop(1,'rgba(255,235,80,0)');
-    ctx.fillStyle=gl;ctx.fillRect(-28,-28,56,56);
+    ctx.globalAlpha=blink*(.66+.34*Math.sin(tGlobal*6));
+    ctx.drawImage(GLOW.star,-28,-28);
+    ctx.globalAlpha=blink;
     ctx.fillStyle='#ffd93b';ctx.strokeStyle='#c98a00';ctx.lineWidth=2;
     ctx.beginPath();
     for(let k=0;k<10;k++){
@@ -671,15 +714,13 @@ function drawHUD(){
     // combo 倒數條
     ctx.fillStyle='rgba(0,0,0,.2)';ctx.fillRect(52,80,90,5);
     ctx.fillStyle=combo>=8?'#ff5722':'#f0a020';
-    ctx.fillRect(52,80,90*clamp(comboT/1.6,0,1),5);
+    ctx.fillRect(52,80,90*clamp(comboT/COMBO_WIN,0,1),5);
   }
   // 時間條
-  const tw=300,tx=GAME_W/2-tw/2;
+  const tw=TIMEBAR_W,tx=TIMEBAR_X;
   panel(tx-8,10,tw+16,30);
-  const frac=clamp(dispTime/30,0,1.5);
-  const barGrad=ctx.createLinearGradient(tx,0,tx+tw,0);
-  if(timeLeft>10){barGrad.addColorStop(0,'#7bd346');barGrad.addColorStop(1,'#4caf50');}
-  else{barGrad.addColorStop(0,'#ff8a65');barGrad.addColorStop(1,'#ff5252');}
+  const frac=clamp(dispTime/BASE_TIME,0,1.5);
+  const barGrad=timeLeft>10?barGreen:barRed;
   ctx.fillStyle='rgba(0,0,0,.12)';ctx.fillRect(tx,17,tw,16);
   ctx.fillStyle=barGrad;ctx.fillRect(tx,17,tw*Math.min(frac,1),16);
   ctx.fillStyle='rgba(255,255,255,.35)';ctx.fillRect(tx,17,tw*Math.min(frac,1),5);
@@ -739,7 +780,8 @@ function draw(){
     ctx.strokeStyle='rgba(74,144,217,.55)';ctx.lineWidth=2;
     ctx.beginPath();ctx.arc(ptr.x,ptr.y,pr+6,0,7);ctx.stroke();
   }
-  items.slice().sort((a,b)=>a.y-b.y).forEach(drawItem);
+  items.sort((a,b)=>a.y-b.y); /* 原地排序，避免每幀 slice 配置 */
+  for(const it of items)drawItem(it);
   for(const b of bombs)drawBomb(b);
   drawPlayer();
   for(const p of parts){
@@ -760,10 +802,9 @@ function draw(){
   ctx.restore();
   drawHUD();
   if(feverT>0&&state==='play'){
-    const vg=ctx.createRadialGradient(GAME_W/2,GAME_H/2,GAME_H*.35,GAME_W/2,GAME_H/2,GAME_H*.75);
-    vg.addColorStop(0,'rgba(255,180,0,0)');
-    vg.addColorStop(1,'rgba(255,150,0,'+(.14+.06*Math.sin(tGlobal*9))+')');
-    ctx.fillStyle=vg;ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.globalAlpha=.14+.06*Math.sin(tGlobal*9);
+    ctx.fillStyle=FEVER_VG;ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.globalAlpha=1;
   }
   if(timeLeft<=5&&state==='play'){
     ctx.fillStyle='rgba(255,40,20,'+(.06+.05*Math.sin(tGlobal*8))+')';
@@ -785,8 +826,10 @@ function frame(now){
 document.getElementById('startBtn').addEventListener('click',startPlay);
 document.getElementById('restartBtn').addEventListener('click',startPlay);
 addEventListener('keydown',e=>{
-  if(e.code==='Space'&&state==='over')startPlay();
+  if((e.code==='Space'||e.code==='Enter')&&state!=='play')startPlay();
 });
+/* 可玩性實測掛鉤（無頭瀏覽器 QA 用） */
+window.__test=()=>({state,x:player.x,y:player.y,score,timeLeft});
 resetGame();
 requestAnimationFrame(frame);
 </script>

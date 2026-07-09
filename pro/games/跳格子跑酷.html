@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -98,7 +98,7 @@
     <div class="sub" style="color:#4a6db4;font-weight:bold;letter-spacing:2px">～ 往畫面內跑 ～</div>
     <div class="sub">小跑者在格子路上全速前進！<br>跳過黑色峽谷、空中收集金幣，<br>吃到 ⭐ 獲得護盾，掉洞免死一次！</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.85">🖥️ 電腦：空白鍵 / ↑＝跳躍（長按跳更高）<br>📱 平板：點螢幕任一處＝跳躍（按住跳更高）<br>✌️ 空中再按一次＝二段跳！</div>
+    <div class="sub" style="opacity:0.85">💻 電腦：空白鍵 / ↑＝跳躍（長按跳更高）<br>📱 平板：點螢幕任一處＝跳躍（按住跳更高）<br>✌️ 空中再按一次＝二段跳！</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -145,11 +145,21 @@ function proj(d) {              // d = 前方幾格（0 = 玩家腳下）
 }
 
 // ----- Web Audio -----
-let AC = null;
+let AC = null, BUS = null;
 let muted = localStorage.getItem('parkour-muted') === '1';
 function audio() {
   if (!AC) {
-    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      // 主匯流排：音量 + 壓縮器，多音同時觸發也不削波
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -14; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      BUS = AC.createGain();
+      BUS.gain.value = 0.85;
+      BUS.connect(comp);
+      comp.connect(AC.destination);
+    } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
@@ -157,16 +167,17 @@ function audio() {
 addEventListener('pointerdown', audio, { once: true });
 addEventListener('keydown', audio, { once: true });
 
-function beep(freq, dur, type, vol, slide) {
+function beep(freq, dur, type, vol, slide, hum) {
   if (muted) return;
   const ac = audio(); if (!ac) return;
+  if (hum) freq *= 1 - hum + Math.random() * hum * 2;   // 音高微隨機，聽起來更活
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(freq, ac.currentTime);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(BUS);
   o.start();
   o.stop(ac.currentTime + dur);
 }
@@ -181,18 +192,18 @@ function noiseBurst(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.2, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(ac.destination);
+  src.connect(g).connect(BUS);
   src.start();
 }
 const sfx = {
-  jump()  { beep(220, 0.16, 'square', 0.11, 420); },
-  land()  { beep(130, 0.06, 'triangle', 0.1); },
+  jump()  { beep(220, 0.16, 'square', 0.11, 420, 0.04); },
+  land()  { beep(130, 0.06, 'triangle', 0.07, 0, 0.05); },
   gap(n)  { const b = 880 + Math.min(4, n) * 110; beep(b, 0.08, 'square', 0.11); setTimeout(() => beep(b * 1.35, 0.13, 'square', 0.11), 70); },
   mile()  { [659, 880, 1109, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.11, 'triangle', 0.12), i * 80)); },
-  die()   { beep(300, 0.5, 'sawtooth', 0.18, -220); noiseBurst(0.4, 0.22); },
-  coin(n) { beep(940 + Math.min(8, n) * 70, 0.07, 'square', 0.1, 300); },
+  die()   { beep(300, 0.5, 'sawtooth', 0.15, -220); noiseBurst(0.4, 0.17); },
+  coin(n) { beep(940 + Math.min(8, n) * 70, 0.07, 'square', 0.09, 300, 0.03); },
   star()  { [880, 1109, 1319, 1760].forEach((f, i) => setTimeout(() => beep(f, 0.09, 'triangle', 0.12), i * 60)); },
-  djump() { beep(330, 0.14, 'square', 0.1, 520); },
+  djump() { beep(330, 0.14, 'square', 0.1, 520, 0.04); },
   rescue(){ beep(180, 0.25, 'sine', 0.16, 480); setTimeout(() => beep(660, 0.15, 'square', 0.1, 220), 120); },
   start() { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
   best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); }
@@ -226,6 +237,8 @@ let shield = false;           // 護盾（掉洞免死一次）
 let items = [];               // {row, h, type:'coin'|'star', seed}
 let lastStarRow = 0;
 let tutorialT = 0;
+let playT = 0;                // 本場遊玩秒數（時長曲線用）
+let firstGapHint = false;     // 首次遊玩：第一個峽谷前的教練提示
 const totalScore = () => Math.floor(dist) + bonus;
 
 // 玩家（垂直跳躍物理）
@@ -247,11 +260,12 @@ function ensureRows() {
   while (genRow < target) {
     genRow++;
     let gap = false, wide = false;
-    if (genRow > 12 && genRow - lastGapRow >= 4) {
-      const p = Math.min(0.34, 0.14 + dist * 0.0004);
+    if (genRow > 16 && genRow - lastGapRow >= 4) {      // 前16格＝安全學習期
+      const p = Math.min(0.36, 0.115 + dist * 0.00045);
       if (Math.random() < p) {
         gap = true;
-        wide = genRow > 130 && Math.random() < 0.35;   // 寬峽谷：後期登場
+        // 寬峽谷：後期登場且比例漸增（收尾難度）
+        wide = genRow > 150 && Math.random() < Math.min(0.62, 0.35 + (dist - 150) * 0.0005);
       }
     }
     rowData.set(genRow, { gap, judged: false });
@@ -322,10 +336,10 @@ function burst(x, y, color, n, speedP, up) {
     const a = Math.random() * Math.PI * 2, s = speedP * (0.3 + Math.random() * 0.7);
     parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - (up || 0), life: 0.4 + Math.random() * 0.4, color, size: 3 + Math.random() * 4 });
   }
-  if (parts.length > 300) parts.splice(0, parts.length - 300);
+  if (parts.length > 260) parts.splice(0, parts.length - 260);
 }
-function addFloat(x, y, text, color, size) {
-  floats.push({ x, y, text, color: color || '#fff', life: 0.9, size: size || 26 });
+function addFloat(x, y, text, color, size, life) {
+  floats.push({ x, y, text, color: color || '#fff', life: life || 0.9, size: size || 26 });
 }
 
 function resetGame() {
@@ -338,7 +352,9 @@ function resetGame() {
   coins = 0; bonus = 0;
   coinChain = 0; coinChainT = 0;
   shield = false; items = []; lastStarRow = 0;
-  tutorialT = localStorage.getItem('parkour-played') ? 5 : 9;
+  playT = 0;
+  firstGapHint = !localStorage.getItem('parkour-played');
+  tutorialT = localStorage.getItem('parkour-played') ? 3 : 9;
   player.h = 0; player.vy = 0; player.grounded = true;
   player.sx = 1; player.sy = 1; player.runCycle = 0;
   player.airJumps = 1; player.spinT = 0;
@@ -473,7 +489,9 @@ function update(dt) {
   for (const p of parts) {
     p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.life -= dt;
   }
-  for (let i = parts.length - 1; i >= 0; i--) if (parts[i].life <= 0) parts.splice(i, 1);
+  for (let i = parts.length - 1; i >= 0; i--) {
+    if (parts[i].life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); }  // swap-pop 零搬移
+  }
   for (const f of floats) { f.y -= 55 * dt; f.life -= dt; }
   for (let i = floats.length - 1; i >= 0; i--) if (floats[i].life <= 0) floats.splice(i, 1);
   for (const c of clouds) {
@@ -490,11 +508,25 @@ function update(dt) {
   }
   if (mode === 'over') return;
 
-  // 前進與加速（漸進難度，有上限）
-  const targetSpeed = Math.min(13, 5.5 + dist * 0.012);
+  // 前進與加速（漸進難度 + 110秒後的衝刺收尾，讓多數場次在4分內結束）
+  if (mode === 'play') playT += dt;
+  const lateRamp = Math.min(2.6, Math.max(0, playT - 110) * 0.026);
+  const targetSpeed = Math.min(13, 5.5 + dist * 0.012) + lateRamp;
   speed += (targetSpeed - speed) * Math.min(1, 2 * dt);
   dist += speed * dt;
   ensureRows();
+
+  // 首次遊玩：第一個峽谷靠近時給大字提示
+  if (firstGapHint && mode === 'play') {
+    for (const [row, data] of rowData) {
+      if (data.gap && row - dist > 2 && row - dist < 4.5) {
+        firstGapHint = false;
+        addFloat(GAME_W / 2, 168, '前方有洞！', '#fff', 34, 1.7);
+        addFloat(GAME_W / 2, 212, '點一下＝跳過去！', '#ffd447', 26, 1.7);
+        break;
+      }
+    }
+  }
 
   // 跳躍物理
   if (player.grounded && jumpBuffer > 0 && mode === 'play') {
@@ -650,12 +682,35 @@ function updateTheme() {
 const stars = [];
 for (let i = 0; i < 44; i++) stars.push({ x: Math.random() * GAME_W, y: Math.random() * (HORIZON_Y - 24), tw: Math.random() * 6.3 });
 
-function drawSky() {
+// ----- 主題漸層快取（只在主題色變化的過渡10格內重建，平時零配置）-----
+const grad = { key: '', sky: null, glow: null, sun: null, grass: null, road: null };
+function refreshGrads() {
+  const key = theme.top + theme.mid + theme.bot + theme.sun + theme.g1 + theme.g2;
+  if (key === grad.key) return;
+  grad.key = key;
   const g = ctx.createLinearGradient(0, 0, 0, HORIZON_Y + 60);
-  g.addColorStop(0, theme.top);
-  g.addColorStop(0.6, theme.mid);
-  g.addColorStop(1, theme.bot);
-  ctx.fillStyle = g;
+  g.addColorStop(0, theme.top); g.addColorStop(0.6, theme.mid); g.addColorStop(1, theme.bot);
+  grad.sky = g;
+  const sg = ctx.createRadialGradient(GAME_W / 2, 62, 5, GAME_W / 2, 62, 90);
+  sg.addColorStop(0, 'rgba(255,246,200,1)');
+  sg.addColorStop(0.3, 'rgba(' + theme.sun + ',0.7)');
+  sg.addColorStop(1, 'rgba(' + theme.sun + ',0)');
+  grad.glow = sg;
+  const sc = ctx.createRadialGradient(GAME_W / 2 - 8, 54, 3, GAME_W / 2, 62, 30);
+  sc.addColorStop(0, '#fff6c8');
+  sc.addColorStop(0.7, 'rgb(' + theme.sun + ')');
+  sc.addColorStop(1, 'rgb(' + theme.sun + ')');
+  grad.sun = sc;
+  const gl = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
+  gl.addColorStop(0, theme.g1); gl.addColorStop(1, theme.g2);
+  grad.grass = gl;
+  const rg = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
+  rg.addColorStop(0, theme.r1); rg.addColorStop(1, theme.r2);
+  grad.road = rg;
+}
+
+function drawSky() {
+  ctx.fillStyle = grad.sky;
   ctx.fillRect(0, 0, GAME_W, HORIZON_Y + 60);
 
   // 夜空星星
@@ -668,20 +723,12 @@ function drawSky() {
     ctx.globalAlpha = 1;
   }
 
-  // 太陽／月亮（光暈 + 漸層本體）
-  const sg = ctx.createRadialGradient(GAME_W / 2, 62, 5, GAME_W / 2, 62, 90);
-  sg.addColorStop(0, 'rgba(255,246,200,1)');
-  sg.addColorStop(0.3, 'rgba(' + theme.sun + ',0.7)');
-  sg.addColorStop(1, 'rgba(' + theme.sun + ',0)');
-  ctx.fillStyle = sg;
+  // 太陽／月亮（光暈 + 漸層本體，漸層取自快取）
+  ctx.fillStyle = grad.glow;
   ctx.beginPath();
   ctx.arc(GAME_W / 2, 62, 90, 0, Math.PI * 2);
   ctx.fill();
-  const sunCore = ctx.createRadialGradient(GAME_W / 2 - 8, 54, 3, GAME_W / 2, 62, 30);
-  sunCore.addColorStop(0, '#fff6c8');
-  sunCore.addColorStop(0.7, 'rgb(' + theme.sun + ')');
-  sunCore.addColorStop(1, 'rgb(' + theme.sun + ')');
-  ctx.fillStyle = sunCore;
+  ctx.fillStyle = grad.sun;
   ctx.beginPath();
   ctx.arc(GAME_W / 2, 62, 30, 0, Math.PI * 2);
   ctx.fill();
@@ -729,17 +776,11 @@ function roadEdgeX(d, side) {
 
 function drawGround() {
   // 兩側草地（漸層 + 遠淡近深，隨關卡變色）
-  const gl = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
-  gl.addColorStop(0, theme.g1);
-  gl.addColorStop(1, theme.g2);
-  ctx.fillStyle = gl;
+  ctx.fillStyle = grad.grass;
   ctx.fillRect(0, HORIZON_Y, GAME_W, GAME_H - HORIZON_Y);
 
   // 道路本體（大梯形）
-  const rg = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
-  rg.addColorStop(0, theme.r1);
-  rg.addColorStop(1, theme.r2);
-  ctx.fillStyle = rg;
+  ctx.fillStyle = grad.road;
   ctx.beginPath();
   ctx.moveTo(roadEdgeX(60, -1), proj(60).y);
   ctx.lineTo(roadEdgeX(60, 1), proj(60).y);
@@ -783,17 +824,23 @@ function drawGround() {
       const inset = 0.06;
       const gy1 = proj(dFar - inset), gy2 = proj(dNear + inset);
       const hw1 = ROAD_HALF * 0.92 * gy1.s, hw2 = ROAD_HALF * 0.92 * gy2.s;
-      // 洞口
-      const hole = ctx.createLinearGradient(0, gy1.y, 0, gy2.y);
-      hole.addColorStop(0, '#000');
-      hole.addColorStop(0.5, '#1a1208');
-      hole.addColorStop(1, '#000');
-      ctx.fillStyle = hole;
+      // 洞口（平色兩層取代每幀重建的漸層：黑底 + 中段微亮）
+      ctx.fillStyle = '#000';
       ctx.beginPath();
       ctx.moveTo(GAME_W / 2 - hw1, gy1.y);
       ctx.lineTo(GAME_W / 2 + hw1, gy1.y);
       ctx.lineTo(GAME_W / 2 + hw2, gy2.y);
       ctx.lineTo(GAME_W / 2 - hw2, gy2.y);
+      ctx.closePath();
+      ctx.fill();
+      const my1 = gy1.y + (gy2.y - gy1.y) * 0.28, my2 = gy1.y + (gy2.y - gy1.y) * 0.72;
+      const mw1 = hw1 + (hw2 - hw1) * 0.28, mw2 = hw1 + (hw2 - hw1) * 0.72;
+      ctx.fillStyle = '#1a1208';
+      ctx.beginPath();
+      ctx.moveTo(GAME_W / 2 - mw1, my1);
+      ctx.lineTo(GAME_W / 2 + mw1, my1);
+      ctx.lineTo(GAME_W / 2 + mw2, my2);
+      ctx.lineTo(GAME_W / 2 - mw2, my2);
       ctx.closePath();
       ctx.fill();
       // 內壁受光面（上緣）

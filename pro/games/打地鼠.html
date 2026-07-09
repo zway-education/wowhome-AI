@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -37,6 +37,7 @@ let GAME_W = 960, GAME_H = 540, PORTRAIT = false, HORIZON = 210;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 let HOLES = [];
+let bgCanvas = null, bgDirty = true, bgHasImgs = false;   /* v3：靜態背景快取 */
 function layout(){
   PORTRAIT = innerHeight > innerWidth;
   GAME_W = PORTRAIT ? 540 : 960;
@@ -62,6 +63,8 @@ function resize(){
   canvas.style.height = GAME_H * scale + 'px';
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   canvas._scale = scale;
+  canvas._q = scale * dpr;
+  bgDirty = true;   /* v3：版面變更時重烘背景 */
 }
 addEventListener('resize', resize);
 resize();
@@ -111,15 +114,23 @@ function drawImg(img, x, y, w, h){
 }
 
 /* ===== 音效 ===== */
-let AC = null;
+let AC = null, master = null, noiseBuf = null;
 let muted = false;
 try{ muted = localStorage.getItem('whackpro_muted') === '1'; }catch(e){}
 function initAudio(){
   if(!AC){
-    try{ AC = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      /* v3：主控音量匯流排——多事件同發也不削波 */
+      master = AC.createGain();
+      master.gain.value = 0.55;
+      master.connect(AC.destination);
+    }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
 }
+/* v3：微幅隨機音高，連續敲擊不像機關槍 */
+const rp = f => f * (0.94 + Math.random() * 0.12);
 function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(muted || !AC) return;
   const o = AC.createOscillator(), g = AC.createGain();
@@ -128,28 +139,32 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g).connect(AC.destination);
+  o.connect(g).connect(master);
   o.start(); o.stop(AC.currentTime + dur);
 }
 function noise(dur = 0.15, vol = 0.2){
   if(muted || !AC) return;
-  const len = Math.floor(AC.sampleRate * dur);
-  const buf = AC.createBuffer(1, len, AC.sampleRate);
-  const d = buf.getChannelData(0);
-  for(let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  /* v3：共用一顆噪音 buffer，不每次配置 */
+  if(!noiseBuf){
+    const len = Math.floor(AC.sampleRate * 0.4);
+    noiseBuf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for(let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  }
   const src = AC.createBufferSource();
-  src.buffer = buf;
+  src.buffer = noiseBuf;
+  src.playbackRate.value = 0.4 / dur * (0.9 + Math.random() * 0.2);
   const g = AC.createGain();
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  src.connect(g).connect(AC.destination);
+  src.connect(g).connect(master);
   src.start();
 }
 const sfx = {
-  whack(){ noise(0.08, 0.18); beep(140, 0.09, 'square', 0.14, -60); },
+  whack(){ noise(0.08, 0.18); beep(rp(140), 0.09, 'square', 0.14, -60); },
   gold(){ beep(988, 0.08, 'square', 0.1); setTimeout(() => beep(1319, 0.14, 'square', 0.1), 80); },
   bomb(){ noise(0.35, 0.25); beep(90, 0.4, 'sawtooth', 0.18, -50); },
-  whiff(){ beep(300, 0.06, 'triangle', 0.06, -120); },
+  whiff(){ beep(rp(300), 0.06, 'triangle', 0.06, -120); },
   tick(){ beep(880, 0.05, 'square', 0.09); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   go(){ beep(523, 0.1, 'square', 0.1); setTimeout(() => beep(784, 0.16, 'square', 0.1), 110); },
@@ -175,11 +190,16 @@ function burst(x, y, color, n = 12, speed = 220, life = 0.5){
   }
 }
 function updateParts(dt){
-  for(const p of parts){
+  /* v3：原地 swap-pop 回收，不每幀新建陣列 */
+  for(let i = parts.length - 1; i >= 0; i--){
+    const p = parts[i];
     p.x += p.vx * dt; p.y += p.vy * dt;
     p.vy += 700 * dt; p.life -= dt;
+    if(p.life <= 0){
+      parts[i] = parts[parts.length - 1];
+      parts.pop();
+    }
   }
-  parts = parts.filter(p => p.life > 0);
 }
 function drawParts(){
   for(const p of parts){
@@ -212,7 +232,7 @@ function drawFloaters(){
 const KEY_HOLE = { 7: 0, 8: 1, 9: 2, 4: 3, 5: 4, 6: 5, 1: 6, 2: 7, 3: 8 };
 
 /* ===== 全域狀態 ===== */
-const GAME_TIME = 45;
+const GAME_TIME = 60;   /* v3：45→60 秒，典型一場約 65～80 秒 */
 let stateName = 'title';
 let stateT = 0, T = 0;
 let shake = 0, freeze = 0;
@@ -271,8 +291,9 @@ function spawnMole(){
   const roll = Math.random();
   let type = 'normal';
   const goldChance = sprint ? 0.17 : 0.09;
-  const helmChance = elapsed > 12 ? 0.13 : 0;
-  const bombChance = feverOn ? 0 : Math.min(0.22, 0.06 + elapsed * 0.004);
+  const helmChance = elapsed > 14 ? 0.13 : 0;
+  /* v3：前 8 秒安全學習期——沒有炸彈，先學會敲再學會避 */
+  const bombChance = (feverOn || elapsed < 8) ? 0 : Math.min(0.22, 0.06 + (elapsed - 8) * 0.004);
   if(roll < goldChance) type = 'gold';
   else if(roll < goldChance + helmChance) type = 'helmet';
   else if(roll < goldChance + helmChance + bombChance) type = 'bomb';
@@ -374,7 +395,7 @@ function hitMole(m){
   addFloater(h.x, h.y - 120 * h.s, '+' + gain, m.type === 'normal' ? '#fff' : '#ffd23f', m.type === 'normal' ? 22 : 26);
   if(m.type === 'gold'){
     stGold++;
-    timeLeft = Math.min(60, timeLeft + 2);
+    timeLeft = Math.min(75, timeLeft + 2);
     addFloater(h.x, h.y - 150 * h.s, '+2秒！', '#7ef0a0', 20);
     sfx.gold();
   }else if(m.type === 'helmet') sfx.gold();
@@ -454,7 +475,8 @@ function playUpdate(dt){
     if(timeLeft <= 0){ timeLeft = 0; phase = 'end'; phaseT = 0; }
     /* 生成（間隔隨時間縮短、同時在場數增加；FEVER／衝刺再加速） */
     spawnTimer -= dt;
-    const maxOnField = 2 + Math.floor(elapsed / 12) + (feverOn ? 2 : 0) + (sprint ? 1 : 0);
+    /* v3：同場上限封頂 5（60 秒版後段不爆滿） */
+    const maxOnField = 2 + Math.min(3, Math.floor(elapsed / 14)) + (feverOn ? 2 : 0) + (sprint ? 1 : 0);
     if(spawnTimer <= 0 && moles.length < maxOnField){
       let iv = Math.max(0.3, 0.82 - elapsed * 0.01);
       if(feverOn) iv = Math.max(0.18, iv * 0.45);
@@ -496,20 +518,90 @@ function playUpdate(dt){
   scoreShow += (score - scoreShow) * (1 - Math.pow(0.02, dt));
 }
 
-/* ===== 背景（天空漸層＋視差雲丘＋柵欄＋裝飾）===== */
-function drawBG(){
-  const g = ctx.createLinearGradient(0, 0, 0, HORIZON);
+/* ===== 背景（v3：靜態層烘焙到離屏 canvas，每幀只 drawImage 一次）===== */
+function bakeBG(){
+  if(!bgCanvas) bgCanvas = document.createElement('canvas');
+  const q = canvas._q || 1;
+  bgCanvas.width = Math.max(1, Math.round(GAME_W * q));
+  bgCanvas.height = Math.max(1, Math.round(GAME_H * q));
+  const c = bgCanvas.getContext('2d');
+  c.setTransform(q, 0, 0, q, 0, 0);
+  const g = c.createLinearGradient(0, 0, 0, HORIZON);
   g.addColorStop(0, '#5fb0ff'); g.addColorStop(1, '#bfe3ff');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, HORIZON);
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, HORIZON);
   /* 太陽 */
   const sunX = GAME_W - 130;
-  ctx.fillStyle = 'rgba(255,236,150,.35)';
-  ctx.beginPath(); ctx.arc(sunX, 60, 58, 0, Math.PI * 2); ctx.fill();
-  const sg = ctx.createRadialGradient(sunX - 8, 52, 5, sunX, 60, 36);
+  c.fillStyle = 'rgba(255,236,150,.35)';
+  c.beginPath(); c.arc(sunX, 60, 58, 0, Math.PI * 2); c.fill();
+  const sg = c.createRadialGradient(sunX - 8, 52, 5, sunX, 60, 36);
   sg.addColorStop(0, '#fff7d8'); sg.addColorStop(1, '#ffd23f');
-  ctx.fillStyle = sg;
-  ctx.beginPath(); ctx.arc(sunX, 60, 36, 0, Math.PI * 2); ctx.fill();
-  /* 兩層視差雲 */
+  c.fillStyle = sg;
+  c.beginPath(); c.arc(sunX, 60, 36, 0, Math.PI * 2); c.fill();
+  /* 遠丘（兩層） */
+  c.fillStyle = '#4fa032';
+  c.beginPath(); c.moveTo(0, HORIZON);
+  for(let x = 0; x <= GAME_W; x += 30)
+    c.lineTo(x, HORIZON - 32 + Math.sin(x * 0.008 + 1) * 22);
+  c.lineTo(GAME_W, HORIZON); c.closePath(); c.fill();
+  c.fillStyle = '#5fb43e';
+  c.beginPath(); c.moveTo(0, HORIZON + 4);
+  for(let x = 0; x <= GAME_W; x += 30)
+    c.lineTo(x, HORIZON - 14 + Math.cos(x * 0.011) * 14);
+  c.lineTo(GAME_W, HORIZON + 4); c.closePath(); c.fill();
+  /* 木柵欄 */
+  c.fillStyle = '#a3703c';
+  for(let x = 20; x < GAME_W; x += 68){
+    c.beginPath();
+    c.moveTo(x + 4, HORIZON - 42);
+    c.arcTo(x + 12, HORIZON - 42, x + 12, HORIZON + 4, 4);
+    c.arcTo(x + 12, HORIZON + 4, x, HORIZON + 4, 4);
+    c.arcTo(x, HORIZON + 4, x, HORIZON - 42, 4);
+    c.arcTo(x, HORIZON - 42, x + 12, HORIZON - 42, 4);
+    c.closePath(); c.fill();
+  }
+  c.fillRect(0, HORIZON - 32, GAME_W, 7);
+  c.fillRect(0, HORIZON - 14, GAME_W, 7);
+  c.fillStyle = 'rgba(0,0,0,.12)';
+  c.fillRect(0, HORIZON - 27, GAME_W, 2);
+  c.fillRect(0, HORIZON - 9, GAME_W, 2);
+  /* 草地（上亮下深的漸層） */
+  const gg = c.createLinearGradient(0, HORIZON, 0, GAME_H);
+  gg.addColorStop(0, '#7ecf58'); gg.addColorStop(0.5, '#6bc44a'); gg.addColorStop(1, '#4fa032');
+  c.fillStyle = gg; c.fillRect(0, HORIZON, GAME_W, GAME_H - HORIZON);
+  /* 草叢 */
+  c.strokeStyle = 'rgba(47,107,40,.5)'; c.lineWidth = 2;
+  for(let i = 0; i < 22; i++){
+    const gx = (i * 157 + 30) % GAME_W;
+    const gy = HORIZON + 25 + (i * 97) % (GAME_H - HORIZON - 60);
+    c.beginPath();
+    c.moveTo(gx, gy); c.lineTo(gx - 4, gy - 9);
+    c.moveTo(gx, gy); c.lineTo(gx + 1, gy - 11);
+    c.moveTo(gx, gy); c.lineTo(gx + 5, gy - 8);
+    c.stroke();
+  }
+  /* OpenMoji 裝飾：花與蘑菇 */
+  const deco = (img, x, y, w, h) => { if(img.complete && img.naturalWidth) c.drawImage(img, x, y, w, h); };
+  deco(IMG.flower, 40, HORIZON + 8, 46, 46);
+  deco(IMG.flower, GAME_W - 80, HORIZON + 40, 40, 40);
+  deco(IMG.flower, 60, GAME_H - 70, 54, 54);
+  deco(IMG.mush, GAME_W - 70, GAME_H - 88, 52, 52);
+  deco(IMG.mush, 130, HORIZON + 120, 38, 38);
+  /* 地洞內部（靜態，一併烘焙） */
+  for(const h of HOLES){
+    c.fillStyle = '#5a3a1e';
+    c.beginPath(); c.ellipse(h.x, h.y, 66 * h.s, 24 * h.s, 0, 0, Math.PI * 2); c.fill();
+    const hg = c.createRadialGradient(h.x, h.y, 4, h.x, h.y, 60 * h.s);
+    hg.addColorStop(0, '#1f1408'); hg.addColorStop(0.7, '#2e1f13'); hg.addColorStop(1, '#4a3320');
+    c.fillStyle = hg;
+    c.beginPath(); c.ellipse(h.x, h.y, 58 * h.s, 20 * h.s, 0, 0, Math.PI * 2); c.fill();
+  }
+  bgHasImgs = !!(IMG.flower.complete && IMG.flower.naturalWidth && IMG.mush.complete && IMG.mush.naturalWidth);
+  bgDirty = false;
+}
+function drawBG(){
+  if(bgDirty || (!bgHasImgs && IMG.flower.complete && IMG.flower.naturalWidth)) bakeBG();
+  ctx.drawImage(bgCanvas, 0, 0, GAME_W, GAME_H);
+  /* 兩層視差雲（唯一逐幀重繪的背景元素） */
   for(const L of [[T * 10, 46, 0.75, 0.5], [T * 22, 92, 1, 0.85]]){
     ctx.fillStyle = 'rgba(255,255,255,' + L[3] + ')';
     for(let i = 0; i < 3; i++){
@@ -521,59 +613,6 @@ function drawBG(){
       ctx.fill();
     }
   }
-  /* 遠丘（兩層） */
-  ctx.fillStyle = '#4fa032';
-  ctx.beginPath(); ctx.moveTo(0, HORIZON);
-  for(let x = 0; x <= GAME_W; x += 30)
-    ctx.lineTo(x, HORIZON - 32 + Math.sin(x * 0.008 + 1) * 22);
-  ctx.lineTo(GAME_W, HORIZON); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#5fb43e';
-  ctx.beginPath(); ctx.moveTo(0, HORIZON + 4);
-  for(let x = 0; x <= GAME_W; x += 30)
-    ctx.lineTo(x, HORIZON - 14 + Math.cos(x * 0.011) * 14);
-  ctx.lineTo(GAME_W, HORIZON + 4); ctx.closePath(); ctx.fill();
-  /* 木柵欄 */
-  ctx.fillStyle = '#a3703c';
-  for(let x = 20; x < GAME_W; x += 68){
-    rr(x, HORIZON - 42, 12, 46, 4); ctx.fill();
-  }
-  ctx.fillRect(0, HORIZON - 32, GAME_W, 7);
-  ctx.fillRect(0, HORIZON - 14, GAME_W, 7);
-  ctx.fillStyle = 'rgba(0,0,0,.12)';
-  ctx.fillRect(0, HORIZON - 27, GAME_W, 2);
-  ctx.fillRect(0, HORIZON - 9, GAME_W, 2);
-  /* 草地（上亮下深的漸層） */
-  const gg = ctx.createLinearGradient(0, HORIZON, 0, GAME_H);
-  gg.addColorStop(0, '#7ecf58'); gg.addColorStop(0.5, '#6bc44a'); gg.addColorStop(1, '#4fa032');
-  ctx.fillStyle = gg; ctx.fillRect(0, HORIZON, GAME_W, GAME_H - HORIZON);
-  /* 草叢 */
-  ctx.strokeStyle = 'rgba(47,107,40,.5)'; ctx.lineWidth = 2;
-  for(let i = 0; i < 22; i++){
-    const gx = (i * 157 + 30) % GAME_W;
-    const gy = HORIZON + 25 + (i * 97) % (GAME_H - HORIZON - 60);
-    ctx.beginPath();
-    ctx.moveTo(gx, gy); ctx.lineTo(gx - 4, gy - 9);
-    ctx.moveTo(gx, gy); ctx.lineTo(gx + 1, gy - 11);
-    ctx.moveTo(gx, gy); ctx.lineTo(gx + 5, gy - 8);
-    ctx.stroke();
-  }
-  /* OpenMoji 裝飾：花與蘑菇（隨風輕擺） */
-  const sway = Math.sin(T * 1.4) * 2;
-  drawImg(IMG.flower, 40 + sway, HORIZON + 8, 46, 46);
-  drawImg(IMG.flower, GAME_W - 80 - sway, HORIZON + 40, 40, 40);
-  drawImg(IMG.flower, 60 - sway, GAME_H - 70, 54, 54);
-  drawImg(IMG.mush, GAME_W - 70 + sway, GAME_H - 88, 52, 52);
-  drawImg(IMG.mush, 130 + sway, HORIZON + 120, 38, 38);
-}
-
-/* ===== 地洞與地鼠 ===== */
-function drawHoleBack(h){
-  ctx.fillStyle = '#5a3a1e';
-  ctx.beginPath(); ctx.ellipse(h.x, h.y, 66 * h.s, 24 * h.s, 0, 0, Math.PI * 2); ctx.fill();
-  const hg = ctx.createRadialGradient(h.x, h.y, 4, h.x, h.y, 60 * h.s);
-  hg.addColorStop(0, '#1f1408'); hg.addColorStop(0.7, '#2e1f13'); hg.addColorStop(1, '#4a3320');
-  ctx.fillStyle = hg;
-  ctx.beginPath(); ctx.ellipse(h.x, h.y, 58 * h.s, 20 * h.s, 0, 0, Math.PI * 2); ctx.fill();
 }
 function drawHoleFront(h){
   ctx.strokeStyle = '#8b5a2b'; ctx.lineWidth = 6 * h.s;
@@ -617,17 +656,25 @@ function drawMole(m){
   ctx.restore();
   ctx.globalAlpha = 1;
 }
+/* v3：身體漸層以型別快取（本地座標可跨隻重用） */
+let moleGradGold = null, moleGradNorm = null;
+function moleGrad(gold){
+  let g = gold ? moleGradGold : moleGradNorm;
+  if(!g){
+    g = ctx.createRadialGradient(-12, -66, 8, 0, -46, 55);
+    if(gold){ g.addColorStop(0, '#ffe387'); g.addColorStop(1, '#e8a020'); moleGradGold = g; }
+    else{ g.addColorStop(0, '#a5744a'); g.addColorStop(1, '#6b4423'); moleGradNorm = g; }
+  }
+  return g;
+}
 function drawMoleBody(m){
   const gold = m.type === 'gold';
   const helm = m.type === 'helmet';
   const OUT = gold ? '#8a5f00' : '#4a2f18';
   ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   /* 身體（球面漸層） */
-  const bg = ctx.createRadialGradient(-12, -66, 8, 0, -46, 55);
-  if(gold){ bg.addColorStop(0, '#ffe387'); bg.addColorStop(1, '#e8a020'); }
-  else{ bg.addColorStop(0, '#a5744a'); bg.addColorStop(1, '#6b4423'); }
   ctx.beginPath(); ctx.ellipse(0, -40, 42, 46, 0, 0, Math.PI * 2);
-  ctx.fillStyle = bg; ctx.fill();
+  ctx.fillStyle = moleGrad(gold); ctx.fill();
   ctx.strokeStyle = OUT; ctx.lineWidth = 3; ctx.stroke();
   /* 耳朵 */
   for(const ex of [-30, 30]){
@@ -930,9 +977,8 @@ function bigText(txt, y, size, color, scaleK){
 function drawWorld(){
   ctx.save();
   ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
-  drawBG();
+  drawBG();   /* v3：洞內漸層已烘進背景 */
   for(let i = 0; i < 9; i++){
-    drawHoleBack(HOLES[i]);
     for(const m of moles) if(m.hole === i) drawMole(m);
     drawHoleFront(HOLES[i]);
   }
@@ -969,8 +1015,8 @@ function titleDraw(){
   }
   ctx.font = 'bold 16px ' + FONT;
   ctx.fillStyle = '#fff';
-  ctx.fillText('🖱️ 電腦：滑鼠點地鼠，或按數字鍵 1～9（九宮格方位）', GAME_W / 2, 366);
-  ctx.fillText('👆 平板：手指直接輕點地鼠', GAME_W / 2, 394);
+  ctx.fillText('💻 電腦：滑鼠點地鼠，或按數字鍵 1～9（九宮格方位）', GAME_W / 2, 366);
+  ctx.fillText('📱 平板：手指直接輕點地鼠', GAME_W / 2, 394);
   ctx.font = '14px ' + FONT;
   ctx.fillStyle = 'rgba(255,255,255,.85)';
   ctx.fillText(GAME_TIME + ' 秒限時挑戰　按 M 或右下角按鈕靜音', GAME_W / 2, 422);
@@ -1037,7 +1083,7 @@ function overDraw(){
   ctx.fillStyle = '#ff6b35';
   ctx.fillText(score + ' 分', 0, -52);
   /* v2：星級評價（逐顆彈出） */
-  const stars = score >= 600 ? 3 : score >= 350 ? 2 : score >= 150 ? 1 : 0;
+  const stars = score >= 800 ? 3 : score >= 480 ? 2 : score >= 200 ? 1 : 0;   /* v3：60 秒版門檻 */
   for(let i = 0; i < 3; i++){
     const pop = clamp((overT - 0.6 - i * 0.28) / 0.3, 0, 1);
     const sc = easeOutBack(pop);
