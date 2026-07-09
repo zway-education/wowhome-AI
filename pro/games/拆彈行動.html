@@ -235,6 +235,8 @@ const COLORS = [
 let stateName = 'title';
 let stateT = 0, T = 0;
 let shake = 0, freeze = 0, flash = 0;
+const WIN_GOAL = 10;   /* v3：連續拆除 10 顆＝破案結局 */
+let won = false;
 let round = 1, defused = 0, score = 0, scoreShow = 0, best = 0;
 try{ best = parseInt(localStorage.getItem('bombpro_best') || '0', 10) || 0; }catch(e){}
 let newBest = false;
@@ -297,7 +299,9 @@ function buildRound(){
       options.push({ type: 'colormax', idx: wires.findIndex(w => w.color.name === nm && w.number === mx), txt: '在「' + nm + '」的線中，剪斷數字最大的那條。' });
     });
   }
-  const chosen = pick(options);
+  /* v3：第 1 關只出「最大／最小」最直覺題型（安全學習期） */
+  const pool = round === 1 ? options.filter(o => o.type === 'max' || o.type === 'min') : options;
+  const chosen = pick(pool.length ? pool : options);
   correctIndex = chosen.idx;
   clueText = chosen.txt;
   timeMax = timeLeft = Math.max(6, 15 - (round - 1) * 0.7);
@@ -306,7 +310,8 @@ function buildRound(){
 }
 function startGame(){
   round = 1; defused = 0; score = 0; scoreShow = 0; newBest = false;
-  shields = 0; mags = 1;
+  won = false;
+  shields = 1; mags = 1;   /* v3：開局送 1 個保險絲，第一次剪錯不會直接結束 */
   parts = []; floaters.length = 0; villagers = [];
   buildRound();
   stateName = 'play'; stateT = 0;
@@ -317,7 +322,8 @@ function endGame(){
     try{ localStorage.setItem('bombpro_best', String(best)); }catch(e){}
   }
   stateName = 'over'; stateT = 0; overT = 0;
-  sfx.lose();
+  if(won){ sfx.win(); spawnCrowd(); }
+  else sfx.lose();
 }
 function toTitle(){
   stateName = 'title'; stateT = 0;
@@ -497,8 +503,9 @@ function playUpdate(dt){
     }
   }else if(phase === 'success'){
     if(phaseT > 1.7){
-      round++;
-      buildRound();
+      /* v3：拆滿 10 顆＝破案，進入勝利結算 */
+      if(defused >= WIN_GOAL){ won = true; endGame(); }
+      else{ round++; buildRound(); }
     }
   }else if(phase === 'boom'){
     if(phaseT > 1.3) endGame();
@@ -509,39 +516,59 @@ function playUpdate(dt){
   scoreShow += (score - scoreShow) * (1 - Math.pow(0.02, dt));
 }
 
-/* ===== 背景（夜空＋月亮＋探照燈＋城市視差）===== */
-function drawBG(){
-  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+/* ===== 背景（v3：夜空／月亮／屋頂烘焙離屏，每幀只補動態元素）===== */
+function bakeBG(){
+  if(!bgCanvas) bgCanvas = document.createElement('canvas');
+  const q = canvas._q || 1;
+  bgCanvas.width = Math.max(1, Math.round(GAME_W * q));
+  bgCanvas.height = Math.max(1, Math.round(GAME_H * q));
+  const c = bgCanvas.getContext('2d');
+  c.setTransform(q, 0, 0, q, 0, 0);
+  const g = c.createLinearGradient(0, 0, 0, GAME_H);
   g.addColorStop(0, '#0a0f1e'); g.addColorStop(0.7, '#141b30'); g.addColorStop(1, '#1a2340');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, GAME_H);
-  /* 星星 */
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
+  /* 月亮 */
+  const mg = c.createRadialGradient(112, 78, 6, 120, 86, 40);
+  mg.addColorStop(0, '#fdf6dc'); mg.addColorStop(1, '#d8cfa4');
+  c.fillStyle = 'rgba(253,246,220,.14)';
+  c.beginPath(); c.arc(120, 86, 58, 0, Math.PI * 2); c.fill();
+  c.fillStyle = mg;
+  c.beginPath(); c.arc(120, 86, 34, 0, Math.PI * 2); c.fill();
+  c.fillStyle = 'rgba(160,150,110,.35)';
+  c.beginPath(); c.arc(110, 80, 6, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(130, 96, 4.5, 0, Math.PI * 2); c.fill();
+  c.beginPath(); c.arc(126, 74, 3, 0, Math.PI * 2); c.fill();
+  /* 屋頂平台 */
+  const fg = c.createLinearGradient(0, GAME_H - 82, 0, GAME_H);
+  fg.addColorStop(0, '#232c42'); fg.addColorStop(1, '#12182a');
+  c.fillStyle = fg; c.fillRect(0, GAME_H - 82, GAME_W, 82);
+  c.fillStyle = '#39435e'; c.fillRect(0, GAME_H - 82, GAME_W, 4);
+  c.fillStyle = 'rgba(255,176,32,.5)';
+  for(let x = 14; x < GAME_W; x += 60) c.fillRect(x, GAME_H - 46, 30, 5);   // 警示斜紋
+  bgDirty = false;
+}
+function drawBG(){
+  if(bgDirty) bakeBG();
+  ctx.drawImage(bgCanvas, 0, 0, GAME_W, GAME_H);
+  /* 星星（閃爍） */
   for(let i = 0; i < 24; i++){
     const sx = (i * 151 + 40) % GAME_W;
     const sy = 14 + (i * 89) % 150;
     ctx.fillStyle = 'rgba(230,240,255,' + (0.25 + 0.3 * Math.sin(T * 1.8 + i)).toFixed(3) + ')';
     ctx.fillRect(sx, sy, 2, 2);
   }
-  /* 月亮 */
-  const mg = ctx.createRadialGradient(112, 78, 6, 120, 86, 40);
-  mg.addColorStop(0, '#fdf6dc'); mg.addColorStop(1, '#d8cfa4');
-  ctx.fillStyle = 'rgba(253,246,220,.14)';
-  ctx.beginPath(); ctx.arc(120, 86, 58, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = mg;
-  ctx.beginPath(); ctx.arc(120, 86, 34, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(160,150,110,.35)';
-  ctx.beginPath(); ctx.arc(110, 80, 6, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(130, 96, 4.5, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(126, 74, 3, 0, Math.PI * 2); ctx.fill();
-  /* 探照燈（緩慢擺動的光束） */
+  /* 探照燈（緩慢擺動的光束；漸層座標固定→惰性快取） */
+  if(!lightGrad){
+    lightGrad = ctx.createLinearGradient(0, 0, 0, -520);
+    lightGrad.addColorStop(0, 'rgba(255,240,190,.13)');
+    lightGrad.addColorStop(1, 'rgba(255,240,190,0)');
+  }
   for(const s of [[GAME_W * 0.25, 0.9, 0.35], [GAME_W * 0.81, -0.7, 0.55]]){
     const ang = -Math.PI / 2 + Math.sin(T * s[2]) * 0.5 + s[1] * 0.2;
     ctx.save();
     ctx.translate(s[0], GAME_H - 130);
     ctx.rotate(ang);
-    const lg = ctx.createLinearGradient(0, 0, 0, -520);
-    lg.addColorStop(0, 'rgba(255,240,190,.13)');
-    lg.addColorStop(1, 'rgba(255,240,190,0)');
-    ctx.fillStyle = lg;
+    ctx.fillStyle = lightGrad;
     ctx.beginPath();
     ctx.moveTo(-8, 0); ctx.lineTo(8, 0);
     ctx.lineTo(70, -520); ctx.lineTo(-70, -520);
@@ -551,13 +578,6 @@ function drawBG(){
   /* 城市剪影（兩層視差） */
   drawSkyline(T * 2.5, GAME_H - 118, '#111a2e', 1);
   drawSkyline(T * 6, GAME_H - 96, '#0a1020', 1.35);
-  /* 屋頂平台 */
-  const fg = ctx.createLinearGradient(0, GAME_H - 82, 0, GAME_H);
-  fg.addColorStop(0, '#232c42'); fg.addColorStop(1, '#12182a');
-  ctx.fillStyle = fg; ctx.fillRect(0, GAME_H - 82, GAME_W, 82);
-  ctx.fillStyle = '#39435e'; ctx.fillRect(0, GAME_H - 82, GAME_W, 4);
-  ctx.fillStyle = 'rgba(255,176,32,.5)';
-  for(let x = 14; x < GAME_W; x += 60) ctx.fillRect(x, GAME_H - 46, 30, 5);   // 警示斜紋
 }
 function drawSkyline(off, baseY, color, hs){
   const period = GAME_W + 200;
@@ -624,10 +644,12 @@ function drawCase(){
   /* 陰影與外殼 */
   ctx.fillStyle = 'rgba(0,0,0,.5)';
   ctx.beginPath(); ctx.ellipse(GAME_W / 2, CASE_Y + CASE_H + 12, CASE_W / 2, 16, 0, 0, Math.PI * 2); ctx.fill();
-  const cg = ctx.createLinearGradient(0, CASE_Y, 0, CASE_Y + CASE_H);
-  cg.addColorStop(0, '#28324a'); cg.addColorStop(0.5, '#1b2230'); cg.addColorStop(1, '#131a28');
+  if(!caseGrad){   /* v3：外殼漸層快取（換版面時重建） */
+    caseGrad = ctx.createLinearGradient(0, CASE_Y, 0, CASE_Y + CASE_H);
+    caseGrad.addColorStop(0, '#28324a'); caseGrad.addColorStop(0.5, '#1b2230'); caseGrad.addColorStop(1, '#131a28');
+  }
   rr(CASE_X, CASE_Y, CASE_W, CASE_H, 20);
-  ctx.fillStyle = cg; ctx.fill();
+  ctx.fillStyle = caseGrad; ctx.fill();
   ctx.strokeStyle = '#39435e'; ctx.lineWidth = 2.5; ctx.stroke();
   /* 鉚釘 */
   for(const p of [[16, 16], [CASE_W - 16, 16], [16, CASE_H - 16], [CASE_W - 16, CASE_H - 16]]){
@@ -668,7 +690,7 @@ function drawCase(){
   ctx.fillStyle = '#e8ecf1';
   ctx.fillText(String(round), SX1, CASE_Y + 88);
   ctx.fillStyle = '#33d1a6';
-  ctx.fillText(String(defused), SX2, CASE_Y + 88);
+  ctx.fillText(defused + '/' + WIN_GOAL, SX2, CASE_Y + 88);
   ctx.fillStyle = '#ffb020';
   ctx.fillText(String(best), SX3, CASE_Y + 88);
   /* 炸彈本體圖示（OpenMoji）＋引信火花 */
@@ -912,7 +934,7 @@ function drawWorld(){
     drawCase();
     drawWires();
   }
-  if(phase === 'boom' || (stateName === 'over' && overT < 0.6)){
+  if(phase === 'boom' || (stateName === 'over' && !won && overT < 0.6)){
     const k = phase === 'boom' ? clamp(phaseT / 0.5, 0, 1) : 1;
     const sz = 180 + k * 220;
     const bcy = GAME_H * 0.52;
@@ -943,15 +965,15 @@ function titleDraw(){
   bigText('拆彈行動', lerp(-40, 158, k), 60, '#ffb020', 1);
   ctx.font = '17px ' + FONT;
   ctx.fillStyle = '#e8ecf1';
-  ctx.fillText('看清案情提示，找出正確的那條線，在倒數歸零前剪斷它。', GAME_W / 2, 212);
-  ctx.fillText('剪錯線、或時間耗盡——轟！關卡越深，線越多、時間越短。', GAME_W / 2, 240);
+  ctx.fillText('看清案情提示，在倒數歸零前剪斷正確的線。剪錯或超時——轟！', GAME_W / 2, 212);
+  ctx.fillText('連續拆除 ' + WIN_GOAL + ' 顆就破案！關卡越深，線越多、時間越短。', GAME_W / 2, 240);
   if(stateT > 0.35){
     drawButton(GAME_W / 2 - 120, 282, 240, 58, '開始拆彈', startGame, true);
   }
   ctx.font = 'bold 15px ' + FONT;
   ctx.fillStyle = '#e8ecf1';
-  ctx.fillText('🖱️ 電腦：滑鼠點電線剪斷，或按「線上號碼」數字鍵 1～9', GAME_W / 2, 372);
-  ctx.fillText('👆 平板：手指輕點要剪的電線', GAME_W / 2, 398);
+  ctx.fillText('💻 電腦：滑鼠點電線剪斷，或按「線上號碼」數字鍵 1～9', GAME_W / 2, 372);
+  ctx.fillText('📱 平板：手指輕點要剪的電線', GAME_W / 2, 398);
   ctx.font = '14px ' + FONT;
   ctx.fillStyle = 'rgba(232,236,241,.75)';
   ctx.fillText('🔍 排除鏡劃掉錯線（按 Q 或左下按鈕）　🛡 保險絲擋一次爆炸　按 M 靜音', GAME_W / 2, 426);
@@ -1002,14 +1024,15 @@ function overDraw(){
   ctx.scale(k, k);
   rr(-235, -140, 470, 280, 18);
   ctx.fillStyle = 'rgba(18,24,38,.96)'; ctx.fill();
-  ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.strokeStyle = won ? '#33d1a6' : '#ff4444'; ctx.lineWidth = 3; ctx.stroke();
   ctx.textAlign = 'center';
   ctx.font = 'bold 36px ' + FONT;
-  ctx.fillStyle = '#ff4444';
-  ctx.fillText('任務結束', 0, -88);
+  ctx.fillStyle = won ? '#33d1a6' : '#ff4444';
+  ctx.fillText(won ? '案件終結！' : '任務結束', 0, -88);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = '#7c8798';
-  ctx.fillText(boomReason + '炸彈爆炸了。（挑戰到第 ' + round + ' 關）', 0, -54);
+  ctx.fillText(won ? WIN_GOAL + ' 顆炸彈全數拆除，城市恢復和平！'
+    : boomReason + '炸彈爆炸了。（挑戰到第 ' + round + ' 關）', 0, -54);
   ctx.font = 'bold 26px ' + FONT;
   ctx.fillStyle = '#e8ecf1';
   ctx.fillText('連續拆除　' + defused + '　顆炸彈', 0, -8);
@@ -1021,7 +1044,8 @@ function overDraw(){
   ctx.fillText(newBest ? '★ 新紀錄！★' : '最佳紀錄　' + best + ' 顆', 0, 68);
   ctx.font = '14px ' + FONT;
   ctx.fillStyle = '#7c8798';
-  ctx.fillText(defused >= 5 ? '名偵探等級的冷靜！' : '深呼吸，下次一定拆得掉！', 0, 100);
+  ctx.fillText(won ? '傳說中的名偵探，就是你！'
+    : defused >= 5 ? '名偵探等級的冷靜！' : '深呼吸，下次一定拆得掉！', 0, 100);
   ctx.restore();
   if(overT > 0.3){
     drawButton(GAME_W / 2 - 120, GAME_H / 2 + 128, 240, 54, '再玩一次', startGame, true);
@@ -1064,6 +1088,7 @@ window.__test = {
   get state(){ return stateName; }, get phase(){ return phase; },
   get round(){ return round; }, get defused(){ return defused; },
   get score(){ return score; }, get mags(){ return mags; }, get shields(){ return shields; },
+  get won(){ return won; },
   get correct(){ return correctIndex; },
   get dims(){ return { W: GAME_W, H: GAME_H, X1: WIRE_X1, X2: WIRE_X2 }; },
   wires(){ return wires.map(w => ({ n: w.number, y: w.y, sag: w.sag, cut: w.cut, ruled: w.ruled })); }

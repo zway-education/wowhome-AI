@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -81,7 +81,7 @@
     letter-spacing:0.1em; color:var(--ink); text-shadow:0 2px 8px rgba(0,0,0,0.9);
     white-space:normal; text-align:center; max-width:min(92%, 680px); width:max-content;
     opacity:0; transition:opacity 0.4s ease, transform 0.4s ease;
-    pointer-events:none; backdrop-filter:blur(2px);
+    pointer-events:none;
   }
   #subtitle.show{ opacity:1; transform:translate(-50%, 0); }
 
@@ -118,7 +118,7 @@
   #endOverlay{
     position:absolute; inset:0;
     display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px;
-    line-height:1.4; background:rgba(4,9,18,0.74); backdrop-filter:blur(3px);
+    line-height:1.4; background:rgba(4,9,18,0.84);
     opacity:0; pointer-events:none; transition:opacity 1s ease; text-align:center;
   }
   #endOverlay.show{ opacity:1; pointer-events:auto; }
@@ -211,6 +211,35 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 
+/* ---- 靜態漸層快取（v3：初始化一次，杜絕每幀配置） ---- */
+const G = {};
+(function buildGradients(){
+  let g;
+  g = ctx.createRadialGradient(0, 0, 2, 0, 0, 151.2); g.addColorStop(0, 'rgba(255,244,214,0.9)');
+  g.addColorStop(0.25, 'rgba(255,220,150,0.35)'); g.addColorStop(1, 'rgba(255,220,150,0)'); G.sunGlow = g;
+  g = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85);
+  g.addColorStop(0, 'rgba(0,0,0,0)'); g.addColorStop(1, 'rgba(0,0,0,0.4)'); G.vignette = g;
+  g = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
+  g.addColorStop(0, 'rgba(255,60,40,0)'); g.addColorStop(1, 'rgba(255,60,40,0.3)'); G.alert = g;
+  g = ctx.createLinearGradient(-56, -30, -38, -6); g.addColorStop(0, '#e0553a');
+  g.addColorStop(1, '#b8402e'); G.tail = g;
+  g = ctx.createLinearGradient(0, -11, 0, 12); g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.55, '#eef0ea'); g.addColorStop(1, '#b9c4ce'); G.fuselage = g;
+  g = ctx.createLinearGradient(0, 4, -20, 26); g.addColorStop(0, '#e6ebf0');
+  g.addColorStop(1, '#b3c0cc'); G.wing = g;
+  g = ctx.createLinearGradient(0, -40, 0, 6); g.addColorStop(0, '#48709c');
+  g.addColorStop(1, '#2a4666'); G.whaleBody = g;
+  g = ctx.createLinearGradient(0, 232, 0, 300); g.addColorStop(0, '#3a6b4a');
+  g.addColorStop(1, '#527f39'); G.island = g;
+  g = ctx.createLinearGradient(0, 250, 0, 300); g.addColorStop(0, '#c9b98a');
+  g.addColorStop(1, '#e8dcc0'); G.usaLand = g;
+  G.ball = {};
+  for(const r of [7, 9]){
+    g = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.15, 0, 0, r * 1.15); g.addColorStop(0, '#ffffff');
+    g.addColorStop(0.65, '#f1ead2'); g.addColorStop(1, '#c9bd9a'); G.ball[r] = g;
+  }
+})();
+
 const titleCard = document.getElementById('titleCard'); const actEl = document.getElementById('act');
 const actNoEl = document.getElementById('actNo'); const actNameEl = document.getElementById('actName');
 const subtitleEl = document.getElementById('subtitle'); const soundBtn = document.getElementById('soundBtn');
@@ -225,7 +254,7 @@ const hintEl = document.getElementById('hint');
    ============================================================ */
 const T = {
   titleHide: 2.8, act2: 7.2, ballIn: 10.2, cross: 11.55, splash: 13.9,
-  whale: 15.5, act3: 18.0, fadeOut: 24.6, end: 26.4
+  whale: 15.5, act3: 18.0, fadeOut: 24.2, end: 25.4
 };
 const HZN = 300;   /* 海平面 */
 
@@ -287,7 +316,12 @@ function ballPos(t){
 let AC = null, master = null, engineGain = null, windGain = null; let audioOn = false;
 function initAudio(){
   AC = new (window.AudioContext || window.webkitAudioContext)();
-  master = AC.createGain(); master.gain.value = 0; master.connect(AC.destination);
+  master = AC.createGain(); master.gain.value = 0;
+  /* v3：限幅器——水花＋引擎＋風聲疊加時不削波 */
+  const comp = AC.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 4;
+  comp.attack.value = 0.003; comp.release.value = 0.25;
+  master.connect(comp); comp.connect(AC.destination);
   const len = AC.sampleRate * 2; const buf = AC.createBuffer(1, len, AC.sampleRate);
   const d = buf.getChannelData(0); let lv = 0;
   for(let i = 0; i < len; i++){ const w = Math.random() * 2 - 1; lv = (lv + 0.02 * w) / 1.02; d[i] = lv * 3.2; }
@@ -341,7 +375,7 @@ function engineLevelAt(t){
   return lerp(0.17, 0, seg(t, 24, 25.8));
 }
 function updateAudio(){
-  if(!AC) return; master.gain.setTargetAtTime(audioOn ? 0.9 : 0, AC.currentTime, 0.08);
+  if(!AC) return; master.gain.setTargetAtTime(audioOn ? 0.85 : 0, AC.currentTime, 0.08);
   engineGain.gain.setTargetAtTime(engineLevelAt(tl) * 0.55, AC.currentTime, 0.25);
   windGain.gain.setTargetAtTime(tl > 3.5 && tl < 24.5 ? 0.03 : 0.005, AC.currentTime, 0.5);
 }
@@ -430,30 +464,39 @@ const PAL = {
 };
 let SKY = { top:'#16305c', mid:'#3d6ea5', low:'#f4c98a', oT:'#1c567f', oB:'#0a2a45' };
 let dayK = 0, sunK = 0, cloudCol = '#ffffff', cloudShade = 'rgba(140,170,205,0.5)';
+let sunCol = '#fff4d6', glitterCol = '#cfeffc', bldCol = '#2c3550';
+let skyGrad = null, oceanGrad = null, lastDayK = -1, lastSunK = -1;
+function mix3(k){
+  /* 黎明→白天→黃昏 三段插值（只在色彩真的變化時呼叫） */
+  const a = hexRgb(PAL.dawn[k]), b = hexRgb(PAL.day[k]), c = hexRgb(PAL.dusk[k]);
+  const r = [0, 1, 2].map(i => Math.round(lerp(lerp(a[i], b[i], dayK), c[i], sunK)));
+  return 'rgb(' + r[0] + ',' + r[1] + ',' + r[2] + ')';
+}
 function updateSkyColors(){
   dayK = seg(tl, 3.5, 7); sunK = seg(tl, 15.5, 19.5);
-  for(const k of ['top', 'mid', 'low', 'oT', 'oB']){
-    SKY[k] = mixc(PAL.dawn[k], PAL.day[k], dayK);
-    SKY[k] = ((c1, c2) => {
-      const p1 = c1.match(/\d+/g).map(Number), p2 = hexRgb(PAL.dusk[k]);
-      return 'rgb(' + Math.round(lerp(p1[0], p2[0], sunK)) + ',' + Math.round(lerp(p1[1], p2[1], sunK)) + ',' + Math.round(lerp(p1[2], p2[2], sunK)) + ')';
-    })(SKY[k]);
-  }
+  if(dayK === lastDayK && sunK === lastSunK) return;   /* v3：過渡期以外零字串/漸層配置 */
+  lastDayK = dayK; lastSunK = sunK;
+  for(const k of ['top', 'mid', 'low', 'oT', 'oB']) SKY[k] = mix3(k);
   cloudCol = mixc('#ffffff', '#ffd9a0', sunK);
   cloudShade = sunK > 0.5 ? 'rgba(120,80,140,0.45)' : 'rgba(140,170,205,0.5)';
+  sunCol = mixc('#fff4d6', '#ff9d4d', sunK);
+  glitterCol = mixc('#cfeffc', '#ffcf8a', sunK);
+  bldCol = mixc('#2c3550', '#1d1430', sunK);
+  skyGrad = ctx.createLinearGradient(0, 0, 0, H * 0.78);
+  skyGrad.addColorStop(0, SKY.top); skyGrad.addColorStop(0.55, SKY.mid); skyGrad.addColorStop(1, SKY.low);
+  oceanGrad = ctx.createLinearGradient(0, HZN, 0, 580);
+  oceanGrad.addColorStop(0, SKY.oT); oceanGrad.addColorStop(1, SKY.oB);
 }
 function drawSkyScreen(){
-  const g = ctx.createLinearGradient(0, 0, 0, H * 0.78);
-  g.addColorStop(0, SKY.top); g.addColorStop(0.55, SKY.mid); g.addColorStop(1, SKY.low);
-  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
-  /* 太陽（清晨低・正午高・黃昏落） */
+  ctx.fillStyle = skyGrad; ctx.fillRect(0, 0, W, H);
+  /* 太陽（清晨低・正午高・黃昏落）——光暈用快取漸層平移縮放 */
   const st = seg(tl, 0, 25);
   const sx = lerp(150, 810, easeInOutSine(st)); const sy = 215 - Math.sin(st * Math.PI) * 135;
-  const sr = 24 + sunK * 12; const sc = mixc('#fff4d6', '#ff9d4d', sunK);
-  const gg = ctx.createRadialGradient(sx, sy, 2, sx, sy, sr * 4.2);
-  gg.addColorStop(0, 'rgba(255,244,214,0.9)'); gg.addColorStop(0.25, 'rgba(255,220,150,0.35)'); gg.addColorStop(1, 'rgba(255,220,150,0)');
-  ctx.fillStyle = gg; ctx.fillRect(sx - sr * 4.2, sy - sr * 4.2, sr * 8.4, sr * 8.4);
-  ctx.fillStyle = sc; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, TAU); ctx.fill();
+  const sr = 24 + sunK * 12;
+  ctx.save(); ctx.translate(sx, sy); ctx.scale(sr / 36, sr / 36);
+  ctx.fillStyle = G.sunGlow; ctx.fillRect(-151.2, -151.2, 302.4, 302.4);
+  ctx.restore();
+  ctx.fillStyle = sunCol; ctx.beginPath(); ctx.arc(sx, sy, sr, 0, TAU); ctx.fill();
 }
 
 /* ============================================================
@@ -491,9 +534,7 @@ function drawCloudLayer(arr, alpha){
   ctx.globalAlpha = 1;
 }
 function drawOcean(){
-  const g = ctx.createLinearGradient(0, HZN, 0, 580);
-  g.addColorStop(0, SKY.oT); g.addColorStop(1, SKY.oB);
-  ctx.fillStyle = g; ctx.fillRect(-200, HZN, 3900, 300);
+  ctx.fillStyle = oceanGrad; ctx.fillRect(-200, HZN, 3900, 300);
   /* 海平線亮邊 */
   ctx.fillStyle = 'rgba(255,255,255,0.25)'; ctx.fillRect(-200, HZN, 3900, 1.5);
   /* 浪弧（隨時間漂移） */
@@ -504,7 +545,7 @@ function drawOcean(){
     ctx.beginPath(); ctx.moveTo(x, rowY); ctx.quadraticCurveTo(x + ww / 2, rowY - 5, x + ww, rowY); ctx.stroke();
   }
   /* 波光粼粼 */
-  ctx.fillStyle = mixc('#cfeffc', '#ffcf8a', sunK);
+  ctx.fillStyle = glitterCol;
   for(let i = 0; i < 46; i++){
     const gx = -200 + ((i * 271.7) % 3900); const gy = 310 + (i * 53) % 160;
     const tw = Math.abs(Math.sin(rt * 2 + i * 1.31));
@@ -529,9 +570,7 @@ function drawTaiwan(){
   ctx.fillStyle = '#1d3f2c';
   ctx.beginPath(); ctx.moveTo(20, HZN);
   ctx.quadraticCurveTo(120, 218, 210, 262); ctx.quadraticCurveTo(300, 226, 420, HZN); ctx.closePath(); ctx.fill();
-  const ig = ctx.createLinearGradient(0, 232, 0, HZN);
-  ig.addColorStop(0, '#3a6b4a'); ig.addColorStop(1, '#527f39');
-  ctx.fillStyle = ig;
+  ctx.fillStyle = G.island;
   ctx.beginPath(); ctx.moveTo(40, HZN);
   ctx.quadraticCurveTo(150, 240, 250, 272); ctx.quadraticCurveTo(340, 246, 410, HZN); ctx.closePath(); ctx.fill();
   /* 沙灘岸線 */
@@ -566,9 +605,7 @@ function drawAtoll(){
 }
 function drawUSA(){
   /* 海岸陸地 */
-  const lg = ctx.createLinearGradient(0, 250, 0, HZN);
-  lg.addColorStop(0, '#c9b98a'); lg.addColorStop(1, '#e8dcc0');
-  ctx.fillStyle = lg;
+  ctx.fillStyle = G.usaLand;
   ctx.beginPath(); ctx.moveTo(2530, HZN);
   ctx.quadraticCurveTo(2680, 262, 2860, 272); ctx.quadraticCurveTo(3100, 252, 3460, 258);
   ctx.lineTo(3460, HZN); ctx.closePath(); ctx.fill();
@@ -577,7 +614,7 @@ function drawUSA(){
   /* 城市天際線（夕照窗光） */
   for(let i = 0; i < 10; i++){
     const bx = 2950 + i * 46; const bh = 42 + ((i * 53) % 78); const bw = 30 + (i % 3) * 8;
-    ctx.fillStyle = mixc('#2c3550', '#1d1430', sunK);
+    ctx.fillStyle = bldCol;
     ctx.fillRect(bx, 268 - bh, bw, bh);
     ctx.fillStyle = 'rgba(255,190,90,0.75)';
     for(let wY = 0; wY < Math.floor(bh / 14); wY++){
@@ -632,17 +669,13 @@ function drawPlane(){
   ctx.fillStyle = '#c2cdd8';
   ctx.beginPath(); ctx.moveTo(-42, 1); ctx.lineTo(-58, 10); ctx.lineTo(-50, 1.5); ctx.closePath(); ctx.fill(); ctx.stroke();
   /* 垂直尾翼（紅漸層＋圓標） */
-  const tg = ctx.createLinearGradient(-56, -30, -38, -6);
-  tg.addColorStop(0, '#e0553a'); tg.addColorStop(1, '#b8402e');
-  ctx.fillStyle = tg;
+  ctx.fillStyle = G.tail;
   ctx.beginPath(); ctx.moveTo(-36, -6); ctx.lineTo(-50, -30); ctx.lineTo(-58, -30); ctx.lineTo(-50, -5); ctx.closePath();
   ctx.fill(); ctx.stroke();
   ctx.fillStyle = '#f4efe2'; ctx.beginPath(); ctx.arc(-50, -24, 3.4, 0, TAU); ctx.fill();
   ctx.fillStyle = '#e0553a'; ctx.beginPath(); ctx.arc(-50, -24, 1.7, 0, TAU); ctx.fill();
   /* 機身（漸層白＋描邊） */
-  const fg = ctx.createLinearGradient(0, -11, 0, 12);
-  fg.addColorStop(0, '#ffffff'); fg.addColorStop(0.55, '#eef0ea'); fg.addColorStop(1, '#b9c4ce');
-  ctx.fillStyle = fg;
+  ctx.fillStyle = G.fuselage;
   ctx.beginPath(); ctx.moveTo(-52, -3);
   ctx.quadraticCurveTo(-30, -10, 8, -10); ctx.quadraticCurveTo(40, -10, 54, -2);
   ctx.quadraticCurveTo(57, 0, 54, 2.5); ctx.quadraticCurveTo(36, 9, 0, 9);
@@ -664,9 +697,7 @@ function drawPlane(){
   ctx.strokeStyle = 'rgba(14,27,43,0.45)'; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(34, -7); ctx.lineTo(34, 3); ctx.moveTo(-42, -5); ctx.lineTo(-42, 4); ctx.stroke();
   /* 近側機翼（前下方・漸層） */
-  const wg = ctx.createLinearGradient(0, 4, -20, 26);
-  wg.addColorStop(0, '#e6ebf0'); wg.addColorStop(1, '#b3c0cc');
-  ctx.fillStyle = wg; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.4;
+  ctx.fillStyle = G.wing; ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.4;
   ctx.beginPath(); ctx.moveTo(14, 3); ctx.lineTo(-16, 25); ctx.lineTo(-30, 25); ctx.lineTo(-6, 3); ctx.closePath();
   ctx.fill(); ctx.stroke();
   /* 引擎短艙 */
@@ -712,9 +743,7 @@ function drawNearMissFX(){
    ============================================================ */
 function drawBaseball(x, y, r, rot){
   ctx.save(); ctx.translate(x, y); ctx.rotate(rot);
-  const bg = ctx.createRadialGradient(-r * 0.35, -r * 0.35, r * 0.15, 0, 0, r * 1.15);
-  bg.addColorStop(0, '#ffffff'); bg.addColorStop(0.65, '#f1ead2'); bg.addColorStop(1, '#c9bd9a');
-  ctx.fillStyle = bg; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
+  ctx.fillStyle = G.ball[r] || '#f1ead2'; ctx.beginPath(); ctx.arc(0, 0, r, 0, TAU); ctx.fill();
   ctx.strokeStyle = 'rgba(14,27,43,0.55)'; ctx.lineWidth = 0.9; ctx.stroke();
   ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1.2;
   ctx.beginPath(); ctx.arc(0, 0, r * 0.98, 0.4, 1.6); ctx.stroke();
@@ -775,9 +804,7 @@ function drawWhale(){
   const rise = (1 - em) * 56;
   ctx.save(); ctx.translate(SPLASH.x - 56, 314 + rise);
   /* 身體（上半弧） */
-  const bg = ctx.createLinearGradient(0, -40, 0, 6);
-  bg.addColorStop(0, '#48709c'); bg.addColorStop(1, '#2a4666');
-  ctx.fillStyle = bg; ctx.strokeStyle = 'rgba(12,22,38,0.8)'; ctx.lineWidth = 1.8;
+  ctx.fillStyle = G.whaleBody; ctx.strokeStyle = 'rgba(12,22,38,0.8)'; ctx.lineWidth = 1.8;
   ctx.beginPath(); ctx.ellipse(0, 8, 54, 40, 0, Math.PI, TAU); ctx.closePath(); ctx.fill(); ctx.stroke();
   /* 肚皮紋 */
   ctx.strokeStyle = 'rgba(220,235,250,0.35)'; ctx.lineWidth = 1.4;
@@ -869,7 +896,7 @@ const SUBS = [
   { a: 14.2, b: 15.7, text: '撲通！墜入太平洋正中央！' },
   { a: 16.1, b: 17.9, text: '據說，那是一記飛得太遠的全壘打……' },
   { a: 19.2, b: 21.4, text: '夕陽下，班機平安飛向美國西岸。' },
-  { a: 22.3, b: 24.3, text: '一段關於飛機、棒球，與運氣的旅程。' }
+  { a: 22.0, b: 24.0, text: '一段關於飛機、棒球，與運氣的旅程。' }
 ];
 const ACTS = [
   { at: 2.95, dur: 2.0, no: '第 一 幕', name: '啟程' },
@@ -981,15 +1008,11 @@ function render(){
   /* 空襲警報紅光 */
   if(alert > 0.02){
     const pu = alert * (0.5 + 0.5 * Math.sin(rt * 9));
-    const rg = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H * 0.75);
-    rg.addColorStop(0, 'rgba(255,60,40,0)'); rg.addColorStop(1, `rgba(255,60,40,${pu * 0.3})`);
-    ctx.fillStyle = rg; ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = pu; ctx.fillStyle = G.alert; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
   }
   if(flash > 0.01){ ctx.fillStyle = `rgba(255,250,235,${clamp(flash, 0, 1) * 0.85})`; ctx.fillRect(0, 0, W, H); }
   drawWarnIndicator();
-  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85);
-  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.4)');
-  ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = G.vignette; ctx.fillRect(0, 0, W, H);
   const bar = 34 * easeOutCubic(seg(tl, 0.2, 1.6));
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
   const fadeIn = 1 - easeOutCubic(seg(tl, 0, 1.2));
@@ -1007,6 +1030,8 @@ function frame(now){
   if(!ended){
     tl += dt * timeScaleAt(tl);
     if(tl >= T.end){ tl = T.end; ended = true; endOverlay.classList.add('show'); }
+  } else {
+    updateAudio(); return;   /* v3：片尾卡顯示時凍結世界渲染，省電不發熱 */
   }
   for(const e of EVENTS){ if(!e.fired && tl >= e.t){ e.fired = true; e.fn(); } }
   updateSkyColors(); updateCamera(dt); updateParticles(dt); updateTrail(dt); updateOverlays(); updateAudio();

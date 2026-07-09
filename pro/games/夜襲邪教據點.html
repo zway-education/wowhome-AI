@@ -26,7 +26,7 @@
    ============================================================ */
 const GAME_W = 960, GAME_H = 540;
 const canvas = document.getElementById('game');
-const ctx = canvas.getContext('2d');
+let ctx = canvas.getContext('2d');
 function resize() {
   const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -256,15 +256,43 @@ function drawFence() {
     ctx.beginPath(); ctx.moveTo(fx - 5, fy - 6); ctx.lineTo(fx + 5, fy - 4); ctx.stroke();
   }
 }
+// 預繪光暈/霧/視線錐貼圖：遊玩中不再每幀建 radial gradient（平板 60fps 關鍵）
+function makeRadialSprite(size, rgb, a0) {
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(size / 2, size / 2, size * 0.04, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(' + rgb + ',' + a0 + ')'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, size, size);
+  return cv;
+}
+const fireGlowCv = makeRadialSprite(256, '255,180,90', 1);
+const fogCv = makeRadialSprite(128, '160,180,160', 1);
+function makeConeSprite(rgb) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 6, 128, 128, 126);
+  g.addColorStop(0, 'rgba(' + rgb + ',0.22)'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(128, 128);
+  c.arc(128, 128, 126, -0.62, 0.62);
+  c.closePath(); c.fill();
+  return cv;
+}
+const coneCalm = makeConeSprite('201,161,90');
+const coneAlert = makeConeSprite('226,73,63');
 function drawFire() {
   const t = bgTime;
   const flick = Math.sin(t * 14) * 3 + Math.sin(t * 7) * 2;
-  // 地面光暈（閃爍）
-  const glow = ctx.createRadialGradient(FIRE.x, FIRE.y, 8, FIRE.x, FIRE.y, 170 + flick * 4);
+  // 地面光暈（閃爍，貼圖縮放）
   const ga = 0.34 + Math.sin(t * 9) * 0.05;
-  glow.addColorStop(0, 'rgba(255,180,90,' + ga + ')'); glow.addColorStop(1, 'rgba(255,180,90,0)');
-  ctx.fillStyle = glow;
-  ctx.beginPath(); ctx.arc(FIRE.x, FIRE.y, 180, 0, 6.29); ctx.fill();
+  const gr = 170 + flick * 4;
+  ctx.globalAlpha = ga;
+  ctx.drawImage(fireGlowCv, FIRE.x - gr, FIRE.y - gr, gr * 2, gr * 2);
+  ctx.globalAlpha = 1;
   // 焦黑柴薪
   ctx.fillStyle = '#1a0f08';
   ctx.beginPath();
@@ -295,6 +323,11 @@ function drawFire() {
   }
   ctx.globalAlpha = 1;
 }
+// 圖騰漸層（座標恆定 → 建一次重用）
+const totemPoleGrad = ctx.createLinearGradient(TOTEM.x - 7, 0, TOTEM.x + 7, 0);
+totemPoleGrad.addColorStop(0, '#0e0a06'); totemPoleGrad.addColorStop(0.5, '#2e2214'); totemPoleGrad.addColorStop(1, '#0e0a06');
+const skullGrad = ctx.createRadialGradient(TOTEM.x - 3, TOTEM.y - 45, 1, TOTEM.x, TOTEM.y - 42, 11);
+skullGrad.addColorStop(0, '#f2ede0'); skullGrad.addColorStop(1, '#a8a08a');
 function drawTotem(lootGlow) {
   const t = bgTime;
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
@@ -305,9 +338,7 @@ function drawTotem(lootGlow) {
     ctx.beginPath(); ctx.arc(TOTEM.x + ox, TOTEM.y + oy, r, 0, 6.29); ctx.fill();
   }
   // 圖騰柱
-  const pg = ctx.createLinearGradient(TOTEM.x - 7, 0, TOTEM.x + 7, 0);
-  pg.addColorStop(0, '#0e0a06'); pg.addColorStop(0.5, '#2e2214'); pg.addColorStop(1, '#0e0a06');
-  ctx.fillStyle = pg;
+  ctx.fillStyle = totemPoleGrad;
   ctx.fillRect(TOTEM.x - 7, TOTEM.y - 38, 14, 62);
   ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2;
   for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(TOTEM.x - 7, TOTEM.y - 26 + i * 13); ctx.lineTo(TOTEM.x + 7, TOTEM.y - 26 + i * 13); ctx.stroke(); }
@@ -316,9 +347,7 @@ function drawTotem(lootGlow) {
   ctx.fillStyle = 'rgba(201,80,47,' + (0.25 + 0.25 * gl) + ')';
   ctx.beginPath(); ctx.arc(TOTEM.x, TOTEM.y - 42, 16 + gl * 3, 0, 6.29); ctx.fill();
   // 骷髏
-  const sg = ctx.createRadialGradient(TOTEM.x - 3, TOTEM.y - 45, 1, TOTEM.x, TOTEM.y - 42, 11);
-  sg.addColorStop(0, '#f2ede0'); sg.addColorStop(1, '#a8a08a');
-  ctx.fillStyle = sg;
+  ctx.fillStyle = skullGrad;
   ctx.beginPath(); ctx.arc(TOTEM.x, TOTEM.y - 42, 10, 0, 6.29); ctx.fill();
   ctx.fillStyle = '#241c14';
   ctx.beginPath();
@@ -337,6 +366,8 @@ function drawTotem(lootGlow) {
     ctx.fillRect(TOTEM.x - 20, TOTEM.y - 90, 40, 90);
   }
 }
+const meatGrad = ctx.createLinearGradient(-8, -6, 8, 6);
+meatGrad.addColorStop(0, '#b06a3a'); meatGrad.addColorStop(1, '#7a4222');
 function drawMeat(m) {
   if (!m.alive) return;
   const bob = Math.sin(bgTime * 3) * 2;
@@ -345,9 +376,7 @@ function drawMeat(m) {
   ctx.save();
   ctx.translate(m.x, m.y + bob);
   ctx.rotate(0.6);
-  const mg = ctx.createLinearGradient(-8, -6, 8, 6);
-  mg.addColorStop(0, '#b06a3a'); mg.addColorStop(1, '#7a4222');
-  ctx.fillStyle = mg;
+  ctx.fillStyle = meatGrad;
   ctx.beginPath(); ctx.ellipse(0, 0, 10, 7, 0, 0, 6.29); ctx.fill();
   ctx.strokeStyle = '#4a2a12'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.fillStyle = '#e8e2d0';
@@ -360,6 +389,28 @@ function drawMeat(m) {
 }
 
 // ---------- 角色繪製（斗篷人：影子/披風/兜帽/武器/走路擺動）----------
+// 角色漸層快取：披風/兜帽依配色只建一次；刀刃恆定
+const capeGrads = new Map(), hoodGrads = new Map();
+function capeGrad(color) {
+  let g = capeGrads.get(color);
+  if (!g) {
+    g = ctx.createLinearGradient(-10, 0, 12, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(0.45, color); g.addColorStop(1, 'rgba(255,255,255,0.14)');
+    capeGrads.set(color, g);
+  }
+  return g;
+}
+function hoodGrad(trim) {
+  let g = hoodGrads.get(trim);
+  if (!g) {
+    g = ctx.createRadialGradient(-2, -9, 1, 0, -7, 9);
+    g.addColorStop(0, '#efe9d6'); g.addColorStop(0.45, trim); g.addColorStop(1, 'rgba(0,0,0,0.7)');
+    hoodGrads.set(trim, g);
+  }
+  return g;
+}
+const bladeGrad = ctx.createLinearGradient(7, 6, 18, 12);
+bladeGrad.addColorStop(0, '#9a9488'); bladeGrad.addColorStop(0.5, '#eae4d2'); bladeGrad.addColorStop(1, '#c7c0ab');
 function drawFigure(x, y, face, opts) {
   const o = opts || {};
   const bob = o.walk ? Math.sin(o.walkT * 10) * 1.6 : Math.sin(bgTime * 2 + (o.ph || 0)) * 0.7;
@@ -386,8 +437,7 @@ function drawFigure(x, y, face, opts) {
   ctx.save();
   ctx.rotate(face + Math.PI / 2); // 身體朝向
   // 披風（淚滴形，漸層 + 邊光）
-  const cg = ctx.createLinearGradient(-10, 0, 12, 0);
-  cg.addColorStop(0, 'rgba(0,0,0,0.55)'); cg.addColorStop(0.45, o.color); cg.addColorStop(1, 'rgba(255,255,255,0.14)');
+  const cg = capeGrad(o.color);
   ctx.fillStyle = o.color;
   ctx.beginPath();
   ctx.moveTo(0, -13);
@@ -407,15 +457,11 @@ function drawFigure(x, y, face, opts) {
   ctx.rotate(o.swing ? -1.7 * Math.sin(o.swing * Math.PI) : 0.25);
   ctx.strokeStyle = o.skin || '#c8a080'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(7, 6); ctx.stroke();
-  const bl = ctx.createLinearGradient(7, 6, 18, 12);
-  bl.addColorStop(0, '#9a9488'); bl.addColorStop(0.5, '#eae4d2'); bl.addColorStop(1, '#c7c0ab');
-  ctx.strokeStyle = bl; ctx.lineWidth = 2.6;
+  ctx.strokeStyle = bladeGrad; ctx.lineWidth = 2.6;
   ctx.beginPath(); ctx.moveTo(7, 6); ctx.lineTo(17, 12); ctx.stroke();
   ctx.restore();
   // 兜帽頭（受月光的漸層 + 帽尖）
-  const hg = ctx.createRadialGradient(-2, -9, 1, 0, -7, 9);
-  hg.addColorStop(0, '#efe9d6'); hg.addColorStop(0.45, o.trim); hg.addColorStop(1, 'rgba(0,0,0,0.7)');
-  ctx.fillStyle = hg;
+  ctx.fillStyle = hoodGrad(o.trim);
   ctx.beginPath(); ctx.arc(0, -7, 7.5, 0, 6.29); ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.4; ctx.stroke();
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
@@ -462,6 +508,8 @@ function drawFigure(x, y, face, opts) {
 const player = { x: 120, y: 470, face: -1.2, hp: 3, stam: 100, hunger: 80, walkT: 0, walk: false, atkT: 0, atkCd: 0, hurtT: 0, loot: false, stepT: 0 };
 let cultists = [], meat = { x: 520, y: 330, alive: true };
 let day = 47, kills = 0, takedowns = 0, nights = 0, phase = 'raid';
+const NIGHTS_GOAL = 3; // 三晚挑戰：撐過三晚即勝利結算（一場 1~4 分鐘自然收尾）
+let won = false, grade = 'C';
 let best = 0, newBest = false, finalScore = 0;
 let bonus = 0, spotted = false, chain = 0, treasures = [];
 try { best = parseInt(localStorage.getItem('夜襲邪教據點.best') || '0', 10) || 0; } catch (err) { best = 0; }
@@ -506,10 +554,13 @@ function drawTreasures() {
     ctx.beginPath(); ctx.ellipse(tr.x, tr.y + 5, 11, 4, 0, 0, 6.29); ctx.fill();
     ctx.save();
     ctx.translate(tr.x, tr.y);
-    ctx.shadowColor = PAL.fireHot; ctx.shadowBlur = 10 + tw * 4;
+    // 光暈色塊取代 shadowBlur（每幀省一次高斯模糊）
+    ctx.globalAlpha = 0.28 + tw * 0.1;
+    ctx.fillStyle = PAL.fireHot;
+    ctx.beginPath(); ctx.arc(0, -1, 13, 0, 6.29); ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = PAL.amber;
     ctx.beginPath(); ctx.arc(-5, 0, 5, 0, 6.29); ctx.arc(5, 1, 5, 0, 6.29); ctx.arc(0, -5, 5, 0, 6.29); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = '#7a5c28';
     ctx.beginPath(); ctx.arc(-5, 0, 2, 0, 6.29); ctx.arc(5, 1, 2, 0, 6.29); ctx.fill();
     ctx.fillStyle = 'rgba(255,240,190,0.9)';
@@ -679,10 +730,30 @@ function hurtPlayer(fromX, fromY) {
 let state = null;
 function setState(s) { state = s; if (s.enter) s.enter(); }
 
-function drawScene(lootGlow) {
-  ctx.drawImage(groundCv, 0, 0);
+// 柵欄與帳篷為全靜態 → 烘焙進地面貼圖（每幀省 26 根木樁的漸層與描邊）
+(function bakeStatic() {
+  const real = ctx;
+  ctx = groundCv.getContext('2d');
   drawFence();
   drawTent(TENTS[0]); drawTent(TENTS[1]);
+  ctx = real;
+})();
+// 月光 + 暗角疊層（全靜態 → 預繪一張）
+const vigCv = document.createElement('canvas');
+vigCv.width = GAME_W; vigCv.height = GAME_H;
+(function () {
+  const c = vigCv.getContext('2d');
+  const ml = c.createRadialGradient(GAME_W * 0.85, 40, 10, GAME_W * 0.85, 40, 320);
+  ml.addColorStop(0, 'rgba(210,220,240,0.1)'); ml.addColorStop(1, 'rgba(210,220,240,0)');
+  c.fillStyle = ml;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+  const vg = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.4, GAME_W / 2, GAME_H / 2, GAME_H * 0.92);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+  c.fillStyle = vg;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+})();
+function drawScene(lootGlow) {
+  ctx.drawImage(groundCv, 0, 0);
   drawTotem(lootGlow);
   drawMeat(meat);
   drawTreasures();
@@ -690,13 +761,12 @@ function drawScene(lootGlow) {
 function drawAtmosphere() {
   // 樹（最上層蓋住邊緣）
   for (const t of trees) drawTree(t);
-  // 霧
+  // 霧（貼圖縮放）
   for (const f of fogs) {
-    const g = ctx.createRadialGradient(f.x, f.y, 4, f.x, f.y, f.r);
-    g.addColorStop(0, 'rgba(160,180,160,' + f.a + ')'); g.addColorStop(1, 'rgba(160,180,160,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, 6.29); ctx.fill();
+    ctx.globalAlpha = f.a;
+    ctx.drawImage(fogCv, f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
   }
+  ctx.globalAlpha = 1;
   // 螢火蟲
   for (const fy2 of flies) {
     const fx = fy2.x + Math.sin(bgTime * fy2.sp + fy2.ph) * 30;
@@ -706,15 +776,8 @@ function drawAtmosphere() {
     ctx.fillRect(fx, fyy, 2.5, 2.5);
   }
   ctx.globalAlpha = 1;
-  // 月光角落 + 暗角
-  const ml = ctx.createRadialGradient(GAME_W * 0.85, 40, 10, GAME_W * 0.85, 40, 320);
-  ml.addColorStop(0, 'rgba(210,220,240,0.1)'); ml.addColorStop(1, 'rgba(210,220,240,0)');
-  ctx.fillStyle = ml;
-  ctx.fillRect(0, 0, GAME_W, GAME_H);
-  const vg = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.4, GAME_W / 2, GAME_H / 2, GAME_H * 0.92);
-  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
-  ctx.fillStyle = vg;
-  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  // 月光角落 + 暗角（預繪疊層）
+  ctx.drawImage(vigCv, 0, 0);
 }
 function fogUpdate(dt) {
   bgTime += dt;
@@ -766,7 +829,7 @@ const titleState = {
     ctx.textAlign = 'center';
     ctx.fillStyle = PAL.ink;
     ctx.font = 'bold 17px sans-serif';
-    ctx.fillText('避開信徒的視線，繞到背後一擊偷襲；清空據點、搶祭壇、撤回森林！', GAME_W / 2, 166);
+    ctx.fillText('繞到信徒背後偷襲、清空據點、搶祭壇撤離——連續達成三晚就獲勝！', GAME_W / 2, 166);
     ctx.fillStyle = 'rgba(6,11,8,0.7)';
     roundRect(GAME_W / 2 - 300, 178, 600, 52, 8);
     ctx.fill();
@@ -801,7 +864,7 @@ const titleState = {
 };
 function startGame() {
   sfx.click();
-  day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0;
+  day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0; won = false;
   player.hp = 3; player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
   parts.length = 0; floaters.length = 0;
   spawnNight();
@@ -810,14 +873,18 @@ function startGame() {
 
 // ===== 夜襲進行 =====
 const playState = {
-  enter() { this.banner = 4; this.nightFade = 0; },
+  enter() { this.banner = 4; this.nightFade = 0; this.elapsed = 0; },
   onKey(code) { if (code === 'KeyE' || code === 'Space' || code === 'KeyJ') tryAttack(); },
   update(dt) {
     fogUpdate(dt);
+    this.elapsed += dt;
     if (this.banner > 0) this.banner -= dt;
     if (this.nightFade > 0) {
       this.nightFade -= dt;
-      if (this.nightFade <= 0) { spawnNight(); this.banner = 2; }
+      if (this.nightFade <= 0) {
+        if (won) { setState(overState); return; }
+        spawnNight(); this.banner = 2;
+      }
       return;
     }
     if (player.hp <= 0) return;
@@ -931,6 +998,17 @@ const playState = {
       }
       burst(player.x, player.y - 20, PAL.fireHot, 20, 200, 120);
       player.stam = Math.min(100, player.stam + 25);
+      // 三晚達成 → 勝利結算（勝利 +300、剩餘 HP 每顆 +100）
+      if (nights >= NIGHTS_GOAL) {
+        won = true;
+        finalScore = calcScore() + 300 + player.hp * 100;
+        grade = finalScore >= 1500 ? 'S' : finalScore >= 1200 ? 'A' : finalScore >= 900 ? 'B' : 'C';
+        newBest = finalScore > best;
+        if (newBest) {
+          best = finalScore;
+          try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {}
+        }
+      }
       this.nightFade = 1.2;
     }
   },
@@ -939,18 +1017,17 @@ const playState = {
     ctx.save();
     ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
     drawScene(phase === 'loot');
-    // 視線錐（黃=巡邏、紅=追擊）
+    // 視線錐（黃=巡邏、紅=追擊；貼圖旋轉縮放，零每幀漸層）
     for (const c of cultists) {
       if (c.dead) continue;
       const rr = c.range * (player.walk ? 1 : 0.55);
-      const g = ctx.createRadialGradient(c.x, c.y, 6, c.x, c.y, rr);
-      const col = c.chaseT > 0 ? '226,73,63' : '201,161,90';
-      g.addColorStop(0, 'rgba(' + col + ',0.22)'); g.addColorStop(1, 'rgba(' + col + ',0)');
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.moveTo(c.x, c.y);
-      ctx.arc(c.x, c.y, rr, c.face - 0.62, c.face + 0.62);
-      ctx.closePath(); ctx.fill();
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.face);
+      const sc = rr / 126;
+      ctx.scale(sc, sc);
+      ctx.drawImage(c.chaseT > 0 ? coneAlert : coneCalm, -128, -128);
+      ctx.restore();
     }
     // 撤離提示圈
     if (phase === 'retreat') {
@@ -965,6 +1042,27 @@ const playState = {
       { y: FIRE.y, f: drawFire }];
     order.sort((a, b) => a.y - b.y);
     for (const o of order) o.f();
+    // 新手指引箭頭：第一晚還沒擊倒人之前，指向最近的信徒
+    if (nights === 0 && kills === 0 && phase === 'raid' && this.elapsed < 18 && player.hp > 0) {
+      let n = null, nd2 = 1e9;
+      for (const c of cultists) {
+        if (c.dead) continue;
+        const d = Math.hypot(c.x - player.x, c.y - player.y);
+        if (d < nd2) { nd2 = d; n = c; }
+      }
+      if (n && nd2 > 70) {
+        const a = Math.atan2(n.y - player.y, n.x - player.x);
+        const rr = 46 + Math.sin(bgTime * 5) * 6;
+        ctx.save();
+        ctx.translate(player.x + Math.cos(a) * rr, player.y - 12 + Math.sin(a) * rr);
+        ctx.rotate(a);
+        ctx.fillStyle = PAL.amber;
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -8); ctx.lineTo(-7, 8); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+    }
     drawParts();
     drawFloaters();
     drawAtmosphere();
@@ -993,6 +1091,7 @@ const playState = {
 };
 
 // ---------- HUD ----------
+const barGrads = new Map();
 function drawHUD(st) {
   // DAY 徽章
   ctx.fillStyle = 'rgba(10,18,12,0.85)';
@@ -1034,8 +1133,12 @@ function drawHUD(st) {
     ctx.fillText(label, bx, y + 8);
     ctx.fillStyle = '#050a06';
     ctx.fillRect(bx + 34, y, bw, 9);
-    const g = ctx.createLinearGradient(bx + 34, 0, bx + 34 + bw, 0);
-    g.addColorStop(0, c1); g.addColorStop(1, c2);
+    let g = barGrads.get(c1);
+    if (!g) {
+      g = ctx.createLinearGradient(bx + 34, 0, bx + 34 + bw, 0);
+      g.addColorStop(0, c1); g.addColorStop(1, c2);
+      barGrads.set(c1, g);
+    }
     ctx.fillStyle = g;
     if (warn && Math.floor(bgTime * 4) % 2) ctx.fillStyle = PAL.bad;
     ctx.fillRect(bx + 34, y, bw * clamp(v / 100, 0, 1), 9);
@@ -1043,10 +1146,15 @@ function drawHUD(st) {
   };
   bar(26, '體力', player.stam, '#b6e07f', '#5aa03e', player.stam < 25);
   bar(48, '飢餓', player.hunger, PAL.fireHot, PAL.fire, player.hunger < 15);
+  // 三晚挑戰進度
+  ctx.fillStyle = PAL.amber;
+  ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚', 122, 58);
   // 目標列
   const alive = cultists.filter(c => !c.dead).length;
-  let obj = '潛入據點：繞到信徒背後按 E 偷襲（剩餘 ' + alive + ' 名）';
-  if (phase === 'loot') obj = '據點清空！到中央祭壇按 E 搶奪戰利品';
+  const atkWord = TOUCH ? '點「攻擊」鈕' : '按 E';
+  let obj = '潛入據點：繞到信徒背後' + atkWord + '偷襲（剩餘 ' + alive + ' 名）';
+  if (phase === 'loot') obj = '據點清空！到中央祭壇' + atkWord + '搶奪戰利品';
   if (phase === 'retreat') obj = '戰利品到手！衝出虛線圈撤回森林！';
   ctx.fillStyle = 'rgba(10,18,12,0.85)';
   const ow = ctx.measureText(obj).width;
@@ -1129,14 +1237,14 @@ const overState = {
     ctx.fillStyle = 'rgba(12,23,16,0.95)';
     roundRect(GAME_W / 2 - 220, 92, 440, 330, 8);
     ctx.fill();
-    ctx.strokeStyle = newBest ? PAL.amber : PAL.hudLine; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.strokeStyle = won || newBest ? PAL.amber : PAL.hudLine; ctx.lineWidth = 2.5; ctx.stroke();
     ctx.textAlign = 'center';
-    ctx.fillStyle = PAL.bone;
+    ctx.fillStyle = won ? PAL.fireHot : PAL.bone;
     ctx.font = 'bold 34px serif';
-    ctx.fillText('夜襲落幕…', GAME_W / 2, 146);
+    ctx.fillText(won ? '夜襲大成功！' : '夜襲落幕…', GAME_W / 2, 146);
     ctx.fillStyle = PAL.ink;
     ctx.font = 'bold 17px sans-serif';
-    ctx.fillText('你被信徒們抓住了，但撐到了第 ' + day + ' 天！', GAME_W / 2, 182);
+    ctx.fillText(won ? '三晚連襲！第 ' + day + ' 天拂曉，邪教據點徹底瓦解！' : '你被信徒們抓住了，但撐到了第 ' + day + ' 天！', GAME_W / 2, 182);
     if (newBest) {
       ctx.fillStyle = PAL.amber;
       ctx.font = 'bold 20px sans-serif';
@@ -1147,7 +1255,17 @@ const overState = {
     ctx.fillText('突襲總分', GAME_W / 2, 244);
     ctx.fillStyle = PAL.amber;
     ctx.font = 'bold 48px monospace';
-    ctx.fillText(String(finalScore), GAME_W / 2, 292);
+    ctx.fillText(String(finalScore), GAME_W / 2 + (won ? -36 : 0), 292);
+    if (won) {
+      // 評級徽章
+      ctx.fillStyle = grade === 'S' ? PAL.fireHot : grade === 'A' ? PAL.amber : PAL.dim;
+      ctx.font = 'bold 44px serif';
+      ctx.fillText(grade, GAME_W / 2 + 96, 292);
+      ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(GAME_W / 2 + 82, 276, 34, 0, 6.29); ctx.stroke();
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('RANK', GAME_W / 2 + 82, 320);
+    }
     ctx.fillStyle = PAL.ink;
     ctx.font = '14px sans-serif';
     ctx.fillText('成功夜襲 ' + nights + ' 晚 · 擊倒 ' + kills + ' 名 · 偷襲 ' + takedowns + ' 次 · 最佳 ' + best + ' 分', GAME_W / 2, 324);

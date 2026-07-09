@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -140,7 +140,7 @@
     <div class="sub" style="opacity:0.75">蛇的顏色：</div>
     <div id="colorPicker"></div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="margin-top:12px">🖱️ 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>👆 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
+    <div class="sub" style="margin-top:12px">💻 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>📱 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
     <div class="sub" style="opacity:0.75">每吃 8 顆收成一籃過關・🌶️ 辣椒加分但會衝刺・🐛 毛毛蟲會逃跑</div>
   </div>
 
@@ -223,11 +223,18 @@ const COLORS = [
 let snakeColor = COLORS[0];
 
 // ----- Web Audio 合成音效 -----
-let AC = null;
+let AC = null, master = null;
 let muted = localStorage.getItem('snake1-muted') === '1';
 function audio() {
   if (!AC) {
-    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      master = AC.createGain(); master.gain.value = 0.85;
+      master.connect(comp); comp.connect(AC.destination);
+    } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
@@ -238,13 +245,14 @@ addEventListener('keydown', audio, { once: true });
 function beep(freq, dur, type, vol, slide) {
   if (muted) return;
   const ac = audio(); if (!ac) return;
+  freq *= 0.98 + Math.random() * 0.04;  // ±2% 音高隨機，連發不呆板
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(freq, ac.currentTime);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(master);
   o.start();
   o.stop(ac.currentTime + dur);
 }
@@ -259,7 +267,7 @@ function noiseBurst(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.2, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(ac.destination);
+  src.connect(g).connect(master);
   src.start();
 }
 const sfx = {
@@ -314,15 +322,20 @@ let bug = { active: false, x: 0, y: 0, px: 0, py: 0, dx: 1, dy: 0, moveAcc: 0, t
 let hintT = 0;               // 開場操作提示
 let readyT = 0;              // 開場 預備→GO 倒數
 
-// 粒子與飄字
-const parts = [], floats = [];
+// 粒子與飄字（物件池：平板 60fps 不產生 GC 抖動）
+const parts = [], floats = [], partPool = [];
+function addPart(x, y, vx, vy, life, color, size) {
+  if (parts.length >= 300) return;
+  const p = partPool.pop() || {};
+  p.x = x; p.y = y; p.vx = vx; p.vy = vy; p.life = life; p.color = color; p.size = size;
+  parts.push(p);
+}
 function burst(x, y, color, n, speed) {
   n = n || 12; speed = speed || 220;
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7);
-    parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: 0.4 + Math.random() * 0.35, color, size: 3 + Math.random() * 4 });
+    addPart(x, y, Math.cos(a) * s, Math.sin(a) * s - 60, 0.4 + Math.random() * 0.35, color, 3 + Math.random() * 4);
   }
-  if (parts.length > 300) parts.splice(0, parts.length - 300);
 }
 function addFloat(x, y, text, color) {
   floats.push({ x, y, text, color: color || PAL.cream, life: 0.8 });
@@ -674,10 +687,11 @@ function update(dt) {
   food.age += dt;
 
   // 粒子
-  for (const p of parts) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
     p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.life -= dt;
+    if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); partPool.push(p); }
   }
-  for (let i = parts.length - 1; i >= 0; i--) if (parts[i].life <= 0) parts.splice(i, 1);
   for (const f of floats) { f.y -= 55 * dt; f.life -= dt; }
   for (let i = floats.length - 1; i >= 0; i--) if (floats[i].life <= 0) floats.splice(i, 1);
 
@@ -733,13 +747,10 @@ function update(dt) {
   // 衝刺火焰尾跡
   if (sprintT > 0 && mode === 'play' && deathTimer < 0 && Math.random() < 0.55) {
     const h = cellCenter(snake[0].x, snake[0].y);
-    parts.push({
-      x: h.x - dir.x * 10 + (Math.random() * 10 - 5),
-      y: h.y - dir.y * 10 + (Math.random() * 10 - 5),
-      vx: -dir.x * 70, vy: -dir.y * 70 - 20,
-      life: 0.3, color: Math.random() < 0.5 ? '#ff7043' : PAL.gold,
-      size: 3 + Math.random() * 3
-    });
+    addPart(h.x - dir.x * 10 + (Math.random() * 10 - 5),
+            h.y - dir.y * 10 + (Math.random() * 10 - 5),
+            -dir.x * 70, -dir.y * 70 - 20,
+            0.3, Math.random() < 0.5 ? '#ff7043' : PAL.gold, 3 + Math.random() * 3);
   }
 
   const interval = (mode === 'title' ? 0.14 : moveInterval) * (sprintT > 0 && mode === 'play' ? 0.7 : 1);
@@ -762,34 +773,43 @@ function rr(x, y, w, h, r) {
   ctx.closePath();
 }
 
-function drawBackground() {
-  // 天空漸層
-  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+/* 靜態天空＋太陽預渲染（效能：不每幀重建漸層） */
+const skyCv = document.createElement('canvas');
+skyCv.width = GAME_W; skyCv.height = GAME_H;
+(function () {
+  const c = skyCv.getContext('2d');
+  const g = c.createLinearGradient(0, 0, 0, GAME_H);
   g.addColorStop(0, '#aee9ff');
   g.addColorStop(0.35, PAL.bgTop);
   g.addColorStop(1, PAL.bgBottom);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, GAME_W, GAME_H);
-
-  // 太陽（光暈 + 本體 + 亮心）
-  const sunG = ctx.createRadialGradient(GAME_W - 90, 60, 6, GAME_W - 90, 60, 70);
+  c.fillStyle = g;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+  const sunG = c.createRadialGradient(GAME_W - 90, 60, 6, GAME_W - 90, 60, 70);
   sunG.addColorStop(0, 'rgba(255,244,180,0.95)');
   sunG.addColorStop(0.35, 'rgba(255,220,120,0.55)');
   sunG.addColorStop(1, 'rgba(255,220,120,0)');
-  ctx.fillStyle = sunG;
-  ctx.beginPath();
-  ctx.arc(GAME_W - 90, 60, 70, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ffe98a';
-  ctx.beginPath();
-  ctx.arc(GAME_W - 90, 60, 24, 0, Math.PI * 2);
-  ctx.fill();
+  c.fillStyle = sunG;
+  c.beginPath();
+  c.arc(GAME_W - 90, 60, 70, 0, Math.PI * 2);
+  c.fill();
+  c.fillStyle = '#ffe98a';
+  c.beginPath();
+  c.arc(GAME_W - 90, 60, 24, 0, Math.PI * 2);
+  c.fill();
+})();
+const hillGrads = {};
+function drawBackground() {
+  ctx.drawImage(skyCv, 0, 0);   // 天空＋太陽（靜態層）
 
-  // 遠山兩層（視差：不同速度、遠淡近深）
+  // 遠山兩層（視差：不同速度、遠淡近深；漸層快取）
   const hillLayer = (base, amp, colTop, colBot, speed, seed) => {
-    const hg = ctx.createLinearGradient(0, base - amp - 20, 0, base + 60);
-    hg.addColorStop(0, colTop);
-    hg.addColorStop(1, colBot);
+    let hg = hillGrads[seed];
+    if (!hg) {
+      hg = ctx.createLinearGradient(0, base - amp - 20, 0, base + 60);
+      hg.addColorStop(0, colTop);
+      hg.addColorStop(1, colBot);
+      hillGrads[seed] = hg;
+    }
     ctx.fillStyle = hg;
     ctx.beginPath();
     ctx.moveTo(-10, GAME_H);
@@ -851,50 +871,61 @@ function drawBackground() {
   }
 }
 
-function drawBoard() {
-  // 木框（深色底 + 亮面 + 木紋 + 頂部受光）
-  ctx.fillStyle = PAL.frameDark;
-  rr(BOARD_X - 14, BOARD_Y - 14, COLS * CELL + 28, ROWS * CELL + 28, 16);
-  ctx.fill();
-  const wg = ctx.createLinearGradient(0, BOARD_Y - 10, 0, BOARD_Y + ROWS * CELL + 10);
+/* 棋盤預渲染（效能：木框＋400格棋盤＋內陰影只畫一次） */
+const boardCv = document.createElement('canvas');
+boardCv.width = GAME_W; boardCv.height = GAME_H;
+(function () {
+  const c = boardCv.getContext('2d');
+  const R = (x, y, w, h, r) => {
+    c.beginPath();
+    c.moveTo(x + r, y);
+    c.arcTo(x + w, y, x + w, y + h, r);
+    c.arcTo(x + w, y + h, x, y + h, r);
+    c.arcTo(x, y + h, x, y, r);
+    c.arcTo(x, y, x + w, y, r);
+    c.closePath();
+  };
+  c.fillStyle = PAL.frameDark;
+  R(BOARD_X - 14, BOARD_Y - 14, COLS * CELL + 28, ROWS * CELL + 28, 16);
+  c.fill();
+  const wg = c.createLinearGradient(0, BOARD_Y - 10, 0, BOARD_Y + ROWS * CELL + 10);
   wg.addColorStop(0, shade(PAL.frame, 0.2));
   wg.addColorStop(1, shade(PAL.frame, -0.15));
-  ctx.fillStyle = wg;
-  rr(BOARD_X - 10, BOARD_Y - 10, COLS * CELL + 20, ROWS * CELL + 20, 12);
-  ctx.fill();
-  // 木紋刻痕
-  ctx.strokeStyle = 'rgba(60,32,16,0.35)';
-  ctx.lineWidth = 1.5;
+  c.fillStyle = wg;
+  R(BOARD_X - 10, BOARD_Y - 10, COLS * CELL + 20, ROWS * CELL + 20, 12);
+  c.fill();
+  c.strokeStyle = 'rgba(60,32,16,0.35)';
+  c.lineWidth = 1.5;
   for (let i = 0; i < 5; i++) {
     const wx = BOARD_X + 40 + i * (COLS * CELL - 80) / 4;
-    ctx.beginPath();
-    ctx.moveTo(wx, BOARD_Y - 12);
-    ctx.quadraticCurveTo(wx + 14, BOARD_Y - 7, wx + 30, BOARD_Y - 12);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(wx - 10, BOARD_Y + ROWS * CELL + 12);
-    ctx.quadraticCurveTo(wx + 4, BOARD_Y + ROWS * CELL + 7, wx + 20, BOARD_Y + ROWS * CELL + 12);
-    ctx.stroke();
+    c.beginPath();
+    c.moveTo(wx, BOARD_Y - 12);
+    c.quadraticCurveTo(wx + 14, BOARD_Y - 7, wx + 30, BOARD_Y - 12);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(wx - 10, BOARD_Y + ROWS * CELL + 12);
+    c.quadraticCurveTo(wx + 4, BOARD_Y + ROWS * CELL + 7, wx + 20, BOARD_Y + ROWS * CELL + 12);
+    c.stroke();
   }
-
-  // 草地棋盤格
   for (let y = 0; y < ROWS; y++) {
     for (let x = 0; x < COLS; x++) {
-      ctx.fillStyle = (x + y) % 2 === 0 ? PAL.boardA : PAL.boardB;
-      ctx.fillRect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL, CELL);
+      c.fillStyle = (x + y) % 2 === 0 ? PAL.boardA : PAL.boardB;
+      c.fillRect(BOARD_X + x * CELL, BOARD_Y + y * CELL, CELL, CELL);
     }
   }
-  // 場地內側陰影（框投在草地上的立體感）
-  const inner = ctx.createLinearGradient(0, BOARD_Y, 0, BOARD_Y + 14);
+  const inner = c.createLinearGradient(0, BOARD_Y, 0, BOARD_Y + 14);
   inner.addColorStop(0, 'rgba(32,70,49,0.3)');
   inner.addColorStop(1, 'rgba(32,70,49,0)');
-  ctx.fillStyle = inner;
-  ctx.fillRect(BOARD_X, BOARD_Y, COLS * CELL, 14);
-  const innerL = ctx.createLinearGradient(BOARD_X, 0, BOARD_X + 12, 0);
+  c.fillStyle = inner;
+  c.fillRect(BOARD_X, BOARD_Y, COLS * CELL, 14);
+  const innerL = c.createLinearGradient(BOARD_X, 0, BOARD_X + 12, 0);
   innerL.addColorStop(0, 'rgba(32,70,49,0.22)');
   innerL.addColorStop(1, 'rgba(32,70,49,0)');
-  ctx.fillStyle = innerL;
-  ctx.fillRect(BOARD_X, BOARD_Y, 12, ROWS * CELL);
+  c.fillStyle = innerL;
+  c.fillRect(BOARD_X, BOARD_Y, 12, ROWS * CELL);
+})();
+function drawBoard() {
+  ctx.drawImage(boardCv, 0, 0);
 }
 
 function drawFood() {
@@ -1376,6 +1407,8 @@ function frame(now) {
 resetGame();
 mode = 'title';
 titleOverlay.classList.add('show');
+/* 可玩性實測掛鉤（無頭瀏覽器 QA 用） */
+window.__test = () => ({ mode, score, level, x: snake[0].x, y: snake[0].y, dx: dir.x, dy: dir.y, len: snake.length });
 requestAnimationFrame(frame);
 </script>
 </body>

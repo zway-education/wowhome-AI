@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -91,7 +91,10 @@ function audio() {
       AC = new (window.AudioContext || window.webkitAudioContext)();
       master = AC.createGain();
       master.gain.value = muted ? 0 : 1;
-      master.connect(AC.destination);
+      // v3：壓縮器主匯流排——空心四連音＋連擊齊發不削波
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
+      master.connect(comp); comp.connect(AC.destination);
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
@@ -104,6 +107,7 @@ function setMuted(m) {
 function beep(freq, dur, type, vol, slide) {
   const ac = audio(); if (!ac || muted) return;
   type = type || 'square'; vol = vol || 0.15; slide = slide || 0;
+  freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，聽感不機械
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, ac.currentTime);
@@ -164,7 +168,7 @@ function updateParts(dt) {
     p.x += p.vx * dt; p.y += p.vy * dt;
     p.vy += 700 * dt; p.rot += p.spin * dt;
     p.life -= dt;
-    if (p.life <= 0) parts.splice(i, 1);
+    if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); }  // v3：swap-pop
   }
 }
 function drawParts() {
@@ -215,20 +219,35 @@ function updateBG(dt) {
   }
 }
 const FLOOR_Y = GAME_H - 46;
+// v3：靜態背景漸層預先計算一次（原本每幀配置 ~10 個漸層，平板掉幀主因）
+const BG_WALL_G = (() => { const g = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
+  g.addColorStop(0, PAL.wall); g.addColorStop(1, PAL.wallLo); return g; })();
+const BG_SKY_G = (() => { const g = ctx.createLinearGradient(0, 60, 0, 240);
+  g.addColorStop(0, PAL.sky); g.addColorStop(1, '#8cc0ff'); return g; })();
+const BG_FLOOR_G = (() => { const g = ctx.createLinearGradient(0, FLOOR_Y, 0, GAME_H);
+  g.addColorStop(0, '#343a5c'); g.addColorStop(1, PAL.bg0); return g; })();
+const POT_G = (() => { const g = ctx.createLinearGradient(330 - 26, 0, 330 + 26, 0);
+  g.addColorStop(0, '#8a4a2c'); g.addColorStop(0.4, '#c96b3c'); g.addColorStop(1, '#8a4a2c'); return g; })();
+const LAMP_G = (() => { const lampX = GAME_W / 2 + 130;
+  const g = ctx.createRadialGradient(lampX, 46, 4, lampX, 46, 90);
+  g.addColorStop(0, 'rgba(255,220,140,0.5)'); g.addColorStop(1, 'rgba(255,220,140,0)'); return g; })();
+const VIG_G = (() => { const g = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.45, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  g.addColorStop(0, 'rgba(10,10,30,0)'); g.addColorStop(1, 'rgba(10,10,30,0.32)'); return g; })();
+const LEAF_GS = (() => { const arr = [], px = 330, py = FLOOR_Y;
+  for (let i = -2; i <= 2; i++) {
+    const ang = -Math.PI / 2 + i * 0.42;
+    const lx = px + Math.cos(ang) * 52, ly = py - 44 + Math.sin(ang) * 52;
+    const g = ctx.createLinearGradient(px, py - 44, lx, ly);
+    g.addColorStop(0, '#2c6e3f'); g.addColorStop(1, '#5fbf6e'); arr.push(g);
+  } return arr; })();
 function drawBG() {
   // 牆面漸層
-  const wall = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
-  wall.addColorStop(0, PAL.wall);
-  wall.addColorStop(1, PAL.wallLo);
-  ctx.fillStyle = wall;
+  ctx.fillStyle = BG_WALL_G;
   ctx.fillRect(0, 0, GAME_W, FLOOR_Y);
 
   // 窗戶（外面是天空 + 視差雲）
   const wx = 60, wy = 60, ww = 300, wh = 180;
-  const sky = ctx.createLinearGradient(0, wy, 0, wy + wh);
-  sky.addColorStop(0, PAL.sky);
-  sky.addColorStop(1, '#8cc0ff');
-  ctx.fillStyle = sky;
+  ctx.fillStyle = BG_SKY_G;
   ctx.fillRect(wx, wy, ww, wh);
   ctx.save();
   ctx.beginPath();
@@ -281,9 +300,7 @@ function drawBG() {
   ctx.fillText('回收愛地球', 490, 205);
 
   // 地板
-  const fl = ctx.createLinearGradient(0, FLOOR_Y, 0, GAME_H);
-  fl.addColorStop(0, '#343a5c'); fl.addColorStop(1, PAL.bg0);
-  ctx.fillStyle = fl;
+  ctx.fillStyle = BG_FLOOR_G;
   ctx.fillRect(0, FLOOR_Y, GAME_W, GAME_H - FLOOR_Y);
   ctx.strokeStyle = PAL.line;
   ctx.lineWidth = 2;
@@ -306,9 +323,7 @@ function drawBG() {
   const px = 330, py = FLOOR_Y;
   ctx.fillStyle = 'rgba(0,0,0,0.28)';
   ctx.beginPath(); ctx.ellipse(px, py + 4, 34, 7, 0, 0, 6.29); ctx.fill();
-  const potG = ctx.createLinearGradient(px - 26, 0, px + 26, 0);
-  potG.addColorStop(0, '#8a4a2c'); potG.addColorStop(0.4, '#c96b3c'); potG.addColorStop(1, '#8a4a2c');
-  ctx.fillStyle = potG;
+  ctx.fillStyle = POT_G;
   ctx.beginPath();
   ctx.moveTo(px - 26, py - 40); ctx.lineTo(px + 26, py - 40);
   ctx.lineTo(px + 18, py); ctx.lineTo(px - 18, py);
@@ -319,13 +334,11 @@ function drawBG() {
   for (let i = -2; i <= 2; i++) {
     const ang = -Math.PI / 2 + i * 0.42 + sway;
     const lx = px + Math.cos(ang) * 52, ly = py - 44 + Math.sin(ang) * 52;
-    const leafG = ctx.createLinearGradient(px, py - 44, lx, ly);
-    leafG.addColorStop(0, '#2c6e3f'); leafG.addColorStop(1, '#5fbf6e');
     ctx.strokeStyle = '#2c6e3f'; ctx.lineWidth = 3;
     ctx.beginPath(); ctx.moveTo(px, py - 42);
     ctx.quadraticCurveTo(px + Math.cos(ang) * 26, py - 44 + Math.sin(ang) * 30, lx, ly);
     ctx.stroke();
-    ctx.fillStyle = leafG;
+    ctx.fillStyle = LEAF_GS[i + 2];   // v3：預計算葉片漸層（搖擺 ±0.06rad 視覺無差）
     ctx.save(); ctx.translate(lx, ly); ctx.rotate(ang + Math.PI / 2);
     ctx.beginPath(); ctx.ellipse(0, 0, 9, 17, 0, 0, 6.29); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1.5; ctx.stroke();
@@ -336,9 +349,7 @@ function drawBG() {
   const lampX = GAME_W / 2 + 130;
   ctx.strokeStyle = '#444c74'; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(lampX, 0); ctx.lineTo(lampX, 34); ctx.stroke();
-  const lampG = ctx.createRadialGradient(lampX, 46, 4, lampX, 46, 90);
-  lampG.addColorStop(0, 'rgba(255,220,140,0.5)'); lampG.addColorStop(1, 'rgba(255,220,140,0)');
-  ctx.fillStyle = lampG;
+  ctx.fillStyle = LAMP_G;
   ctx.beginPath(); ctx.arc(lampX, 46, 90, 0, 6.29); ctx.fill();
   ctx.fillStyle = '#565f8c';
   ctx.beginPath(); ctx.moveTo(lampX - 22, 44);
@@ -348,9 +359,7 @@ function drawBG() {
   ctx.beginPath(); ctx.arc(lampX, 46, 7, 0, 6.29); ctx.fill();
 
   // 全場氛圍暗角
-  const vig = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.45, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
-  vig.addColorStop(0, 'rgba(10,10,30,0)'); vig.addColorStop(1, 'rgba(10,10,30,0.32)');
-  ctx.fillStyle = vig;
+  ctx.fillStyle = VIG_G;
   ctx.fillRect(0, 0, GAME_W, GAME_H);
 }
 
@@ -360,6 +369,8 @@ const bin = {
   oscA: 0, oscS: 1, squash: 1
 };
 bin.y = FLOOR_Y - bin.h;
+const BIN_FRONT_G = (() => { const g = ctx.createLinearGradient(0, 0, bin.w, 0);
+  g.addColorStop(0, PAL.binDark); g.addColorStop(0.35, PAL.binBody); g.addColorStop(1, PAL.binDark); return g; })();
 function mouthY() { return bin.y + bin.h * 0.12; }
 function updateBin(dt, hits) {
   // 難度爬升：命中越多，桶子擺動幅度與速度越大（前 2 球不動，先教學）
@@ -397,14 +408,15 @@ function drawBinFront() {
   ctx.translate(x + w / 2, y + h);
   ctx.scale(2 - bin.squash, bin.squash);
   ctx.translate(-(x + w / 2), -(y + h));
-  // 桶身正面（左暗右暗中間亮 → 圓柱感）
-  const g = ctx.createLinearGradient(x, 0, x + w, 0);
-  g.addColorStop(0, PAL.binDark); g.addColorStop(0.35, PAL.binBody); g.addColorStop(1, PAL.binDark);
-  ctx.fillStyle = g;
+  // 桶身正面（左暗右暗中間亮 → 圓柱感；v3：漸層預計算 + translate）
+  ctx.save();
+  ctx.translate(x, 0);
+  ctx.fillStyle = BIN_FRONT_G;
   ctx.beginPath();
-  ctx.moveTo(x + w * 0.06, y + h * 0.17); ctx.lineTo(x + w * 0.94, y + h * 0.17);
-  ctx.lineTo(x + w * 0.82, y + h); ctx.lineTo(x + w * 0.18, y + h);
+  ctx.moveTo(w * 0.06, y + h * 0.17); ctx.lineTo(w * 0.94, y + h * 0.17);
+  ctx.lineTo(w * 0.82, y + h); ctx.lineTo(w * 0.18, y + h);
   ctx.closePath(); ctx.fill();
+  ctx.restore();
   // 橫紋
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
   ctx.lineWidth = 2;
@@ -440,6 +452,21 @@ function makeLaptop() {
   };
 }
 let laptop = makeLaptop();
+// v3：筆電漸層預計算（普通 / 金色兩套，76×48 標準座標，繪製時 ctx.scale 正規化）
+function makeLapGrads(gold) {
+  const w = 76, h = 48;
+  const base = ctx.createLinearGradient(0, h * 0.08, 0, h * 0.48);
+  if (gold) { base.addColorStop(0, '#fff3c8'); base.addColorStop(0.5, '#ffd77a'); base.addColorStop(1, '#c9992e'); }
+  else { base.addColorStop(0, '#cfd8e0'); base.addColorStop(0.5, PAL.lapBase); base.addColorStop(1, '#7e8a96'); }
+  const lid = ctx.createLinearGradient(0, -h * 0.5, 0, h * 0.1);
+  if (gold) { lid.addColorStop(0, '#e8c25a'); lid.addColorStop(1, '#a8842a'); }
+  else { lid.addColorStop(0, '#727f8e'); lid.addColorStop(1, '#48545f'); }
+  const scr = ctx.createLinearGradient(-w * 0.4, -h * 0.42, w * 0.4, 0);
+  if (gold) { scr.addColorStop(0, '#fff3c8'); scr.addColorStop(0.5, '#ffcd75'); scr.addColorStop(1, '#e09b30'); }
+  else { scr.addColorStop(0, '#6fc0ff'); scr.addColorStop(0.5, PAL.lapScreen); scr.addColorStop(1, '#2b7cd0'); }
+  return { base, lid, scr };
+}
+const LAP_GRADS = makeLapGrads(false), LAP_GRADS_GOLD = makeLapGrads(true);
 function drawLaptop(l) {
   // 殘影
   for (let i = 0; i < l.trail.length; i++) {
@@ -462,14 +489,18 @@ function drawLaptop(l) {
   ctx.save();
   ctx.translate(l.x, l.y);
   ctx.rotate(l.rot);
-  ctx.scale(l.sx, l.sy);
-  const w = l.w, h = l.h, gold = l.gold;
-  if (gold) { ctx.shadowColor = '#ffd447'; ctx.shadowBlur = 18; }   // v2：金色筆電光暈
+  ctx.scale(l.sx * l.w / 76, l.sy * l.h / 48);   // v3：正規化到 76×48，共用預計算漸層
+  const w = 76, h = 48, gold = l.gold;
+  const G = gold ? LAP_GRADS_GOLD : LAP_GRADS;
+  if (gold) {   // v3：金色光暈改色暈底（取代每幀 shadowBlur 18）
+    ctx.globalAlpha = 0.3 + 0.1 * Math.sin(bgTime * 6);
+    ctx.fillStyle = '#ffd447';
+    roundRect(-w * 0.56, -h * 0.62, w * 1.12, h * 1.18, 14);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
   // 底座（鍵盤面）：金屬漸層 + 外框線
-  const baseG = ctx.createLinearGradient(0, h * 0.08, 0, h * 0.48);
-  if (gold) { baseG.addColorStop(0, '#fff3c8'); baseG.addColorStop(0.5, '#ffd77a'); baseG.addColorStop(1, '#c9992e'); }
-  else { baseG.addColorStop(0, '#cfd8e0'); baseG.addColorStop(0.5, PAL.lapBase); baseG.addColorStop(1, '#7e8a96'); }
-  ctx.fillStyle = baseG;
+  ctx.fillStyle = G.base;
   roundRect(-w / 2, h * 0.08, w, h * 0.4, 5);
   ctx.fill();
   ctx.strokeStyle = gold ? '#8a6a1a' : '#3d4650'; ctx.lineWidth = 2.5; ctx.stroke();
@@ -483,21 +514,14 @@ function drawLaptop(l) {
   roundRect(-w * 0.1, h * 0.35, w * 0.2, h * 0.09, 2);
   ctx.fill();
   // 螢幕（上蓋）：漸層 + 外框線 + 鉸鏈陰影
-  const lidG = ctx.createLinearGradient(0, -h * 0.5, 0, h * 0.1);
-  if (gold) { lidG.addColorStop(0, '#e8c25a'); lidG.addColorStop(1, '#a8842a'); }
-  else { lidG.addColorStop(0, '#727f8e'); lidG.addColorStop(1, '#48545f'); }
-  ctx.fillStyle = lidG;
+  ctx.fillStyle = G.lid;
   roundRect(-w * 0.46, -h * 0.5, w * 0.92, h * 0.58, 6);
   ctx.fill();
   ctx.strokeStyle = gold ? '#8a6a1a' : '#2b333c'; ctx.lineWidth = 2.5; ctx.stroke();
-  ctx.shadowBlur = 0;
   ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fillRect(-w * 0.46, h * 0.05, w * 0.92, 3);
   // 螢幕面板：發光漸層
-  const scrG = ctx.createLinearGradient(-w * 0.4, -h * 0.42, w * 0.4, 0);
-  if (gold) { scrG.addColorStop(0, '#fff3c8'); scrG.addColorStop(0.5, '#ffcd75'); scrG.addColorStop(1, '#e09b30'); }
-  else { scrG.addColorStop(0, '#6fc0ff'); scrG.addColorStop(0.5, PAL.lapScreen); scrG.addColorStop(1, '#2b7cd0'); }
-  ctx.fillStyle = scrG;
+  ctx.fillStyle = G.scr;
   roundRect(-w * 0.4, -h * 0.42, w * 0.8, h * 0.42, 4);
   ctx.fill();
   // 螢幕反光斜條
@@ -642,10 +666,10 @@ addEventListener('keyup', e => {
 
 // ---------- 遊戲數值 ----------
 const GRAVITY = 1500;
-const ROUND_TIME = 60;
+const ROUND_TIME = 75;               // v3：60→75 秒，完整體驗 2–3 輪金色/金環循環
 let score = 0, hits = 0, throws = 0, combo = 0, timeLeft = ROUND_TIME;
 let ring = null, ringT = 0;          // v2：空中加分環
-const OVER_STARS = [150, 300, 500];  // v2：三星門檻
+const OVER_STARS = [180, 380, 650];  // v3：三星門檻隨時長調整
 let best = 0;
 try { best = parseInt(localStorage.getItem('丟筆電大賽.best') || '0', 10) || 0; } catch (err) { best = 0; }
 let newBest = false;
@@ -707,7 +731,7 @@ const titleState = {
     ctx.textAlign = 'center';
     ctx.fillStyle = PAL.ink;
     ctx.font = '20px sans-serif';
-    ctx.fillText('60 秒內把筆電甩進回收桶，穿金環、丟金色筆電賺加倍！', GAME_W / 2, 208);
+    ctx.fillText('75 秒內把筆電甩進回收桶，穿金環、丟金色筆電賺加倍！', GAME_W / 2, 208);
     ctx.fillStyle = PAL.accent;
     ctx.font = 'bold 17px sans-serif';
     ctx.fillText('📱 平板：手指按住筆電，往回收桶方向快速甩出', GAME_W / 2, 238);
@@ -974,6 +998,19 @@ const playState = {
     drawBinFront();
     if (!laptop.inBin) drawLaptop(laptop);
     drawAim();
+    // v3：第一球前，筆電上方畫彈跳指引（首次體驗 10 秒內免閱讀）
+    if (throws === 0 && !laptop.thrown && !dragging) {
+      const bob = Math.sin(bgTime * 5) * 6;
+      ctx.fillStyle = PAL.accent;
+      ctx.font = 'bold 19px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('按住我，往桶子甩！', laptop.x + 10, laptop.y - 92 + bob);
+      ctx.beginPath();
+      ctx.moveTo(laptop.x, laptop.y - 62 + bob);
+      ctx.lineTo(laptop.x - 10, laptop.y - 78 + bob);
+      ctx.lineTo(laptop.x + 10, laptop.y - 78 + bob);
+      ctx.closePath(); ctx.fill();
+    }
     drawParts();
     drawFloaters();
     ctx.restore();
@@ -1059,13 +1096,15 @@ function drawRing() {   // v2：空中加分環（旋轉虛線金環＋星星）
   ctx.translate(ring.x, ring.y);
   ctx.globalAlpha = blink;
   ctx.rotate(ring.t * 1.2);
+  // v3：光暈改雙筆畫（原 shadowBlur 14 每幀成本高）
+  ctx.strokeStyle = 'rgba(255,205,117,0.3)';
+  ctx.lineWidth = 12;
+  ctx.beginPath(); ctx.arc(0, 0, ring.r, 0, 6.29); ctx.stroke();
   ctx.strokeStyle = PAL.accent;
   ctx.lineWidth = 5;
   ctx.setLineDash([12, 9]);
-  ctx.shadowColor = PAL.accent; ctx.shadowBlur = 14;
   ctx.beginPath(); ctx.arc(0, 0, ring.r, 0, 6.29); ctx.stroke();
   ctx.setLineDash([]);
-  ctx.shadowBlur = 0;
   ctx.rotate(-ring.t * 1.2);
   ctx.fillStyle = PAL.accent;
   ctx.font = 'bold 22px sans-serif';

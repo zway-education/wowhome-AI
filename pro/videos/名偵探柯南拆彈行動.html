@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -143,8 +143,8 @@ function noiseBurst(dur, f0, f1, vol){
 const sfx = {
   tick(){ tone(1900, 0.03, 'square', 0.05); tone(950, 0.04, 'sine', 0.06); },
   sting(){ tone(220, 0.7, 'sawtooth', 0.09, -60); tone(233, 0.7, 'sawtooth', 0.09, -60); },
-  heart(){ tone(70, 0.12, 'sine', 0.3, -20); setTimeout(() => tone(60, 0.16, 'sine', 0.26, -15), 180); },
-  snip(){ noiseBurst(0.08, 2500, 5000, 0.3); tone(3200, 0.05, 'square', 0.1); },
+  heart(){ tone(70, 0.12, 'sine', 0.24, -20); setTimeout(() => tone(60, 0.16, 'sine', 0.2, -15), 180); },
+  snip(){ noiseBurst(0.08, 2500, 5000, 0.26); tone(3200, 0.05, 'square', 0.1); },
   alarmOff(){ tone(880, 0.4, 'sine', 0.1); setTimeout(() => tone(1174, 0.6, 'sine', 0.1), 180); },
   fanfare(){ [523, 659, 784, 1046].forEach((f, i) => setTimeout(() => tone(f, 0.4, 'triangle', 0.1), i * 130)); },
   whoosh(){ noiseBurst(0.3, 300, 1800, 0.2); },
@@ -209,21 +209,44 @@ function drawParts(g){
 
 /* ---------- 倉庫背景 ---------- */
 let wall = 0, alertLv = 0;
+/* v3：靜態漸層快取（避免每幀重建 ~12 個 gradient） */
+let G_back = null, G_winG = null, G_floor = null, G_lamp = null, G_alert = null;
+const G_beam = {}, G_crate = {};
+function gradInit(){
+  if (G_back) return;
+  G_back = ctx.createLinearGradient(0, 0, 0, 420);
+  G_back.addColorStop(0, '#101827'); G_back.addColorStop(1, '#1a2233');
+  G_winG = ctx.createLinearGradient(0, 42, 0, 168);
+  G_winG.addColorStop(0, '#2c3f5e'); G_winG.addColorStop(1, '#18253c');
+  for (const wx of [90, 400, 710]){
+    const bg = ctx.createLinearGradient(wx + 100, 160, wx + 30, 470);
+    bg.addColorStop(0, 'rgba(140,170,220,0.10)'); bg.addColorStop(1, 'rgba(140,170,220,0)');
+    G_beam[wx] = bg;
+  }
+  for (const [bx, by, , bh] of [[60, 330, 120, 96], [150, 366, 100, 60], [806, 340, 130, 86], [742, 384, 96, 42]]){
+    const cg = ctx.createLinearGradient(bx, by, bx, by + bh);
+    cg.addColorStop(0, '#4a3b28'); cg.addColorStop(1, '#332818');
+    G_crate[bx] = cg;
+  }
+  G_floor = ctx.createLinearGradient(0, 426, 0, 540);
+  G_floor.addColorStop(0, '#2b2f38'); G_floor.addColorStop(1, '#171b22');
+  G_lamp = ctx.createLinearGradient(0, 104, 0, 470);
+  G_lamp.addColorStop(0, 'rgba(255,233,176,0.13)'); G_lamp.addColorStop(1, 'rgba(255,233,176,0)');
+  G_alert = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H);
+  G_alert.addColorStop(0, 'rgba(255,0,0,0)'); G_alert.addColorStop(1, '#ff2222');
+}
 function drawWarehouse(t){
+  gradInit();
   // 後牆
   applyCam(0.85);
-  let gr = ctx.createLinearGradient(0, 0, 0, 420);
-  gr.addColorStop(0, '#101827'); gr.addColorStop(1, '#1a2233');
-  ctx.fillStyle = gr; ctx.fillRect(-300, -80, 1560, 500);
+  ctx.fillStyle = G_back; ctx.fillRect(-300, -80, 1560, 500);
   // 鐵皮波浪牆
   ctx.strokeStyle = 'rgba(70,86,110,0.35)'; ctx.lineWidth = 3;
   for (let x = -280; x < 1280; x += 42){ ctx.beginPath(); ctx.moveTo(x, -60); ctx.lineTo(x, 300); ctx.stroke(); }
   // 高窗與月光
   for (const wx of [90, 400, 710]){
     ctx.fillStyle = '#0c1420'; ctx.fillRect(wx - 8, 42, 216, 126);
-    gr = ctx.createLinearGradient(0, 42, 0, 168);
-    gr.addColorStop(0, '#2c3f5e'); gr.addColorStop(1, '#18253c');
-    ctx.fillStyle = gr; ctx.fillRect(wx, 50, 200, 110);
+    ctx.fillStyle = G_winG; ctx.fillRect(wx, 50, 200, 110);
     // 警車紅藍光掃過
     const sw = (Math.sin(wall * 1.8 + wx) + 1) / 2;
     ctx.globalAlpha = 0.16 + alertLv * 0.22;
@@ -236,9 +259,7 @@ function drawWarehouse(t){
     ctx.moveTo(wx, 105); ctx.lineTo(wx + 200, 105);
     ctx.stroke();
     // 月光斜束
-    gr = ctx.createLinearGradient(wx + 100, 160, wx + 30, 470);
-    gr.addColorStop(0, 'rgba(140,170,220,0.10)'); gr.addColorStop(1, 'rgba(140,170,220,0)');
-    ctx.fillStyle = gr;
+    ctx.fillStyle = G_beam[wx];
     ctx.beginPath(); ctx.moveTo(wx + 8, 160); ctx.lineTo(wx + 192, 160);
     ctx.lineTo(wx + 120, 470); ctx.lineTo(wx - 70, 470); ctx.closePath(); ctx.fill();
   }
@@ -246,9 +267,7 @@ function drawWarehouse(t){
   // 中景木箱
   applyCam(0.93);
   for (const [bx, by, bw, bh, tag] of [[60, 330, 120, 96, 0], [150, 366, 100, 60, 1], [806, 340, 130, 86, 0], [742, 384, 96, 42, 0]]){
-    gr = ctx.createLinearGradient(bx, by, bx, by + bh);
-    gr.addColorStop(0, '#4a3b28'); gr.addColorStop(1, '#332818');
-    ctx.fillStyle = gr; ctx.fillRect(bx, by, bw, bh);
+    ctx.fillStyle = G_crate[bx]; ctx.fillRect(bx, by, bw, bh);
     ctx.strokeStyle = '#241b0f'; ctx.lineWidth = 3; ctx.strokeRect(bx, by, bw, bh);
     ctx.strokeStyle = 'rgba(90,72,46,0.8)'; ctx.lineWidth = 2;
     ctx.strokeRect(bx + 7, by + 7, bw - 14, bh - 14);
@@ -262,9 +281,7 @@ function drawWarehouse(t){
   ctx.restore();
   // 地面
   applyCam(1);
-  gr = ctx.createLinearGradient(0, 426, 0, 540);
-  gr.addColorStop(0, '#2b2f38'); gr.addColorStop(1, '#171b22');
-  ctx.fillStyle = gr; ctx.fillRect(-300, 426, 1560, 130);
+  ctx.fillStyle = G_floor; ctx.fillRect(-300, 426, 1560, 130);
   ctx.strokeStyle = 'rgba(120,132,150,0.4)'; ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(-300, 428); ctx.lineTo(1260, 428); ctx.stroke();
   ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 1.5;
@@ -285,9 +302,7 @@ function drawWarehouse(t){
   ctx.save(); ctx.shadowColor = '#ffe9b0'; ctx.shadowBlur = 16;
   ctx.fillStyle = '#ffe9b0'; ctx.beginPath(); ctx.arc(0, 104, 7, 0, 6.283); ctx.fill();
   ctx.restore();
-  gr = ctx.createLinearGradient(0, 104, 0, 470);
-  gr.addColorStop(0, 'rgba(255,233,176,0.13)'); gr.addColorStop(1, 'rgba(255,233,176,0)');
-  ctx.fillStyle = gr;
+  ctx.fillStyle = G_lamp;
   ctx.beginPath(); ctx.moveTo(-14, 104); ctx.lineTo(14, 104); ctx.lineTo(150, 470); ctx.lineTo(-150, 470); ctx.closePath(); ctx.fill();
   ctx.restore();
   ctx.restore();
@@ -602,8 +617,6 @@ function drawVillager(g, x, y, fl, col, round, lt){
     g.restore();
   }
   // 頭身
-  const bg = g.createRadialGradient(-3, -12, 2, 0, -8, 16);
-  bg.addColorStop(0, col); bg.addColorStop(1, col);
   g.fillStyle = col;
   g.beginPath(); g.ellipse(0, -9, 12, 10, 0, 0, 6.283); g.fill(); g.stroke();
   g.fillStyle = col;
@@ -662,11 +675,9 @@ function overlays(sc, t){
     ctx.restore();
   }
   // 危險紅光脈動
-  if (alertLv > 0){
+  if (alertLv > 0 && G_alert){
     ctx.globalAlpha = alertLv * (0.14 + 0.1 * Math.abs(Math.sin(wall * 5)));
-    const ag = ctx.createRadialGradient(W / 2, H / 2, H * 0.3, W / 2, H / 2, H);
-    ag.addColorStop(0, 'rgba(255,0,0,0)'); ag.addColorStop(1, '#ff2222');
-    ctx.fillStyle = ag; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = G_alert; ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = 1;
   }
   drawSubs(sc, t);
@@ -709,12 +720,15 @@ function tickCheck(){
   if (s !== lastTickSec){ lastTickSec = s; if (!defused && timeLeft > 0) sfx.tick(); }
 }
 const s0 = {
-  dur: 5, act: '第一幕・深夜倉庫',
-  subs: [{ a: 2.4, b: 4.3, tx: '深夜的倉庫裡，滴答聲正在倒數——' }],
+  dur: 3.4, act: '第一幕・深夜倉庫',
+  subs: [{ a: 1.8, b: 3.1, tx: '深夜的倉庫裡，滴答聲正在倒數——' }],
   init(){ S = {}; timeLeft = 20; defused = false; cutP = 0; alertLv = 0.3; showHud = false;
     cam.tx = 120; cam.ty = -20; cam.tz = 1.35; camSnap(); },
   evts: [{ t: 0.6, fn(){ sfx.sting(); } }],
-  update(t){ cam.tz = lerp(1.35, 1.12, eO(clamp01(t / 4.5))); cam.ty = lerp(-20, 0, eO(clamp01(t / 4.5))); },
+  update(t, dt){
+    timeLeft = Math.max(0, timeLeft - (dt || 0)); tickCheck();
+    cam.tz = lerp(1.35, 1.12, eO(clamp01(t / 3.0))); cam.ty = lerp(-20, 0, eO(clamp01(t / 3.0)));
+  },
   draw(t){
     drawWarehouse(t);
     applyCam(1);
@@ -740,10 +754,10 @@ const s0 = {
   }
 };
 const s1 = {
-  dur: 6, act: '第一幕・發現炸彈',
+  dur: 4.6, act: '第一幕・發現炸彈',
   subs: [
-    { a: 1.2, b: 2.8, tx: '柯南：就是這裡！' },
-    { a: 3.8, b: 5.6, tx: '球形炸彈——導火線已經點燃！', warn: true }
+    { a: 1.2, b: 2.6, tx: '柯南：就是這裡！' },
+    { a: 3.2, b: 4.3, tx: '球形炸彈——導火線已經點燃！', warn: true }
   ],
   init(){ S = { stepT: 0 }; showHud = true; alertLv = 0.35; cam.tx = 0; cam.tz = 1.05; camSnap(); },
   evts: [
@@ -788,44 +802,44 @@ const s1 = {
   }
 };
 const s2 = {
-  dur: 8, act: '第二幕・偵測電路',
+  dur: 6.0, act: '第二幕・偵測電路',
   subs: [
-    { a: 0.6, b: 2.4, tx: '偵測電路中……' },
-    { a: 3.2, b: 5.2, tx: '這條紅線是陷阱……', warn: true },
-    { a: 5.6, b: 7.6, tx: '真正的線路，在藍線之下！' }
+    { a: 0.5, b: 2.0, tx: '偵測電路中……' },
+    { a: 2.8, b: 4.2, tx: '這條紅線是陷阱……', warn: true },
+    { a: 4.5, b: 5.8, tx: '真正的線路，在藍線之下！' }
   ],
   init(){ S = {}; alertLv = 0.4; cam.tx = 150; cam.tz = 1.2; camSnap(); },
   evts: [
-    { t: 3.2, fn(){ sfx.sting(); shakeMag = 3; } },
-    { t: 5.6, fn(){ sfx.pop(); } }
+    { t: 2.8, fn(){ sfx.sting(); shakeMag = 3; } },
+    { t: 4.5, fn(){ sfx.pop(); } }
   ],
   update(t, dt){
     timeLeft = Math.max(0, timeLeft - (dt || 0)); tickCheck();
-    cam.tx = lerp(150, 180, seg(t, 1, 3)); cam.tz = lerp(1.2, 1.42, seg(t, 2.6, 5)); cam.ty = lerp(0, 26, seg(t, 2.6, 5));
-    alertLv = 0.4 + seg(t, 3, 6) * 0.2;
+    cam.tx = lerp(150, 180, seg(t, 1, 2.6)); cam.tz = lerp(1.2, 1.42, seg(t, 2.3, 4.3)); cam.ty = lerp(0, 26, seg(t, 2.3, 4.3));
+    alertLv = 0.4 + seg(t, 2.7, 5.2) * 0.2;
   },
   draw(t){
     drawWarehouse(t);
     applyCam(1);
     drawBomb(ctx, t);
     // 柯南蹲下用放大鏡
-    drawConan(ctx, { x: 486, dir: 1, crouch: 0.85, exp: t > 3 ? 'grit' : 'focus',
+    drawConan(ctx, { x: 486, dir: 1, crouch: 0.85, exp: t > 2.8 ? 'grit' : 'focus',
       armL: -0.4, armR: 1.05 + Math.sin(t * 2) * 0.06, foreR: 0.55, mag: true,
-      sweat: seg(t, 2.6, 4.2), head: 0.15 });
+      sweat: seg(t, 2.4, 3.8), head: 0.15 });
     // 紅線警示 X
-    if (t > 3.4 && t < 5.6){
-      const xa = subAlpha(t, 3.5, 5.4);
+    if (t > 3.0 && t < 4.5){
+      const xa = subAlpha(t, 3.1, 4.3);
       ctx.save(); ctx.globalAlpha = xa;
       ctx.translate(546, FY - 30);
       ctx.strokeStyle = '#ff3333'; ctx.lineWidth = 5; ctx.lineCap = 'round';
       ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 10;
-      const xs = eOB(seg(t, 3.4, 3.75)) * 14;
+      const xs = eOB(seg(t, 3.0, 3.35)) * 14;
       ctx.beginPath(); ctx.moveTo(-xs, -xs); ctx.lineTo(xs, xs); ctx.moveTo(xs, -xs); ctx.lineTo(-xs, xs); ctx.stroke();
       ctx.restore();
     }
     // 藍線聚光
-    if (t > 5.6){
-      const ba = subAlpha(t, 5.7, 7.9);
+    if (t > 4.5){
+      const ba = subAlpha(t, 4.6, 6.1);
       ctx.save(); ctx.globalAlpha = ba * (0.6 + Math.abs(Math.sin(wall * 4)) * 0.4);
       ctx.strokeStyle = '#66c2ff'; ctx.lineWidth = 3;
       ctx.shadowColor = '#3399ff'; ctx.shadowBlur = 14;
@@ -837,14 +851,14 @@ const s2 = {
   }
 };
 const s3 = {
-  dur: 7, act: '第二幕・最後三秒',
+  dur: 6.6, act: '第二幕・最後三秒',
   subs: [
     { a: 0.4, b: 1.7, tx: '等等……先剪紅線？', warn: true },
     { a: 2.0, b: 3.3, tx: '不對！紅線是陷阱——剪藍線！', warn: true },
-    { a: 4.9, b: 6.6, tx: '喀嚓！' }
+    { a: 4.9, b: 6.3, tx: '喀嚓！' }
   ],
   init(){ S = { hb: 0 }; alertLv = 0.7; cam.tx = 170; cam.ty = 20; cam.tz = 1.35; camSnap(); },
-  timeScale(t){ return (t > 3.4 && t < 4.7) ? 0.35 : 1; },
+  timeScale(t){ return (t > 3.4 && t < 4.7) ? 0.5 : 1; },
   evts: [
     { t: 1.0, fn(){ sfx.sting(); shakeMag = 3.5; } },
     { t: 2.1, fn(){ sfx.pop(); } },
@@ -909,10 +923,10 @@ const s3 = {
   }
 };
 const s4 = {
-  dur: 7, act: '第三幕・真相只有一個',
+  dur: 6.0, act: '第三幕・真相只有一個',
   subs: [
     { a: 0.6, b: 2.2, tx: '成功拆除！' },
-    { a: 5.0, b: 6.8, tx: '嫌犯的詭計，被完全識破。' }
+    { a: 4.6, b: 5.8, tx: '嫌犯的詭計，被完全識破。' }
   ],
   init(){ S = {}; alertLv = 0; cam.tx = 120; cam.ty = 0; cam.tz = 1.15; camSnap(); },
   evts: [
@@ -923,13 +937,13 @@ const s4 = {
   update(t){
     cam.tx = lerp(120, 20, seg(t, 0.5, 2));
     cam.tz = t > 2.4 ? lerp(1.15, 1.32, seg(t, 2.4, 3.2)) : 1.15;
-    if (t > 5.6) cam.tz = lerp(1.32, 1.1, seg(t, 5.6, 7));
+    if (t > 5.0) cam.tz = lerp(1.32, 1.1, seg(t, 5.0, 6.0));
   },
   draw(t){
     drawWarehouse(t);
     // 漫畫放射集中線（高潮）
     if (t > 2.6){
-      const ra = Math.min(seg(t, 2.6, 3.1), clamp01((6.2 - t) / 0.8));
+      const ra = Math.min(seg(t, 2.6, 3.1), clamp01((5.5 - t) / 0.8));
       ctx.save();
       ctx.globalAlpha = ra * 0.5;
       ctx.strokeStyle = '#e8ecf4'; ctx.lineWidth = 2;
@@ -961,9 +975,9 @@ const s4 = {
     drawParts(ctx);
     ctx.restore();
     // 大字
-    if (t > 2.8 && t < 6.4){
+    if (t > 2.8 && t < 5.9){
       const su = eOB(seg(t, 2.8, 3.25));
-      const fa = Math.min(seg(t, 2.8, 3.0), clamp01((6.4 - t) / 0.6));
+      const fa = Math.min(seg(t, 2.8, 3.0), clamp01((5.9 - t) / 0.6));
       ctx.save();
       ctx.globalAlpha = fa;
       ctx.translate(W / 2, 150); ctx.rotate(-0.04); ctx.scale(lerp(2.2, 1, su), lerp(2.2, 1, su));
@@ -980,19 +994,19 @@ const s4 = {
   }
 };
 const s5 = {
-  dur: 8, act: '第三幕・全體居民歡慶',
+  dur: 6.0, act: '第三幕・全體居民歡慶',
   subs: [
-    { a: 0.8, b: 2.8, tx: '成功拆除！全體居民衝出來慶祝！' },
-    { a: 5.4, b: 7.4, tx: '倉庫的夜晚，變成了慶典。' }
+    { a: 0.8, b: 2.6, tx: '成功拆除！全體居民衝出來慶祝！' },
+    { a: 4.6, b: 5.8, tx: '倉庫的夜晚，變成了慶典。' }
   ],
   init(){ S = { conf: 0 }; buildVillagers(); alertLv = 0; cam.tx = 0; cam.ty = 0; cam.tz = 1.02; camSnap(); },
   evts: [
     { t: 0.5, fn(){ sfx.whoosh(); sfx.pop(); spawnConfetti(140, 545, 40, 1); spawnConfetti(820, 545, 40, -1); } },
     { t: 1.8, fn(){ sfx.pop(); spawnConfetti(480, 545, 36, 0.15); } },
-    { t: 3.6, fn(){ sfx.fanfare(); } },
-    { t: 4.6, fn(){ sfx.pop(); spawnConfetti(300, 545, 30, 0.6); spawnConfetti(660, 545, 30, -0.6); } }
+    { t: 3.2, fn(){ sfx.fanfare(); } },
+    { t: 4.2, fn(){ sfx.pop(); spawnConfetti(300, 545, 30, 0.6); spawnConfetti(660, 545, 30, -0.6); } }
   ],
-  update(t){ cam.tz = lerp(1.02, 1.08, seg(t, 2, 6)); },
+  update(t){ cam.tz = lerp(1.02, 1.08, seg(t, 2, 5)); },
   draw(t){
     drawWarehouse(t);
     applyCam(1);
@@ -1012,7 +1026,7 @@ const s5 = {
   }
 };
 const s6 = {
-  dur: 5.5, act: '終幕',
+  dur: 3.6, act: '終幕',
   init(){ S = {}; cam.tx = 0; cam.ty = 0; cam.tz = 1; camSnap(); showHud = false; },
   evts: [{ t: 0.5, fn(){ sfx.alarmOff(); } }],
   update(){},

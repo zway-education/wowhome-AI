@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -73,8 +73,8 @@
   找到 <b style="color:#eee">3 把鑰匙</b>，再抵達綠色的出口逃出這裡。<br>
   藏在角落的 <b style="color:#7ec8ff">🧿 護身符</b> 能在它抓住你時救你一命。<br>
   它能聽見你的腳步，也能在黑暗中看見你——你的選擇將決定你的命運。</p>
-  <p style="font-size:13px;color:#999">🖱️ <b style="color:#ccc">電腦</b>：WASD / 方向鍵 移動・滑鼠 控制手電筒方向・E 互動・M 靜音<br>
-  👆 <b style="color:#ccc">平板</b>：左下按住拖曳＝浮動搖桿移動・右半邊拖曳＝轉手電筒・右下「互動」鈕<br>
+  <p style="font-size:13px;color:#999">💻 <b style="color:#ccc">電腦</b>：WASD / 方向鍵 移動・滑鼠 控制手電筒方向・E 互動・M 靜音<br>
+  📱 <b style="color:#ccc">平板</b>：左下按住拖曳＝浮動搖桿移動・右半邊拖曳＝轉手電筒・右下「互動」鈕<br>
   💡 站著不動 2 秒，直覺會指引你最近的鑰匙方向</p>
   <button id="startBtn">開始遊戲</button>
 </div>
@@ -88,12 +88,31 @@ const interactHint=document.getElementById('interactHint'),exitHintEl=document.g
 const storyBox=document.getElementById('storyBox'),storyText=document.getElementById('storyText'),storyChoices=document.getElementById('storyChoices');
 const maskCv=document.createElement('canvas'),maskCtx=maskCv.getContext('2d');
 let vw=innerWidth,vh=innerHeight,dpr=1;
+/* v3：常駐暗角烘焙（resize 時重建，不再每幀建全螢幕漸層） */
+let vigCv=null;
+function bakeVig(){
+  vigCv=document.createElement('canvas');vigCv.width=vw;vigCv.height=vh;
+  const g=vigCv.getContext('2d');
+  const vig=g.createRadialGradient(vw/2,vh/2,vh*.4,vw/2,vh/2,vh*.9);
+  vig.addColorStop(0,'rgba(0,0,0,0)');vig.addColorStop(1,'rgba(0,0,0,.5)');
+  g.fillStyle=vig;g.fillRect(0,0,vw,vh);
+}
 function resize(){
   vw=innerWidth;vh=innerHeight;dpr=Math.min(devicePixelRatio||1,2);
   cv.width=vw*dpr;cv.height=vh*dpr;cv.style.width=vw+'px';cv.style.height=vh+'px';
   maskCv.width=vw;maskCv.height=vh;
+  bakeVig();
 }
 addEventListener('resize',resize);resize();
+/* v3：牆前緣受光面貼圖（烘一次，重複 drawImage） */
+const wallFrontCv=(()=>{
+  const c=document.createElement('canvas');c.width=48*2;c.height=14*2;
+  const g=c.getContext('2d');g.setTransform(2,0,0,2,0,0);
+  const fg=g.createLinearGradient(0,0,0,14);
+  fg.addColorStop(0,'#4a3230');fg.addColorStop(1,'#241614');
+  g.fillStyle=fg;g.fillRect(0,0,48,14);
+  return c;
+})();
 const clamp=(v,a,b)=>v<a?a:v>b?b:v,dist=(a,b,c,d)=>Math.hypot(a-c,b-d),rnd=(a,b)=>a+Math.random()*(b-a);
 /* ============ 音效（全部 Web Audio 合成） ============ */
 let AC=null,master=null,muted=false,drone=null,musicT=null,heartT=null,stepT=0;
@@ -143,13 +162,15 @@ function sBlip(f,d,type,vol,slide){
   g.gain.setValueAtTime(vol||.12,now);g.gain.exponentialRampToValueAtTime(.001,now+d);
   o.connect(g).connect(master);o.start();o.stop(now+d);
 }
+let sharedNoise=null;   /* v3：共用噪音 buffer，腳步聲不再每次配置 */
 function sNoise(d,vol,fType,fFreq){
   if(!audio())return;
-  const src=AC.createBufferSource();src.buffer=noiseBuf(d);
+  if(!sharedNoise)sharedNoise=noiseBuf(1.5);
+  const src=AC.createBufferSource();src.buffer=sharedNoise;src.loop=true;
   const f=AC.createBiquadFilter();f.type=fType||'lowpass';f.frequency.value=fFreq||600;
   const g=AC.createGain();g.gain.setValueAtTime(vol,AC.currentTime);
   g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+d);
-  src.connect(f).connect(g).connect(master);src.start();
+  src.connect(f).connect(g).connect(master);src.start();src.stop(AC.currentTime+d+.05);
 }
 function sFootstep(){sNoise(.09,.1,'lowpass',500+Math.random()*200);}
 function sKey(){[880,1320,1760].forEach((f,i)=>setTimeout(()=>sBlip(f,.3,'sine',.14),i*80));}
@@ -223,8 +244,9 @@ function isWall(tx,ty){return tx<0||ty<0||tx>=MW||ty>=MH||map[ty][tx]===1;}
 function bfsFrom(sx,sy){
   const d=new Int16Array(MW*MH).fill(-1);
   const q=[[sx,sy]];d[sy*MW+sx]=0;
-  while(q.length){
-    const [x,y]=q.shift(),dd=d[y*MW+x];
+  let qi=0;   /* v3：索引指標取代 shift()，追擊 BFS 不再 O(n²) */
+  while(qi<q.length){
+    const [x,y]=q[qi++],dd=d[y*MW+x];
     [[1,0],[-1,0],[0,1],[0,-1]].forEach(([ox,oy])=>{
       const nx=x+ox,ny=y+oy;
       if(!isWall(nx,ny)&&d[ny*MW+nx]<0){d[ny*MW+nx]=dd+1;q.push([nx,ny]);}
@@ -465,7 +487,12 @@ function updateNodeProximity(){
     if(n.done)continue;
     if(dist(player.x,player.y,n.tx*TILE+TILE/2,n.ty*TILE+TILE/2)<44){nearNode=n;break;}
   }
-  interactHint.style.display=nearNode?'block':'none';
+  const disp=nearNode?'block':'none';
+  if(interactHint.style.display!==disp){
+    /* v3：依裝置顯示互動提示文字 */
+    if(nearNode)interactHint.textContent=document.body.classList.contains('touch-mode')?'點右下「互動」鈕':'按 E 互動';
+    interactHint.style.display=disp;
+  }
 }
 function updateMonster(dt){
   if(storyActive)return;
@@ -493,9 +520,13 @@ function updateMonster(dt){
   }
   if(keysCollected>=3)monster.active=true;         // 最後衝刺：它知道你要逃
   else if(d>560)monster.active=false;
+  /* v3：開場 15 秒安全學習期——先學會走路，再學會逃命 */
+  if(gameT<15&&keysCollected<1)monster.active=false;
   if(monster.active&&!monster.wasActive){sSting();shake=Math.max(shake,6);}
   monster.wasActive=monster.active;
-  const chaseSpd=88+keysCollected*14,wanderSpd=52;
+  /* v3：150 秒後獵殺加速（每 30 秒 +8、上限 +32）——多數場次 4 分鐘內收尾 */
+  const rush=Math.min(32,Math.max(0,(gameT-150)/30)*8);
+  const chaseSpd=88+keysCollected*14+rush,wanderSpd=52+rush*.4;
   const prevX=monster.x,prevY=monster.y;
   if(monster.active){
     monster.pathT-=dt;
@@ -553,7 +584,7 @@ function updateMonster(dt){
 function updateGlimpses(dt){
   glimpseT-=dt;
   if(glimpseT<=0&&!storyActive){
-    glimpseT=rnd(4,9)*Math.max(.5,1-keysCollected*.15);   // 越接近結局越頻繁
+    glimpseT=rnd(4,9)*Math.max(.5,1-keysCollected*.15)*(gameT>150?.6:1);   // 越接近結局／拖越久越頻繁
     if(glimpses.length<1&&Math.random()<.8){
       const a=player.angle+rnd(-.55,.55),sd=rnd(150,250);
       glimpses.push({x:player.x+Math.cos(a)*sd,y:player.y+Math.sin(a)*sd,life:rnd(.9,1.5),max:1.5,sway:rnd(0,6)});
@@ -603,9 +634,19 @@ function showEnd(kind){
   document.getElementById('restartBtn').addEventListener('click',resetGame);
 }
 function resetGame(){
-  genMap();placeItems();placeStoryNodes();
+  genMap();placeItems();placeStoryNodes();placeAmulets();
   storyFlags={};keysCollected=0;nodesRead=0;keyCountEl.textContent=0;
+  amuletCount=0;amuletEl().textContent=0;
+  monsterStun=0;graceT=0;idleT=0;flashW=0;
   glimpses=[];glimpseT=4;parts=[];floats=[];
+  /* v2：開局操作提示（依裝置，8 秒後淡出） */
+  const ph=document.getElementById('playHint');
+  ph.innerHTML=document.body.classList.contains('touch-mode')
+    ?'👆 <b>左下按住拖曳</b>＝移動　<b>右半邊拖曳</b>＝轉手電筒<br>看到物品走過去撿・<b>互動鈕</b>＝閱讀劇情　🗝️ 找 3 把鑰匙'
+    :'⌨️ <b>WASD</b> 移動　🖱️ <b>滑鼠</b>＝手電筒方向　<b>E</b>＝互動<br>🗝️ 找 3 把鑰匙，小心黑暗中的「它」';
+  ph.style.display='block';ph.style.opacity='1';
+  clearTimeout(ph._t);
+  ph._t=setTimeout(()=>{ph.style.opacity='0';setTimeout(()=>ph.style.display='none',700);},8000);
   player.x=TILE*2.5;player.y=TILE*2.5;player.angle=0;
   const far=reachableTiles(18);
   const m=far.length?far[Math.random()*far.length|0]:{tx:MW>>1,ty:MH>>1};
@@ -661,6 +702,45 @@ function drawKey(it,t){
   ctx.strokeStyle='#ffe9a3';ctx.lineWidth=1.4;
   ctx.beginPath();ctx.arc(-5,0,5.5,-2.4,-.8);ctx.stroke();
   ctx.restore();
+}
+/* v2：護身符 */
+function drawAmulet(a,t){
+  const bob=Math.sin(t*2.6+a.bob)*4;
+  ctx.save();ctx.translate(a.x,a.y+bob);
+  const gl=ctx.createRadialGradient(0,0,2,0,0,24);
+  gl.addColorStop(0,'rgba(126,200,255,.5)');gl.addColorStop(1,'rgba(126,200,255,0)');
+  ctx.fillStyle=gl;ctx.fillRect(-24,-24,48,48);
+  ctx.rotate(Math.sin(t*1.8+a.bob)*.2);
+  ctx.fillStyle='#3a6aa8';ctx.strokeStyle='#1a2a48';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(0,-10);ctx.lineTo(8,0);ctx.lineTo(0,10);ctx.lineTo(-8,0);ctx.closePath();
+  ctx.fill();ctx.stroke();
+  ctx.fillStyle='#cfe8ff';ctx.beginPath();ctx.ellipse(0,0,3.6,2.6,0,0,7);ctx.fill();
+  ctx.fillStyle='#1a2a48';ctx.beginPath();ctx.arc(0,0,1.5,0,7);ctx.fill();
+  ctx.strokeStyle='#7ec8ff';ctx.lineWidth=1;
+  ctx.beginPath();ctx.moveTo(0,-14);ctx.lineTo(0,-10);ctx.stroke();
+  ctx.restore();
+}
+/* v2：直覺羅盤——站著不動指向最近目標 */
+function drawCompass(t){
+  if(idleT<2||storyActive)return;
+  let target=null,label='🗝️';
+  if(keysCollected>=3){target={x:exitTile.tx*TILE+TILE/2,y:exitTile.ty*TILE+TILE/2};label='出口';}
+  else{
+    let bd=1e9;
+    for(const it of items)if(!it.taken){const d=dist(player.x,player.y,it.x,it.y);if(d<bd){bd=d;target=it;}}
+  }
+  if(!target)return;
+  const a=Math.atan2(target.y-player.y,target.x-player.x);
+  const al=Math.min(1,(idleT-2)*1.5)*(.6+.3*Math.sin(t*4));
+  ctx.save();ctx.translate(player.x,player.y);ctx.rotate(a);ctx.globalAlpha=al;
+  ctx.fillStyle='#ffd868';ctx.strokeStyle='rgba(60,40,0,.8)';ctx.lineWidth=2;
+  ctx.beginPath();ctx.moveTo(52,0);ctx.lineTo(38,-7);ctx.lineTo(41,0);ctx.lineTo(38,7);ctx.closePath();
+  ctx.fill();ctx.stroke();
+  ctx.rotate(-a);
+  ctx.font='bold 12px sans-serif';ctx.textAlign='center';
+  ctx.fillStyle='rgba(255,216,104,'+al+')';
+  ctx.fillText(label==='出口'?'出口 →':'鑰匙 →',Math.cos(a)*70,Math.sin(a)*70+4);
+  ctx.restore();ctx.globalAlpha=1;
 }
 function drawNodeIcon(n,t){
   const x=n.tx*TILE+TILE/2,y=n.ty*TILE+TILE/2;
@@ -813,10 +893,8 @@ function render(t){
   for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){
     if(map[y][x]!==1)continue;
     const px=x*TILE,py=y*TILE,h=Math.sin(x*91.3+y*151.7)*.5+.5;
-    if(!isWall(x,y+1)){                                   // 前緣（受光面）
-      const fg=ctx.createLinearGradient(px,py+TILE-WH,px,py+TILE);
-      fg.addColorStop(0,'#4a3230');fg.addColorStop(1,'#241614');
-      ctx.fillStyle=fg;ctx.fillRect(px,py+TILE-WH,TILE,WH);
+    if(!isWall(x,y+1)){                                   // 前緣（受光面，v3：快取貼圖）
+      ctx.drawImage(wallFrontCv,px,py+TILE-WH,TILE,WH);
       ctx.fillStyle='rgba(0,0,0,.35)';
       ctx.fillRect(px+6,py+TILE-WH+3,TILE-16,2);          // 磚縫
     }
@@ -843,9 +921,19 @@ function render(t){
   }
   for(const n of storyNodes)if(!n.done)drawNodeIcon(n,t);
   for(const it of items)if(!it.taken)drawKey(it,t);
+  for(const a of amulets)if(!a.taken)drawAmulet(a,t);
   for(const g of glimpses)drawGlimpse(g);
   drawMonster(t);
+  /* v2：暈眩星星 */
+  if(monsterStun>0){
+    for(let i=0;i<3;i++){
+      const sa=t*5+i*2.09;
+      ctx.fillStyle='rgba(126,200,255,'+(.4+.4*Math.sin(sa*2))+')';
+      ctx.beginPath();ctx.arc(monster.x+Math.cos(sa)*20,monster.y-26+Math.sin(sa*1.4)*5,3,0,7);ctx.fill();
+    }
+  }
   drawPlayer(t);
+  drawCompass(t);
   for(const p of parts){
     ctx.globalAlpha=clamp(p.life/p.max,0,1);
     ctx.fillStyle=p.c;ctx.fillRect(p.x-p.sz/2,p.y-p.sz/2,p.sz,p.sz);
@@ -884,16 +972,19 @@ function render(t){
     if(dif<.6&&dist(mx,my,psx,psy)<R)ctx.fillRect(mx,my,m.s,m.s);
   }
   ctx.restore();
+  /* v2：護身符白閃 */
+  if(flashW>0){
+    ctx.fillStyle='rgba(200,230,255,'+(flashW*.8)+')';
+    ctx.fillRect(0,0,vw,vh);
+  }
   // 追擊紅暈
   if(monster.active){
     const v=ctx.createRadialGradient(vw/2,vh/2,vh/3,vw/2,vh/2,vh);
     v.addColorStop(0,'rgba(80,0,0,0)');v.addColorStop(1,'rgba(120,0,0,'+(.35+.15*Math.sin(t*6))+')');
     ctx.fillStyle=v;ctx.fillRect(0,0,vw,vh);
   }
-  // 常駐暗角
-  const vig=ctx.createRadialGradient(vw/2,vh/2,vh*.4,vw/2,vh/2,vh*.9);
-  vig.addColorStop(0,'rgba(0,0,0,0)');vig.addColorStop(1,'rgba(0,0,0,.5)');
-  ctx.fillStyle=vig;ctx.fillRect(0,0,vw,vh);
+  // 常駐暗角（v3：快取貼圖）
+  ctx.drawImage(vigCv,0,0,vw,vh);
   // 飄字
   ctx.font='bold 15px sans-serif';ctx.textAlign='center';
   for(const f of floats){
@@ -926,6 +1017,9 @@ function drawMinimap(){
   for(const it of items)
     if(!it.taken&&explored[(it.y/TILE|0)*MW+(it.x/TILE|0)]){
       ctx.fillStyle='#ffd868';ctx.fillRect(ox+(it.x/TILE|0)*s,oy+(it.y/TILE|0)*s,s,s);}
+  for(const a of amulets)
+    if(!a.taken&&explored[a.ty*MW+a.tx]){
+      ctx.fillStyle='#7ec8ff';ctx.fillRect(ox+a.tx*s,oy+a.ty*s,s,s);}
   if(keysCollected>=3){ctx.fillStyle='#5aff78';ctx.fillRect(ox+exitTile.tx*s,oy+exitTile.ty*s,s,s);}
   ctx.fillStyle='#fff';ctx.fillRect(ox+(player.x/TILE|0)*s,oy+(player.y/TILE|0)*s,s,s);
 }
@@ -995,6 +1089,14 @@ function frame(now){
 document.getElementById('startBtn').addEventListener('click',()=>{resetGame();});
 genMap();
 requestAnimationFrame(frame);
+/* 測試掛鉤（唯讀，不影響遊戲） */
+window.__test={
+  get state(){return state;},get px(){return player.x;},get py(){return player.y;},
+  get angle(){return player.angle;},get keys(){return keysCollected;},
+  get amulets(){return amuletCount;},get stun(){return monsterStun;},
+  get monster(){return {x:monster.x,y:monster.y,active:monster.active};},
+  get idle(){return idleT;}
+};
 })();
 </script>
 </body>

@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -73,6 +73,8 @@
     padding:12px 34px;font-size:1.05rem;font-weight:bold;cursor:pointer;box-shadow:0 5px 0 var(--accent-dark);
     margin-top:12px;letter-spacing:2px}
   .mainBtn:active{transform:translateY(4px);box-shadow:0 1px 0 var(--accent-dark)}
+  .glowPulse{animation:glowP .9s infinite alternate}
+  @keyframes glowP{from{box-shadow:0 3px 0 var(--accent-dark)}to{box-shadow:0 3px 0 var(--accent-dark),0 0 14px 4px #ffd54f}}
 </style>
 </head>
 <body>
@@ -122,8 +124,8 @@
     <b style="color:var(--accent-dark)">7 天經營挑戰</b>：招募可愛貓咪、服務客人、<br>
     升級裝潢、雇用員工，賺越多錢、聲望越高，評價越棒！</p>
     <p style="background:#fff;border:2px dashed var(--wood);border-radius:12px;padding:8px;font-size:.85rem">
-    🖱️ <b>電腦</b>：滑鼠點桌子上餐、點貓咪摸摸<br>
-    👆 <b>平板</b>：手指點桌子上餐、點貓咪摸摸<br>
+    💻 <b>電腦</b>：滑鼠點桌子上餐、<b>空白鍵</b>幫最急的桌子上餐<br>
+    📱 <b>平板</b>：手指點桌子上餐、點貓咪摸摸<br>
     🛒 右側商店按按鈕買貓咪與升級</p>
     <p class="small">⚡ 耐心還很多就上餐＝<b style="color:var(--accent-dark)">完美服務</b>小費加倍疊連擊！<br>
     🎯 每天有賺錢目標，達成領獎金；第 7 天有神秘貴客…</p>
@@ -189,16 +191,27 @@ for(const k in SVGS){
 }
 const ok=i=>i.complete&&i.naturalWidth>0;
 /* ============ 音效 ============ */
-let AC=null,sfxMuted=false;
-function audio(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}return AC;}
+let AC=null,sfxMuted=false,sfxBus=null;
+function audio(){
+  if(!AC){try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    const comp=AC.createDynamicsCompressor();
+    comp.threshold.value=-18;comp.knee.value=24;comp.ratio.value=8;
+    comp.attack.value=.003;comp.release.value=.2;
+    sfxBus=AC.createGain();sfxBus.gain.value=.85;
+    sfxBus.connect(comp);comp.connect(AC.destination);
+  }catch(e){}}
+  return AC;
+}
 function beep(f,d,type,vol,slide){
   const ac=audio();if(!ac||sfxMuted)return;
+  f*= .98+Math.random()*.04; /* 音高微隨機，連發不呆板 */
   const o=ac.createOscillator(),g=ac.createGain();
   o.type=type||'sine';o.frequency.setValueAtTime(f,ac.currentTime);
   if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide),ac.currentTime+d);
   g.gain.setValueAtTime(vol||.12,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
-  o.connect(g).connect(ac.destination);o.start();o.stop(ac.currentTime+d);
+  o.connect(g).connect(sfxBus);o.start();o.stop(ac.currentTime+d);
 }
 const sfx={
   serve(){beep(880,.08,'square',.09);setTimeout(()=>beep(1175,.12,'square',.09),70);},
@@ -308,8 +321,8 @@ const ORDER_TYPES=[
   {img:'f_icecream',name:'冰淇淋',base:20},{img:'f_croissant',name:'可頌',base:16},
 ];
 const TOTAL_DAYS=7;
-/* 每日賺錢目標 */
-const GOALS=[180,300,450,600,800,1000,1300];
+/* 每日賺錢目標（一天約70秒營業時間） */
+const GOALS=[180,280,420,560,720,900,1100];
 /* 第7天壓軸貴客 */
 const CRITIC={key:'critic',name:'美食評論家',img:'cu_vip',pat:.65,tip:3,repLoss:15,orders:[2,2]};
 /* ============ 狀態 ============ */
@@ -347,6 +360,73 @@ function rr(x,y,w,h,r){
   ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
 }
+/* ============ 靜態場景預渲染（效能：牆/地板/門/吧台只畫一次） ============ */
+const sceneCv=document.createElement('canvas');sceneCv.width=GAME_W;sceneCv.height=GAME_H;
+(function(){
+  const c=sceneCv.getContext('2d');
+  const R=(x,y,w,h,r)=>{c.beginPath();c.moveTo(x+r,y);c.arcTo(x+w,y,x+w,y+h,r);c.arcTo(x+w,y+h,x,y+h,r);c.arcTo(x,y+h,x,y,r);c.arcTo(x,y,x+w,y,r);c.closePath();};
+  const wg=c.createLinearGradient(0,0,0,190);
+  wg.addColorStop(0,'#e8c39a');wg.addColorStop(1,'#d3a578');
+  c.fillStyle=wg;c.fillRect(0,0,GAME_W,190);
+  c.fillStyle='rgba(255,255,255,.14)';
+  for(let x=0;x<GAME_W;x+=64)c.fillRect(x,0,30,190);
+  const fg=c.createLinearGradient(0,190,0,GAME_H);
+  fg.addColorStop(0,'#c99a6b');fg.addColorStop(1,'#9c7048');
+  c.fillStyle=fg;c.fillRect(0,190,GAME_W,GAME_H-190);
+  c.strokeStyle='rgba(90,55,25,.3)';c.lineWidth=2;
+  for(let i=0;i<9;i++){const y=190+i*44;c.beginPath();c.moveTo(0,y);c.lineTo(GAME_W,y);c.stroke();}
+  for(let i=0;i<13;i++){
+    const off=(i%2)*40;
+    for(let y=190;y<GAME_H;y+=88){c.beginPath();c.moveTo(i*80+off,y);c.lineTo(i*80+off,y+44);c.stroke();}
+  }
+  c.fillStyle='#8c6440';c.fillRect(0,182,GAME_W,10);
+  c.fillStyle='rgba(255,255,255,.2)';c.fillRect(0,182,GAME_W,3);
+  const dg=c.createLinearGradient(24,0,96,0);
+  dg.addColorStop(0,'#7a4e2b');dg.addColorStop(1,'#9c6a3f');
+  c.fillStyle=dg;R(24,60,72,130,8);c.fill();
+  c.strokeStyle='#5a3a1e';c.lineWidth=4;R(24,60,72,130,8);c.stroke();
+  c.strokeStyle='rgba(255,255,255,.25)';c.lineWidth=2;
+  R(34,72,52,50,4);c.stroke();R(34,132,52,44,4);c.stroke();
+  c.fillStyle='#e0a72d';c.beginPath();c.arc(86,140,4,0,7);c.fill();
+  c.fillStyle='#fff';c.font='bold 12px sans-serif';c.textAlign='center';
+  c.fillText('OPEN',60,52);
+  const bg=c.createLinearGradient(0,196,0,246);
+  bg.addColorStop(0,'#b98a5e');bg.addColorStop(1,'#8c6440');
+  c.fillStyle=bg;R(700,196,240,50,8);c.fill();
+  c.fillStyle='rgba(255,255,255,.25)';c.fillRect(704,198,232,6);
+  c.strokeStyle='#5a3a1e';c.lineWidth=3;R(700,196,240,50,8);c.stroke();
+  c.fillStyle='#4a3a3a';R(830,160,54,40,6);c.fill();
+  c.fillStyle='#6a5a5a';R(836,166,42,12,3);c.fill();
+  c.fillStyle='#e0e0e0';R(848,184,18,10,2);c.fill();
+})();
+/* 桌子 sprite（所有桌子共用，不再每幀建 radial gradient） */
+const tableCv=document.createElement('canvas');tableCv.width=140;tableCv.height=72;
+(function(){
+  const c=tableCv.getContext('2d');
+  c.translate(70,28);
+  c.fillStyle='rgba(60,35,15,.3)';
+  c.beginPath();c.ellipse(0,26,46,10,0,0,7);c.fill();
+  c.fillStyle='#8c6440';
+  c.beginPath();c.ellipse(-52,4,14,7,0,0,7);c.fill();
+  c.fillRect(-56,4,8,16);
+  c.fillStyle='#7a5230';c.fillRect(-6,6,12,20);
+  const tg=c.createRadialGradient(-10,-12,4,0,0,46);
+  tg.addColorStop(0,'#d8ae80');tg.addColorStop(.8,'#b98a5e');tg.addColorStop(1,'#9c7048');
+  c.fillStyle=tg;
+  c.beginPath();c.ellipse(0,0,44,20,0,0,7);c.fill();
+  c.strokeStyle='#7a5230';c.lineWidth=3;c.stroke();
+  c.strokeStyle='rgba(255,255,255,.35)';c.lineWidth=2;
+  c.beginPath();c.ellipse(0,-2,36,14,0,Math.PI*1.1,Math.PI*1.9);c.stroke();
+})();
+/* 吊燈光暈 sprite */
+const lampGlow=(function(){
+  const c=document.createElement('canvas');c.width=c.height=140;
+  const x=c.getContext('2d');
+  const g=x.createRadialGradient(70,70,4,70,70,70);
+  g.addColorStop(0,'rgba(255,220,130,.35)');g.addColorStop(1,'rgba(255,220,130,0)');
+  x.fillStyle=g;x.fillRect(0,0,140,140);return c;
+})();
+const skyGradCache={};
 /* ============ 桌位 ============ */
 const TABLE_SLOTS=[];
 for(let row=0;row<3;row++)for(let col=0;col<4;col++)
@@ -359,11 +439,15 @@ function initTables(){
 }
 /* ============ 粒子 / 飄字 ============ */
 let parts=[],floats=[],tGlobal=0,shake=0,playHintT=0;
+const drawQ=[];
+const partPool=[];
 function burst(x,y,kind,n){
   for(let i=0;i<(n||8);i++){
-    if(parts.length>200)parts.shift();
+    if(parts.length>=200)return; /* 上限直接略過，不 shift 搬移 */
     const a=Math.random()*Math.PI*2,s=rnd(30,110);
-    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-50,life:rnd(.5,.9),max:.9,kind});
+    const p=partPool.pop()||{};
+    p.x=x;p.y=y;p.vx=Math.cos(a)*s;p.vy=Math.sin(a)*s-50;p.life=rnd(.5,.9);p.max=.9;p.kind=kind;
+    parts.push(p);
   }
 }
 function floatTxt(x,y,txt,color,sz){floats.push({x,y,txt,c:color||'#e0a72d',life:1.1,sz:sz||17});}
@@ -411,10 +495,12 @@ function shopItem(imgKey,title,descHTML,btnLabel,disabled,onclick){
 function renderShop(){
   const grid=document.getElementById('shopGrid');grid.innerHTML='';
   if(curTab==='cat'){
-    CAT_TYPES.forEach(ct=>{
-      grid.appendChild(shopItem(ct.img,ct.name,
+    CAT_TYPES.forEach((ct,idx)=>{
+      const item=shopItem(ct.img,ct.name,
         '<div class="small">收益+'+ct.income+'/單・萌度'+ct.cute+'</div>',
-        '💰'+ct.cost,false,()=>buyCat(ct)));
+        '💰'+ct.cost,false,()=>buyCat(ct));
+      if(idx===0&&S.cats.length===0)item.querySelector('.buy').classList.add('glowPulse');
+      grid.appendChild(item);
     });
   }else if(curTab==='upg'){
     UPGRADES.forEach(u=>{
@@ -452,10 +538,12 @@ function buyCat(ct){
     mood:80,x:rnd(120,840),y:rnd(300,490),tx:rnd(120,840),ty:rnd(300,490),face:1,pop:0,moveT:rnd(2,5)});
   log('🎉 招募了新貓咪：'+ct.name+'！');
   sfx.meow();renderCatList();updateStats();
+  if(S.cats.length===1)renderShop(); /* 移除首購發光提示 */
 }
+let catEls={};
 function renderCatList(){
   document.getElementById('catCount').textContent=S.cats.length;
-  const list=document.getElementById('catList');list.innerHTML='';
+  const list=document.getElementById('catList');list.innerHTML='';catEls={};
   S.cats.forEach(c=>{
     const div=document.createElement('div');div.className='catCard';
     const im=document.createElement('img');im.src=IMG[c.img].src;div.appendChild(im);
@@ -463,7 +551,14 @@ function renderCatList(){
       '<div class="bar"><div class="fill" style="width:'+c.mood+'%"></div></div>'+
       '<div class="small">心情 '+Math.round(c.mood)+'%・收益 +'+c.income+'</div></div>');
     list.appendChild(div);
+    catEls[c.id]={fill:div.querySelector('.fill'),txt:div.querySelector('.small')};
   });
+}
+/* 每 tick 只更新心情條，不重建 DOM（平板效能） */
+function refreshCatMoods(){
+  for(const c of S.cats){const el=catEls[c.id];
+    if(el){el.fill.style.width=clamp(c.mood,0,100)+'%';
+      el.txt.textContent='心情 '+Math.round(c.mood)+'%・收益 +'+c.income;}}
 }
 function petCat(cat){
   cat.mood=Math.min(100+S.upgrades.toy*5,cat.mood+15+S.upgrades.toy*3);
@@ -471,7 +566,7 @@ function petCat(cat){
   sfx.meow();
   burst(cat.x,cat.y-24,'heart',5);
   floatTxt(cat.x,cat.y-36,'+😊','#ff8fab',16);
-  renderCatList();
+  refreshCatMoods();
 }
 /* ============ 顧客 ============ */
 function pickCustomerType(){
@@ -646,6 +741,7 @@ function maybeRush(){
   document.getElementById('rushBanner').style.display=isRush()?'block':'none';
 }
 let spawnTimer=9000,tickAcc=0;
+const TICK=.9; /* 一格遊戲時間0.9秒：一天 8:00→21:00 ≈ 70 秒 */
 function gameTick(){
   S.minute+=10;
   if(S.minute>=60){S.minute=0;S.hour++;}
@@ -681,9 +777,9 @@ function gameTick(){
       serveTable(t);
     }
   }
-  renderCatList();
+  refreshCatMoods();
   updateStats();
-  if(S.hour>=22)endDay();
+  if(S.hour>=21)endDay();
 }
 function endDay(){
   S.running=false;state='dayend';
@@ -770,12 +866,12 @@ function update(dt){
   dispMoney+=(S.money-dispMoney)*Math.min(1,dt*6);
   for(let i=parts.length-1;i>=0;i--){const p=parts[i];
     p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=(p.kind==='heart'?-20:160)*dt;p.life-=dt;
-    if(p.life<=0)parts.splice(i,1);}
+    if(p.life<=0){parts[i]=parts[parts.length-1];parts.pop();partPool.push(p);}}
   for(let i=floats.length-1;i>=0;i--){const f=floats[i];f.y-=30*dt;f.life-=dt;if(f.life<=0)floats.splice(i,1);}
   if(state!=='play'||!S.running)return;
   playHintT-=dt;
   tickAcc+=dt;
-  while(tickAcc>=1){tickAcc-=1;gameTick();}
+  while(tickAcc>=TICK){tickAcc-=TICK;gameTick();}
   // 顧客動畫
   for(const t of S.tables){
     t.pop=Math.max(0,t.pop-dt*3);
@@ -819,8 +915,8 @@ function skyColor(){
 }
 function drawWindow(x,w){
   const [top,bot]=skyColor();
-  const g=ctx.createLinearGradient(0,28,0,150);
-  g.addColorStop(0,top);g.addColorStop(1,bot);
+  let g=skyGradCache[top];
+  if(!g){g=ctx.createLinearGradient(0,28,0,150);g.addColorStop(0,top);g.addColorStop(1,bot);skyGradCache[top]=g;}
   ctx.fillStyle=g;
   rr(x,28,w,122,10);ctx.fill();
   const h=S?S.hour+S.minute/60:10;
@@ -855,46 +951,8 @@ function drawWindow(x,w){
   ctx.beginPath();ctx.moveTo(x+w/2,28);ctx.lineTo(x+w/2,150);ctx.moveTo(x,89);ctx.lineTo(x+w,89);ctx.stroke();
 }
 function drawScene(){
-  // 牆
-  const wg=ctx.createLinearGradient(0,0,0,190);
-  wg.addColorStop(0,'#e8c39a');wg.addColorStop(1,'#d3a578');
-  ctx.fillStyle=wg;ctx.fillRect(0,0,GAME_W,190);
-  ctx.fillStyle='rgba(255,255,255,.14)';
-  for(let x=0;x<GAME_W;x+=64)ctx.fillRect(x,0,30,190);
-  // 地板（透視漸層＋木板）
-  const fg=ctx.createLinearGradient(0,190,0,GAME_H);
-  fg.addColorStop(0,'#c99a6b');fg.addColorStop(1,'#9c7048');
-  ctx.fillStyle=fg;ctx.fillRect(0,190,GAME_W,GAME_H-190);
-  ctx.strokeStyle='rgba(90,55,25,.3)';ctx.lineWidth=2;
-  for(let i=0;i<9;i++){const y=190+i*44;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(GAME_W,y);ctx.stroke();}
-  for(let i=0;i<13;i++){
-    const off=(i%2)*40;
-    for(let y=190;y<GAME_H;y+=88){ctx.beginPath();ctx.moveTo(i*80+off,y);ctx.lineTo(i*80+off,y+44);ctx.stroke();}
-  }
-  // 踢腳板
-  ctx.fillStyle='#8c6440';ctx.fillRect(0,182,GAME_W,10);
-  ctx.fillStyle='rgba(255,255,255,.2)';ctx.fillRect(0,182,GAME_W,3);
+  ctx.drawImage(sceneCv,0,0);   /* 靜態層（牆/地板/門/吧台/咖啡機） */
   drawWindow(620,290);
-  // 門（左側）
-  const dg=ctx.createLinearGradient(24,0,96,0);
-  dg.addColorStop(0,'#7a4e2b');dg.addColorStop(1,'#9c6a3f');
-  ctx.fillStyle=dg;rr(24,60,72,130,8);ctx.fill();
-  ctx.strokeStyle='#5a3a1e';ctx.lineWidth=4;rr(24,60,72,130,8);ctx.stroke();
-  ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=2;
-  rr(34,72,52,50,4);ctx.stroke();rr(34,132,52,44,4);ctx.stroke();
-  ctx.fillStyle='#e0a72d';ctx.beginPath();ctx.arc(86,140,4,0,7);ctx.fill();
-  ctx.fillStyle='#fff';ctx.font='bold 12px sans-serif';ctx.textAlign='center';
-  ctx.fillText('OPEN',60,52);
-  // 吧台（右上）
-  const bg=ctx.createLinearGradient(0,196,0,246);
-  bg.addColorStop(0,'#b98a5e');bg.addColorStop(1,'#8c6440');
-  ctx.fillStyle=bg;rr(700,196,240,50,8);ctx.fill();
-  ctx.fillStyle='rgba(255,255,255,.25)';ctx.fillRect(704,198,232,6);
-  ctx.strokeStyle='#5a3a1e';ctx.lineWidth=3;rr(700,196,240,50,8);ctx.stroke();
-  // 咖啡機
-  ctx.fillStyle='#4a3a3a';rr(830,160,54,40,6);ctx.fill();
-  ctx.fillStyle='#6a5a5a';rr(836,166,42,12,3);ctx.fill();
-  ctx.fillStyle='#e0e0e0';rr(848,184,18,10,2);ctx.fill();
   if(S&&S.running&&Math.sin(tGlobal*3)>0){        // 蒸氣
     ctx.strokeStyle='rgba(255,255,255,.4)';ctx.lineWidth=2;
     ctx.beginPath();ctx.moveTo(857,182);ctx.quadraticCurveTo(853,174,858,166);ctx.stroke();
@@ -915,11 +973,7 @@ function drawDecos(){
       if(d.key==='lamp'){
         ctx.strokeStyle='#5a3a1e';ctx.lineWidth=2;
         ctx.beginPath();ctx.moveTo(ax,0);ctx.lineTo(ax,ay-14);ctx.stroke();
-        if((S.hour>=17||S.hour<9)){
-          const g=ctx.createRadialGradient(ax,ay,4,ax,ay,70);
-          g.addColorStop(0,'rgba(255,220,130,.35)');g.addColorStop(1,'rgba(255,220,130,0)');
-          ctx.fillStyle=g;ctx.fillRect(ax-70,ay-70,140,140);
-        }
+        if((S.hour>=17||S.hour<9))ctx.drawImage(lampGlow,ax-70,ay-70);
       }
       if(d.key==='painting'){
         ctx.fillStyle='#8c6440';rr(ax-20,ay-17,40,34,4);ctx.fill();
@@ -946,22 +1000,7 @@ function drawDecos(){
 function drawTable(t){
   const pop=1+t.pop*.15;
   ctx.save();ctx.translate(t.x,t.y);ctx.scale(pop,pop);
-  // 影子
-  ctx.fillStyle='rgba(60,35,15,.3)';
-  ctx.beginPath();ctx.ellipse(0,26,46,10,0,0,7);ctx.fill();
-  // 椅子（顧客側）
-  ctx.fillStyle='#8c6440';
-  ctx.beginPath();ctx.ellipse(-52,4,14,7,0,0,7);ctx.fill();
-  ctx.fillRect(-56,4,8,16);
-  // 桌腳與桌面（立體）
-  ctx.fillStyle='#7a5230';ctx.fillRect(-6,6,12,20);
-  const tg=ctx.createRadialGradient(-10,-12,4,0,0,46);
-  tg.addColorStop(0,'#d8ae80');tg.addColorStop(.8,'#b98a5e');tg.addColorStop(1,'#9c7048');
-  ctx.fillStyle=tg;
-  ctx.beginPath();ctx.ellipse(0,0,44,20,0,0,7);ctx.fill();
-  ctx.strokeStyle='#7a5230';ctx.lineWidth=3;ctx.stroke();
-  ctx.strokeStyle='rgba(255,255,255,.35)';ctx.lineWidth=2;
-  ctx.beginPath();ctx.ellipse(0,-2,36,14,0,Math.PI*1.1,Math.PI*1.9);ctx.stroke();
+  ctx.drawImage(tableCv,-70,-28);  /* 預渲染桌子 sprite */
   // 空桌提示
   if(!t.cust){
     ctx.globalAlpha=.5+.2*Math.sin(tGlobal*2+t.id);
@@ -1086,11 +1125,12 @@ function draw(){
   if(S){
     drawDecos();
     S.staff.filter(s=>s.key!=='groomer').forEach(drawStaff);
-    const drawList=[];
-    S.tables.forEach(t=>drawList.push({y:t.y,fn:()=>{drawTable(t);drawCustomer(t);}}));
-    S.cats.forEach(c=>drawList.push({y:c.y,fn:()=>drawCat(c)}));
-    S.staff.filter(s=>s.key==='groomer').forEach(st=>drawList.push({y:st.y,fn:()=>drawStaff(st)}));
-    drawList.sort((a,b)=>a.y-b.y).forEach(d=>d.fn());
+    drawQ.length=0;
+    for(const t of S.tables)drawQ.push({y:t.y,k:0,o:t});
+    for(const c of S.cats)drawQ.push({y:c.y,k:1,o:c});
+    for(const st of S.staff)if(st.key==='groomer')drawQ.push({y:st.y,k:2,o:st});
+    drawQ.sort((a,b)=>a.y-b.y);
+    for(const d of drawQ){if(d.k===0){drawTable(d.o);drawCustomer(d.o);}else if(d.k===1)drawCat(d.o);else drawStaff(d.o);}
     drawParts();
     // 時段色調
     const h=S.hour+S.minute/60;
@@ -1106,6 +1146,20 @@ function draw(){
       ctx.fillStyle=f.c;ctx.fillText(f.txt,f.x,f.y);
     }
     ctx.globalAlpha=1;
+    /* 首次上餐引導箭頭：新手一眼知道要點桌子 */
+    if(S.served===0&&state==='play'){
+      const t0=S.tables.find(t=>t.cust&&t.cust.state==='wait');
+      if(t0){
+        const ay=t0.y-116+Math.sin(tGlobal*6)*6;
+        ctx.fillStyle='#ffb300';
+        ctx.beginPath();ctx.moveTo(t0.x-12,ay);ctx.lineTo(t0.x+12,ay);ctx.lineTo(t0.x,ay+16);ctx.closePath();ctx.fill();
+        ctx.strokeStyle='#fff';ctx.lineWidth=2;ctx.stroke();
+        ctx.font='bold 15px sans-serif';ctx.textAlign='center';
+        ctx.strokeStyle='rgba(255,255,255,.9)';ctx.lineWidth=4;
+        ctx.strokeText('點桌子上餐！',t0.x,ay-8);
+        ctx.fillStyle='#e56a8a';ctx.fillText('點桌子上餐！',t0.x,ay-8);
+      }
+    }
     /* 開場操作提示 */
     if(playHintT>0&&state==='play'){
       ctx.globalAlpha=clamp(playHintT,0,1);
@@ -1147,6 +1201,14 @@ addEventListener('keydown',e=>{
     else if(state==='end')startGame();
   }
   if(e.code==='KeyM')document.getElementById('muteToggle').click();
+  /* 空白鍵：幫最急（耐心最少）的桌子上餐 */
+  if(e.code==='Space'&&state==='play'){
+    e.preventDefault();
+    let tgt=null;
+    for(const t of S.tables)
+      if(t.cust&&t.cust.state==='wait'&&(!tgt||t.cust.patience<tgt.cust.patience))tgt=t;
+    if(tgt){serveTable(tgt);updateStats();}
+  }
   const tabs={Digit1:'cat',Digit2:'upg',Digit3:'staff',Digit4:'deco'};
   if(tabs[e.code]){
     document.querySelector('.tabbtn[data-tab="'+tabs[e.code]+'"]').click();
@@ -1159,6 +1221,9 @@ renderShop();
 updateStats();
 resize();
 setTimeout(resize,100);
+/* 可玩性實測掛鉤（無頭瀏覽器 QA 用） */
+window.__test=()=>({state,money:S.money,served:S.served,day:S.day,cats:S.cats.length,tab:curTab,
+  waiting:S.tables.filter(t=>t.cust&&t.cust.state==='wait').map(t=>({x:t.x,y:t.y}))});
 requestAnimationFrame(frame);
 })();
 </script>

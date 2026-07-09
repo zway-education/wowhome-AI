@@ -419,7 +419,12 @@ function timeScaleAt(t){
 let AC = null, master = null, crowdGain = null; let audioOn = false;
 
 function initAudio(){
-  AC = new (window.AudioContext || window.webkitAudioContext)(); master = AC.createGain(); master.gain.value = 0; master.connect(AC.destination);
+  AC = new (window.AudioContext || window.webkitAudioContext)(); master = AC.createGain(); master.gain.value = 0;
+  /* v3：限幅器——擊球爆音＋煙火＋號角疊加時不削波 */
+  const comp = AC.createDynamicsCompressor();
+  comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 4;
+  comp.attack.value = 0.003; comp.release.value = 0.25;
+  master.connect(comp); comp.connect(AC.destination);
   /* 觀眾聲浪：棕色噪音循環 → 帶通濾波 */
   const len = AC.sampleRate * 2; const buf = AC.createBuffer(1, len, AC.sampleRate); const d = buf.getChannelData(0); let lastV = 0;
   for(let i = 0; i < len; i++){
@@ -467,7 +472,7 @@ function exciteAt(t){
 let EX = 0.25;
 
 function updateAudio(){
-  if(!AC) return; master.gain.setTargetAtTime(audioOn ? 0.9 : 0, AC.currentTime, 0.08);
+  if(!AC) return; master.gain.setTargetAtTime(audioOn ? 0.85 : 0, AC.currentTime, 0.08);
   crowdGain.gain.setTargetAtTime(0.02 + EX * 0.15, AC.currentTime, 0.3);
 }
 
@@ -479,7 +484,7 @@ soundBtn.addEventListener('click', () => {
 /* ============================================================
    第 6 節　粒子系統（火花・塵土・彩帶・煙火）
    ============================================================ */
-const parts = []; const trail = [];
+const parts = []; const trail = []; const born = [];   /* born：共用暫存，避免每幀配置 */
 let batProj = null;   /* 甩棒（bat flip）拋物物件 */
 
 function spawnSpark(x, y, n, sp, colors){
@@ -540,7 +545,7 @@ function explodeFirework(x, y, color){
 
 function updateParticles(dt){
   /* 慶典期間持續灑彩帶 */
-  if(tl > T.armsUp && tl < 21.5 && parts.length < 520){
+  if(tl > T.armsUp && tl < T.fadeOut - 1 && parts.length < 520){
     for(let i = 0; i < 2; i++){
       parts.push({
         type:'confetti',
@@ -563,7 +568,7 @@ function updateParticles(dt){
       color:'#ffcb3d'
     });
   }
-  const born = [];
+  born.length = 0;
   for(let i = parts.length - 1; i >= 0; i--){
     const p = parts[i]; p.x += p.vx * dt; p.y += p.vy * dt; p.vy += (p.g || 0) * dt;
     if(p.drag && p.drag < 1){
@@ -891,22 +896,19 @@ function drawPitcher(){
   limb2(0, -20, -5, -11 - leg * 0.7, -8 + leg * 0.5, -leg, 5, '#b9c2cc'); limb2(0, -20, 6, -10, 8, 0, 5, '#b9c2cc');
   shoe(-8 + leg * 0.5, -leg, -1, '#22303f'); shoe(8, 0, 1, '#22303f');
   /* 軀幹（客隊灰球衣・漸層＋描邊） */
-  ctx.save(); ctx.translate(0, -20); ctx.rotate(lean); const jg = ctx.createLinearGradient(-8, 0, 8, -18);
-  jg.addColorStop(0, '#8e9aa7'); jg.addColorStop(0.5, '#c9d2da'); jg.addColorStop(1, '#eef3f7'); ctx.beginPath();
+  ctx.save(); ctx.translate(0, -20); ctx.rotate(lean); ctx.beginPath();
   ctx.moveTo(-6, 1); ctx.quadraticCurveTo(-7.5, -8, -6.6, -15.5); ctx.quadraticCurveTo(0, -18.5, 6.6, -15.5);
-  ctx.quadraticCurveTo(7.5, -8, 6, 1); ctx.quadraticCurveTo(0, 2.8, -6, 1); ctx.closePath(); ctx.fillStyle = jg;
+  ctx.quadraticCurveTo(7.5, -8, 6, 1); ctx.quadraticCurveTo(0, 2.8, -6, 1); ctx.closePath(); ctx.fillStyle = G.pJersey;
   ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.5; ctx.stroke();
   /* 紅色鑲邊 */
   ctx.strokeStyle = '#c0392b'; ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(-2, -16.8); ctx.lineTo(-2, -4); ctx.stroke();
   /* 頭（膚色漸層）面向左邊的打者 */
-  const fgP = ctx.createRadialGradient(-2, -24.5, 1.5, 0.5, -22.5, 7); fgP.addColorStop(0, '#f2cba0');
-  fgP.addColorStop(1, '#d9a06e'); ctx.beginPath(); ctx.arc(0.5, -22.5, 5.8, 0, TAU); ctx.fillStyle = fgP; ctx.fill();
+  ctx.beginPath(); ctx.arc(0.5, -22.5, 5.8, 0, TAU); ctx.fillStyle = G.pFace; ctx.fill();
   ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.3; ctx.stroke();
   /* 耳朵 */
   ctx.beginPath(); ctx.arc(4.6, -22, 1.8, 0, TAU); ctx.fillStyle = '#e0ab77'; ctx.fill(); ctx.stroke();
   /* 紅帽：帽冠＋帽簷（面左） */
-  const cg = ctx.createLinearGradient(-5, -29, 4, -22); cg.addColorStop(0, '#e05545');
-  cg.addColorStop(0.6, '#c0392b'); cg.addColorStop(1, '#8e2419'); ctx.fillStyle = cg; ctx.beginPath();
+  ctx.fillStyle = G.pCap; ctx.beginPath();
   ctx.arc(0.5, -23.2, 6.2, Math.PI * 0.98, Math.PI * 2.02); ctx.closePath(); ctx.fill(); ctx.strokeStyle = OUTLINE;
   ctx.lineWidth = 1.2; ctx.stroke(); ctx.beginPath(); ctx.moveTo(-4.4, -24.5);
   ctx.quadraticCurveTo(-10.5, -24, -10.2, -21.8); ctx.quadraticCurveTo(-6.5, -21.2, -3.8, -22.4); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -930,8 +932,7 @@ function drawPitcher(){
 
 function drawBat(len){
   /* 木紋漸層球棒：細握把 → 粗棒頭，含描邊與高光 */
-  const g = ctx.createLinearGradient(0, 0, len, 0); g.addColorStop(0, '#8a5a2b'); g.addColorStop(0.45, '#c8985c');
-  g.addColorStop(1, '#e2b878'); ctx.beginPath(); ctx.moveTo(-8, -1.6); ctx.lineTo(len * 0.35, -2.2);
+  const g = G.bat[len]; ctx.beginPath(); ctx.moveTo(-8, -1.6); ctx.lineTo(len * 0.35, -2.2);
   ctx.quadraticCurveTo(len * 0.75, -3.8, len - 2, -3.5); ctx.quadraticCurveTo(len + 3, 0, len - 2, 3.5);
   ctx.quadraticCurveTo(len * 0.75, 3.8, len * 0.35, 2.2); ctx.lineTo(-8, 1.6); ctx.quadraticCurveTo(-10, 0, -8, -1.6);
   ctx.closePath(); ctx.fillStyle = g; ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.3; ctx.stroke();
@@ -1020,23 +1021,20 @@ function drawBatter(){
   /* 軀幹（含旋轉＝重心轉移） */
   ctx.save(); ctx.translate(0, hipY); ctx.rotate(P.torso);
   /* 球衣：漸層＋描邊＋紅色門襟＋背號 */
-  const jg = ctx.createLinearGradient(-9, 0, 10, -24); jg.addColorStop(0, '#cfc7b2');
-  jg.addColorStop(0.45, '#f6f1e0'); jg.addColorStop(1, '#ffffff'); ctx.beginPath(); ctx.moveTo(-7.5, 1);
+  ctx.beginPath(); ctx.moveTo(-7.5, 1);
   ctx.quadraticCurveTo(-9.5, -11, -8.6, -21); ctx.quadraticCurveTo(0, -25.5, 8.6, -21);
-  ctx.quadraticCurveTo(9.5, -11, 7.5, 1); ctx.quadraticCurveTo(0, 3.4, -7.5, 1); ctx.closePath(); ctx.fillStyle = jg;
+  ctx.quadraticCurveTo(9.5, -11, 7.5, 1); ctx.quadraticCurveTo(0, 3.4, -7.5, 1); ctx.closePath(); ctx.fillStyle = G.bJersey;
   ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.6; ctx.stroke(); ctx.strokeStyle = '#c0392b';
   ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(2.5, -22.5); ctx.lineTo(2.5, -3); ctx.stroke();
   ctx.fillStyle = '#1c4fa1'; ctx.font = 'bold 7px -apple-system,"Segoe UI",sans-serif'; ctx.textAlign = 'center'; ctx.fillText('17', -2.5, -10);
   /* 皮帶＋金釦 */
   ctx.fillStyle = '#16233a'; ctx.fillRect(-7.5, -2.6, 15, 3.2); ctx.fillStyle = '#ffcb3d'; ctx.fillRect(-1.2, -2.2, 2.4, 2.4);
   /* 頭：膚色漸層＋描邊＋耳朵 */
-  const fg = ctx.createRadialGradient(-1.5, -35, 1.5, 1, -33, 8.5); fg.addColorStop(0, '#f2cba0');
-  fg.addColorStop(1, '#d9a06e'); ctx.beginPath(); ctx.arc(1, -33, 7.5, 0, TAU); ctx.fillStyle = fg; ctx.fill();
+  ctx.beginPath(); ctx.arc(1, -33, 7.5, 0, TAU); ctx.fillStyle = G.bFace; ctx.fill();
   ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.4; ctx.stroke(); ctx.beginPath(); ctx.arc(-4.8, -31.5, 2.1, 0, TAU);
   ctx.fillStyle = '#e0ab77'; ctx.fill(); ctx.stroke();
   /* 藍盔：漸層帽冠＋護耳＋帽簷＋高光 */
-  const hg = ctx.createLinearGradient(-6, -42, 7, -30); hg.addColorStop(0, '#3f78d6');
-  hg.addColorStop(0.5, '#1c4fa1'); hg.addColorStop(1, '#0f2d63'); ctx.fillStyle = hg; ctx.beginPath();
+  ctx.fillStyle = G.bHelmet; ctx.beginPath();
   ctx.arc(1, -33.5, 8.4, Math.PI * 0.97, Math.PI * 2.03); ctx.closePath(); ctx.fill(); ctx.strokeStyle = OUTLINE; ctx.lineWidth = 1.3; ctx.stroke();
   /* 護耳（後側） */
   ctx.beginPath(); ctx.ellipse(-5, -29.5, 3.2, 4.4, 0.15, 0, TAU); ctx.fill(); ctx.stroke();
@@ -1277,7 +1275,7 @@ const SUBS = [
   { a:11.7,  b:13.1, text:'還在飛……還在飛……' },
   { a:13.35, b:15.1, text:'飛越全壘打牆！！' },
   { a:16.4,  b:18.8, text:'全．壘．打！全場沸騰！' },
-  { a:19.6,  b:22.4, text:'今夜的英雄——大谷翔平。' }
+  { a:19.2,  b:21.5, text:'今夜的英雄——大谷翔平。' }
 ];
 const ACTS = [
   { at:2.95,  dur:2.0, no:'第 一 幕', name:'夜空下的球場' },
@@ -1341,9 +1339,9 @@ const EVENTS = [
   { t:15.3,        fired:false, fn:fwEvent(220, '#ffcb3d') },
   { t:16.3,        fired:false, fn:fwEvent(760, '#ff5a4e') },
   { t:17.4,        fired:false, fn:fwEvent(480, '#7ec8ff') },
-  { t:18.5,        fired:false, fn:fwEvent(860, '#ffcb3d') },
-  { t:19.7,        fired:false, fn:fwEvent(140, '#ff87d2') },
-  { t:20.9,        fired:false, fn:fwEvent(620, '#9dff8a') }
+  { t:18.4,        fired:false, fn:fwEvent(860, '#ffcb3d') },
+  { t:19.3,        fired:false, fn:fwEvent(140, '#ff87d2') },
+  { t:20.2,        fired:false, fn:fwEvent(620, '#9dff8a') }
 ];
 
 /* ============================================================
@@ -1383,8 +1381,7 @@ function render(){
     ctx.fillStyle = `rgba(255,250,235,${clamp(flash, 0, 1) * 0.9})`; ctx.fillRect(0, 0, W, H);
   }
   /* 暗角 */
-  const vg = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85);
-  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.42)'); ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = G.vignette; ctx.fillRect(0, 0, W, H);
   /* 電影黑邊 */
   const bar = 34 * easeOutCubic(seg(tl, 0.2, 1.6)); ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, bar); ctx.fillRect(0, H - bar, W, bar);
   /* 開場淡入・片尾淡出 */
@@ -1405,6 +1402,8 @@ function frame(now){
     if(tl >= T.end){
       tl = T.end; ended = true; endOverlay.classList.add('show');
     }
+  } else {
+    updateAudio(); return;   /* v3：片尾卡顯示時凍結世界渲染，省電不發熱 */
   }
   for(const e of EVENTS){
     if(!e.fired && tl >= e.t){ e.fired = true; e.fn(); }

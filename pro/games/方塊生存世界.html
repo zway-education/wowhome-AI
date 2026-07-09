@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -49,9 +49,16 @@
   #deathScreen{background:radial-gradient(ellipse at center,rgba(90,8,8,.82),rgba(20,2,2,.94));display:none}
   #deathScreen h1{font-size:50px;margin:0 0 8px;text-shadow:0 4px 12px #000}
   #deathScreen .stats{font-size:17px;line-height:2;margin:10px 0 22px}
-  #retryBtn{padding:16px 52px;font-size:20px;font-weight:bold;cursor:pointer;border:none;border-radius:12px;color:#fff;
+  #retryBtn,#winRetryBtn{padding:16px 52px;font-size:20px;font-weight:bold;cursor:pointer;border:none;border-radius:12px;color:#fff;
     background:linear-gradient(#ffb347,#e07b12);box-shadow:0 5px 0 #9c5407;font-family:inherit}
-  #retryBtn:active{transform:translateY(4px);box-shadow:0 1px 0 #9c5407}
+  #retryBtn:active,#winRetryBtn:active{transform:translateY(4px);box-shadow:0 1px 0 #9c5407}
+  /* v3：勝利結算 */
+  #winScreen{background:radial-gradient(ellipse at center,rgba(18,66,34,.88),rgba(4,18,9,.96));display:none}
+  #winScreen h1{font-size:46px;margin:0 0 4px;text-shadow:0 4px 12px #000}
+  #winScreen .stats{font-size:17px;line-height:2;margin:8px 0 20px}
+  #winContinueBtn{padding:16px 34px;font-size:17px;font-weight:bold;cursor:pointer;border:none;border-radius:12px;color:#fff;
+    background:linear-gradient(#4aa8f0,#1d6fc0);box-shadow:0 5px 0 #124a83;font-family:inherit;margin-left:12px}
+  #winContinueBtn:active{transform:translateY(4px);box-shadow:0 1px 0 #124a83}
   .tbtn{position:fixed;z-index:20;border-radius:50%;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.3);
     color:#fff;font-size:26px;display:none;align-items:center;justify-content:center;width:64px;height:64px;
     -webkit-tap-highlight-color:transparent}
@@ -105,9 +112,18 @@
     <button id="btnCreative" class="modeBtn">🛠️ 創造模式<small>飛行・無限方塊・不會受傷</small></button>
   </div>
   <div class="ctrl">
-    🖱️ <b>電腦</b>：A/D 或 ←→ 移動・W/空白鍵 跳躍・滑鼠<b>左鍵按住</b>挖掘/攻擊・<b>右鍵</b>放置/吃・E 上下車<br>
-    👆 <b>平板</b>：◀▶ 移動・⤒ 跳躍・<b>手指按住方塊</b>挖掘・⛏️/🧱 鈕切換挖掘/放置・點物品格選擇
+    💻 <b>電腦</b>：A/D 或 ←→ 移動・W/空白鍵 跳躍・滑鼠<b>左鍵按住</b>挖掘/攻擊・<b>右鍵</b>放置/吃・E 上下車<br>
+    📱 <b>平板</b>：◀▶ 移動・⤒ 跳躍・<b>手指按住方塊</b>挖掘・⛏️/🧱 鈕切換挖掘/放置・點物品格選擇
   </div>
+</div>
+<div id="winScreen" class="ovl">
+  <h1>🏆 挑戰完成！</h1>
+  <div class="stats">
+    <div id="winStars" style="font-size:36px;letter-spacing:6px;color:#ffd447">★★★</div>
+    <div>8 個任務全部達成！存活 <b id="wDays">3</b> 天・挖掘 <b id="wMined">0</b> 方塊・擊敗 <b id="wKills">0</b> 殭屍</div>
+    <div style="font-size:24px">分數 <b id="wScore">0</b>　<span style="opacity:.8">最佳 <b id="wBest">0</b></span></div>
+  </div>
+  <div><button id="winRetryBtn">🔄 再玩一次</button><button id="winContinueBtn">🌍 繼續探索</button></div>
 </div>
 <div id="deathScreen" class="ovl">
   <h1>💀 旅程結束</h1>
@@ -145,8 +161,15 @@ function mixC(c1,c2,t){
   return 'rgb('+r+','+g+','+bl+')';
 }
 /* ================= 音效 ================= */
-let AC=null,muted=false;
-function audio(){if(!AC){try{AC=new (window.AudioContext||window.webkitAudioContext)();}catch(e){}}return AC;}
+let AC=null,muted=false,master=null,noiseBuf=null;
+function audio(){
+  if(!AC){try{
+    AC=new (window.AudioContext||window.webkitAudioContext)();
+    /* v3：主控音量匯流排——挖掘連發＋殭屍混戰也不削波 */
+    master=AC.createGain();master.gain.value=.55;master.connect(AC.destination);
+  }catch(e){}}
+  return AC;
+}
 addEventListener('pointerdown',audio,{once:true});addEventListener('keydown',audio,{once:true});
 function beep(f,d,type,vol,slide){
   const ac=audio();if(!ac||muted)return;
@@ -155,21 +178,25 @@ function beep(f,d,type,vol,slide){
   if(slide)o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide),ac.currentTime+d);
   g.gain.setValueAtTime(vol||.12,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
-  o.connect(g).connect(ac.destination);o.start();o.stop(ac.currentTime+d);
+  o.connect(g).connect(master);o.start();o.stop(ac.currentTime+d);
 }
 function noiseS(d,vol){
   const ac=audio();if(!ac||muted)return;
-  const len=Math.floor(ac.sampleRate*d),buf=ac.createBuffer(1,len,ac.sampleRate),ch=buf.getChannelData(0);
-  for(let i=0;i<len;i++)ch[i]=(Math.random()*2-1)*(1-i/len);
-  const src=ac.createBufferSource(),g=ac.createGain();src.buffer=buf;
+  /* v3：共用一顆噪音 buffer，不每次配置 */
+  if(!noiseBuf){
+    const len=Math.floor(ac.sampleRate*.5),ch0=(noiseBuf=ac.createBuffer(1,len,ac.sampleRate)).getChannelData(0);
+    for(let i=0;i<len;i++)ch0[i]=(Math.random()*2-1)*(1-i/len);
+  }
+  const src=ac.createBufferSource(),g=ac.createGain();src.buffer=noiseBuf;
+  src.playbackRate.value=.5/d*(0.9+Math.random()*0.2);
   g.gain.setValueAtTime(vol||.15,ac.currentTime);g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d);
-  src.connect(g).connect(ac.destination);src.start();
+  src.connect(g).connect(master);src.start();
 }
 const sfx={
   jump(){beep(230,.13,'square',.09,380);},
   dig(){beep(130+Math.random()*50,.05,'triangle',.06);},
-  brk(){noiseS(.09,.13);beep(90,.09,'triangle',.1,-30);},
-  place(){beep(330,.06,'square',.08,60);},
+  brk(){noiseS(.09,.13);beep(84+Math.random()*14,.09,'triangle',.1,-30);},
+  place(){beep(310+Math.random()*40,.06,'square',.08,60);},
   pick(){beep(988,.06,'square',.09);setTimeout(()=>beep(1319,.1,'square',.09),70);},
   hurt(){beep(190,.22,'sawtooth',.16,-120);noiseS(.08,.08);},
   zhit(){beep(120,.08,'square',.12,-50);},
@@ -179,7 +206,8 @@ const sfx={
   warn(){beep(660,.12,'square',.1);setTimeout(()=>beep(660,.12,'square',.1),160);},
   dawn(){[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.16,'triangle',.09),i*100));},
   death(){beep(300,.7,'sawtooth',.16,-260);},
-  craft(){beep(440,.07,'square',.08);setTimeout(()=>beep(587,.1,'square',.08),80);}
+  craft(){beep(440,.07,'square',.08);setTimeout(()=>beep(587,.1,'square',.08),80);},
+  win(){[523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.16,'square',.09),i*110));}
 };
 document.getElementById('muteBtn').addEventListener('click',()=>{
   muted=!muted;document.getElementById('muteBtn').textContent=muted?'🔇':'🔊';
@@ -341,10 +369,26 @@ function updateQuests(){
     logMsg('✅ 任務完成：'+q.txt+'　+'+q.r+' 分');
     floatTxt(player.x,player.y-2.4,'✅ +'+q.r,'#a4f0a4');
     qIdx++;
+    if(qIdx>=quests.length)winGame();   /* v3：全任務完成＝挑戰結局 */
   }
   renderQuest();
 }
-const DAY_LEN=150;
+/* v3：勝利結算（依剩餘血量評 1～3 星） */
+function winGame(){
+  if(state!=='play'||creative)return;
+  state='win';sfx.win();
+  if(score>best){best=score;try{localStorage.setItem('blockworld.best',best);}catch(e){}}
+  const stars=player.hp>=14?3:player.hp>=8?2:1;
+  document.getElementById('winStars').textContent='★★★'.slice(0,stars)+'☆☆☆'.slice(0,3-stars);
+  document.getElementById('wDays').textContent=day;
+  document.getElementById('wMined').textContent=mined;
+  document.getElementById('wKills').textContent=kills;
+  document.getElementById('wScore').textContent=score;
+  document.getElementById('wBest').textContent=best;
+  document.getElementById('winScreen').style.display='flex';
+  updScore();
+}
+const DAY_LEN=90;   /* v3：150→90 秒／天，標準挑戰約 3 分鐘收尾 */
 let best=0;try{best=+localStorage.getItem('blockworld.best')||0;}catch(e){}
 const player={x:20,y:20,vx:0,vy:0,w:.72,h:1.72,grounded:false,coyote:0,face:1,
   hp:20,hunger:20,alive:true,sx:1,sy:1,walkT:0,blink:0,swing:0,attackCd:0,inWater:false,driving:false};
@@ -824,9 +868,75 @@ function ridge(par,base,amp,color,fr,seed){
   }
   ctx.lineTo(vw,vh);ctx.closePath();ctx.fill();
 }
-/* ================= 繪圖：方塊（假 3D 立方體） ================= */
+/* ================= 繪圖：方塊（v3：貼圖快取——每型別×2變體只烘一次，逐幀 drawImage） ================= */
+const tileCache={},topCache={},SIDE_COL={};
+function bakeTiles(){
+  const VAR=[[.22,.68],[.78,.32]];   // 兩組固定雜湊變體
+  for(const bs of Object.keys(COL)){
+    const b=+bs,c=COL[b];
+    SIDE_COL[b]=shade(c,.52);
+    tileCache[b]=VAR.map((hv,vi)=>{
+      const cv2=document.createElement('canvas');cv2.width=TILE*2;cv2.height=TILE*2;   // 2x 抗糊
+      const g=cv2.getContext('2d');g.setTransform(2,0,0,2,0,0);
+      const dot2=(x,y,r)=>{g.beginPath();g.arc(x,y,r,0,7);g.fill();};
+      const h1=hv[0],h2=hv[1];
+      const fg=g.createLinearGradient(0,0,0,TILE);
+      fg.addColorStop(0,shade(c,1.08+h1*.06));fg.addColorStop(1,shade(c,.8));
+      g.fillStyle=fg;g.fillRect(0,0,TILE,TILE);
+      if(b===T.GRASS){
+        const gg=g.createLinearGradient(0,0,0,9);
+        gg.addColorStop(0,'#6fce53');gg.addColorStop(1,'#3f8f38');
+        g.fillStyle=gg;g.fillRect(0,0,TILE,8+h1*3);
+        g.fillStyle='#7fdd60';
+        for(let i=0;i<3;i++){const gx=4+i*9+h2*4;g.fillRect(gx,0,2,4+((i+vi)%2)*2);}
+      }else if(b===T.STONE||b===T.COAL||b===T.IRON){
+        g.fillStyle='rgba(255,255,255,.08)';
+        g.fillRect(4+h1*8,5+h2*6,7,4);g.fillRect(15,18,6,3);
+        if(b===T.COAL){g.fillStyle='#22262e';
+          dot2(8+h1*4,9,3.4);dot2(19,16+h2*4,3);dot2(11,21,2.6);}
+        if(b===T.IRON){g.fillStyle='#e0b489';
+          dot2(8+h2*4,9,3.4);dot2(19,15+h1*5,3);dot2(12,22,2.6);
+          g.fillStyle='rgba(255,255,255,.5)';dot2(7+h2*4,8,1.2);}
+      }else if(b===T.DIRT||b===T.SAND){
+        g.fillStyle=b===T.SAND?'rgba(160,130,60,.35)':'rgba(60,35,15,.3)';
+        dot2(7+h1*6,8+h2*8,2.2);dot2(20,14+h1*6,1.8);dot2(12,22,2);
+      }else if(b===T.WOOD){
+        g.strokeStyle='rgba(50,30,12,.5)';g.lineWidth=2;
+        g.beginPath();g.moveTo(8,0);g.lineTo(8,TILE);
+        g.moveTo(20,0);g.lineTo(20,TILE);g.stroke();
+        g.strokeStyle='rgba(120,80,40,.5)';
+        g.beginPath();g.ellipse(14,15,4,7,0,0,7);g.stroke();
+      }else if(b===T.LEAVES){
+        g.fillStyle='rgba(20,80,25,.45)';
+        dot2(8+h1*4,9,4);dot2(20,18,4.5);dot2(13,23,3.5);
+        g.fillStyle='rgba(160,230,120,.4)';dot2(18+h2*4,7,3);dot2(6,19,2.6);
+      }else if(b===T.PLANK){
+        g.strokeStyle='rgba(90,50,20,.55)';g.lineWidth=2;
+        g.beginPath();g.moveTo(0,10);g.lineTo(TILE,10);
+        g.moveTo(0,20);g.lineTo(TILE,20);g.stroke();
+        g.fillStyle='rgba(50,28,10,.6)';dot2(5,5,1.4);dot2(24,15,1.4);dot2(5,25,1.4);
+      }else if(b===T.BEDROCK){
+        g.fillStyle='rgba(0,0,0,.4)';g.fillRect(3+h1*6,4,9,6);g.fillRect(16,16+h2*6,10,7);
+        g.fillStyle='rgba(255,255,255,.06)';g.fillRect(14,6,8,4);
+      }
+      return cv2;
+    });
+    /* 頂面平行四邊形貼圖 */
+    const tc=document.createElement('canvas');tc.width=(TILE+D)*2;tc.height=(D+1)*2;
+    const tg2=tc.getContext('2d');tg2.setTransform(2,0,0,2,0,0);
+    const topC=b===T.GRASS?'#5ec84e':c;
+    const tg=tg2.createLinearGradient(0,0,TILE,D);
+    tg.addColorStop(0,shade(topC,1.45));tg.addColorStop(1,shade(topC,1.15));
+    tg2.fillStyle=tg;
+    tg2.beginPath();tg2.moveTo(0,D);tg2.lineTo(D,0);tg2.lineTo(TILE+D,0);tg2.lineTo(TILE,D);tg2.closePath();tg2.fill();
+    tg2.strokeStyle='rgba(255,255,255,.25)';tg2.lineWidth=1;
+    tg2.beginPath();tg2.moveTo(0,D-.5);tg2.lineTo(TILE,D-.5);tg2.stroke();
+    topCache[b]=tc;
+  }
+}
+bakeTiles();
 function drawTile(x,y,b){
-  const px=x*TILE,py=y*TILE,c=COL[b];
+  const px=x*TILE,py=y*TILE;
   if(b===T.WATER){
     ctx.fillStyle='rgba(46,134,222,.55)';ctx.fillRect(px,py,TILE,TILE);
     if(getB(x,y-1)!==T.WATER){
@@ -837,70 +947,21 @@ function drawTile(x,y,b){
     return;
   }
   const upS=solidAt(x,y-1),rtS=solidAt(x+1,y),ltS=solidAt(x-1,y),dnS=solidAt(x,y+1);
-  const h1=hashN(x,y,3),h2=hashN(x,y,8);
-  // ── 正面（垂直漸層 = 受光）
-  const fg=ctx.createLinearGradient(px,py,px,py+TILE);
-  fg.addColorStop(0,shade(c,1.08+h1*.06));fg.addColorStop(1,shade(c,.8));
-  ctx.fillStyle=fg;ctx.fillRect(px,py,TILE,TILE);
-  // 正面材質細節
-  ctx.save();ctx.beginPath();ctx.rect(px,py,TILE,TILE);ctx.clip();
-  if(b===T.GRASS){
-    const gg=ctx.createLinearGradient(px,py,px,py+9);
-    gg.addColorStop(0,'#6fce53');gg.addColorStop(1,'#3f8f38');
-    ctx.fillStyle=gg;ctx.fillRect(px,py,TILE,8+h1*3);
-    ctx.fillStyle='#7fdd60';
-    for(let i=0;i<3;i++){const gx=px+4+i*9+h2*4;ctx.fillRect(gx,py-0,2,4+((i+x)%2)*2);}
-  }else if(b===T.STONE||b===T.COAL||b===T.IRON){
-    ctx.fillStyle='rgba(255,255,255,.08)';
-    ctx.fillRect(px+4+h1*8,py+5+h2*6,7,4);ctx.fillRect(px+15,py+18,6,3);
-    if(b===T.COAL){ctx.fillStyle='#22262e';
-      dot(px+8+h1*4,py+9,3.4);dot(px+19,py+16+h2*4,3);dot(px+11,py+21,2.6);}
-    if(b===T.IRON){ctx.fillStyle='#e0b489';
-      dot(px+8+h2*4,py+9,3.4);dot(px+19,py+15+h1*5,3);dot(px+12,py+22,2.6);
-      ctx.fillStyle='rgba(255,255,255,.5)';dot(px+7+h2*4,py+8,1.2);}
-  }else if(b===T.DIRT||b===T.SAND){
-    ctx.fillStyle=b===T.SAND?'rgba(160,130,60,.35)':'rgba(60,35,15,.3)';
-    dot(px+7+h1*6,py+8+h2*8,2.2);dot(px+20,py+14+h1*6,1.8);dot(px+12,py+22,2);
-  }else if(b===T.WOOD){
-    ctx.strokeStyle='rgba(50,30,12,.5)';ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(px+8,py);ctx.lineTo(px+8,py+TILE);
-    ctx.moveTo(px+20,py);ctx.lineTo(px+20,py+TILE);ctx.stroke();
-    ctx.strokeStyle='rgba(120,80,40,.5)';
-    ctx.beginPath();ctx.ellipse(px+14,py+15,4,7,0,0,7);ctx.stroke();
-  }else if(b===T.LEAVES){
-    ctx.fillStyle='rgba(20,80,25,.45)';
-    dot(px+8+h1*4,py+9,4);dot(px+20,py+18,4.5);dot(px+13,py+23,3.5);
-    ctx.fillStyle='rgba(160,230,120,.4)';dot(px+18+h2*4,py+7,3);dot(px+6,py+19,2.6);
-  }else if(b===T.PLANK){
-    ctx.strokeStyle='rgba(90,50,20,.55)';ctx.lineWidth=2;
-    ctx.beginPath();ctx.moveTo(px,py+10);ctx.lineTo(px+TILE,py+10);
-    ctx.moveTo(px,py+20);ctx.lineTo(px+TILE,py+20);ctx.stroke();
-    ctx.fillStyle='rgba(50,28,10,.6)';dot(px+5,py+5,1.4);dot(px+24,py+15,1.4);dot(px+5,py+25,1.4);
-  }else if(b===T.BEDROCK){
-    ctx.fillStyle='rgba(0,0,0,.4)';ctx.fillRect(px+3+h1*6,py+4,9,6);ctx.fillRect(px+16,py+16+h2*6,10,7);
-    ctx.fillStyle='rgba(255,255,255,.06)';ctx.fillRect(px+14,py+6,8,4);
-  }
-  // 環境光遮蔽：與相鄰實心方塊接縫處壓暗
+  // ── 正面（快取貼圖）
+  ctx.drawImage(tileCache[b][(x*7+y*13)&1],px,py,TILE,TILE);
+  // 環境光遮蔽：平價色帶（不建漸層）
   ctx.fillStyle='rgba(0,0,0,.16)';
   if(dnS)ctx.fillRect(px,py+TILE-4,TILE,4);
   if(ltS)ctx.fillRect(px,py,3,TILE);
-  if(upS){const ao=ctx.createLinearGradient(px,py,px,py+8);
-    ao.addColorStop(0,'rgba(0,0,0,.3)');ao.addColorStop(1,'rgba(0,0,0,0)');
-    ctx.fillStyle=ao;ctx.fillRect(px,py,TILE,8);}
-  ctx.restore();
-  // ── 頂面（亮，向右上斜移 = 透視深度）
-  if(!upS){
-    const topC=b===T.GRASS?'#5ec84e':c;
-    const tg=ctx.createLinearGradient(px,py-D,px+TILE,py);
-    tg.addColorStop(0,shade(topC,1.45));tg.addColorStop(1,shade(topC,1.15));
-    ctx.fillStyle=tg;
-    ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+D,py-D);ctx.lineTo(px+TILE+D,py-D);ctx.lineTo(px+TILE,py);ctx.closePath();ctx.fill();
-    ctx.strokeStyle='rgba(255,255,255,.25)';ctx.lineWidth=1;
-    ctx.beginPath();ctx.moveTo(px,py);ctx.lineTo(px+TILE,py);ctx.stroke();
+  if(upS){
+    ctx.fillStyle='rgba(0,0,0,.22)';ctx.fillRect(px,py,TILE,4);
+    ctx.fillStyle='rgba(0,0,0,.1)';ctx.fillRect(px,py+4,TILE,4);
   }
-  // ── 右側面（暗）
+  // ── 頂面（快取貼圖）
+  if(!upS)ctx.drawImage(topCache[b],px,py-D,TILE+D,D+1);
+  // ── 右側面（暗，平面填色）
   if(!rtS){
-    ctx.fillStyle=shade(c,.52);
+    ctx.fillStyle=SIDE_COL[b];
     ctx.beginPath();ctx.moveTo(px+TILE,py);ctx.lineTo(px+TILE+D,py-D);ctx.lineTo(px+TILE+D,py+TILE-D);ctx.lineTo(px+TILE,py+TILE);ctx.closePath();ctx.fill();
   }
   // 地下深度陰影
@@ -1213,7 +1274,7 @@ function update(dt){
     updateVillagers(dt);updateCar(dt);
     return;
   }
-  if(state==='dead')return;
+  if(state==='dead'||state==='win')return;
   const isNight=updateDay(dt);
   updatePlayer(dt);
   updateDig(dt);
@@ -1270,6 +1331,7 @@ function startGame(mode){
   camera.y=clamp((player.y-3)*TILE-vh/view*.42,0,H*TILE-vh/view);
   document.getElementById('startScreen').style.display='none';
   document.getElementById('deathScreen').style.display='none';
+  document.getElementById('winScreen').style.display='none';
   ['hud','dayPill','scorePill','hint'].forEach(id=>document.getElementById(id).style.display=id==='hud'?'flex':'block');
   document.getElementById('dnLabel').textContent='第 1 天・白天';
   logMsg(creative?'🛠️ 創造模式：W/空白 飛升、S 下降，方塊無限！':'⚔️ 歡迎來到方塊生存世界！先砍樹採集吧。');
@@ -1278,6 +1340,12 @@ function startGame(mode){
 document.getElementById('btnSurvival').addEventListener('click',()=>startGame('survival'));
 document.getElementById('btnCreative').addEventListener('click',()=>startGame('creative'));
 document.getElementById('retryBtn').addEventListener('click',()=>startGame(creative?'creative':'survival'));
+document.getElementById('winRetryBtn').addEventListener('click',()=>startGame('survival'));
+document.getElementById('winContinueBtn').addEventListener('click',()=>{
+  document.getElementById('winScreen').style.display='none';
+  state='play';
+  logMsg('🌍 自由探索模式！想蓋什麼就蓋什麼');
+});
 /* ================= 初始化 ================= */
 genWorld();
 spawnVillagers();
