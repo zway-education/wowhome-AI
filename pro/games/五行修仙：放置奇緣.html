@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -581,7 +581,7 @@ const COUNTERS = { metal: 'wood', wood: 'earth', earth: 'water', water: 'fire', 
 function spawnMonster(mlv) {
   monster = {
     // v3：HP 基數 30→50、成長 1.3→1.48。模擬：快手 1–1.5 分、一般 2.4 分、佛系 3.5 分通關
-    mlv, hpMax: Math.floor(50 * Math.pow(1.48, mlv - 1)), sx: 0.2, sy: 0.2,
+    mlv, hpMax: Math.floor(50 * Math.pow(1.48, mlv - 1) * rebirthHpMul()), sx: 0.2, sy: 0.2,
     flash: 0, dead: false, deathT: 0, born: 0,
     elemIdx: Math.floor(rnd(0, 5)), enraged: false   // v2：妖龍屬性 / 龍皇狂怒
   };
@@ -603,6 +603,7 @@ function realmName(lv) { return realmNames[Math.min(5, Math.floor((lv - 1) / 2))
 function playerPower() {
   let p = G.perClick + Math.floor(G.level * 0.5);
   if (ELEMS[G.elemIdx].id === 'metal') p = Math.floor(p * 1.3);
+  p = Math.round(p * rebirthPowerMul());   // v4：轉世仙緣加成
   return Math.max(1, p);
 }
 function currentCost(u) { return Math.floor(u.baseCost * Math.pow(1.16, u.count)); }
@@ -626,6 +627,14 @@ function gainExp(n) {
 let best = 0;
 try { best = parseInt(localStorage.getItem('五行修仙.best') || '0', 10) || 0; } catch (err) { best = 0; }
 let newBest = false, finalScore = 0;
+// ---------- v4：轉世重修（飛升後解鎖的輪迴加成）----------
+// 每次飛升成仙後轉世＋1：仙緣加成讓打坐/攻擊/道行更強，但妖龍也更兇，越轉越有挑戰。
+let rebirth = 0;
+try { rebirth = parseInt(localStorage.getItem('五行修仙.rebirth') || '0', 10) || 0; } catch (err) { rebirth = 0; }
+let justAscended = false;                                  // 本局是否剛飛升（給結算畫面判斷）
+function rebirthPowerMul() { return 1 + rebirth * 0.6; }    // 打坐/攻擊/採氣加成
+function rebirthHpMul() { return 1 + rebirth * 0.5; }       // 妖龍血量成長
+function rebirthScoreMul() { return 1 + rebirth * 1.0; }    // 道行總分加成
 
 // ---------- UI 元件 ----------
 const uiButtons = [];
@@ -831,7 +840,7 @@ const playState = {
     this.cloud = null; this.cloudT = rnd(15, 25);
   },
   meditate() {
-    let gain = G.perClick, twice = false;
+    let gain = Math.round(G.perClick * rebirthPowerMul()), twice = false;   // v4：轉世加成
     if (ELEMS[G.elemIdx].id === 'fire' && Math.random() < 0.25) { gain *= 2; twice = true; }
     gainEnergy(gain, CHAR_X + rnd(-30, 30), CHAR_Y - rnd(20, 60), twice);
     G.charSx = 1.15; G.charSy = 0.85;
@@ -940,7 +949,7 @@ const playState = {
     G.tickT += dt;
     if (G.tickT >= 1) {
       G.tickT -= 1;
-      if (G.perSecond > 0) gainEnergy(G.perSecond, CHAR_X + rnd(-50, 50), CHAR_Y + rnd(-40, 20));
+      if (G.perSecond > 0) gainEnergy(Math.round(G.perSecond * rebirthPowerMul()), CHAR_X + rnd(-50, 50), CHAR_Y + rnd(-40, 20));
     }
     // 妖龍
     if (monster.dead) {

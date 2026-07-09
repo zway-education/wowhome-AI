@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -158,7 +158,7 @@ addEventListener('keydown', e => {
   if(c === 'KeyW') in1.jumpBuf = 0.12;
   if(c === 'KeyF' || c === 'KeyJ' || c === 'Space') in1.atkBuf = 0.16;
   if(c === 'KeyS') in1.spBuf = 0.2;
-  if(mode === 'ai'){
+  if(mode !== '2p'){
     if(c === 'ArrowUp') in1.jumpBuf = 0.12;
     if(c === 'KeyK') in1.atkBuf = 0.16;
     if(c === 'ArrowDown' || c === 'KeyL') in1.spBuf = 0.2;
@@ -274,6 +274,11 @@ const FINAL_ROUND = 5; // 五回合挑戰制：全勝即結算，一場約 3 分
 let score = 0, scoreShow = 0;
 let best = 0;
 try{ best = parseInt(localStorage.getItem('wn_best') || '0', 10) || 0; }catch(e){}
+/* v4 無盡模式：通關五回合挑戰後解鎖；紀錄最高連勝回合數 */
+let cleared = false;
+try{ cleared = localStorage.getItem('wn_cleared') === '1'; }catch(e){}
+let bestEndless = 0;
+try{ bestEndless = parseInt(localStorage.getItem('wn_endless') || '0', 10) || 0; }catch(e){}
 let wins1 = 0, wins2 = 0;
 let phase = 'intro', phaseT = 0;   // intro / fight / ko / roundwin
 let overT = 0, playerWon = false;
@@ -302,18 +307,19 @@ function resetRound(healed){
     f.atkTimer = 0; f.atkCd = 0; f.sx = 1; f.sy = 1;
     f.dead = false; f.koT = 0; f.grounded = true; f.walkT = 0;
     f.spActive = false; f.combo = 0; f.comboT = 0;
-    if(mode !== 'ai') f.sp = 0; // 單人模式的氣跨回合保留
+    if(mode === '2p') f.sp = 0; // 單人／無盡模式的氣跨回合保留
   }
   p1.facing = 1; p2.facing = -1;
-  if(mode === 'ai'){
+  if(mode !== '2p'){
     const r = round;
-    // v3 時長調校：HP 成長 +25→+15/回合，單回合維持 25~50 秒
-    p2.maxHp = 90 + 15 * (r - 1);
+    const endless = mode === 'endless';
+    // v3 時長調校：HP 成長 +25→+15/回合；無盡模式成長更兇、無上限
+    p2.maxHp = 90 + (endless ? 18 : 15) * (r - 1);
     p2.hp = p2.hpShow = p2.maxHp;
-    p2.speed = Math.min(390, 215 + 30 * (r - 1));
-    p2.atkCdMax = Math.max(0.5, 1.05 - 0.09 * (r - 1));
-    p2.dmg = Math.min(16, 6 + 1.4 * (r - 1));
-    if(healed) p1.hp = Math.min(100, p1.hp + 35);
+    p2.speed = Math.min(endless ? 440 : 390, 215 + 30 * (r - 1));
+    p2.atkCdMax = Math.max(endless ? 0.42 : 0.5, 1.05 - 0.09 * (r - 1));
+    p2.dmg = Math.min(endless ? 22 : 16, 6 + 1.4 * (r - 1));
+    if(healed) p1.hp = Math.min(100, p1.hp + (endless ? 28 : 35));
     else p1.hp = 100;
     p1.hpShow = p1.hp;
   }else{
@@ -339,9 +345,17 @@ function startGame(m){
 function endGame(won){
   playerWon = won;
   stateName = 'over'; stateT = 0; overT = 0;
-  if(mode === 'ai' && score > best){
+  if(mode !== '2p' && score > best){
     best = score;
     try{ localStorage.setItem('wn_best', String(best)); }catch(e){}
+  }
+  if(mode === 'ai' && won && !cleared){
+    cleared = true;
+    try{ localStorage.setItem('wn_cleared', '1'); }catch(e){}
+  }
+  if(mode === 'endless' && wins1 > bestEndless){
+    bestEndless = wins1;
+    try{ localStorage.setItem('wn_endless', String(bestEndless)); }catch(e){}
   }
   if(won) sfx.win(); else sfx.lose();
 }
@@ -378,7 +392,7 @@ function applyHit(att, def){
   freeze = Math.max(freeze, sp ? 0.12 : 0.05);
   shake = Math.max(shake, sp ? 11 : 6);
   sfx.hit();
-  if(mode === 'ai' && att === p1) score += dmg * 10 + Math.max(0, att.combo - 1) * 15;
+  if(mode !== '2p' && att === p1) score += dmg * 10 + Math.max(0, att.combo - 1) * 15;
   if(def.hp <= 0){
     def.dead = true;
     def.hurtTimer = 0.6;
@@ -510,11 +524,11 @@ function playUpdate(dt){
   phaseT += dt;
   if(phase === 'intro' && phaseT > 1.1){ phase = 'fight'; phaseT = 0; }
   /* 玩家 1 輸入 */
-  const l1 = keys.KeyA || (mode === 'ai' && keys.ArrowLeft) || touchIn.left;
-  const r1 = keys.KeyD || (mode === 'ai' && keys.ArrowRight) || touchIn.right;
+  const l1 = keys.KeyA || (mode !== '2p' && keys.ArrowLeft) || touchIn.left;
+  const r1 = keys.KeyD || (mode !== '2p' && keys.ArrowRight) || touchIn.right;
   in1.mx = (r1 ? 1 : 0) - (l1 ? 1 : 0);
   /* 玩家 2 / AI 輸入 */
-  if(mode === 'ai'){
+  if(mode !== '2p'){
     if(phase === 'fight' && !p2.dead && !p1.dead) updateAI(dt);
     in2.mx = (phase === 'fight' && !p2.dead) ? aiMx : 0;
   }else{
@@ -524,7 +538,7 @@ function playUpdate(dt){
   updateFighter(p2, p1, in2, dt);
   /* KO 流程 */
   if(phase === 'ko' && phaseT > 1.15){
-    if(mode === 'ai'){
+    if(mode !== '2p'){
       if(p2.dead){
         score += 500 + Math.round(p1.hp) * 5;
         wins1++;
@@ -539,10 +553,11 @@ function playUpdate(dt){
     }
   }
   if(phase === 'roundwin' && phaseT > 1.5){
-    if(round >= FINAL_ROUND){
+    if(mode === 'ai' && round >= FINAL_ROUND){
       score += 1000; // 完賽獎勵
       endGame(true);
     }else{
+      // 無盡模式無回合上限：一路變強直到落敗
       round++;
       resetRound(true);
     }
@@ -1163,9 +1178,9 @@ function drawHUD(){
   drawSpBar(GAME_W - 230, 54, 210, p2, true);
   ctx.textAlign = 'center';
   ctx.font = 'bold 18px ' + FONT;
-  if(mode === 'ai'){
+  if(mode !== '2p'){
     ctx.fillStyle = '#fff';
-    ctx.fillText('第 ' + round + '/' + FINAL_ROUND + ' 回合', GAME_W / 2, 26);
+    ctx.fillText(mode === 'endless' ? '無盡・第 ' + round + ' 回合' : '第 ' + round + '/' + FINAL_ROUND + ' 回合', GAME_W / 2, 26);
     ctx.fillStyle = '#ffcf4d';
     ctx.fillText('分數 ' + Math.round(scoreShow), GAME_W / 2, 50);
   }else{
@@ -1237,26 +1252,45 @@ function titleDraw(){
   drawWorld();
   ctx.fillStyle = 'rgba(12,6,30,.42)'; ctx.fillRect(0, 0, GAME_W, GAME_H);
   const k = easeOutBack(Math.min(1, stateT / 0.8));
-  bigText('孫悟空大戰哪吒', lerp(-40, 152, k), 58, '#ffcf4d', 1);
-  ctx.font = '20px ' + FONT;
+  bigText('孫悟空大戰哪吒', lerp(-40, 132, k), 54, '#ffcf4d', 1);
+  ctx.font = '18px ' + FONT;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#e8ddff';
-  ctx.fillText('花果山之巔・五回合巔峰挑戰', GAME_W / 2, 192);
+  ctx.fillText('花果山之巔・五回合巔峰挑戰', GAME_W / 2, 166);
+  /* v4 無盡模式解鎖狀態公告 */
+  ctx.font = 'bold 15px ' + FONT;
+  ctx.fillStyle = cleared ? '#ff8c3a' : 'rgba(230,220,255,.7)';
+  ctx.fillText(cleared ? '★ 無盡模式已解鎖　最佳連勝 ' + bestEndless + ' 回合' : '通關五回合挑戰即可解鎖「無盡模式」', GAME_W / 2, 190);
   if(stateT > 0.35){
-    drawButton(GAME_W / 2 - 120, 262, 240, 60, '開始', () => startGame('ai'), true);
-    drawButton(GAME_W / 2 - 120, 340, 240, 50, '雙人對戰', () => startGame('2p'), false);
+    drawButton(GAME_W / 2 - 120, 208, 240, 52, '開始挑戰', () => startGame('ai'), true);
+    drawButton(GAME_W / 2 - 158, 272, 150, 46, '雙人對戰', () => startGame('2p'), false);
+    if(cleared){
+      drawButton(GAME_W / 2 + 8, 272, 150, 46, '無盡模式', () => startGame('endless'), false);
+    }else{
+      /* 未解鎖：灰色鎖定鈕（不註冊點擊） */
+      rr(GAME_W / 2 + 8, 272, 150, 46, 12);
+      ctx.fillStyle = 'rgba(255,255,255,.06)'; ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = 'rgba(255,255,255,.4)';
+      ctx.font = 'bold 18px ' + FONT;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('無盡（鎖）', GAME_W / 2 + 83, 296);
+      ctx.textBaseline = 'alphabetic';
+    }
   }
-  rr(GAME_W / 2 - 330, 404, 660, 78, 10);
+  rr(GAME_W / 2 - 335, 336, 670, 104, 10);
   ctx.fillStyle = 'rgba(12,6,30,.6)'; ctx.fill();
   ctx.strokeStyle = 'rgba(255,207,77,.5)'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.font = 'bold 15px ' + FONT;
   ctx.fillStyle = '#ffe9ad';
   ctx.textAlign = 'center';
-  ctx.fillText('電腦：A D 或 ← → 移動 · W / ↑ 跳 · F / J / 空白鍵 攻擊 · 氣滿按 S 放必殺', GAME_W / 2, 426);
-  ctx.fillText('平板：畫面下方圓鈕 ◀ ▶ 移動 · 「跳」「打」 · 氣滿點「絕」放必殺', GAME_W / 2, 448);
-  ctx.fillStyle = 'rgba(230,220,255,.8)';
+  ctx.fillText('電腦：A D 或 ← → 移動 · W / ↑ 跳 · F / J / 空白鍵 攻擊 · 氣滿按 S 放必殺', GAME_W / 2, 360);
+  ctx.fillText('平板：畫面下方圓鈕 ◀ ▶ 移動 · 「跳」「打」 · 氣滿點「絕」放必殺', GAME_W / 2, 382);
+  ctx.fillStyle = '#ffd08a';
   ctx.font = '13px ' + FONT;
-  ctx.fillText('雙人（鍵盤）：P1＝A D W F S　｜　P2＝← → ↑ K L　　按 M 靜音', GAME_W / 2, 470);
+  ctx.fillText('無盡模式：操作同挑戰，哪吒每回合無限變強，比誰撐得久！', GAME_W / 2, 404);
+  ctx.fillStyle = 'rgba(230,220,255,.8)';
+  ctx.fillText('雙人（鍵盤）：P1＝A D W F S　｜　P2＝← → ↑ K L　　按 M 靜音', GAME_W / 2, 426);
   drawMuteBtn();
 }
 function playDraw(){
@@ -1265,7 +1299,7 @@ function playDraw(){
   if(touchMode) drawTouchUI();
   if(phase === 'intro'){
     const k = easeOutBack(Math.min(1, phaseT / 0.5));
-    bigText(mode === 'ai' ? '第 ' + round + '/' + FINAL_ROUND + ' 回合' : '雙人對戰', 236, 54, '#ffcf4d', k);
+    bigText(mode === '2p' ? '雙人對戰' : (mode === 'endless' ? '無盡・第 ' + round + ' 回合' : '第 ' + round + '/' + FINAL_ROUND + ' 回合'), 236, 54, '#ffcf4d', k);
     ctx.font = '22px ' + FONT;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
@@ -1287,7 +1321,7 @@ function playDraw(){
     ctx.fillStyle = '#fff';
     ctx.fillText('+' + (500 + Math.round(p1.hp) * 5) + ' 分　體力回復！', GAME_W / 2, 268);
   }
-  if(mode === 'ai' && round === 1 && phase === 'fight' && phaseT < 6){
+  if(mode !== '2p' && round === 1 && phase === 'fight' && phaseT < 6){
     ctx.font = 'bold 16px ' + FONT;
     ctx.textAlign = 'center';
     ctx.fillStyle = 'rgba(255,255,255,.85)';
@@ -1308,7 +1342,21 @@ function overDraw(){
   ctx.strokeStyle = '#ffcf4d'; ctx.lineWidth = 3;
   ctx.stroke();
   ctx.textAlign = 'center';
-  if(mode === 'ai'){
+  if(mode === 'endless'){
+    const nr = wins1 >= bestEndless && wins1 > 0;
+    ctx.font = 'bold 38px ' + FONT;
+    ctx.fillStyle = '#ff8c3a';
+    ctx.fillText('無盡試煉結束', 0, -100);
+    ctx.font = '22px ' + FONT;
+    ctx.fillStyle = '#fff';
+    ctx.fillText('你在花果山連勝 ' + wins1 + ' 回合！', 0, -58);
+    ctx.font = 'bold 30px ' + FONT;
+    ctx.fillStyle = '#ffe9ad';
+    ctx.fillText('分數　' + score, 0, -12);
+    ctx.font = '19px ' + FONT;
+    ctx.fillStyle = nr ? '#7ad1ff' : 'rgba(255,255,255,.7)';
+    ctx.fillText(nr ? '無盡新紀錄！連勝 ' + wins1 + ' 回合' : '最佳連勝　' + bestEndless + ' 回合', 0, 22);
+  }else if(mode === 'ai'){
     ctx.font = 'bold 40px ' + FONT;
     ctx.fillStyle = playerWon ? '#ffcf4d' : '#c9bfe8';
     ctx.fillText(playerWon ? '挑戰成功！' : '挑戰結束！', 0, -100);
@@ -1321,6 +1369,11 @@ function overDraw(){
     ctx.font = '19px ' + FONT;
     ctx.fillStyle = score >= best && score > 0 ? '#7ad1ff' : 'rgba(255,255,255,.7)';
     ctx.fillText(score >= best && score > 0 ? '新紀錄！' : '最佳紀錄　' + best, 0, 22);
+    if(playerWon && cleared){
+      ctx.font = 'bold 17px ' + FONT;
+      ctx.fillStyle = '#ff8c3a';
+      ctx.fillText('★ 無盡模式已解鎖！回主選單挑戰', 0, 48);
+    }
   }else{
     ctx.font = 'bold 40px ' + FONT;
     ctx.fillStyle = playerWon ? '#ffcf4d' : '#7ad1ff';
@@ -1341,7 +1394,8 @@ function overDraw(){
 }
 
 /* 測試掛鉤（自動化冒煙測試用，不影響遊戲） */
-window.__smoke = () => ({ scene: stateName, phase, x: p1.x, atkT: p1.atkTimer, sp: p1.sp, oppHp: p2.hp });
+window.__smoke = () => ({ scene: stateName, phase, mode, round, wins1, score, cleared, bestEndless, x: p1.x, atkT: p1.atkTimer, sp: p1.sp, oppHp: p2.hp, parts: parts.length });
+window.__startMode = m => startGame(m); // 測試專用：直接進入指定模式
 
 /* ===== 主迴圈：固定時間步進 60Hz ===== */
 const STEP = 1 / 60;

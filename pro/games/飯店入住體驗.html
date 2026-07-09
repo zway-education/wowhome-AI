@@ -1,11 +1,12 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
 <title>飯店入住體驗</title>
+<meta name="author" content="AI未來創作營隊">
 <style>
   :root{
     --ink:#16332C; --brass:#C9A15A; --brass-deep:#a97f38; --accent:#B5493D;
@@ -83,7 +84,11 @@
     background:var(--brass);color:#fff;border:none;padding:14px 26px;border-radius:999px;
     cursor:pointer;box-shadow:0 6px 16px var(--shadow)}
   .bigbtn.alt{background:#fff;color:var(--text);border:1.5px solid var(--card-border)}
+  .bigbtn.chal{background:linear-gradient(180deg,#c96a4a,#a5382a)}
+  .bigbtn.locked{opacity:.5}
+  .bigbtn.chal small{display:block;font-weight:400;font-size:11.5px;opacity:.9;margin-top:1px}
   .bigbtn:active{transform:scale(.97)}
+  #clock.warn{color:var(--accent);font-weight:700}
   .best{font-size:12.5px;color:var(--brass-deep);margin-top:10px}
   #stars{font-size:34px;letter-spacing:8px;color:var(--brass);margin:2px 0 6px}
   #endStats{font-size:14.5px;color:var(--text);margin:0 0 6px;line-height:1.9}
@@ -123,13 +128,15 @@
       <h2 class="display">飯店入住體驗</h2>
       <div class="rule"></div>
       <p>歡迎光臨！完成四項入住任務——櫃檯報到、放行李、逛泳池、上餐廳，
-        沿路蒐集 8 枚金色行李吊牌，爭取三星滿分評價。</p>
+        沿路蒐集 8 枚金色行李吊牌，爭取三星滿分評價。<br>
+        <b style="color:var(--accent)">通關一次即解鎖「限時挑戰」</b>——趕在時限內辦完入住！</p>
       <div class="keys">
         💻 電腦：<kbd>WASD</kbd> 移動、<kbd>E</kbd> 互動（二人：<kbd>方向鍵</kbd>＋<kbd>Enter</kbd>）<br>
         📱 平板：按住螢幕拖曳移動，靠近時按「互動」大按鈕
       </div>
       <button class="bigbtn" id="startSolo">單人入住（夥伴會跟著你）</button>
       <button class="bigbtn alt" id="startCoop">雙人同行（各控一人）</button>
+      <button class="bigbtn chal locked" id="startChal">限時挑戰 🔒<small id="chalSub">通關一次解鎖</small></button>
       <div class="best" id="bestLine"></div>
     </div>
   </div>
@@ -291,12 +298,16 @@ let player1 = makeGuest(0), player2 = makeGuest(1);
 let players = [player1, player2];
 
 /* ---------- 遊戲狀態 ---------- */
-const S = { scene:'title', coop:false, time:0, tagsGot:0, over:false, hintT:0 };
-let best = null;
+const S = { scene:'title', coop:false, challenge:false, timeUp:false, time:0, tagsGot:0, over:false, hintT:0 };
+const CHAL_LIMIT = 75;             // 限時挑戰秒數
+let best = null, bestC = null, cleared = false;
 try{ best = JSON.parse(localStorage.getItem('pro飯店入住_best')||'null'); }catch(e){}
+try{ bestC = JSON.parse(localStorage.getItem('pro飯店入住_bestC')||'null'); }catch(e){}
+try{ cleared = localStorage.getItem('pro飯店入住_cleared') === '1'; }catch(e){}
 
-function resetGame(coop){
-  S.coop = coop; S.time = 0; S.tagsGot = 0; S.over = false; S.hintT = 7;
+function resetGame(coop, challenge){
+  S.coop = coop; S.challenge = !!challenge; S.timeUp = false;
+  S.time = 0; S.tagsGot = 0; S.over = false; S.hintT = 7;
   hotspots.forEach(h => h.done = false);
   document.querySelectorAll('.task').forEach(t => t.classList.remove('done'));
   player1 = makeGuest(0); player2 = makeGuest(1);
@@ -306,8 +317,11 @@ function resetGame(coop){
   for(const id in sticks) delete sticks[id];
   camera.x = 0; camera.y = 4.5;
   $('tagCount').textContent = '0';
-  $('clock').textContent = '0:00';
-  showHint(coop ? '兩人分頭完成 4 個金色圓圈任務，順路撿行李吊牌！'
+  $('clock').classList.remove('warn');
+  S._clockTxt = S.challenge ? '⏳ '+fmtTime(CHAL_LIMIT) : null;
+  $('clock').textContent = S.challenge ? '⏳ '+fmtTime(CHAL_LIMIT) : '0:00';
+  showHint(S.challenge ? '限時挑戰！'+CHAL_LIMIT+' 秒內辦完 4 項入住任務，越快越多吊牌評價越高！'
+                : coop ? '兩人分頭完成 4 個金色圓圈任務，順路撿行李吊牌！'
                 : '走到金色圓圈按互動完成任務，順路撿 8 枚行李吊牌！');
 }
 let hintFade = null;
@@ -326,10 +340,21 @@ function enterTitle(){
   $('hud').style.display = 'none'; compass.style.display = 'none';
   $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
   $('prompt').style.display = 'none';
-  $('bestLine').textContent = best ? ('🏆 最佳紀錄：'+fmtTime(best.time)+'（'+'★'.repeat(best.stars)+'）') : '';
+  $('bestLine').textContent = best ? ('🏆 導覽最佳：'+fmtTime(best.time)+'（'+'★'.repeat(best.stars)+'）') : '';
+  // 限時挑戰按鈕：通關後解鎖
+  const cb = $('startChal');
+  if(cleared){
+    cb.classList.remove('locked');
+    cb.firstChild.textContent = '限時挑戰（趕行程）';
+    $('chalSub').textContent = bestC ? ('最佳 '+fmtTime(bestC.time)+'（'+'★'.repeat(bestC.stars)+'）') : (CHAL_LIMIT+' 秒內完成入住');
+  }else{
+    cb.classList.add('locked');
+    cb.firstChild.textContent = '限時挑戰 🔒';
+    $('chalSub').textContent = '通關一次解鎖';
+  }
 }
-function enterPlay(coop){
-  resetGame(coop);
+function enterPlay(coop, challenge){
+  resetGame(coop, challenge);
   S.scene = 'play';
   $('titleOvl').style.display = 'none'; $('endOvl').style.display = 'none';
   $('hud').style.display = 'block'; compass.style.display = 'block';
@@ -345,36 +370,81 @@ function calcStars(){
   if(S.time <= 120) stars++;
   return stars;
 }
-function endGame(){
-  S.over = true;
-  sfx.win();
-  const cx = stage.clientWidth/2, cy = stage.clientHeight/2;
-  for(let i=0;i<4;i++) setTimeout(()=>burstConfetti(rnd(cx-260,cx+260), rnd(cy-160,cy+40), 26), i*160);
-  setTimeout(()=>{
-    S.scene = 'end';
-    const stars = calcStars();
+function calcStarsChallenge(){
+  let stars = 1;
+  if(S.tagsGot >= 8) stars++;
+  if(S.time <= 45) stars++;
+  return stars;
+}
+function showEnd(){
+  S.scene = 'end';
+  if(S.timeUp){
+    // 限時挑戰逾時失敗
+    $('stars').textContent = '☆☆☆';
+    $('endStats').innerHTML = '完成 <b>'+hotspots.filter(h=>h.done).length+'/4</b> 項任務 ｜ 行李吊牌 <b>'+S.tagsGot+'/8</b>';
+    $('endWord').textContent = '⏰ 時間到！這次沒趕上行程，再挑戰一次吧！';
+    $('newBest').style.display = 'none';
+    $('bellIcon').style.opacity = '.4';
+    $('bestLine2').textContent = bestC ? ('🏆 挑戰最佳：'+fmtTime(bestC.time)+'（'+'★'.repeat(bestC.stars)+'）')
+                                       : '再試一次就能拿下挑戰紀錄！';
+  }else{
+    $('bellIcon').style.opacity = '1';
+    const chal = S.challenge;
+    const stars = chal ? calcStarsChallenge() : calcStars();
     $('stars').textContent = '★'.repeat(stars) + '☆'.repeat(3-stars);
-    $('endStats').innerHTML = '入住時間 <b>'+fmtTime(S.time)+'</b> ｜ 行李吊牌 <b>'+S.tagsGot+'/8</b>';
-    $('endWord').textContent = stars===3 ? '完美三星入住！櫃檯、房間、泳池、餐廳都走遍了，您是模範房客！'
-      : stars===2 ? '很棒的入住體驗！再快一點、吊牌收齊就是三星滿分。'
-      : '四項任務都完成了！下次挑戰 2 分鐘內收齊吊牌吧。';
+    $('endStats').innerHTML = (chal?'⏱ 限時挑戰　':'') + '入住時間 <b>'+fmtTime(S.time)+'</b> ｜ 行李吊牌 <b>'+S.tagsGot+'/8</b>';
+    $('endWord').textContent = chal
+      ? (stars===3 ? '極速三星！趕行程也難不倒您，堪稱 VIP 房客！'
+        : stars===2 ? '順利趕上行程！再快一點、吊牌收齊就是三星。'
+        : '趕上入住了！下次挑戰 45 秒內收齊吊牌拿三星。')
+      : (stars===3 ? '完美三星入住！櫃檯、房間、泳池、餐廳都走遍了，您是模範房客！'
+        : stars===2 ? '很棒的入住體驗！再快一點、吊牌收齊就是三星滿分。'
+        : '四項任務都完成了！下次挑戰 2 分鐘內收齊吊牌吧。');
     let newBest = false;
-    if(!best || stars > best.stars || (stars===best.stars && S.time < best.time)){
-      best = { time: Math.round(S.time), stars };
+    const rec = { time: Math.round(S.time), stars };
+    const cur = chal ? bestC : best;
+    if(!cur || stars > cur.stars || (stars===cur.stars && rec.time < cur.time)){
       newBest = true;
-      try{ localStorage.setItem('pro飯店入住_best', JSON.stringify(best)); }catch(e){}
+      if(chal){ bestC = rec; try{ localStorage.setItem('pro飯店入住_bestC', JSON.stringify(bestC)); }catch(e){} }
+      else{ best = rec; try{ localStorage.setItem('pro飯店入住_best', JSON.stringify(best)); }catch(e){} }
     }
     $('newBest').style.display = newBest ? 'block' : 'none';
-    $('bestLine2').textContent = '🏆 最佳紀錄：'+fmtTime(best.time)+'（'+'★'.repeat(best.stars)+'）';
-    $('endOvl').style.display = 'flex';
-    $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
-    $('prompt').style.display = 'none';
-  }, 1100);
+    // 首次通關 → 解鎖限時挑戰
+    if(!cleared){ cleared = true; try{ localStorage.setItem('pro飯店入住_cleared','1'); }catch(e){} }
+    const shown = chal ? bestC : best;
+    $('bestLine2').textContent = '🏆 '+(chal?'挑戰最佳：':'導覽最佳：')+fmtTime(shown.time)+'（'+'★'.repeat(shown.stars)+'）';
+  }
+  $('endOvl').style.display = 'flex';
+  $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
+  $('prompt').style.display = 'none';
+}
+function endGame(timeUp){
+  if(S.over) return;
+  S.over = true;
+  if(timeUp){
+    S.timeUp = true;
+    sfx.sleep();
+    setTimeout(showEnd, 600);
+  }else{
+    sfx.win();
+    const cx = stage.clientWidth/2, cy = stage.clientHeight/2;
+    for(let i=0;i<4;i++) setTimeout(()=>burstConfetti(rnd(cx-260,cx+260), rnd(cy-160,cy+40), 26), i*160);
+    setTimeout(showEnd, 1100);
+  }
 }
 
-$('startSolo').addEventListener('click', ()=>{ sfx.blip(); enterPlay(false); });
-$('startCoop').addEventListener('click', ()=>{ sfx.blip(); enterPlay(true); });
-$('replayBtn').addEventListener('click', ()=>{ sfx.blip(); enterPlay(S.coop); });
+$('startSolo').addEventListener('click', ()=>{ sfx.blip(); enterPlay(false, false); });
+$('startCoop').addEventListener('click', ()=>{ sfx.blip(); enterPlay(true, false); });
+$('startChal').addEventListener('click', ()=>{
+  if(!cleared){
+    sfx.blip();
+    const cb = $('startChal');
+    if(cb.animate) cb.animate([{transform:'translateX(0)'},{transform:'translateX(-5px)'},{transform:'translateX(5px)'},{transform:'translateX(0)'}],{duration:260});
+    return;
+  }
+  sfx.blip(); enterPlay(false, true);
+});
+$('replayBtn').addEventListener('click', ()=>{ sfx.blip(); enterPlay(S.coop, S.challenge); });
 $('menuBtn').addEventListener('click', ()=>{ sfx.blip(); enterTitle(); });
 
 /* ---------- 輸入：鍵盤 ---------- */
@@ -383,7 +453,7 @@ addEventListener('keydown', e => {
   keys[e.code] = true;
   if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','Slash','Enter'].includes(e.code)) e.preventDefault();
   if(S.scene === 'title' && (e.code==='Space'||e.code==='Enter')){ enterPlay(false); return; }
-  if(S.scene === 'end' && (e.code==='Space'||e.code==='Enter')){ enterPlay(S.coop); return; }
+  if(S.scene === 'end' && (e.code==='Space'||e.code==='Enter')){ enterPlay(S.coop, S.challenge); return; }
   if(S.scene !== 'play') return;
   if(e.code==='KeyE' || (!S.coop && (e.code==='Space'||e.code==='Enter'))) tryInteract(player1);
   if(S.coop && (e.code==='Slash' || e.code==='Enter')) tryInteract(player2);
@@ -759,7 +829,18 @@ function update(dt, t){
     return;
   }
   S.time += dt;
-  if((S.time|0) !== ((S.time-dt)|0)) $('clock').textContent = fmtTime(S.time);
+  if(S.challenge){
+    if(S.time >= CHAL_LIMIT){ endGame(true); return; }
+    const remain = Math.max(0, Math.ceil(CHAL_LIMIT - S.time));
+    const txt = '⏳ '+fmtTime(remain);
+    if(txt !== S._clockTxt){
+      S._clockTxt = txt;
+      $('clock').textContent = txt;
+      $('clock').classList.toggle('warn', remain <= 15);
+    }
+  }else if((S.time|0) !== ((S.time-dt)|0)){
+    $('clock').textContent = fmtTime(S.time);
+  }
 
   let dx1 = 0, dy1 = 0;
   if(keys['KeyW']) dy1--; if(keys['KeyS']) dy1++;
@@ -1078,11 +1159,13 @@ requestAnimationFrame(frame);
 
 /* ---------- QA 掛鉤（無頭瀏覽器可玩性驗證用，不影響遊戲） ---------- */
 window.__QA = {
-  snap(){ return { scene:S.scene, coop:S.coop, time:S.time,
+  snap(){ return { scene:S.scene, coop:S.coop, challenge:S.challenge, timeUp:S.timeUp, over:S.over, time:S.time,
     p1x:player1.x, p1y:player1.y, p2x:player2.x, p2y:player2.y,
-    tasksDone:hotspots.filter(h=>h.done).length, tags:S.tagsGot }; },
+    tasksDone:hotspots.filter(h=>h.done).length, tags:S.tagsGot,
+    cleared, hasBest:!!best, hasBestC:!!bestC, confetti:confetti.length }; },
   teleport(x,y){ player1.x = x; player1.y = y; },
-  interact(){ player1.target = nearestHotspot(player1); tryInteract(player1); }
+  interact(){ player1.target = nearestHotspot(player1); tryInteract(player1); },
+  setTime(t){ S.time = t; }
 };
 
 })();

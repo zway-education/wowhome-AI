@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -52,6 +52,12 @@
   .btn:hover { transform: translateY(-2px) scale(1.04); box-shadow: 0 9px 22px rgba(255,206,84,.45); }
   .btn:active { transform: translateY(2px) scale(.95); border-bottom-width: 2px; }
   .hiddenEl { display: none !important; }
+  .unlockBadge { background: linear-gradient(180deg, rgba(255,207,92,.22), rgba(255,126,61,.18));
+    border: 1px solid rgba(255,207,92,.55); border-radius: 14px; padding: 9px 18px;
+    font-size: clamp(12px, 2.5vw, 15px); color: #ffe6a8; max-width: 520px; line-height: 1.6; }
+  .btn2 { background: linear-gradient(180deg,#8fd8ff,#4f9cff); border-bottom-color: #2f5fb0;
+    color: #06122a; box-shadow: 0 6px 18px rgba(79,124,255,.4); }
+  .btn2:hover { box-shadow: 0 9px 22px rgba(79,124,255,.5); }
 </style>
 </head>
 <body>
@@ -76,15 +82,19 @@
       <div>💻 電腦：<b>↑ ↓ 或 W S</b> 上下移動，空白鍵開始</div>
       <div>📱 平板：<b>手指按住畫面拖曳</b>，Conie 跟著移動</div>
       <div class="sub">閃開烏雲⛈️碎片🪵禿鷹🦅，撿 🪙🛡️⭐　Ｍ鍵靜音</div>
+      <div class="sub">🎯 目標：吹到非洲即通關；<b>通關後解鎖 🌏 無盡環遊世界模式</b></div>
     </div>
     <div class="stats hiddenEl" id="menuBest">🏆 最佳分數：<b id="menuBestN">0</b></div>
+    <div class="unlockBadge hiddenEl" id="menuUnlock">🌏 已解鎖無盡環遊世界！世界越轉越快，挑戰最高分　🏅 <b id="menuEndlessN">0</b></div>
     <button class="btn" id="startBtn">開始被吹飛 🚀</button>
+    <button class="btn btn2 hiddenEl" id="endlessBtn">🌏 無盡環遊世界</button>
   </div>
   <div id="endOv" class="ov hidden">
     <h1 id="endTitle"></h1>
     <p id="endText"></p>
     <div class="stats"><span>🪙 <b id="endCoins">0</b></span><span>分數 <b id="endScore">0</b></span><span>🏆 最佳 <b id="endBest">0</b></span></div>
     <button class="btn" id="againBtn">再玩一次 🔁</button>
+    <button class="btn btn2 hiddenEl" id="endEndlessBtn">🌏 挑戰無盡模式</button>
   </div>
   <button id="muteBtn" title="靜音">🔊</button>
 </div>
@@ -214,9 +224,15 @@ const endScore = document.getElementById('endScore');
 const endBest = document.getElementById('endBest');
 const menuBest = document.getElementById('menuBest');
 const menuBestN = document.getElementById('menuBestN');
+const menuUnlock = document.getElementById('menuUnlock');
+const menuEndlessN = document.getElementById('menuEndlessN');
 const startBtn = document.getElementById('startBtn');
+const endlessBtn = document.getElementById('endlessBtn');
+const endEndlessBtn = document.getElementById('endEndlessBtn');
 const againBtn = document.getElementById('againBtn');
 const muteBtn = document.getElementById('muteBtn');
+const barTW = document.getElementById('barTW');
+const barAF = document.getElementById('barAF');
 
 // ---------- 輸入：鍵盤 + 觸控/滑鼠拖曳 ----------
 const input = { up:false, down:false
@@ -255,6 +271,7 @@ for(const ev of ['touchstart','touchmove']) canvas.addEventListener(ev, e => e.p
 
 // ---------- 遊戲狀態 ----------
 const GOAL = 30000;                  // 抵達非洲需要的距離
+const LAP_LEN = 15000;               // v4：無盡模式每圈距離（生態循環一輪，約 40 秒）
 let state = 'menu';                  // menu | play | won | dead | end
 let endReady = false;
 let t = 0;                           // 全域動畫時間
@@ -263,6 +280,11 @@ let invuln = 0, combo = 0, comboT = 0;
 let shake = 0, freeze = 0, flash = 0, redFlash = 0;
 let endTimer = 0, endWon = false;
 let best = parseInt(localStorage.getItem('conie_africa_best') || '0', 10) || 0;
+// v4：無盡環遊世界模式
+let mode = 'journey';                 // journey（冒險之旅）| endless（無盡環遊）
+let lap = 0;                          // 環遊世界圈數
+let cleared = localStorage.getItem('conie_africa_cleared') === '1';
+let endlessBest = parseInt(localStorage.getItem('conie_africa_endless_best') || '0', 10) || 0;
 
 const P = { x: 210, y: GAME_H / 2, vy: 0, r: 22, hitR: 14, sx: 1, sy: 1, rot: 0, shield: false, star: 0 };
 
@@ -303,8 +325,12 @@ for(let i = 0; i < 12; i++) windLines.push({ x: Math.random() * GAME_W, y: Math.
 initClouds();
 
 // ---------- 進度與速度 ----------
-function progress(){ return clamp(dist / GOAL, 0, 1); }
-function scrollSpeed(){ return 240 + progress() * 290; }
+function progress(){ return clamp(dist / GOAL, 0, 1); }          // journey：抵達非洲 0→1
+// v4：世界生態循環進度（無盡模式每 GOAL 距離循環一次生態，讓天空/地面持續變化）
+function worldP(){ return mode === 'endless' ? (dist % LAP_LEN) / LAP_LEN : progress(); }
+// v4：難度值——journey 就是 progress；endless 隨圈數與段落持續攀升（最高 1.5）
+function difficulty(){ return mode === 'endless' ? clamp(0.42 + lap * 0.16 + worldP() * 0.22, 0, 1.5) : progress(); }
+function scrollSpeed(){ return 240 + difficulty() * 290; }
 
 // ---------- 粒子 ----------
 function burst(x, y, color, n, speed, grav){
@@ -369,7 +395,7 @@ function pickKind(p){
   return r < 0.26 ? 'vulture' : (r < 0.5 ? 'debris' : (r < 0.68 ? 'thunder' : 'cloud'));
 }
 function spawnObstacle(){
-  const p = progress();
+  const p = difficulty();
   // 轉折：中後期偶爾出現「烏雲牆」，留一個缺口
   if(p > 0.5 && Math.random() < 0.12){ spawnWall(); return; }
   const kind = pickKind(p);
@@ -387,7 +413,7 @@ function spawnObstacle(){
 }
 function spawnWall(){
   const gapY = rand(90, GAME_H - 150);
-  const gapH = lerp(220, 165, progress());
+  const gapH = lerp(220, 165, clamp(difficulty(), 0, 1));
   for(let y = 46; y < GAME_H - 60; y += 74){
     if(y > gapY - gapH / 2 && y < gapY + gapH / 2) continue;
     obstacles.push({ kind: 'cloud', x: GAME_W + 60 + rand(-8, 8), y, r: 34, wob: rand(0, TAU), wobSp: 1.6, sp: 0 });
@@ -417,10 +443,14 @@ function resetGame(){
   obstacles = []; coinsList = []; hearts = []; parts = []; floats = [];
   pows = []; powT = 8; powIdx = 0; playT = 0; finale = false;
   banner = null;
+  lap = 0;                                    // v4：重置環遊圈數
   spawnT = 1.4; coinT = 0.8; heartT = 0;
   P.y = GAME_H / 2; P.vy = 0; P.sx = 1; P.sy = 1; P.rot = 0; P.shield = false; P.star = 0;
   milestones = makeMilestones();
   initClouds();
+  // v4：依模式設定進度條標籤
+  if(mode === 'endless'){ barTW.textContent = '🌏 第1圈'; barAF.textContent = '越轉越快'; }
+  else { barTW.textContent = '🇹🇼 台灣'; barAF.textContent = '非洲 🌍'; }
   updateHud(true);
 }
 
@@ -428,7 +458,7 @@ function resetGame(){
 function updateHud(force){
   heartsEl.textContent = '❤️'.repeat(lives) + '🖤'.repeat(Math.max(0, 3 - lives));
   coinNEl.textContent = coins;
-  const pct = (progress() * 100).toFixed(1) + '%';
+  const pct = (worldP() * 100).toFixed(1) + '%';
   barFill.style.width = pct;
   barIcon.style.left = pct;
   if(force) scoreNEl.textContent = Math.round(dispScore);
@@ -474,8 +504,8 @@ function updatePlay(dt){
   score += scrollSpeed() * dt / 60 * (finale ? 2 : 1);   // 距離分（終盤 x2）
   if(invuln > 0) invuln -= dt;
   if(comboT > 0){ comboT -= dt; if(comboT <= 0) combo = 0; }
-  // v2：最後衝刺（82% 起）
-  if(!finale && p >= 0.82){
+  // v2：最後衝刺（82% 起，僅冒險之旅）
+  if(mode === 'journey' && !finale && p >= 0.82){
     finale = true;
     banner = { txt: '⚡ 最後衝刺！分數 x2', t: 0 };
     sfx.milestone(); shake = 5;
@@ -515,7 +545,7 @@ function updatePlay(dt){
   spawnT -= dt;
   if(spawnT <= 0){
     spawnObstacle();
-    spawnT = Math.max(0.4, 1.2 - p * 0.72) * rand(0.75, 1.2);
+    spawnT = Math.max(0.4, 1.2 - difficulty() * 0.72) * rand(0.75, 1.2);
   }
   coinT -= dt;
   if(coinT <= 0){ spawnCoins(); coinT = finale ? rand(0.9, 1.6) : rand(1.7, 3.2); }
@@ -650,22 +680,40 @@ function updatePlay(dt){
     }
   }
 
-  // --- 里程碑 ---
-  for(const m of milestones){
-    if(!m.done && p >= m.p){
-      m.done = true;
-      banner = { txt: m.txt, t: 0 };
-      sfx.milestone();
-      burst(GAME_W / 2, GAME_H * 0.3, '#fff', 16, 260, 100);
+  // --- 里程碑（僅冒險之旅）---
+  if(mode === 'journey'){
+    for(const m of milestones){
+      if(!m.done && p >= m.p){
+        m.done = true;
+        banner = { txt: m.txt, t: 0 };
+        sfx.milestone();
+        burst(GAME_W / 2, GAME_H * 0.3, '#fff', 16, 260, 100);
+      }
     }
   }
 
-  // --- 抵達非洲 ---
-  if(dist >= GOAL){
-    state = 'won'; endTimer = 0;
-    shake = 6;
-    sfx.win();
-    banner = { txt: '🌍 非洲到了！', t: 0 };
+  // --- 抵達非洲（冒險之旅） / 環遊世界圈數（無盡模式）---
+  if(mode === 'journey'){
+    if(dist >= GOAL){
+      state = 'won'; endTimer = 0;
+      shake = 6;
+      sfx.win();
+      banner = { txt: '🌍 非洲到了！', t: 0 };
+    }
+  } else {
+    const curLap = Math.floor(dist / LAP_LEN);
+    if(curLap > lap){
+      lap = curLap;
+      const bonus = 400 * lap;
+      score += bonus;
+      banner = { txt: '🌏 環遊世界 第' + lap + ' 圈！+' + bonus, t: 0 };
+      addFloat(P.x, P.y - 52, '+' + bonus, '#ffe08a', 24);
+      sfx.milestone(); shake = 6; flash = 0.12;
+      confetti();
+      if(lives < 3) lives++;                 // 每完成一圈回一顆心當獎勵
+      barTW.textContent = '🌏 第' + (lap + 1) + '圈';
+      updateHud();
+    }
   }
 }
 
@@ -721,7 +769,7 @@ function stageWeights(p){
 // v3：天空/太陽漸層快取——進度量化 150 格，跨格才重建（原本每幀重建）
 const skyCache = { key: -1, g: null, sg: null, sy: 0 };
 function drawBackground(){
-  const p = progress();
+  const p = worldP();
   const key = Math.round(p * 150);
   if(key !== skyCache.key){
     skyCache.key = key;
@@ -795,7 +843,7 @@ function moveClouds(dt, speedMul){
 }
 
 function drawGround(){
-  const p = progress();
+  const p = worldP();
   const c = skyAt(p);
   const w = stageWeights(p);
   const gy = GAME_H - 40;
@@ -858,9 +906,9 @@ function drawLandmarks(){
     ctx.fillRect(x101 - 3, gy - 30 - 9 * 22 - 26, 6, 30);
     ctx.fillRect(x101 - 22, gy - 30, 44, 30);
   }
-  // 非洲：金合歡樹 + 長頸鹿剪影（接近終點時迎接）
+  // 非洲：金合歡樹 + 長頸鹿剪影（接近終點時迎接；無盡模式不顯示終點裝飾）
   const remain = GOAL - dist;
-  if(remain < 3200){
+  if(mode === 'journey' && remain < 3200 && remain > -300){
     const gy = GAME_H - 40;
     const ax = GAME_W * 0.72 + remain * 0.3;
     ctx.fillStyle = 'rgba(60,45,20,0.75)';
@@ -1230,7 +1278,7 @@ function draw(){
   drawPows();
   drawObstacles();
   if(!(state === 'dead' && P.y > GAME_H + 60)) drawPlayer();
-  drawCloudLayer(2, progress());   // 最近的前景雲，蓋在角色前增加深度
+  drawCloudLayer(2, worldP());   // 最近的前景雲，蓋在角色前增加深度
   drawParts();
   drawFloats();
   ctx.restore();
@@ -1298,7 +1346,7 @@ function update(dt){
   dispScore += (score - dispScore) * Math.min(1, 8 * dt);
   if(state === 'play'){
     scoreNEl.textContent = Math.round(dispScore);
-    const pct = (progress() * 100).toFixed(1) + '%';
+    const pct = (worldP() * 100).toFixed(1) + '%';
     barFill.style.width = pct;
     barIcon.style.left = pct;
   }
@@ -1325,22 +1373,35 @@ function showEnd(won){
   endWon = won;
   state = 'end';
   score = Math.round(score);
-  if(score > best){ best = score; localStorage.setItem('conie_africa_best', String(best)); }
-  if(won){
-    endTitle.textContent = '🌍 咚！Conie 被吹到了非洲！';
-    endText.innerHTML = '巴威颱風把 Conie 一路從台灣吹過印度洋、吹過撒哈拉，<br>最後「咻——」一聲降落在非洲大草原，鍋蓋頭都吹歪了 🥢💨<br>長頸鹿都跑來看她了！恭喜完成「Conie 世界巡迴（被迫版）」！';
+  if(mode === 'endless'){
+    // v4：無盡模式——分數獨立記錄於 endlessBest
+    if(score > endlessBest){ endlessBest = score; localStorage.setItem('conie_africa_endless_best', String(endlessBest)); }
+    endTitle.textContent = '🌏 環遊世界 · 撐了 ' + lap + ' 圈';
+    endText.innerHTML = 'Conie 這趟被颱風吹著環遊世界 <b>' + lap + '</b> 圈！世界越轉越快，<br>' +
+      (lap >= 3 ? '你已經是被颱風吹遍全球的高手了 🌪️🏆<br>' : '多撿護盾🛡️與無敵星⭐，就能轉得更久！<br>') +
+      '再挑戰一次，刷新你的環遊世界紀錄！';
   } else {
-    endTitle.textContent = '💥 Conie 被吹得暈頭轉向…';
-    endText.innerHTML = '風力太強，Conie 這次沒撐到非洲。<br>沒關係，再挑戰一次！閃過烏雲、碎片和閃電，<br>小心會追人的禿鷹，把她安全吹到非洲吧！';
+    if(score > best){ best = score; localStorage.setItem('conie_africa_best', String(best)); }
+    if(won){
+      if(!cleared){ cleared = true; localStorage.setItem('conie_africa_cleared', '1'); }
+      endTitle.textContent = '🌍 咚！Conie 被吹到了非洲！';
+      endText.innerHTML = '巴威颱風把 Conie 一路從台灣吹過印度洋、吹過撒哈拉，<br>最後「咻——」一聲降落在非洲大草原，鍋蓋頭都吹歪了 🥢💨<br>🎉 <b>解鎖 🌏 無盡環遊世界模式！</b>試試看你能環遊幾圈！';
+    } else {
+      endTitle.textContent = '💥 Conie 被吹得暈頭轉向…';
+      endText.innerHTML = '風力太強，Conie 這次沒撐到非洲。<br>沒關係，再挑戰一次！閃過烏雲、碎片和閃電，<br>小心會追人的禿鷹，把她安全吹到非洲吧！';
+    }
   }
   endCoins.textContent = coins;
   endScore.textContent = score;
-  endBest.textContent = best;
+  endBest.textContent = mode === 'endless' ? endlessBest : best;
+  // v4：解鎖後在結束畫面提供無盡模式入口
+  endEndlessBtn.classList.toggle('hiddenEl', !cleared);
   endOv.classList.remove('hidden');
 }
 
 // ---------- 按鈕 ----------
-function startGame(){
+function startGame(m){
+  if(m) mode = m;                       // 指定模式；再玩一次沿用當前 mode
   sfx.click(); sfx.whoosh();
   menuOv.classList.add('hidden');
   endOv.classList.add('hidden');
@@ -1349,8 +1410,10 @@ function startGame(){
   resetGame();
   state = 'play';
 }
-startBtn.addEventListener('click', startGame);
-againBtn.addEventListener('click', startGame);   // <1 秒立即重玩
+startBtn.addEventListener('click', () => startGame('journey'));
+endlessBtn.addEventListener('click', () => startGame('endless'));
+endEndlessBtn.addEventListener('click', () => startGame('endless'));
+againBtn.addEventListener('click', () => startGame());   // 沿用當前模式，<1 秒立即重玩
 
 function toggleMute(){
   muted = !muted;
@@ -1365,6 +1428,12 @@ muteBtn.textContent = muted ? '🔇' : '🔊';
 if(best > 0){
   menuBest.classList.remove('hiddenEl');
   menuBestN.textContent = best;
+}
+// v4：已通關→顯示無盡環遊世界入口與紀錄
+if(cleared){
+  endlessBtn.classList.remove('hiddenEl');
+  menuUnlock.classList.remove('hiddenEl');
+  menuEndlessN.textContent = endlessBest;
 }
 
 // ---------- 啟動 ----------

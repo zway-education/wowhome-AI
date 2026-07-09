@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -315,8 +315,8 @@ addEventListener('keydown', e => {
   keys[c] = true;
   if(e.repeat) return;
   if(c === 'KeyM'){ toggleMute(); return; }
-  if(stateName === 'title' && (c === 'Enter' || c === 'Space')) startGame();
-  else if(stateName === 'over' && (c === 'Enter' || c === 'Space' || c === 'KeyR') && overT > 0.4) startGame();
+  if(stateName === 'title' && (c === 'Enter' || c === 'Space')) startGame('normal');
+  else if(stateName === 'over' && (c === 'Enter' || c === 'Space' || c === 'KeyR') && overT > 0.4) startGame(mode);
 });
 addEventListener('keyup', e => { keys[e.code] = false; });
 
@@ -420,6 +420,12 @@ let stateT = 0, T = 0;
 let shake = 0, freeze = 0;
 let score = 0, scoreShow = 0, best = 0;
 try{ best = parseInt(localStorage.getItem('jojo_best') || '0', 10) || 0; }catch(e){}
+/* v4 困難模式「黃金狂潮」：達成單場 300 分（黃金體驗）後解鎖，獨立紀錄 */
+let mode = 'normal';
+let cleared = false;
+try{ cleared = localStorage.getItem('jojo_cleared') === '1'; }catch(e){}
+let bestHard = 0;
+try{ bestHard = parseInt(localStorage.getItem('jojo_best_hard') || '0', 10) || 0; }catch(e){}
 let lives = 3, lifeFlash = 0;
 let combo = 0, comboFlash = 0;
 let elapsed = 0, spawnTimer = 0;
@@ -447,7 +453,8 @@ const PANTS_DARK = ['#1d8f8d', '#2fa06f', '#a87a0a', '#8a1f52', '#6b48b8'];
 
 const player = { x: GAME_W / 2, tx: GAME_W / 2, lvl: 1, sx: 1, sy: 1, hurtT: 0, happyT: 0, starT: 0 };
 
-function startGame(){
+function startGame(m){
+  mode = (m === 'hard') ? 'hard' : 'normal';
   score = 0; scoreShow = 0; lives = 3; combo = 0;
   elapsed = 0; spawnTimer = 0; newBest = false;
   fever = 0; feverT = 0; feverCount = 0;
@@ -462,8 +469,19 @@ function startGame(){
   sfx.ora();
 }
 function endGame(){
-  if(score > best){ best = score; newBest = true;
-    try{ localStorage.setItem('jojo_best', String(best)); }catch(e){}
+  if(mode === 'hard'){
+    if(score > bestHard){ bestHard = score; newBest = true;
+      try{ localStorage.setItem('jojo_best_hard', String(bestHard)); }catch(e){}
+    }
+  }else{
+    if(score > best){ best = score; newBest = true;
+      try{ localStorage.setItem('jojo_best', String(best)); }catch(e){}
+    }
+  }
+  /* 達成黃金體驗 → 解鎖困難模式 */
+  if(score >= 300 && !cleared){
+    cleared = true;
+    try{ localStorage.setItem('jojo_cleared', '1'); }catch(e){}
   }
   stateName = 'over'; stateT = 0; overT = 0;
   sfx.lose();
@@ -477,10 +495,12 @@ function toTitle(){
 /* ===== 生成與難度曲線 ===== */
 function spawnItem(){
   const t = elapsed;
+  const hard = mode === 'hard';
   const roll = Math.random();
   const jojoChance = player.lvl < MAX_LVL ? 0.07 : 0.035;
-  /* 開場 8 秒安全學習期：零邪箭；之後隨時間緩升 */
-  const badChance = t < 8 ? 0 : Math.min(0.36, 0.10 + t * 0.0028);
+  /* 安全學習期：普通 8 秒、困難 2.5 秒；之後邪箭比例隨時間緩升（困難更兇） */
+  const safe = hard ? 2.5 : 8;
+  const badChance = t < safe ? 0 : Math.min(hard ? 0.5 : 0.36, (hard ? 0.20 : 0.10) + t * (hard ? 0.004 : 0.0028));
   let type = 'gold';
   if(roll < jojoChance) type = 'jojo';
   else if(roll < jojoChance + badChance) type = 'bad';
@@ -488,7 +508,7 @@ function spawnItem(){
   items.push({
     x: 40 + Math.random() * (GAME_W - 80),
     y: -30,
-    vy: Math.min(620, 160 + t * 3.8) + Math.random() * 60,
+    vy: Math.min(hard ? 780 : 620, (hard ? 220 : 160) + t * (hard ? 4.9 : 3.8)) + Math.random() * 60,
     rot: (Math.random() - 0.5) * 0.6,
     vr: (Math.random() - 0.5) * 2.2,
     type, trailT: 0
@@ -607,10 +627,11 @@ function playUpdate(dt){
       feverT -= dt;
       if(feverT <= 0){ feverT = 0; addFloater(player.x, FEET_Y - 200, '時間結束！', '#3ddad7', 22); }
     }
-    /* 生成（間隔隨時間縮短；210 秒後終盤高壓，確保 4 分鐘內收尾） */
+    /* 生成（間隔隨時間縮短；210 秒後終盤高壓，確保 4 分鐘內收尾；困難模式更密集） */
+    const hard = mode === 'hard';
     spawnTimer -= dt;
     if(spawnTimer <= 0){
-      spawnTimer = Math.max(elapsed > 210 ? 0.24 : 0.30, 1.15 - elapsed * 0.0075)
+      spawnTimer = Math.max(hard ? 0.20 : (elapsed > 210 ? 0.24 : 0.30), (hard ? 0.95 : 1.15) - elapsed * (hard ? 0.009 : 0.0075))
                    * (feverT > 0 ? 0.55 : 1);
       spawnItem();
     }
@@ -621,7 +642,7 @@ function playUpdate(dt){
     }else{
       rainT -= dt;
       if(rainT <= 0 && feverT <= 0){
-        rainT = stage >= 3 ? 12 + Math.random() * 5 : 20 + Math.random() * 8;
+        rainT = (hard ? (stage >= 3 ? 8 : 12) : (stage >= 3 ? 12 : 20)) + Math.random() * (hard ? 4 : (stage >= 3 ? 5 : 8));
         rainBanner = 1.3;
         addFloater(GAME_W / 2, 250, 'ゴゴゴゴ… 箭雨來襲！', '#e8478b', 28);
         shake = Math.max(shake, 5);
@@ -1063,6 +1084,16 @@ function drawHUD(){
   ctx.strokeText(STAGE_INFO[stage][0], GAME_W / 2, 32);
   ctx.fillStyle = '#ffe08a';
   ctx.fillText(STAGE_INFO[stage][0], GAME_W / 2, 32);
+  /* 困難模式徽章 */
+  if(mode === 'hard'){
+    rr(8, 46, 62, 20, 6);
+    ctx.fillStyle = 'rgba(180,30,60,.88)'; ctx.fill();
+    ctx.strokeStyle = '#ff6a8a'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.font = 'bold 12px ' + FONT_HUD;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff'; ctx.fillText('困難模式', 39, 57);
+    ctx.textBaseline = 'alphabetic';
+  }
 }
 function bigText(txt, y, size, color, scaleK, skew){
   ctx.save();
@@ -1104,25 +1135,38 @@ function titleDraw(){
   ctx.fillText('接金箭＝得分，虹色 JOJO 星＝尻力覺醒', GAME_W / 2, 292);
   ctx.fillText('紫色邪箭＝扣心，漏接金箭也扣心（共 3 顆）', GAME_W / 2, 316);
   ctx.fillText('接滿 ORA 量表 → ORA ORA 時間，分數×2！', GAME_W / 2, 340);
+  /* v4 困難模式解鎖公告 */
+  ctx.font = 'bold 15px ' + FONT;
+  ctx.fillStyle = cleared ? '#f4c430' : 'rgba(255,246,232,.7)';
+  ctx.fillText(cleared ? '★ 困難模式「黃金狂潮」已解鎖！' : '單場達成黃金體驗（300 分）解鎖困難模式', GAME_W / 2, 366);
   if(stateT > 0.35){
-    drawButton(GAME_W / 2 - 110, 380, 220, 58, '開始', startGame, true);
+    if(cleared){
+      drawButton(GAME_W / 2 - 158, 384, 150, 52, '普通開始', () => startGame('normal'), true);
+      drawButton(GAME_W / 2 + 8, 384, 150, 52, '困難模式', () => startGame('hard'), false);
+    }else{
+      drawButton(GAME_W / 2 - 110, 384, 220, 52, '開始', () => startGame('normal'), true);
+    }
   }
-  /* 操作說明：兩行＋手繪裝置圖示（電腦／平板） */
-  rr(GAME_W / 2 - 210, 462, 420, 62, 10);
+  /* 操作說明：電腦／平板＋困難模式提示（手繪裝置圖示） */
+  rr(GAME_W / 2 - 215, 458, 430, 86, 10);
   ctx.fillStyle = 'rgba(20,5,35,.6)'; ctx.fill();
   ctx.strokeStyle = 'rgba(244,196,48,.55)'; ctx.lineWidth = 1.5; ctx.stroke();
-  drawMonitorIcon(GAME_W / 2 - 186, 481);
-  drawTabletIcon(GAME_W / 2 - 186, 507);
+  drawMonitorIcon(GAME_W / 2 - 191, 479);
+  drawTabletIcon(GAME_W / 2 - 191, 505);
   ctx.font = 'bold 15px ' + FONT;
   ctx.textAlign = 'left';
   ctx.fillStyle = '#ffe9c4';
-  ctx.fillText('電腦：← → 或 A D 移動，也可用滑鼠', GAME_W / 2 - 168, 486);
-  ctx.fillText('平板：手指左右拖曳（按 M 或右上鈕靜音）', GAME_W / 2 - 168, 512);
+  ctx.fillText('電腦：← → 或 A D 移動，也可用滑鼠', GAME_W / 2 - 173, 484);
+  ctx.fillText('平板：手指左右拖曳（按 M 或右上鈕靜音）', GAME_W / 2 - 173, 510);
+  ctx.fillStyle = '#ff9ab5';
+  ctx.font = '14px ' + FONT;
+  ctx.fillText('困難模式：邪箭又快又多、箭雨更兇，分數獨立紀錄！', GAME_W / 2 - 191, 534);
   ctx.textAlign = 'center';
-  if(best > 0){
+  const showBest = best > 0 || bestHard > 0;
+  if(showBest){
     ctx.font = '14px ' + FONT;
     ctx.fillStyle = '#ffe08a';
-    ctx.fillText('最佳紀錄：' + best, GAME_W / 2, 546);
+    ctx.fillText('最佳：普通 ' + best + (cleared ? ' · 困難 ' + bestHard : ''), GAME_W / 2, 564);
   }
   drawMuteBtn();
 }
@@ -1200,32 +1244,39 @@ function overDraw(){
   ctx.fillStyle = 'rgba(42,20,64,.95)'; ctx.fill();
   ctx.strokeStyle = '#f4c430'; ctx.lineWidth = 3; ctx.stroke();
   ctx.textAlign = 'center';
+  const shownBest = mode === 'hard' ? bestHard : best;
   ctx.font = 'bold 34px ' + FONT;
   ctx.fillStyle = '#f4c430';
   ctx.fillText(score >= 300 ? '黃金體驗！' : '挑戰結束！', 0, -96);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = 'rgba(255,246,232,.75)';
-  ctx.fillText(score >= 300 ? '「GOLD EXPERIENCE！」' : '「やれやれだぜ…」', 0, -62);
+  ctx.fillText((mode === 'hard' ? '困難模式 · ' : '') + (score >= 300 ? '「GOLD EXPERIENCE！」' : '「やれやれだぜ…」'), 0, -62);
   ctx.font = 'bold 30px ' + FONT;
   ctx.fillStyle = '#ffe08a';
   ctx.fillText('分數　' + score, 0, -8);
   ctx.font = '18px ' + FONT;
   ctx.fillStyle = newBest ? '#3ddad7' : 'rgba(255,255,255,.7)';
-  ctx.fillText(newBest ? '新紀錄！' : '最佳紀錄　' + best, 0, 28);
+  ctx.fillText(newBest ? '新紀錄！' : '最佳紀錄　' + shownBest, 0, 28);
   ctx.font = '16px ' + FONT;
   ctx.fillStyle = 'rgba(255,255,255,.65)';
   ctx.fillText('尻力最終等級 LV ' + player.lvl + ' · ORA ORA 時間 ×' + feverCount, 0, 58);
   ctx.fillText('存活 ' + Math.round(elapsed) + ' 秒 · 到達 ' + STAGE_INFO[stage][0], 0, 84);
+  if(mode === 'normal' && score >= 300){
+    ctx.font = 'bold 15px ' + FONT;
+    ctx.fillStyle = '#3ddad7';
+    ctx.fillText('★ 困難模式已解鎖！回主選單挑戰', 0, 114);
+  }
   ctx.restore();
   if(overT > 0.3){
-    drawButton(GAME_W / 2 - 110, GAME_H / 2 + 130, 220, 54, '再玩一次', startGame, true);
+    drawButton(GAME_W / 2 - 110, GAME_H / 2 + 130, 220, 54, '再玩一次', () => startGame(mode), true);
     drawButton(GAME_W / 2 - 80, GAME_H / 2 + 194, 160, 48, '回主選單', toTitle, false);
   }
   drawMuteBtn();
 }
 
 /* 測試掛鉤（自動化冒煙測試用，不影響遊戲） */
-window.__smoke = () => ({ scene: stateName, x: player.x, tx: player.tx, lives, score, fever, elapsed, stage, overT });
+window.__smoke = () => ({ scene: stateName, mode, x: player.x, tx: player.tx, lives, score, fever, feverT, elapsed, stage, lvl: player.lvl, cleared, bestHard, items: items.length, overT });
+window.__startMode = m => startGame(m); // 測試專用：直接進入指定模式
 window.__test = { hit(){ if(stateName === 'play') loseLife(player.x, 300, '測試'); } };
 
 /* ===== 主迴圈：固定時間步進 60Hz ===== */

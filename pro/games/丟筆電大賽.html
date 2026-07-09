@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -81,6 +81,15 @@ function roundRect(x, y, w, h, r) {
   ctx.arcTo(x, y + h, x, y, r);
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
+}
+// v4：逐字換行（中文），需先設定 font 與 textAlign='left'
+function wrapText(text, x, y, maxW, lh) {
+  let line = '';
+  for (const ch of text) {
+    if (line && ctx.measureText(line + ch).width > maxW) { ctx.fillText(line, x, y); line = ch; y += lh; }
+    else line += ch;
+  }
+  if (line) ctx.fillText(line, x, y);
 }
 
 // ---------- 音效（Web Audio 合成，零音檔）----------
@@ -373,10 +382,16 @@ const BIN_FRONT_G = (() => { const g = ctx.createLinearGradient(0, 0, bin.w, 0);
   g.addColorStop(0, PAL.binDark); g.addColorStop(0.35, PAL.binBody); g.addColorStop(1, PAL.binDark); return g; })();
 function mouthY() { return bin.y + bin.h * 0.12; }
 function updateBin(dt, hits) {
-  // 難度爬升：命中越多，桶子擺動幅度與速度越大（前 2 球不動，先教學）
-  const lv = Math.max(0, hits - 2);
-  bin.oscA = Math.min(150, lv * 22);
-  bin.oscS = Math.min(2.2, 0.9 + lv * 0.16);
+  if (curLevel >= 0 && state === playState) {
+    // v4：關卡模式——固定套用該關的擺幅與速度（開場即為關卡難度）
+    bin.oscA = lvl.oscMax;
+    bin.oscS = lvl.oscSpeed;
+  } else {
+    // 經典模式難度爬升：命中越多，桶子擺動幅度與速度越大（前 2 球不動，先教學）
+    const lv = Math.max(0, hits - 2);
+    bin.oscA = Math.min(150, lv * 22);
+    bin.oscS = Math.min(2.2, 0.9 + lv * 0.16);
+  }
   bin.t += dt * bin.oscS;
   bin.x = bin.baseX + Math.sin(bin.t) * bin.oscA;
   bin.x = clamp(bin.x, 430, GAME_W - bin.w - 20);
@@ -676,6 +691,27 @@ let newBest = false;
 let lastTickSec = -1;
 let respawnT = 0;
 
+// ---------- v4：關卡挑戰系統 ----------
+// 保留「經典 75 秒」模式；另加 6 關卡挑戰，每關引入新機制、各自三星評價存 localStorage。
+const LEVELS = [
+  { name: '新手回收',     time: 45, oscMax: 55,  oscSpeed: 0.95, wind: 0,   binX: 700, beam: null, star: [100, 200, 320], tip: '桶子輕輕晃，先抓到甩筆電的手感' },
+  { name: '搖擺回收桶',   time: 55, oscMax: 150, oscSpeed: 1.35, wind: 0,   binX: 690, beam: null, star: [160, 320, 500], tip: '桶子晃很大，抓它經過中間再丟' },
+  { name: '辦公室陣風',   time: 55, oscMax: 90,  oscSpeed: 1.1,  wind: 150, binX: 700, beam: null, star: [180, 360, 540], tip: '側風把筆電吹偏，往上風處補一點' },
+  { name: '遠距投擲',     time: 55, oscMax: 70,  oscSpeed: 1.1,  wind: 0,   binX: 820, beam: null, star: [180, 360, 560], tip: '桶子退到最遠，力道要更大' },
+  { name: '吊燈橫梁',     time: 60, oscMax: 110, oscSpeed: 1.2,  wind: 0,   binX: 720, beam: { x: 470, y: 250, w: 180, h: 16 }, star: [200, 400, 600], tip: '橫梁擋路，把筆電拋高越過去' },
+  { name: '狂風亂桶·大師', time: 70, oscMax: 150, oscSpeed: 1.5,  wind: 170, binX: 720, beam: { x: 470, y: 250, w: 180, h: 16 }, star: [260, 520, 780], tip: '風＋亂桶＋橫梁全上，證明你是丟筆電大師' }
+];
+const LVL_CLASSIC = { name: '經典 75 秒', oscMax: 150, oscSpeed: 1, wind: 0, binX: 720, beam: null, star: OVER_STARS };
+let curLevel = -1;                    // -1 = 經典模式；0..5 = 關卡
+let lvl = LVL_CLASSIC;                // 目前生效的關卡設定
+let roundTime = ROUND_TIME;          // 本局總秒數（依模式而定）
+let windCur = 0;                     // 本幀側風值（陣風）
+let lastStars = 0;                   // 本關取得星數
+function starKey(i) { return '丟筆電大賽.lv' + i; }
+function getStars(i) { try { return parseInt(localStorage.getItem(starKey(i)) || '0', 10) || 0; } catch (e) { return 0; } }
+function saveStars(i, s) { try { if (s > getStars(i)) localStorage.setItem(starKey(i), String(s)); } catch (e) {} }
+function levelUnlocked(i) { return i === 0 || getStars(i - 1) >= 1; }
+
 // ---------- 狀態機 ----------
 let state = null;
 function setState(s) { state = s; if (s.enter) s.enter(); }
@@ -733,37 +769,120 @@ const titleState = {
     ctx.font = '20px sans-serif';
     ctx.fillText('75 秒內把筆電甩進回收桶，穿金環、丟金色筆電賺加倍！', GAME_W / 2, 208);
     ctx.fillStyle = PAL.accent;
-    ctx.font = 'bold 17px sans-serif';
-    ctx.fillText('📱 平板：手指按住筆電，往回收桶方向快速甩出', GAME_W / 2, 238);
-    ctx.fillText('💻 電腦：← → 瞄準，按住空白鍵蓄力、放開投擲', GAME_W / 2, 264);
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('📱 平板：手指按住筆電，往回收桶方向快速甩出', GAME_W / 2, 233);
+    ctx.fillText('💻 電腦：← → 瞄準，按住空白鍵蓄力、放開投擲', GAME_W / 2, 258);
+    // v4：關卡挑戰宣傳
+    ctx.fillStyle = PAL.good;
+    ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('🎯 新增「關卡挑戰」：6 關新機制（陣風／遠距／橫梁…）各關拚三星！', GAME_W / 2, 286);
     if (best > 0) {
       ctx.fillStyle = PAL.dim;
-      ctx.font = 'bold 16px sans-serif';
-      ctx.fillText('最佳紀錄：' + best + ' 分', GAME_W / 2, 294);
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText('經典模式最佳：' + best + ' 分', GAME_W / 2, 308);
     }
     // 開始按鈕（呼吸縮放）
-    const bw = 220, bh = 64;
+    const bw = 230, bh = 52;
     const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
     ctx.save();
     ctx.translate(GAME_W / 2, 330 + bh / 2);
     ctx.scale(pulse, pulse);
     ctx.translate(-GAME_W / 2, -(330 + bh / 2));
-    button(GAME_W / 2 - bw / 2, 330, bw, bh, '開 始', startGame, { size: 30 });
+    button(GAME_W / 2 - bw / 2, 330, bw, bh, '開始（經典 75 秒）', startGame, { size: 24 });
     ctx.restore();
+    button(GAME_W / 2 - bw / 2, 392, bw, bh, '🎯 關卡挑戰', openSelect, { size: 24, bg: PAL.good, fg: '#08331d' });
     muteButton();
   }
 };
+// v4：標題鍵盤——空白/Enter 經典開始，L 進入關卡挑戰
+titleState.onKey = function (code, down) {
+  if (!down) return;
+  if (code === 'Space' || code === 'Enter') startGame();
+  else if (code === 'KeyL') openSelect();
+};
 
 function startGame() {
+  curLevel = -1;
+  sfx.click();
+  setState(playState);
+}
+function openSelect() { sfx.click(); setState(selectState); }
+function startLevel(i) {
+  if (!levelUnlocked(i)) { sfx.miss(); return; }
+  curLevel = i;
   sfx.click();
   setState(playState);
 }
 
+// ===== 選關畫面 =====
+const selectState = {
+  enter() { this.t = 0; },
+  update(dt) { this.t += dt; updateBG(dt); updateBin(dt, 0); },
+  onKey(code, down) {
+    if (!down) return;
+    if (code === 'Escape' || code === 'Backspace') { setState(titleState); return; }
+    const d = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4, Digit6: 5 }[code];
+    if (d !== undefined) startLevel(d);
+  },
+  draw() {
+    uiButtons.length = 0;
+    drawBG();
+    ctx.fillStyle = 'rgba(10,12,24,0.5)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.accent;
+    ctx.font = 'bold 40px sans-serif';
+    ctx.fillText('關卡挑戰', GAME_W / 2, 62);
+    ctx.fillStyle = PAL.dim;
+    ctx.font = '14px sans-serif';
+    ctx.fillText('每關有新機制，通關拿星！　💻 按 1–6 選關、Esc 返回', GAME_W / 2, 88);
+    const cols = 3, cw = 270, ch = 134, gapx = 20, gapy = 16;
+    const totalW = cols * cw + (cols - 1) * gapx;
+    const x0 = (GAME_W - totalW) / 2, y0 = 106;
+    for (let i = 0; i < LEVELS.length; i++) {
+      const cxi = i % cols, cyi = Math.floor(i / cols);
+      const x = x0 + cxi * (cw + gapx), y = y0 + cyi * (ch + gapy);
+      const unlocked = levelUnlocked(i), stars = getStars(i);
+      ctx.fillStyle = unlocked ? PAL.bg1 : 'rgba(30,34,52,0.7)';
+      roundRect(x, y, cw, ch, 14); ctx.fill();
+      ctx.strokeStyle = stars === 3 ? PAL.accent : (unlocked ? PAL.line : 'rgba(80,88,120,0.5)');
+      ctx.lineWidth = stars === 3 ? 3 : 2; ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = unlocked ? PAL.accent : PAL.dim;
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText((i + 1) + '. ' + LEVELS[i].name, x + 16, y + 30);
+      ctx.fillStyle = PAL.dim;
+      ctx.font = '13px sans-serif';
+      wrapText(LEVELS[i].tip, x + 16, y + 52, cw - 32, 17);
+      for (let s = 0; s < 3; s++) {
+        ctx.fillStyle = s < stars ? PAL.accent : 'rgba(148,160,184,0.28)';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.fillText('★', x + 16 + s * 30, y + ch - 14);
+      }
+      if (unlocked) {
+        button(x + cw - 96, y + ch - 42, 80, 30, '挑 戰', () => startLevel(i), { size: 16 });
+      } else {
+        ctx.textAlign = 'right';
+        ctx.fillStyle = PAL.dim;
+        ctx.font = 'bold 14px sans-serif';
+        ctx.fillText('🔒 前關拿★解鎖', x + cw - 16, y + ch - 22);
+      }
+    }
+    button(20, GAME_H - 50, 118, 38, '← 返回', () => setState(titleState), { size: 18, bg: PAL.dim, fg: '#101018' });
+    muteButton();
+  }
+};
+
 // ===== 遊戲進行 =====
 const playState = {
   enter() {
+    // v4：套用關卡參數（curLevel<0 為經典模式）
+    lvl = curLevel >= 0 ? LEVELS[curLevel] : LVL_CLASSIC;
+    roundTime = curLevel >= 0 ? lvl.time : ROUND_TIME;
+    bin.baseX = lvl.binX;
+    windCur = 0; lastStars = 0;
     score = 0; hits = 0; throws = 0; combo = 0;
-    timeLeft = ROUND_TIME;
+    timeLeft = roundTime;
     newBest = false;
     lastTickSec = -1;
     respawnT = 0;
@@ -829,6 +948,7 @@ const playState = {
   update(dt) {
     updateBG(dt);
     updateBin(dt, hits);
+    windCur = lvl.wind ? lvl.wind * Math.sin(bgTime * 0.6) : 0;   // v4：陣風（左右擺動）
     this.bannerT += dt;
     this.hudScore += (score - this.hudScore) * (1 - Math.pow(0.001, dt));
 
@@ -904,6 +1024,7 @@ const playState = {
     // --- 投擲物理 ---
     laptop.airTime += dt;
     laptop.vy += GRAVITY * dt;
+    if (lvl.wind) laptop.vx += windCur * dt;   // v4：側風推移筆電
     laptop.x += laptop.vx * dt;
     laptop.y += laptop.vy * dt;
     laptop.rot += laptop.vrot * dt;
@@ -961,6 +1082,20 @@ const playState = {
       }
     }
 
+    // v4：橫梁障礙（吊燈橫梁關）——擋住直線路徑，必須拋高越過
+    if (lvl.beam && !laptop.inBin) {
+      const bm = lvl.beam, lr = laptop.w * 0.34;
+      if (laptop.x > bm.x - lr && laptop.x < bm.x + bm.w + lr &&
+          laptop.y > bm.y - lr && laptop.y < bm.y + bm.h + lr) {
+        if (laptop.vy > 0 && laptop.y < bm.y + bm.h * 0.5) { laptop.y = bm.y - lr; laptop.vy *= -0.4; }
+        else { laptop.y = bm.y + bm.h + lr; laptop.vy = Math.max(laptop.vy, 40); }
+        laptop.vx *= 0.6; laptop.vrot *= 0.6;
+        laptop.touchedRim = true;             // 碰梁後不算完美空心
+        sfx.thud(); shake = Math.max(shake, 3);
+        burst(laptop.x, laptop.y, '#7a5a2a', 6, 150);
+      }
+    }
+
     // 牆壁
     if (laptop.x < 20) { laptop.x = 20; laptop.vx *= -0.45; sfx.thud(); }
     if (laptop.x > GAME_W - 20) { laptop.x = GAME_W - 20; laptop.vx *= -0.45; sfx.thud(); }
@@ -991,6 +1126,7 @@ const playState = {
     ctx.save();
     ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
     drawBG();
+    if (lvl.beam) drawBeam();
     drawRing();
     drawBinShadow();
     drawBinBack();
@@ -1015,19 +1151,65 @@ const playState = {
     drawFloaters();
     ctx.restore();
     drawHUD(this);
+    if (lvl.wind) drawWindGauge();
+    if (curLevel >= 0) {   // v4：關卡名稱標籤
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PAL.good; ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('關卡 ' + (curLevel + 1) + '　' + lvl.name, 16, 90);
+    }
     muteButton();
     // 開場橫幅
     if (this.bannerT < 1.6) {
       const a = this.bannerT < 1.1 ? 1 : 1 - (this.bannerT - 1.1) / 0.5;
       ctx.globalAlpha = clamp(a, 0, 1);
       ctx.fillStyle = PAL.accent;
-      ctx.font = 'bold 34px sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('把筆電丟進回收桶！', GAME_W / 2, 200);
+      if (curLevel >= 0) {
+        ctx.font = 'bold 24px sans-serif';
+        ctx.fillText('關卡 ' + (curLevel + 1) + '：' + lvl.tip, GAME_W / 2, 200);
+      } else {
+        ctx.font = 'bold 34px sans-serif';
+        ctx.fillText('把筆電丟進回收桶！', GAME_W / 2, 200);
+      }
       ctx.globalAlpha = 1;
     }
   }
 };
+// v4：橫梁障礙繪製
+function drawBeam() {
+  const bm = lvl.beam;
+  ctx.save();
+  ctx.strokeStyle = '#3a4166'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(bm.x + 30, 0); ctx.lineTo(bm.x + 30, bm.y);
+  ctx.moveTo(bm.x + bm.w - 30, 0); ctx.lineTo(bm.x + bm.w - 30, bm.y); ctx.stroke();
+  ctx.fillStyle = '#6b7280';
+  roundRect(bm.x, bm.y, bm.w, bm.h, 4); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  roundRect(bm.x, bm.y + bm.h * 0.55, bm.w, bm.h * 0.45, 3); ctx.fill();
+  ctx.fillStyle = PAL.accent;
+  for (let i = 0; i < 5; i++) ctx.fillRect(bm.x + 14 + i * 34, bm.y + 3, 8, bm.h - 6);
+  ctx.strokeStyle = 'rgba(255,255,255,0.15)'; ctx.lineWidth = 1.5;
+  roundRect(bm.x, bm.y, bm.w, bm.h, 4); ctx.stroke();
+  ctx.restore();
+}
+// v4：陣風指示器
+function drawWindGauge() {
+  const cx = GAME_W / 2, cy = 104, w = windCur / 200;
+  const dir = w >= 0 ? 1 : -1, mag = clamp(Math.abs(w), 0.12, 1);
+  const col = Math.abs(w) > 0.55 ? PAL.bad : PAL.accent;
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.fillStyle = PAL.dim; ctx.font = 'bold 11px sans-serif';
+  ctx.fillText('風向', cx, cy - 9);
+  ctx.strokeStyle = col; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  const len = 42 * mag * dir;
+  ctx.beginPath(); ctx.moveTo(cx - len, cy); ctx.lineTo(cx + len, cy); ctx.stroke();
+  const tipx = cx + len;
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(tipx, cy); ctx.lineTo(tipx - dir * 9, cy - 6); ctx.lineTo(tipx - dir * 9, cy + 6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
 
 function throwLaptop(vx, vy) {
   laptop.vx = vx;
@@ -1081,10 +1263,17 @@ function finishThrow(scored) {
   respawnT = 0.45; // 不到 1 秒就有新筆電
 }
 function endGame() {
-  if (score > best) {
+  if (curLevel >= 0) {
+    // v4：關卡模式——依門檻計算三星並存檔（取歷史最高）
+    lastStars = LEVELS[curLevel].star.filter(s => score >= s).length;
+    newBest = lastStars > getStars(curLevel);
+    saveStars(curLevel, lastStars);
+  } else if (score > best) {
     best = score;
     newBest = true;
     try { localStorage.setItem('丟筆電大賽.best', String(best)); } catch (err) {}
+  } else {
+    newBest = false;
   }
   setState(overState);
 }
@@ -1215,7 +1404,7 @@ function drawHUD(st) {
   roundRect(GAME_W / 2 - 65, 74, 130, 6, 3);
   ctx.fill();
   ctx.fillStyle = urgent ? PAL.bad : PAL.good;
-  roundRect(GAME_W / 2 - 65, 74, 130 * clamp(timeLeft / ROUND_TIME, 0, 1), 6, 3);
+  roundRect(GAME_W / 2 - 65, 74, 130 * clamp(timeLeft / roundTime, 0, 1), 6, 3);
   ctx.fill();
   // 操作提示
   ctx.fillStyle = 'rgba(148,160,184,0.85)';
@@ -1234,7 +1423,10 @@ const overState = {
     this.confettiT = 0;
   },
   onKey(code, down) {
-    if (down && this.t > 0.5 && (code === 'Space' || code === 'Enter')) startGame();
+    if (!down || this.t <= 0.5) return;
+    if (code === 'Space' || code === 'Enter') { if (curLevel >= 0) startLevel(curLevel); else startGame(); }
+    else if (code === 'KeyN' && curLevel >= 0 && curLevel + 1 < LEVELS.length && lastStars >= 1) startLevel(curLevel + 1);
+    else if (code === 'Escape') { if (curLevel >= 0) openSelect(); else setState(titleState); }
   },
   update(dt) {
     this.t += dt;
@@ -1277,52 +1469,67 @@ const overState = {
     ctx.strokeStyle = newBest ? PAL.accent : PAL.line;
     ctx.lineWidth = 3;
     ctx.stroke();
+    const inLevel = curLevel >= 0;
+    const starT = inLevel ? LEVELS[curLevel].star : OVER_STARS;
+    const gotStars = inLevel ? lastStars : starT.filter(s => score >= s).length;
     ctx.textAlign = 'center';
     ctx.fillStyle = PAL.ink;
-    ctx.font = 'bold 32px sans-serif';
-    ctx.fillText('時間到！', GAME_W / 2, 140);
-    // v2：三星評價（逐顆彈出）
-    const gotStars = OVER_STARS.filter(s => score >= s).length;
+    ctx.font = 'bold 30px sans-serif';
+    ctx.fillText(inLevel ? ('關卡 ' + (curLevel + 1) + '：' + lvl.name) : '時間到！', GAME_W / 2, 138);
+    // 三星評價（逐顆彈出）
     for (let i = 0; i < 3; i++) {
-      const st = clamp((this.t - 0.5 - i * 0.3) / 0.3, 0, 1);
-      if (st <= 0) continue;
+      const stp = clamp((this.t - 0.5 - i * 0.3) / 0.3, 0, 1);
+      if (stp <= 0) continue;
       ctx.save();
-      ctx.translate(GAME_W / 2 - 40 + i * 40, 178);
-      ctx.scale(easeOutBack(st), easeOutBack(st));
+      ctx.translate(GAME_W / 2 - 44 + i * 44, 180);
+      ctx.scale(easeOutBack(stp), easeOutBack(stp));
       ctx.fillStyle = i < gotStars ? PAL.accent : 'rgba(148,160,184,0.3)';
-      ctx.font = 'bold 32px sans-serif';
-      ctx.fillText('★', 0, 10);
+      ctx.font = 'bold 36px sans-serif';
+      ctx.fillText('★', 0, 12);
       ctx.restore();
     }
     if (newBest) {
       const bp = 1 + Math.sin(bgTime * 6) * 0.06;
       ctx.save();
-      ctx.translate(GAME_W / 2, 212);
+      ctx.translate(GAME_W / 2, 216);
       ctx.scale(bp, bp);
       ctx.fillStyle = PAL.accent;
       ctx.font = 'bold 20px sans-serif';
-      ctx.fillText('★ 新紀錄！★', 0, 0);
+      ctx.fillText(inLevel ? '★ 星數刷新！★' : '★ 新紀錄！★', 0, 0);
       ctx.restore();
     } else {
       ctx.fillStyle = PAL.dim;
       ctx.font = '14px sans-serif';
-      ctx.fillText(gotStars < 3 ? '下一顆★需要 ' + OVER_STARS[gotStars] + ' 分' : '全星制霸！', GAME_W / 2, 212);
+      ctx.fillText(gotStars < 3 ? '下一顆★需要 ' + starT[gotStars] + ' 分' : '全星制霸！', GAME_W / 2, 216);
     }
     ctx.fillStyle = PAL.dim;
     ctx.font = 'bold 15px sans-serif';
-    ctx.fillText('得分', GAME_W / 2, 236);
+    ctx.fillText('得分', GAME_W / 2, 240);
     ctx.fillStyle = PAL.accent;
-    ctx.font = 'bold 52px sans-serif';
-    ctx.fillText(String(score), GAME_W / 2, 284);
+    ctx.font = 'bold 50px sans-serif';
+    ctx.fillText(String(score), GAME_W / 2, 286);
     ctx.fillStyle = PAL.dim;
     ctx.font = '15px sans-serif';
     const acc = throws > 0 ? Math.round(hits / throws * 100) : 0;
     ctx.fillText('命中 ' + hits + ' 球 ／ 投擲 ' + throws + ' 次（命中率 ' + acc + '%）', GAME_W / 2, 312);
-    ctx.fillStyle = PAL.ink;
-    ctx.font = 'bold 16px sans-serif';
-    ctx.fillText('最佳紀錄：' + best + ' 分', GAME_W / 2, 338);
     if (this.t > 0.5) {
-      button(GAME_W / 2 - 110, 356, 220, 54, '再玩一次', startGame, { size: 26 });
+      if (inLevel) {
+        const nxt = curLevel + 1, hasNext = nxt < LEVELS.length, canNext = hasNext && gotStars >= 1;
+        button(GAME_W / 2 - 214, 352, 132, 50, '重玩本關', () => startLevel(curLevel), { size: 20 });
+        button(GAME_W / 2 - 66, 352, 132, 50, '選關', openSelect, { size: 20, bg: PAL.dim, fg: '#101018' });
+        button(GAME_W / 2 + 82, 352, 132, 50, hasNext ? '下一關 ▶' : '已通關 🏆',
+          () => { if (canNext) startLevel(nxt); else openSelect(); },
+          { size: 20, bg: canNext ? PAL.good : PAL.dim, fg: canNext ? '#08331d' : '#101018' });
+        if (hasNext && !canNext) {
+          ctx.fillStyle = PAL.dim; ctx.font = '12px sans-serif';
+          ctx.fillText('拿 ★ 解鎖下一關', GAME_W / 2 + 148, 344);
+        }
+      } else {
+        ctx.fillStyle = PAL.ink;
+        ctx.font = 'bold 15px sans-serif';
+        ctx.fillText('最佳紀錄：' + best + ' 分', GAME_W / 2, 338);
+        button(GAME_W / 2 - 110, 356, 220, 50, '再玩一次', startGame, { size: 24 });
+      }
     }
     ctx.restore();
     muteButton();

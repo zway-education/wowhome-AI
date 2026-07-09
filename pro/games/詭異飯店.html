@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -382,6 +382,8 @@ function stickDir(who){
 /* ---------- 遊戲狀態資料 ---------- */
 const S = {
   coop: false,
+  nm: false,           // v4：惡夢模式
+  keysNeed: 2,
   time: 0,
   keysGot: 0,
   doorOpen: false,
@@ -389,8 +391,22 @@ const S = {
   hintT: 0,
   msg: '', msgT: 0
 };
-let best = null;
+let best = null, bestNM = null, unlockedNM = false;
 try{ best = JSON.parse(localStorage.getItem('pro詭異飯店_best') || 'null'); }catch(e){}
+try{ bestNM = JSON.parse(localStorage.getItem('pro詭異飯店_bestNM') || 'null'); }catch(e){}
+try{ unlockedNM = localStorage.getItem('pro詭異飯店_nm') === '1'; }catch(e){}
+let nmSelected = false;   // 標題上是否選了惡夢模式
+/* v4：挑一塊離指定點都最遠的地板（惡夢第三把鑰匙用） */
+function pickFarTile(avoid){
+  let bt = null, bd = -1;
+  for(const t of floorTiles){
+    const tx = cx(t.c), ty = cyy(t.r);
+    let mind = 1e9;
+    for(const a of avoid) mind = Math.min(mind, dist(tx,ty,a.x,a.y));
+    if(mind > bd){ bd = mind; bt = t; }
+  }
+  return bt;
+}
 
 function makePlayer(idx){
   return {
@@ -420,8 +436,9 @@ const crumbs = [];   // 單人模式：玩家一足跡，供夥伴AI跟隨
 let shake = 0, freeze = 0, redFlash = 0, scareT = 0, winkT = 0;
 let heartbeatT = 0, whisperT = 0;
 
-function resetGame(coop){
-  S.coop = coop; S.time = 0; S.keysGot = 0; S.doorOpen = false; S.over = false;
+function resetGame(coop, nm){
+  S.coop = coop; S.nm = !!nm; S.keysNeed = S.nm ? 3 : 2;
+  S.time = 0; S.keysGot = 0; S.doorOpen = false; S.over = false;
   S.hintT = 6.5; S.msg = ''; S.msgT = 0;
   players.forEach((p,i)=>{
     Object.assign(p, makePlayer(i));
@@ -429,13 +446,20 @@ function resetGame(coop){
     p.y = cyy(playerSpawn.r);
   });
   monster.x = cx(monsterSpawn.c); monster.y = cyy(monsterSpawn.r);
-  monster.awake = false; monster.wakeT = 10; monster.speed = 60;
+  monster.awake = false; monster.wakeT = S.nm ? 4 : 10; monster.speed = S.nm ? 75 : 60;
   monster.path = []; monster.pathT = 0;
   keyItems = keySpawns.map(k => ({x:cx(k.c), y:cyy(k.r), taken:false, phase:Math.random()*6}));
+  if(S.nm){   // 惡夢：第三把鑰匙藏在離出生點與其他鑰匙都最遠處
+    const avoid = [{x:cx(playerSpawn.c),y:cyy(playerSpawn.r)}, ...keyItems.map(k=>({x:k.x,y:k.y}))];
+    const t3 = pickFarTile(avoid);
+    if(t3) keyItems.push({x:cx(t3.c), y:cyy(t3.r), taken:false, phase:Math.random()*6});
+  }
   parts.length = 0; floats.length = 0; crumbs.length = 0;
   shake = 0; freeze = 0; redFlash = 0; scareT = 0;
+  heartbeatT = 0; whisperT = rnd(5,11);
   for(const id in sticks) delete sticks[id];
-  showMsg(coop ? '找到 2 把鑰匙，兩人一起逃到出口！' : '找到 2 把鑰匙，帶著夥伴逃到出口！', 4.5);
+  const km = S.keysNeed;
+  showMsg((S.nm?'🌙 惡夢模式！':'') + '找到 '+km+' 把鑰匙，' + (coop?'兩人一起逃到出口！':'帶著夥伴逃到出口！'), 4.5);
 }
 function showMsg(t, dur){ S.msg = t; S.msgT = dur || 3; }
 
@@ -547,7 +571,12 @@ function updateCompanion(dt){
   if(!last || dist(last.x,last.y,p1.x,p1.y) > 14) crumbs.push({x:p1.x, y:p1.y});
   if(crumbs.length > 80) crumbs.shift();
   let dirX = 0, dirY = 0;
-  if(dist(p2.x,p2.y,p1.x,p1.y) > 44 && crumbs.length){
+  /* v4：門開且小藍已進出口時，小綠直奔出口，避免卡在門口無法通關 */
+  if(S.doorOpen && inExit(p1) && !inExit(p2)){
+    const tx = exitRect.x + exitRect.w*0.7, ty = exitRect.y + exitRect.h/2;
+    const d = dist(p2.x,p2.y,tx,ty);
+    if(d > 4){ dirX = (tx-p2.x)/d; dirY = (ty-p2.y)/d; }
+  }else if(dist(p2.x,p2.y,p1.x,p1.y) > 44 && crumbs.length){
     let t = crumbs[0];
     while(crumbs.length > 1 && dist(p2.x,p2.y,t.x,t.y) < 12){ crumbs.shift(); t = crumbs[0]; }
     const d = dist(p2.x,p2.y,t.x,t.y);
@@ -569,8 +598,8 @@ function updateMonster(dt){
     }
     return;
   }
-  // 隨時間變快（120 秒內 60 → 96），開門後再 +14
-  monster.speed = 60 + Math.min(1, S.time/120)*36 + (S.doorOpen?14:0);
+  // 隨時間變快（普通 60→96／惡夢 75→123），開門後再 +14
+  monster.speed = (S.nm?75:60) + Math.min(1, S.time/(S.nm?90:120))*(S.nm?48:36) + (S.doorOpen?14:0);
   // 追最近的玩家
   monster.pathT -= dt;
   if(monster.pathT <= 0 || !monster.path.length){
@@ -620,7 +649,7 @@ function updateMonster(dt){
 function updateSanity(dt){
   players.forEach(p => {
     const d = dist(p.x,p.y,monster.x,monster.y);
-    if(monster.awake && d < 150) p.san = clamp(p.san - 13*dt, 0, 100);
+    if(monster.awake && d < 150) p.san = clamp(p.san - (S.nm?18:13)*dt, 0, 100);
     else p.san = clamp(p.san + 5.5*dt, 0, 100);
     if(p.san <= 0){
       p.san = 55; p.hearts--;
@@ -655,14 +684,14 @@ function updatePickups(){
         freeze = .05; shake = Math.max(shake, 4);
         burst(k.x, k.y, '#ffd257', 18, 200, .6);
         burst(k.x, k.y, '#fff2c0', 8, 120, .8, -60);
-        floatText(k.x, k.y-22, '鑰匙 '+S.keysGot+'/2', '#ffd257');
-        if(S.keysGot >= 2){
+        floatText(k.x, k.y-22, '鑰匙 '+S.keysGot+'/'+S.keysNeed, '#ffd257');
+        if(S.keysGot >= S.keysNeed){
           S.doorOpen = true;
           sfx.door();
           showMsg('大門開了！兩人一起衝向出口！', 4);
           burst(exitRect.x+exitRect.w/2, exitRect.y+exitRect.h/2, '#7de08a', 20, 160, .9, -30);
         }else{
-          showMsg('拿到一把鑰匙！還差 1 把', 2.5);
+          showMsg('拿到一把鑰匙！還差 '+(S.keysNeed-S.keysGot)+' 把', 2.5);
         }
       }
     });
@@ -693,15 +722,20 @@ function endGame(win, text){
     else if(S.time < 110 && heartsLeft >= 3) grade = 'A';
     else grade = 'B';
   }
-  let newBest = false;
+  let newBest = false, justUnlocked = false;
   if(win){
-    if(!best || S.time < best.time){
-      best = { time: Math.round(S.time*10)/10, grade };
+    const key = S.nm ? 'pro詭異飯店_bestNM' : 'pro詭異飯店_best';
+    const cur = S.nm ? bestNM : best;
+    if(!cur || S.time < cur.time){
+      const rec = { time: Math.round(S.time*10)/10, grade };
+      if(S.nm) bestNM = rec; else best = rec;
       newBest = true;
-      try{ localStorage.setItem('pro詭異飯店_best', JSON.stringify(best)); }catch(e){}
+      try{ localStorage.setItem(key, JSON.stringify(rec)); }catch(e){}
     }
+    /* v4：首次通關（任何模式）解鎖惡夢模式 */
+    if(!unlockedNM){ unlockedNM = true; justUnlocked = true; try{ localStorage.setItem('pro詭異飯店_nm','1'); }catch(e){} }
   }
-  endInfo = { win, text: text||'', grade, newBest, time:S.time, hearts:heartsLeft };
+  endInfo = { win, text: text||'', grade, newBest, time:S.time, hearts:heartsLeft, nm:S.nm, justUnlocked };
   setState(endState);
 }
 
@@ -862,7 +896,7 @@ function drawExit(t){
   if(!S.doorOpen){
     ctx.font = '11px sans-serif';
     ctx.fillStyle = '#b8a890';
-    ctx.fillText('🔒 '+S.keysGot+'/2', e.x+e.w/2-6, e.y+e.h/2+22);
+    ctx.fillText('🔒 '+S.keysGot+'/'+S.keysNeed, e.x+e.w/2-6, e.y+e.h/2+22);
   }
 }
 
@@ -875,7 +909,7 @@ function drawDarkness(t){
   darkCtx.globalCompositeOperation = 'destination-out';
   players.forEach(p => {
     const flick = 1 + Math.sin(t*13+p.idx*7)*.03 + Math.sin(t*29)*.02;
-    const rad = (105 + 120*(p.san/100)) * flick;   // 理智＝手電筒亮度
+    const rad = (105 + 120*(p.san/100)) * flick * (S.nm?0.82:1);   // 理智＝手電筒亮度（惡夢更暗）
     darkCtx.drawImage(lightSpr, p.x-rad, p.y-rad, rad*2, rad*2);
   });
   keyItems.forEach(k => {
@@ -942,9 +976,11 @@ function drawHUD(t){
   ctx.beginPath(); ctx.roundRect(GAME_W/2-88, 8, 176, 30, 8); ctx.fill();
   ctx.textAlign = 'center'; ctx.font = 'bold 15px "Microsoft JhengHei",sans-serif';
   ctx.fillStyle = '#ffd257';
-  ctx.fillText('🗝 ' + S.keysGot + '/2', GAME_W/2-42, 29);
+  ctx.fillText('🗝 ' + S.keysGot + '/' + S.keysNeed, GAME_W/2-42, 29);
   ctx.fillStyle = '#d8c9b8';
   ctx.fillText(S.time.toFixed(0) + 's', GAME_W/2+40, 29);
+  if(S.nm){ ctx.fillStyle = '#ff8a9a'; ctx.font = 'bold 12px "Microsoft JhengHei",sans-serif';
+    ctx.fillText('🌙 惡夢', GAME_W/2, 52); }
   // 訊息
   if(S.msgT > 0){
     ctx.globalAlpha = clamp(S.msgT, 0, 1);
@@ -985,9 +1021,10 @@ function drawHUD(t){
 
 /* ---------- 標題畫面 ---------- */
 const titleBtns = [
-  { x:GAME_W/2-270, y:388, w:250, h:64, label:'單人闖關', sub:'夥伴AI跟著你', coop:false },
-  { x:GAME_W/2+20,  y:388, w:250, h:64, label:'雙人同行', sub:'和朋友一起玩', coop:true }
+  { x:GAME_W/2-270, y:392, w:250, h:60, label:'單人闖關', sub:'夥伴AI跟著你', coop:false },
+  { x:GAME_W/2+20,  y:392, w:250, h:60, label:'雙人同行', sub:'和朋友一起玩', coop:true }
 ];
+const nmToggle = { x:GAME_W/2-175, y:344, w:350, h:38 };
 const titleBgCv = makeCanvas(GAME_W, GAME_H);
 (function bakeTitleBg(){
   const g = titleBgCv.getContext('2d');
@@ -1080,11 +1117,26 @@ const titleState = {
     // 操作說明
     ctx.font = '15px "Microsoft JhengHei",sans-serif';
     ctx.fillStyle = '#c8b8a8';
-    ctx.fillText('💻 電腦：WASD（小藍）＋ 方向鍵（小綠）移動', GAME_W/2, 300);
-    ctx.fillText('📱 平板：按住螢幕拖曳移動（雙人＝左右半邊各控一人）', GAME_W/2, 328);
-    if(best){
-      ctx.fillStyle = '#ffd257';
-      ctx.fillText('🏆 最快逃脫紀錄：' + best.time + ' 秒（' + best.grade + ' 級）', GAME_W/2, 358);
+    ctx.fillText('💻 電腦：WASD（小藍）＋ 方向鍵（小綠）移動', GAME_W/2, 286);
+    ctx.fillText('📱 平板：按住螢幕拖曳移動（雙人＝左右半邊各控一人）', GAME_W/2, 312);
+    // 最快紀錄（普通 / 惡夢）
+    ctx.font = '14px "Microsoft JhengHei",sans-serif';
+    let recTxt = '';
+    if(best) recTxt += '🏆 ' + best.time + '秒(' + best.grade + ')';
+    if(bestNM) recTxt += (recTxt?'　':'') + '🌙 ' + bestNM.time + '秒(' + bestNM.grade + ')';
+    if(recTxt){ ctx.fillStyle = '#ffd257'; ctx.fillText(recTxt, GAME_W/2, 335); }
+    // 惡夢模式切換鈕（通關一次解鎖）
+    {
+      const b = nmToggle;
+      const on = unlockedNM && nmSelected;
+      ctx.fillStyle = !unlockedNM ? 'rgba(30,20,26,.8)' : (on ? 'rgba(90,20,90,.85)' : 'rgba(40,28,48,.8)');
+      ctx.strokeStyle = !unlockedNM ? 'rgba(120,90,90,.5)' : (on ? '#d060e0' : '#7a5a8a');
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.roundRect(b.x, b.y, b.w, b.h, 10); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = !unlockedNM ? 'rgba(200,170,160,.7)' : '#f0d8ff';
+      ctx.font = 'bold 15px "Microsoft JhengHei",sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(!unlockedNM ? '🔒 惡夢模式 · 通關一次即可解鎖'
+        : ('🌙 惡夢模式：' + (on?'開啟':'關閉') + '（按 N 切換）'), GAME_W/2, b.y+24);
     }
     // 按鈕
     titleBtns.forEach((b,i) => {
@@ -1104,18 +1156,24 @@ const titleState = {
     ctx.fillText('AI未來創作營隊 · JOJO老師專業升級版', GAME_W/2, GAME_H-14);
   },
   tap(x,y){
-    for(const b of titleBtns){
-      if(x>=b.x && x<=b.x+b.w && y>=b.y-6 && y<=b.y+b.h+6){
-        sfx.blip(); resetGame(b.coop); setState(playState); return true;
+    const b = nmToggle;
+    if(unlockedNM && x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h){
+      nmSelected = !nmSelected; sfx.blip(); return true;
+    }
+    for(const bt of titleBtns){
+      if(x>=bt.x && x<=bt.x+bt.w && y>=bt.y-6 && y<=bt.y+bt.h+6){
+        sfx.blip(); resetGame(bt.coop, unlockedNM && nmSelected); setState(playState); return true;
       }
     }
     return false;
   },
   key(code){
+    if(code==='KeyN'){ if(unlockedNM){ nmSelected = !nmSelected; sfx.blip(); } return; }
+    const nm = unlockedNM && nmSelected;
     if(code==='Digit1' || code==='Numpad1' || code==='Space' || code==='Enter'){
-      sfx.blip(); resetGame(false); setState(playState);
+      sfx.blip(); resetGame(false, nm); setState(playState);
     }else if(code==='Digit2' || code==='Numpad2'){
-      sfx.blip(); resetGame(true); setState(playState);
+      sfx.blip(); resetGame(true, nm); setState(playState);
     }
   }
 };
@@ -1217,16 +1275,21 @@ const endState = {
       ctx.fillText('你們一起衝出了大門。回頭望去，飯店靜靜地矗立在雨夜中……', GAME_W/2, 196);
       ctx.font = 'bold 30px "Microsoft JhengHei",sans-serif';
       ctx.fillStyle = '#ffd257';
-      ctx.fillText('評級 ' + endInfo.grade, GAME_W/2, 258);
+      ctx.fillText('評級 ' + endInfo.grade + (endInfo.nm?'　🌙 惡夢':''), GAME_W/2, 258);
       ctx.font = '19px "Microsoft JhengHei",sans-serif';
       ctx.fillStyle = '#e8d8c8';
       ctx.fillText('逃脫時間 ' + endInfo.time.toFixed(1) + ' 秒 ｜ 剩餘 ❤ ' + endInfo.hearts, GAME_W/2, 296);
+      const rec = endInfo.nm ? bestNM : best;
       if(endInfo.newBest){
         ctx.fillStyle = '#ff6cc7';
-        ctx.fillText('★ 新紀錄！', GAME_W/2, 330);
-      }else if(best){
+        ctx.fillText('★ 新紀錄！', GAME_W/2, 328);
+      }else if(rec){
         ctx.fillStyle = 'rgba(216,201,184,.7)';
-        ctx.fillText('最快紀錄 ' + best.time + ' 秒', GAME_W/2, 330);
+        ctx.fillText((endInfo.nm?'惡夢':'') + '最快紀錄 ' + rec.time + ' 秒', GAME_W/2, 328);
+      }
+      if(endInfo.justUnlocked){
+        ctx.fillStyle = '#d060e0'; ctx.font = 'bold 17px "Microsoft JhengHei",sans-serif';
+        ctx.fillText('🌙 解鎖惡夢模式！回標題開啟挑戰', GAME_W/2, 356);
       }
     }else{
       ctx.font = 'bold 50px "Microsoft JhengHei",serif';
@@ -1256,13 +1319,13 @@ const endState = {
     if(winkT < .5) return true;      // 防誤觸冷卻
     const b = this.btn;
     if(x>=b.x-10 && x<=b.x+b.w+10 && y>=b.y-10 && y<=b.y+b.h+10){
-      sfx.blip(); resetGame(S.coop); setState(playState);
+      sfx.blip(); resetGame(S.coop, S.nm); setState(playState);
     }
     return true;
   },
   key(code){
     if(winkT < .5) return;
-    if(code==='Space' || code==='Enter'){ sfx.blip(); resetGame(S.coop); setState(playState); }
+    if(code==='Space' || code==='Enter'){ sfx.blip(); resetGame(S.coop, S.nm); setState(playState); }
     if(code==='KeyM' || code==='Escape'){ setState(titleState); }
   }
 };
@@ -1290,9 +1353,12 @@ requestAnimationFrame(frame);
 /* ---------- QA 掛鉤（無頭瀏覽器可玩性驗證用，不影響遊戲） ---------- */
 window.__QA = {
   snap(){ return { scene: state===titleState?'title':(state===playState?'play':'end'),
-    p1x:p1.x, p1y:p1.y, p2x:p2.x, keys:S.keysGot, time:S.time, coop:S.coop,
-    hearts:p1.hearts, monsterAwake:monster.awake }; },
-  forceEnd(win){ S.over = true; endGame(!!win, 'QA'); }
+    p1x:p1.x, p1y:p1.y, p2x:p2.x, keys:S.keysGot, keysNeed:S.keysNeed, time:S.time, coop:S.coop,
+    nm:S.nm, unlocked:unlockedNM, hearts:p1.hearts, monsterAwake:monster.awake,
+    keyCount:keyItems.length, monsterSpeed:monster.speed }; },
+  forceEnd(win){ S.over = true; endGame(!!win, 'QA'); },
+  play(coop,nm){ resetGame(!!coop, !!nm); setState(playState); },
+  unlock(){ unlockedNM = true; try{ localStorage.setItem('pro詭異飯店_nm','1'); }catch(e){} }
 };
 
 })();

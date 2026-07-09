@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
 <title>貪食蛇 Snake</title>
+<meta name="author" content="AI未來創作營隊">
 <style>
   html, body {
     margin: 0; padding: 0;
@@ -128,6 +129,38 @@
   #btn-left { grid-column: 1; grid-row: 2; }
   #btn-down { grid-column: 2; grid-row: 2; }
   #btn-right { grid-column: 3; grid-row: 2; }
+  #diffRow {
+    display: flex; gap: 10px; justify-content: center; margin: 6px 0 2px;
+  }
+  .diffbtn {
+    flex: 1; max-width: 150px;
+    padding: 10px 8px;
+    font-size: 16px; font-weight: bold; font-family: inherit;
+    letter-spacing: 2px;
+    border: 2px solid rgba(0, 240, 255, 0.45);
+    border-radius: 12px;
+    background: rgba(0, 240, 255, 0.06);
+    color: #9fdfff;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .diffbtn:active { transform: scale(0.95); }
+  .diffbtn.active {
+    border-color: #00f0ff;
+    background: rgba(0, 240, 255, 0.2);
+    color: #00f0ff;
+    text-shadow: 0 0 8px rgba(0, 240, 255, 0.8);
+    box-shadow: 0 0 16px rgba(0, 240, 255, 0.4), inset 0 0 10px rgba(0, 240, 255, 0.15);
+  }
+  .diffbtn.hard.active {
+    border-color: #ff2975;
+    background: rgba(255, 41, 117, 0.2);
+    color: #ff77ad;
+    text-shadow: 0 0 8px rgba(255, 41, 117, 0.8);
+    box-shadow: 0 0 16px rgba(255, 41, 117, 0.4), inset 0 0 10px rgba(255, 41, 117, 0.15);
+  }
+  .diffbtn.locked { opacity: 0.55; }
+  .diffbtn small { display: block; font-size: 11px; letter-spacing: 0; opacity: 0.8; font-weight: normal; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -138,8 +171,13 @@
   <div id="titleOverlay" class="overlay">
     <h1>貪食蛇<span class="en">S N A K E</span></h1>
     <div class="sub">賽博夜城版：牆壁是傳送門，穿牆自由滑行！<br>連吃能量方塊疊 COMBO，疊到 <b style="color:#fff700">×5 進入幻影駭入</b>穿透一切！<br>💣 吃 EMP 可以炸光紅色防火牆。</div>
+    <div id="diffRow">
+      <button id="diffNormal" class="diffbtn active">普通<small id="bestNormalLbl">最佳 0</small></button>
+      <button id="diffHard" class="diffbtn hard locked">困難 🔒<small id="hardLbl">通關一場解鎖</small></button>
+    </div>
+    <div class="sub" id="diffDesc" style="opacity:0.8; margin-top:2px">選擇難度。<b style="color:#ff77ad">困難超頻</b>：起步更快、防火牆更密、COMBO 更難維持，另計最佳分數。</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.75">💻 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>📱 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
+    <div class="sub" style="opacity:0.75">💻 電腦：方向鍵 / WASD 轉向・空白鍵暫停・點按鈕選難度<br>📱 平板：往想去的方向「點一下」或滑動螢幕，也可用右下角方向按鈕<br>先玩一場即可解鎖 <b style="color:#ff77ad">困難超頻模式</b>！</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -291,8 +329,18 @@ let obstacles = [];          // 防火牆 {x,y,age}
 let eatCount = 0;
 let score = 0;
 let combo = 1, comboTimer = 0;
-const COMBO_WINDOW = 4;      // 秒內再吃可疊倍率
-let best = parseInt(localStorage.getItem('snake2-best') || '0', 10) || 0;
+const COMBO_WINDOW = 4;      // 秒內再吃可疊倍率（普通）
+let comboWin = COMBO_WINDOW; // 當前難度的 COMBO 視窗
+// v4：困難超頻模式（先玩一場即解鎖）
+let hard = false;
+let cleared = localStorage.getItem('snake2-cleared') === '1';
+let bestN = parseInt(localStorage.getItem('snake2-best') || '0', 10) || 0;
+let bestH = parseInt(localStorage.getItem('snake2-best-hard') || '0', 10) || 0;
+let best = bestN;            // 當前難度的最佳分數
+let baseInterval = 0.15;     // 起步移動間隔（隨難度）
+let minInterval = 0.065;     // 最快移動間隔（隨難度）
+let obstEvery = 6;           // 每吃幾個生一道防火牆
+let obstMax = 8;             // 防火牆數量上限
 let dispScore = 0;
 let moveTimer = 0;
 let moveInterval = 0.15;
@@ -305,7 +353,8 @@ let stars = [], skyline = [];
 
 // v2：幻影駭入 / EMP 炸彈 / 開場倒數與提示
 const OBST_LIFE = 22;        // 防火牆壽命（秒）
-const OBST_ARM = 1.2;        // 防火牆實體化前的預警時間
+const OBST_ARM = 1.2;        // 防火牆實體化前的預警時間（普通）
+let obstArm = OBST_ARM;      // 當前難度的預警時間
 let phaseT = 0;              // 幻影模式剩餘秒數（穿透牆與自己）
 let phaseUsed = false;       // 這一輪 combo 是否已觸發過幻影
 let emp = { active: false, x: 0, y: 0, timer: 0, age: 0 };
@@ -377,8 +426,8 @@ function spawnObstacle() {
   } while (tries < 500 && (cellBlocked(x, y) || (food.x === x && food.y === y) ||
            (Math.abs(x - head.x) + Math.abs(y - head.y)) < 6));
   if (tries < 500) {
-    // 先預警 1.2 秒再實體化，不會突然出現害死玩家
-    obstacles.push({ x, y, age: 0, armT: OBST_ARM, life: OBST_LIFE });
+    // 先預警再實體化，不會突然出現害死玩家
+    obstacles.push({ x, y, age: 0, armT: obstArm, armDur: obstArm, life: OBST_LIFE });
     addFloat(cellCenter(x, y).x, cellCenter(x, y).y, '⚠ 防火牆', PAL.pink);
     sfx.wall();
   }
@@ -408,7 +457,7 @@ function resetGame() {
   combo = 1; comboTimer = 0;
   phaseT = 0; phaseUsed = false;
   emp.active = false; empCd = 6;
-  moveInterval = 0.15;
+  moveInterval = baseInterval;
   moveTimer = 0;
   headPulse = 1;
   deathTimer = -1;
@@ -504,7 +553,56 @@ const titleOverlay = document.getElementById('titleOverlay');
 const overOverlay = document.getElementById('overOverlay');
 let overCooldown = 0;
 
+// ----- 難度（普通 / 困難超頻）-----
+const diffNormalBtn = document.getElementById('diffNormal');
+const diffHardBtn = document.getElementById('diffHard');
+function applyDifficulty() {
+  if (hard) {
+    baseInterval = 0.12; minInterval = 0.05;
+    obstEvery = 4; obstMax = 10; obstArm = 0.9; comboWin = 3;
+    best = bestH;
+  } else {
+    baseInterval = 0.15; minInterval = 0.065;
+    obstEvery = 6; obstMax = 8; obstArm = 1.2; comboWin = 4;
+    best = bestN;
+  }
+}
+function refreshTitle() {
+  document.getElementById('bestNormalLbl').textContent = '最佳 ' + bestN;
+  const hl = document.getElementById('hardLbl');
+  if (cleared) {
+    diffHardBtn.classList.remove('locked');
+    diffHardBtn.firstChild.textContent = '困難超頻';
+    hl.textContent = '最佳 ' + bestH;
+  } else {
+    diffHardBtn.classList.add('locked');
+    diffHardBtn.firstChild.textContent = '困難 🔒';
+    hl.textContent = '通關一場解鎖';
+  }
+  diffNormalBtn.classList.toggle('active', !hard);
+  diffHardBtn.classList.toggle('active', hard);
+}
+function setDifficulty(h) {
+  if (h && !cleared) {
+    // 未解鎖：提示並閃一下
+    diffHardBtn.animate ? diffHardBtn.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(0)' }],
+      { duration: 260 }) : 0;
+    beep(200, 0.12, 'square', 0.08, -60);
+    return;
+  }
+  hard = h;
+  applyDifficulty();
+  refreshTitle();
+  beep(h ? 520 : 660, 0.06, 'sine', 0.08);
+}
+diffNormalBtn.addEventListener('click', () => setDifficulty(false));
+diffHardBtn.addEventListener('click', () => setDifficulty(true));
+applyDifficulty();
+refreshTitle();
+
 function startGame() {
+  applyDifficulty();
   resetGame();
   mode = 'play';
   hintT = 5;
@@ -519,11 +617,17 @@ function endGame() {
   const isBest = score > best;
   if (isBest) {
     best = score;
-    localStorage.setItem('snake2-best', String(best));
+    if (hard) { bestH = score; localStorage.setItem('snake2-best-hard', String(score)); }
+    else { bestN = score; localStorage.setItem('snake2-best', String(score)); }
     setTimeout(() => sfx.best(), 400);
   }
+  // 第一次通關 → 解鎖困難超頻模式
+  const justUnlocked = !cleared;
+  if (!cleared) { cleared = true; localStorage.setItem('snake2-cleared', '1'); }
+  refreshTitle();
   document.getElementById('finalScore').textContent = score;
-  document.getElementById('bestLine').textContent = '最佳分數：' + best;
+  document.getElementById('bestLine').textContent = (hard ? '困難最佳：' : '最佳分數：') + best +
+    (justUnlocked ? '　🔓 已解鎖困難超頻模式！' : '');
   document.getElementById('newBest').style.display = isBest ? 'block' : 'none';
   overOverlay.classList.add('show');
 }
@@ -619,7 +723,7 @@ function step() {
     if (mode === 'play') {
       const gained = (food.core ? 30 : 10) * combo;
       score += gained;
-      comboTimer = COMBO_WINDOW;
+      comboTimer = comboWin;
       shake = food.core ? 7 : 3;
       headPulse = 1.5;
       addFloat(c.x, c.y - 10, '+' + gained + (combo > 1 ? ' ×' + combo : ''), food.core ? PAL.yellow : PAL.cyan);
@@ -635,12 +739,15 @@ function step() {
         burst(c.x, c.y, PAL.white, 24, 320);
         sfx.phase();
       }
-      moveInterval = Math.max(0.065, 0.15 - eatCount * 0.0022);
-      // 每吃 6 個生一道防火牆（上限 8）
-      if (eatCount % 6 === 0 && obstacles.length < 8) spawnObstacle();
+      moveInterval = Math.max(minInterval, baseInterval - eatCount * 0.0022);
+      // 每吃幾個生一道防火牆（依難度）
+      if (eatCount % obstEvery === 0 && obstacles.length < obstMax) spawnObstacle();
     }
-    const tail = snake[snake.length - 1];
-    snake.push({ x: tail.px, y: tail.py, px: tail.px, py: tail.py, warp: false });
+    // 標題展示不讓蛇無限長大（避免 AI 卡死）
+    if (mode !== 'title' || snake.length < 9) {
+      const tail = snake[snake.length - 1];
+      snake.push({ x: tail.px, y: tail.py, px: tail.px, py: tail.py, warp: false });
+    }
     placeFood();
   }
 }
@@ -897,7 +1004,7 @@ function drawObstacles() {
       ctx.globalAlpha = 1;
       continue;
     }
-    const appear = Math.min(1, (o.age - OBST_ARM) * 3 + 0.3);
+    const appear = Math.min(1, (o.age - o.armDur) * 3 + 0.3);
     const flick = 0.75 + 0.25 * Math.sin(o.age * 12 + o.x);
     ctx.save();
     ctx.translate(c.x, c.y);
@@ -1246,6 +1353,14 @@ function drawHUD() {
   ctx.fillStyle = PAL.white;
   ctx.font = '15px "Microsoft JhengHei", sans-serif';
   ctx.fillText('分數', 40, 48);
+  if (hard) {
+    ctx.fillStyle = PAL.pink;
+    ctx.shadowColor = PAL.pink;
+    ctx.shadowBlur = 6;
+    ctx.font = 'bold 13px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('困難超頻', 82, 48);
+    ctx.shadowBlur = 0;
+  }
   ctx.font = 'bold 32px "Microsoft JhengHei", sans-serif';
   ctx.fillStyle = PAL.cyan;
   ctx.shadowColor = PAL.cyan;
@@ -1268,7 +1383,7 @@ function drawHUD() {
     ctx.font = 'bold 20px "Microsoft JhengHei", sans-serif';
     ctx.fillText('COMBO ×' + combo, GAME_W / 2, 54);
     ctx.shadowBlur = 0;
-    const w = 120 * (comboTimer / COMBO_WINDOW);
+    const w = 120 * (comboTimer / comboWin);
     ctx.fillStyle = 'rgba(255,247,0,0.25)';
     rr(GAME_W / 2 - 60, 62, 120, 8, 4);
     ctx.fill();

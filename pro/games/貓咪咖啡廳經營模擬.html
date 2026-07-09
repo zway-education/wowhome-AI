@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -129,7 +129,10 @@
     🛒 右側商店按按鈕買貓咪與升級</p>
     <p class="small">⚡ 耐心還很多就上餐＝<b style="color:var(--accent-dark)">完美服務</b>小費加倍疊連擊！<br>
     🎯 每天有賺錢目標，達成領獎金；第 7 天有神秘貴客…</p>
-    <button class="mainBtn" id="startBtn">開始經營 ☕</button>
+    <p class="small" id="endlessHint" style="background:#fff3f7;border:2px dashed var(--accent);border-radius:12px;padding:7px">
+    ♾️ <b style="color:var(--accent-dark)">無盡模式</b>：通關 7 天挑戰後解鎖！打烊條件變成「每日目標」——沒達標就關店，看你能撐幾天！</p>
+    <button class="mainBtn" id="startBtn">開始 7 天挑戰 ☕</button>
+    <button class="mainBtn" id="endlessBtn" style="background:var(--wood);box-shadow:0 5px 0 var(--wood-dark)">♾️ 無盡模式</button>
   </div>
 </div>
 <div class="ovl hidden" id="dayOvl">
@@ -141,10 +144,11 @@
 </div>
 <div class="ovl hidden" id="endOvl">
   <div class="modal">
-    <h2>🎉 七天挑戰結束！</h2>
+    <h2 id="endTitle">🎉 七天挑戰結束！</h2>
     <div class="grade" id="endGrade">A</div>
     <p id="endBody"></p>
     <button class="mainBtn" id="retryBtn">再玩一次 🔄</button>
+    <button class="mainBtn" id="titleBtn" style="background:var(--wood);box-shadow:0 5px 0 var(--wood-dark)">回標題選模式</button>
   </div>
 </div>
 <script>
@@ -337,9 +341,16 @@ function freshState(){
     dayEarned:0,dayGoal:GOALS[0],goalDone:false,goalStars:0,
     streak:0,bestStreak:0,perfects:0,
     criticPending:false,criticDone:false,
+    endless:false,closed:false,
   };
 }
 let best=0;try{best=+localStorage.getItem('catcafe.best')||0;}catch(e){}
+/* v4：無盡模式 */
+let bestEndless=0;try{bestEndless=+localStorage.getItem('catcafe.endless.best')||0;}catch(e){}
+let unlockedEndless=false;try{unlockedEndless=localStorage.getItem('catcafe.endless.unlock')==='1';}catch(e){}
+function dayGoalFor(day){
+  return day<=TOTAL_DAYS ? GOALS[day-1] : Math.round(GOALS[TOTAL_DAYS-1]*Math.pow(1.18,day-TOTAL_DAYS));
+}
 let state='title';   // title | play | dayend | end
 /* ============ 畫布 ============ */
 const GAME_W=960,GAME_H=540;
@@ -467,7 +478,7 @@ function bump(id){
 function updateStats(){
   document.getElementById('stMoney').textContent=Math.round(dispMoney);
   document.getElementById('stRep').textContent=S.rep;
-  document.getElementById('stDay').textContent=S.day+'/'+TOTAL_DAYS;
+  document.getElementById('stDay').textContent=S.endless?('第'+S.day+'天 ♾️'):(S.day+'/'+TOTAL_DAYS);
   document.getElementById('stTime').textContent=pad2(S.hour)+':'+pad2(S.minute);
   document.getElementById('stCats').textContent=S.cats.length;
   document.getElementById('stServed').textContent=S.served;
@@ -753,8 +764,9 @@ function gameTick(){
   document.getElementById('rushBanner').style.display=isRush()?'block':'none';
   spawnTimer-=1000;
   if(spawnTimer<=0){trySpawnCustomer();spawnTimer=spawnIntervalMs();}
-  /* 第 7 天中午：美食評論家壓軸登場 */
-  if(S.day===TOTAL_DAYS&&!S.criticDone&&!S.criticPending&&S.hour>=12)S.criticPending=true;
+  /* 第 7 天（無盡模式每 7 天）中午：美食評論家壓軸登場 */
+  const criticDay=(S.day===TOTAL_DAYS)||(S.endless&&S.day%TOTAL_DAYS===0);
+  if(criticDay&&!S.criticDone&&!S.criticPending&&S.hour>=12)S.criticPending=true;
   if(S.criticPending&&spawnCritic()){S.criticPending=false;S.criticDone=true;}
   /* 貓咪招財：心情好的貓會招來客人 */
   for(const c of S.cats){
@@ -788,53 +800,72 @@ function endDay(){
   S.money+=bonus;S.totalEarned+=bonus;
   sfx.dayend();
   document.getElementById('rushBanner').style.display='none';
-  if(S.day>=TOTAL_DAYS){showFinal();return;}
-  document.getElementById('dayTitle').textContent='第 '+S.day+' 天結束！';
+  /* 7 天挑戰：第 7 天結束→結算 */
+  if(!S.endless && S.day>=TOTAL_DAYS){showFinal();return;}
+  /* 無盡模式：沒達到當日目標就打烊收攤 */
+  if(S.endless && !S.goalDone){S.closed=true;showFinal();return;}
+  const nextGoal=dayGoalFor(S.day+1);
+  document.getElementById('dayTitle').textContent='第 '+S.day+' 天結束！'+(S.endless?' ♾️':'');
   document.getElementById('dayBody').innerHTML='今天辛苦了！☕<br>'+
     (S.goalDone?'🎯 <b style="color:var(--green)">每日目標達成 ✔</b>':
       '🎯 <b style="color:var(--red)">目標未達成 ✘</b>（'+S.dayEarned+'/'+S.dayGoal+'）')+
-    '・目標星 ⭐'+S.goalStars+'/'+TOTAL_DAYS+
+    '・目標星 ⭐'+S.goalStars+(S.endless?'':'/'+TOTAL_DAYS)+
     '<br>營業獎金 💰'+bonus+
     '<br>目前金錢 💰'+S.money+'・聲望 ⭐'+S.rep+
     '<br><span class="small">已服務 '+S.served+' 位・氣走 '+S.angry+' 位・最高完美連擊 ×'+S.bestStreak+'</span>'+
-    '<br><span class="small" style="color:var(--red)">明天顧客更多更沒耐心，目標 💰'+GOALS[Math.min(S.day,TOTAL_DAYS-1)]+'，加油！</span>';
+    '<br><span class="small" style="color:var(--red)">'+(S.endless?'撐下去！明天目標 💰':'明天顧客更多更沒耐心，目標 💰')+nextGoal+'，加油！</span>';
   document.getElementById('dayOvl').classList.remove('hidden');
 }
 function nextDay(){
   document.getElementById('dayOvl').classList.add('hidden');
   S.day++;S.hour=8;S.minute=0;S.rushUntil=0;spawnTimer=4000;
   S.dayEarned=0;S.goalDone=false;S.streak=0;
-  S.dayGoal=GOALS[Math.min(S.day-1,GOALS.length-1)];
+  S.criticPending=false;S.criticDone=false;   /* v4：新的一天重置評論家（無盡每 7 天再訪） */
+  S.dayGoal=dayGoalFor(S.day);
   S.running=true;state='play';
   log('☀️ 第 '+S.day+' 天開始營業！今日目標：賺 💰'+S.dayGoal);
-  if(S.day===TOTAL_DAYS)log('📰 聽說今天中午美食評論家會來視察…');
+  if((S.day===TOTAL_DAYS)||(S.endless&&S.day%TOTAL_DAYS===0))log('📰 聽說今天中午美食評論家會來視察…');
   updateStats();
 }
 function showFinal(){
   state='end';
-  const score=S.money+S.rep*10+S.goalStars*100;
-  const isNew=score>best;
-  if(isNew){best=score;try{localStorage.setItem('catcafe.best',best);}catch(e){}}
+  const en=S.endless;
+  const daysDone=en?Math.max(0,S.day-1):TOTAL_DAYS;   // 無盡：打烊當天不計入撐過天數
+  let score=S.money+S.rep*10+S.goalStars*100;
+  if(en)score+=daysDone*80;                            // 無盡：每撐一天 +80
+  const rec=en?bestEndless:best;
+  const isNew=score>rec;
+  if(isNew){
+    if(en){bestEndless=score;try{localStorage.setItem('catcafe.endless.best',score);}catch(e){}}
+    else{best=score;try{localStorage.setItem('catcafe.best',score);}catch(e){}}
+  }
+  /* v4：首次完成 7 天挑戰→解鎖無盡模式 */
+  let justUnlocked=false;
+  if(!en && !unlockedEndless){unlockedEndless=true;justUnlocked=true;try{localStorage.setItem('catcafe.endless.unlock','1');}catch(e){}}
   const grade=score>=4000?'S':score>=2500?'A':score>=1500?'B':score>=800?'C':'D';
   const msg={S:'傳說級貓咖啡廳！全城的人都來朝聖！',A:'超棒的咖啡廳，貓咪與客人都愛你！',
     B:'經營得有聲有色，繼續加油！',C:'不錯的開始，下次挑戰更高分！',D:'貓咪們相信你下次會更好！'}[grade];
+  document.getElementById('endTitle').textContent=en?('♾️ 咖啡廳打烊了！撐了 '+daysDone+' 天'):'🎉 七天挑戰結束！';
   document.getElementById('endGrade').textContent=grade;
   document.getElementById('endBody').innerHTML='<b style="font-size:1.3em">分數 '+score+'</b>'+
     (isNew?' <span style="color:var(--red)">✨新紀錄！</span>':'')+
-    '<br><span class="small">＝金錢＋聲望×10＋目標星×100</span>'+
-    '<br>🎯 目標星 '+S.goalStars+'/'+TOTAL_DAYS+'・✨ 最高完美連擊 ×'+S.bestStreak+
+    '<br><span class="small">＝金錢＋聲望×10＋目標星×100'+(en?'＋天數×80':'')+'</span>'+
+    '<br>'+(en?'♾️ 撐過 '+daysDone+' 天':'🎯 目標星 '+S.goalStars+'/'+TOTAL_DAYS)+'・✨ 最高完美連擊 ×'+S.bestStreak+
     '<br>💰 總收入 '+S.totalEarned+'・⭐ 聲望 '+S.rep+
     '<br>✅ 服務 '+S.served+' 位・😠 氣走 '+S.angry+' 位・😻 貓咪 '+S.cats.length+' 隻'+
-    '<br>🏆 最佳紀錄 '+best+'<br><br>'+msg;
+    '<br>🏆 '+(en?'無盡最佳 ':'挑戰最佳 ')+(en?bestEndless:best)+
+    (justUnlocked?'<br><b style="color:var(--accent-dark)">♾️ 解鎖無盡模式！回標題挑戰看看能撐幾天</b>':'')+
+    '<br><br>'+msg;
   document.getElementById('endOvl').classList.remove('hidden');
   sfx.fanfare();
 }
-function startGame(){
+function startGame(endless){
   S=freshState();
+  S.endless=!!endless;
   dispMoney=150;parts=[];floats=[];spawnTimer=2500;tickAcc=0;playHintT=8;
   initTables();
   S.logs=[];logBox.innerHTML='';
-  log('🏪 咖啡廳開張了！先招募一隻貓咪吧～ 今日目標：賺 💰'+S.dayGoal);
+  log((S.endless?'♾️ 無盡經營開始！沒達到每日目標就得打烊～ ':'🏪 咖啡廳開張了！先招募一隻貓咪吧～ ')+'今日目標：賺 💰'+S.dayGoal);
   renderShop();renderCatList();updateStats();
   document.getElementById('titleOvl').classList.add('hidden');
   document.getElementById('endOvl').classList.add('hidden');
@@ -1182,9 +1213,30 @@ function frame(now){
   draw();
 }
 /* ============ 事件 ============ */
-document.getElementById('startBtn').addEventListener('click',()=>{audio();startGame();});
+/* v4：無盡模式按鈕狀態 + 回標題 */
+function refreshTitle(){
+  const eb=document.getElementById('endlessBtn');
+  if(unlockedEndless){
+    eb.disabled=false;eb.style.opacity='1';eb.style.cursor='pointer';
+    eb.textContent='♾️ 無盡模式'+(bestEndless?'（最佳 '+bestEndless+'）':'（挑戰最長營業）');
+    document.getElementById('endlessHint').innerHTML='♾️ <b style="color:var(--accent-dark)">無盡模式已解鎖！</b>沒達到每日目標就關店——看你能撐幾天，衝上最高分！';
+  }else{
+    eb.disabled=true;eb.style.opacity='.55';eb.style.cursor='not-allowed';
+    eb.textContent='🔒 無盡模式（通關 7 天解鎖）';
+  }
+}
+function showTitle(){
+  state='title';
+  document.getElementById('endOvl').classList.add('hidden');
+  document.getElementById('dayOvl').classList.add('hidden');
+  document.getElementById('titleOvl').classList.remove('hidden');
+  refreshTitle();
+}
+document.getElementById('startBtn').addEventListener('click',()=>{audio();startGame(false);});
+document.getElementById('endlessBtn').addEventListener('click',()=>{if(unlockedEndless){audio();startGame(true);}});
 document.getElementById('nextDayBtn').addEventListener('click',nextDay);
-document.getElementById('retryBtn').addEventListener('click',()=>startGame());
+document.getElementById('retryBtn').addEventListener('click',()=>startGame(S.endless));
+document.getElementById('titleBtn').addEventListener('click',showTitle);
 document.getElementById('musicToggle').addEventListener('click',()=>{
   audio();
   const on=Music.toggle();
@@ -1198,7 +1250,7 @@ addEventListener('keydown',e=>{
   if(e.code==='Enter'){
     if(state==='title')document.getElementById('startBtn').click();
     else if(state==='dayend')nextDay();
-    else if(state==='end')startGame();
+    else if(state==='end')startGame(S.endless);
   }
   if(e.code==='KeyM')document.getElementById('muteToggle').click();
   /* 空白鍵：幫最急（耐心最少）的桌子上餐 */
@@ -1221,9 +1273,17 @@ renderShop();
 updateStats();
 resize();
 setTimeout(resize,100);
+refreshTitle();
 /* 可玩性實測掛鉤（無頭瀏覽器 QA 用） */
 window.__test=()=>({state,money:S.money,served:S.served,day:S.day,cats:S.cats.length,tab:curTab,
+  endless:S.endless,goalDone:S.goalDone,dayGoal:S.dayGoal,goalStars:S.goalStars,
+  unlockedEndless,bestEndless,best,
   waiting:S.tables.filter(t=>t.cust&&t.cust.state==='wait').map(t=>({x:t.x,y:t.y}))});
+/* QA 控制方法：略過長時間遊玩，直接觸發日終/結算與模式切換 */
+window.__test.forceEndDay=()=>{if(state==='play')endDay();};
+window.__test.forceFinish=()=>{S.day=S.endless?S.day:TOTAL_DAYS;if(S.endless)S.closed=true;showFinal();};
+window.__test.setMoney=v=>{S.money=v;S.dayEarned=Math.max(S.dayEarned,v);dispMoney=v;checkGoal();updateStats();};
+window.__test.unlockEndless=()=>{unlockedEndless=true;try{localStorage.setItem('catcafe.endless.unlock','1');}catch(e){}refreshTitle();};
 requestAnimationFrame(frame);
 })();
 </script>

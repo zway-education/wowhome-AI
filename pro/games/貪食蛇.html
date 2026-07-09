@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -83,6 +83,16 @@
     border-color: #fff5d6;
     transform: scale(1.22);
   }
+  #levelGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin: 14px 4px; }
+  .levelCard {
+    background: rgba(255,245,214,0.12); border: 2px solid #aee239; border-radius: 14px;
+    padding: 10px 6px; cursor: pointer; transition: transform .12s ease, background .12s ease;
+  }
+  .levelCard:hover { transform: translateY(-2px); background: rgba(255,245,214,0.22); }
+  .levelCard .ln { font-size: 15px; font-weight: bold; color: #fff5d6; }
+  .levelCard .lt { font-size: 12px; opacity: 0.8; margin: 3px 0; min-height: 28px; }
+  .levelCard .ls { font-size: 20px; color: #ffd447; letter-spacing: 2px; }
+  .levelCard.locked { opacity: 0.5; border-color: #6b8a4a; cursor: not-allowed; filter: grayscale(0.4); }
   #finalScore { font-size: 46px; font-weight: bold; color: #ffd447; margin: 6px 0; }
   #bestLine { font-size: 15px; opacity: 0.9; }
   #newBest {
@@ -139,9 +149,25 @@
     <div class="sub">陽光菜園大冒險：吃越多、跑越快！</div>
     <div class="sub" style="opacity:0.75">蛇的顏色：</div>
     <div id="colorPicker"></div>
-    <button id="startBtn" class="bigbtn">開 始</button>
+    <button id="startBtn" class="bigbtn">經典模式</button>
+    <button id="levelBtn" class="bigbtn" style="background:linear-gradient(180deg,#ffd447,#e0a41f)">🗺️ 闖關模式</button>
     <div class="sub" style="margin-top:12px">💻 電腦：方向鍵 / WASD 轉向・空白鍵暫停<br>📱 平板：往想去的方向「點一下」或滑動螢幕，<br>也可以用右下角方向按鈕</div>
-    <div class="sub" style="opacity:0.75">每吃 8 顆收成一籃過關・🌶️ 辣椒加分但會衝刺・🐛 毛毛蟲會逃跑</div>
+    <div class="sub" style="opacity:0.75">每吃 8 顆收成一籃過關・🌶️ 辣椒加分但會衝刺・🐛 毛毛蟲會逃跑<br>🗺️ <b style="color:#ffd447">闖關模式</b>：5 關各有新機關（石頭、傳送門、極速），拿三顆星！</div>
+  </div>
+
+  <div id="selectOverlay" class="overlay">
+    <h1 style="font-size:30px">🗺️ 選擇關卡</h1>
+    <div class="sub">通關解鎖下一關・挑戰 ⭐⭐⭐</div>
+    <div id="levelGrid"></div>
+    <button id="backBtn" class="bigbtn" style="font-size:18px;padding:10px 30px">返回</button>
+  </div>
+
+  <div id="clearOverlay" class="overlay">
+    <h1 id="clearTitle" style="font-size:32px">🎉 過關！</h1>
+    <div id="clearStars" style="font-size:42px;letter-spacing:4px;margin:6px 0">☆☆☆</div>
+    <div id="clearMsg" class="sub"></div>
+    <button id="nextLevelBtn" class="bigbtn">下一關 ▶</button>
+    <button id="toSelectBtn" class="bigbtn" style="font-size:18px;padding:10px 30px;background:linear-gradient(180deg,#ffd447,#e0a41f)">選關</button>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -150,6 +176,7 @@
     <div id="finalScore">0</div>
     <div id="bestLine">最佳分數：0</div>
     <button id="restartBtn" class="bigbtn">再玩一次</button>
+    <button id="overSelectBtn" class="bigbtn" style="display:none;font-size:18px;padding:10px 30px;background:linear-gradient(180deg,#ffd447,#e0a41f)">選關</button>
   </div>
 
   <div id="dpad">
@@ -316,6 +343,20 @@ let grassSeeds = [];         // 背景裝飾草叢
 // v2：收成關卡 / 辣椒衝刺 / 毛毛蟲
 const LEVEL_GOAL = 8;
 let level = 1, levelEat = 0;
+// v4：闖關模式（5 關 + 選關 + 每關星等）
+const LEVELS = [
+  { name: '陽光菜園', twist: '新手練習・開闊田地', goal: 2, interval: 0.16, wrap: false, rocks: 0, star2: 26, star3: 18 },
+  { name: '石牆菜圃', twist: '🪨 石頭擋路，別撞上！', goal: 3, interval: 0.15, wrap: false, rocks: 7, star2: 42, star3: 30 },
+  { name: '傳送田', twist: '🌀 撞到邊界會傳送到對面', goal: 3, interval: 0.135, wrap: true, rocks: 0, star2: 40, star3: 28 },
+  { name: '蟲蟲危機', twist: '🐛 毛毛蟲成群・石頭夾擊', goal: 4, interval: 0.125, wrap: false, rocks: 5, bugRush: true, star2: 58, star3: 42 },
+  { name: '極速豐收', twist: '⚡ 高速＋穿牆的終極挑戰', goal: 4, interval: 0.10, wrap: true, rocks: 8, star2: 60, star3: 44 },
+];
+let campaign = false, curLevel = 0, baskets = 0, levelTime = 0;
+let rocks = [], wrapMode = false;
+let levelStars = [0, 0, 0, 0, 0];
+try { const s = JSON.parse(localStorage.getItem('snake1-lv-stars') || 'null'); if (Array.isArray(s)) for (let i = 0; i < 5; i++) levelStars[i] = s[i] | 0; } catch (e) {}
+function saveStars() { try { localStorage.setItem('snake1-lv-stars', JSON.stringify(levelStars)); } catch (e) {} }
+function levelUnlocked(i) { return i === 0 || levelStars[i - 1] >= 1; }
 let sprintT = 0;             // 辣椒衝刺剩餘秒數
 let chili = { active: false, x: 0, y: 0, timer: 0, age: 0 };
 let bug = { active: false, x: 0, y: 0, px: 0, py: 0, dx: 1, dy: 0, moveAcc: 0, timer: 0, age: 0 };
@@ -353,7 +394,8 @@ function placeFood() {
     tries++;
   } while (tries < 400 && (snake.some(s => s.x === food.x && s.y === food.y)
       || (chili.active && chili.x === food.x && chili.y === food.y)
-      || (bug.active && bug.x === food.x && bug.y === food.y)));
+      || (bug.active && bug.x === food.x && bug.y === food.y)
+      || rocks.some(r => r.x === food.x && r.y === food.y)));
   food.golden = (eatCount > 0 && eatCount % 5 === 0);
   food.timer = food.golden ? 6 : 0;
   food.age = 0;
@@ -365,6 +407,7 @@ function freeCell(awayFromHead) {
     if (x === food.x && y === food.y) continue;
     if (chili.active && chili.x === x && chili.y === y) continue;
     if (bug.active && bug.x === x && bug.y === y) continue;
+    if (rocks.some(r => r.x === x && r.y === y)) continue;
     if (awayFromHead && Math.abs(x - snake[0].x) + Math.abs(y - snake[0].y) < 4) continue;
     return { x, y };
   }
@@ -383,6 +426,18 @@ function spawnBug() {
   addFloat(cc.x, cc.y - 18, '🐛 毛毛蟲！+3', '#aee239');
 }
 
+function genRocks(n) {
+  rocks = [];
+  let tries = 0;
+  while (rocks.length < n && tries < 600) {
+    tries++;
+    const x = Math.floor(Math.random() * COLS), y = Math.floor(Math.random() * ROWS);
+    if (y >= 8 && y <= 12 && x <= 12) continue;          // 避開起始走廊
+    if (snake.some(s => s.x === x && s.y === y)) continue;
+    if (rocks.some(r => r.x === x && r.y === y)) continue;
+    rocks.push({ x, y });
+  }
+}
 function resetGame() {
   snake = [];
   for (let i = 0; i < 4; i++) snake.push({ x: 8 - i, y: 10, px: 8 - i, py: 10 });
@@ -391,7 +446,11 @@ function resetGame() {
   score = 0; dispScore = 0; eatCount = 0;
   level = 1; levelEat = 0; sprintT = 0;
   chili.active = false; bug.active = false;
-  moveInterval = 0.16;
+  const cfg = campaign ? LEVELS[curLevel] : null;
+  moveInterval = cfg ? cfg.interval : 0.16;
+  wrapMode = cfg ? cfg.wrap : false;
+  baskets = 0; levelTime = 0;
+  if (cfg) genRocks(cfg.rocks); else rocks = [];
   moveTimer = 0;
   tongue = 0; headPulse = 1;
   bulges = [];
@@ -569,12 +628,18 @@ function step() {
   else if (mode === 'title') autoPilot();
 
   const head = snake[0];
-  const nx = head.x + dir.x, ny = head.y + dir.y;
+  let nx = head.x + dir.x, ny = head.y + dir.y;
 
-  // 撞牆 / 撞自己
+  // 傳送門（穿牆）：撞到邊界改傳送到對面
+  if (wrapMode) {
+    if (nx < 0) nx = COLS - 1; else if (nx >= COLS) nx = 0;
+    if (ny < 0) ny = ROWS - 1; else if (ny >= ROWS) ny = 0;
+  }
+  // 撞牆 / 撞自己 / 撞石頭
   const hitWall = nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS;
   const hitSelf = snake.some((s, i) => i < snake.length - 1 && s.x === nx && s.y === ny);
-  if (hitWall || hitSelf) {
+  const hitRock = rocks.length > 0 && rocks.some(r => r.x === nx && r.y === ny);
+  if (hitWall || hitSelf || hitRock) {
     if (mode === 'title') { dir = { x: -dir.x, y: -dir.y }; return; } // 展示模式不死
     die();
     return;
@@ -640,22 +705,32 @@ function step() {
       else sfx.eat();
       // 漸進加速：吃越多越快，有下限
       moveInterval = Math.max(0.075, moveInterval - 0.0045);
-      // 每關中段放出毛毛蟲、隨機長出辣椒
-      if (levelEat === 4 && !bug.active) spawnBug();
+      // 每關中段放出毛毛蟲、隨機長出辣椒（蟲蟲危機關卡蟲更多）
+      const rush = campaign && LEVELS[curLevel].bugRush;
+      if (((levelEat === 4) || (rush && (levelEat === 2 || levelEat === 6))) && !bug.active) spawnBug();
       if (!chili.active && !food.golden && Math.random() < 0.25) spawnChili();
-      // 收成一籃 → 過關！速度小幅回落當喘息
+      // 收成一籃
       if (levelEat >= LEVEL_GOAL) {
-        level++; levelEat = 0;
-        score += 5;
-        moveInterval = Math.min(0.16, moveInterval + 0.02);
+        levelEat = 0;
         freeze = 0.12; shake = 5;
-        addFloat(GAME_W / 2, BOARD_Y + 150, '🧺 豐收！進入第 ' + level + ' 關 +5', PAL.gold);
         const confetti = [PAL.gold, '#ff8a65', '#aee239', '#ffd9e8'];
         for (let k = 0; k < 5; k++) {
           burst(BOARD_X + 60 + Math.random() * (COLS * CELL - 120),
                 BOARD_Y + 80 + Math.random() * 220, confetti[k % 4], 10, 280);
         }
         sfx.harvest();
+        if (campaign) {
+          baskets++;
+          const cfg = LEVELS[curLevel];
+          if (baskets >= cfg.goal) { grow(); levelClear(); return; }   // 過關！
+          score += 5;
+          moveInterval = Math.min(cfg.interval, moveInterval + 0.02);
+          addFloat(GAME_W / 2, BOARD_Y + 150, '🧺 豐收！還差 ' + (cfg.goal - baskets) + ' 籃過關 +5', PAL.gold);
+        } else {
+          level++; score += 5;
+          moveInterval = Math.min(0.16, moveInterval + 0.02);
+          addFloat(GAME_W / 2, BOARD_Y + 150, '🧺 豐收！進入第 ' + level + ' 關 +5', PAL.gold);
+        }
       }
     }
     grow();
@@ -705,6 +780,7 @@ function update(dt) {
   if (paused && mode === 'play') return;
   // 開場倒數：先讓玩家看清楚場地再開跑
   if (readyT > 0 && mode === 'play') { readyT -= dt; return; }
+  if (campaign && mode === 'play') levelTime += dt;   // v4：關卡計時（給星等評分）
 
   // 金蘋果限時
   if (food.golden && mode === 'play') {
@@ -758,7 +834,7 @@ function update(dt) {
   while (moveTimer >= interval) {
     moveTimer -= interval;
     step();
-    if (deathTimer >= 0) break;
+    if (deathTimer >= 0 || mode === 'over') break;   // 死亡或過關即停止本幀後續步進
   }
 }
 

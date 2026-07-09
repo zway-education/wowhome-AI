@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -23,6 +23,12 @@
   #replayBtn.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
   #replayBtn:hover{background:#ff6b57;color:#1a0906}
   #replayBtn:active{transform:translate(-50%,0) scale(.94)}
+  #altBtn{left:50%;bottom:calc(12% + 66px);transform:translate(-50%,30px);opacity:0;pointer-events:none;
+    font-size:16px;font-weight:700;padding:12px 30px;min-height:52px;border:2px solid #6bffb0;color:#6bffb0;
+    background:rgba(6,20,14,.85);box-shadow:0 0 22px rgba(107,255,176,.28);letter-spacing:.2em}
+  #altBtn.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+  #altBtn:hover{background:#6bffb0;color:#06201a}
+  #altBtn:active{transform:translate(-50%,0) scale(.94)}
   #hint{position:absolute;z-index:9;top:max(16px,env(safe-area-inset-top));left:50%;
     background:rgba(8,12,22,.8);border:1px solid rgba(255,107,87,.5);color:#e8ecf4;
     border-radius:999px;padding:10px 20px;font-size:14px;letter-spacing:.06em;
@@ -36,6 +42,7 @@
 <canvas id="stage"></canvas>
 <button class="btn" id="soundBtn" type="button">聲音：關</button>
 <button class="btn" id="replayBtn" type="button">重新播放</button>
+<button class="btn" id="altBtn" type="button">試試第二結局</button>
 <div id="hint" class="run">▶ 自動播放中 ・ 點右上「聲音」開啟音效</div>
 <script>
 'use strict';
@@ -306,7 +313,7 @@ function drawWarehouse(t){
 }
 
 /* ---------- 炸彈與彈坑 ---------- */
-let timeLeft = 20, exploded = false, cutP = 0;
+let timeLeft = 20, exploded = false, cutP = 0, bombSafe = false; // bombSafe：第二結局拆除成功
 function drawBomb(g, t){
   const bx = 600, by = FY;
   g.save();
@@ -321,14 +328,18 @@ function drawBomb(g, t){
   g.quadraticCurveTo(-4, -112, fx + burn * 4, fy + burn * 16);
   g.stroke();
   const sx = fx + burn * 4, sy = fy + burn * 16;
-  const fl = 0.8 + 0.25 * Math.sin(wall * 22);
-  g.save(); g.shadowColor = '#ff8800'; g.shadowBlur = 18;
-  const sg = g.createRadialGradient(sx, sy, 1, sx, sy, 11 * fl);
-  sg.addColorStop(0, '#fff'); sg.addColorStop(0.4, '#ffcc00'); sg.addColorStop(0.8, '#ff5500'); sg.addColorStop(1, 'rgba(255,85,0,0)');
-  g.fillStyle = sg;
-  g.beginPath(); g.arc(sx, sy, 11 * fl, 0, 6.283); g.fill();
-  g.restore();
-  if (Math.random() < 0.3) spawnSpark(bx + sx, by + sy, 1, 90, '#ffcc00');
+  if (!bombSafe){
+    const fl = 0.8 + 0.25 * Math.sin(wall * 22);
+    g.save(); g.shadowColor = '#ff8800'; g.shadowBlur = 18;
+    const sg = g.createRadialGradient(sx, sy, 1, sx, sy, 11 * fl);
+    sg.addColorStop(0, '#fff'); sg.addColorStop(0.4, '#ffcc00'); sg.addColorStop(0.8, '#ff5500'); sg.addColorStop(1, 'rgba(255,85,0,0)');
+    g.fillStyle = sg;
+    g.beginPath(); g.arc(sx, sy, 11 * fl, 0, 6.283); g.fill();
+    g.restore();
+    if (Math.random() < 0.3) spawnSpark(bx + sx, by + sy, 1, 90, '#ffcc00');
+  } else if (Math.random() < 0.12){
+    spawnSmoke(bx + sx, by + sy, 1, false); // 引信已熄，冒一縷輕煙
+  }
   // 球體（剪錯線後會脹大）
   const swell = cutP > 0 ? 1 + eOB(clamp01(cutP)) * 0.1 : 1;
   g.save(); g.scale(swell, swell);
@@ -346,7 +357,14 @@ function drawBomb(g, t){
   g.beginPath(); g.roundRect(-38, -72, 76, 34, 5); g.fill();
   g.strokeStyle = '#4a5568'; g.lineWidth = 2; g.stroke();
   g.font = '700 20px monospace'; g.textAlign = 'center';
-  if (cutP > 0){
+  if (bombSafe){
+    // 第二結局：面板轉綠「解除」
+    g.fillStyle = '#6bffb0';
+    g.save(); g.shadowColor = '#6bffb0'; g.shadowBlur = 10;
+    g.font = '700 18px "Noto Sans TC",monospace';
+    g.fillText('解 除', 0, -47);
+    g.restore();
+  } else if (cutP > 0){
     // 面板顯示錯誤
     g.fillStyle = '#ff3333';
     g.save(); g.shadowColor = '#ff3333'; g.shadowBlur = 10;
@@ -360,9 +378,9 @@ function drawBomb(g, t){
     g.restore();
   }
   for (let i = 0; i < 3; i++){
-    const on = cutP > 0 ? true : (Math.floor(wall * 4 + i) % 3 === 0);
-    g.fillStyle = on ? '#ff2222' : '#4a0d0d';
-    if (on){ g.save(); g.shadowColor = '#ff2222'; g.shadowBlur = 8; }
+    const on = bombSafe ? true : (cutP > 0 ? true : (Math.floor(wall * 4 + i) % 3 === 0));
+    g.fillStyle = bombSafe ? '#39ff88' : (on ? '#ff2222' : '#4a0d0d');
+    if (on){ g.save(); g.shadowColor = bombSafe ? '#39ff88' : '#ff2222'; g.shadowBlur = 8; }
     g.beginPath(); g.arc(-16 + i * 16, -30, 4, 0, 6.283); g.fill();
     if (on) g.restore();
   }
@@ -740,12 +758,12 @@ function overlays(sc, t){
     ctx.fillText(sc.act, 16, 17);
     ctx.globalAlpha = 1;
   }
-  const total = SCENES.reduce((a, s) => a + s.dur, 0);
-  let done = 0; for (let i = 0; i < sceneIdx; i++) done += SCENES[i].dur;
+  const total = curScenes.reduce((a, s) => a + s.dur, 0);
+  let done = 0; for (let i = 0; i < sceneIdx; i++) done += curScenes[i].dur;
   ctx.fillStyle = 'rgba(255,255,255,0.12)'; ctx.fillRect(0, H - 4, W, 4);
-  ctx.fillStyle = '#ff6b57'; ctx.fillRect(0, H - 4, W * clamp01((done + Math.min(t, sc.dur)) / total), 4);
+  ctx.fillStyle = curScenes === ALT ? '#6bffb0' : '#ff6b57'; ctx.fillRect(0, H - 4, W * clamp01((done + Math.min(t, sc.dur)) / total), 4);
   let fade = clamp01(t / 0.45);
-  if (sceneIdx < SCENES.length - 1) fade = Math.min(fade, clamp01((sc.dur - t) / 0.45));
+  if (sceneIdx < curScenes.length - 1) fade = Math.min(fade, clamp01((sc.dur - t) / 0.45));
   if (fade < 1){
     ctx.globalAlpha = 1 - fade;
     ctx.fillStyle = '#03040a'; ctx.fillRect(0, 0, W, H);
@@ -762,7 +780,7 @@ function tickCheck(){
 const s0 = {
   dur: 3.6, act: '第一幕・深夜倉庫',
   subs: [{ a: 2.1, b: 3.3, tx: '同一個倉庫、同一顆炸彈……但這次——' }],
-  init(){ S = {}; timeLeft = 20; exploded = false; cutP = 0; alertLv = 0.3; showHud = false;
+  init(){ S = {}; timeLeft = 20; exploded = false; cutP = 0; bombSafe = false; alertLv = 0.3; showHud = false;
     cam.tx = 120; cam.ty = -20; cam.tz = 1.35; camSnap(); },
   evts: [{ t: 0.6, fn(){ sfx.sting(); } }],
   update(t, dt){
@@ -1104,6 +1122,10 @@ const s6 = {
     ctx.globalAlpha = seg(t, 3.4, 4.2);
     ctx.fillStyle = '#7fd1a3'; ctx.font = '700 18px "Noto Sans TC",sans-serif';
     ctx.fillText('別氣餒！名偵探也需要再試一次——', W / 2, 368);
+    // 新功能提示：第二結局（在筆記氣泡出現前淡出，避免重疊）
+    ctx.globalAlpha = Math.min(seg(t, 3.9, 4.6), clamp01((5.2 - t) / 0.5)) * 0.85;
+    ctx.fillStyle = '#6bffb0'; ctx.font = '600 15px "Noto Sans TC",sans-serif';
+    ctx.fillText('這次剪對藍線會怎樣？試試下方「第二結局」', W / 2, 404);
     ctx.globalAlpha = 1;
     // v2 最後一笑：灰頭土臉的柯南從畫面底部探出頭來
     const cu = seg(t, 4.6, 5.5, eOB);
@@ -1132,20 +1154,142 @@ const s6 = {
   }
 };
 
+/* ============================================================
+   第二結局（隱藏分支）：如果柯南冷靜下來，剪對藍線……
+   —— 於失敗結局畫面點「試試第二結局」進入，主結局仍是失敗版，兩者並存。
+   ============================================================ */
+const sAlt = {
+  dur: 9.0, act: '第二結局・冷靜下來',
+  subs: [
+    { a: 0.4, b: 2.0, tx: '這一次……深呼吸，冷靜下來。' },
+    { a: 2.0, b: 2.6, tx: '紅線是陷阱——剪藍線！', warn: true },
+    { a: 4.9, b: 6.4, tx: '嫌犯的詭計，這次被完全識破。' }
+  ],
+  init(){ S = { blueCut: false, spk: 0 }; timeLeft = 3; exploded = false; cutP = 0; bombSafe = false;
+    alertLv = 0.7; showHud = true; cam.tx = 172; cam.ty = 22; cam.tz = 1.36; camSnap(); altDefused = false; },
+  evts: [
+    { t: 1.0, fn(){ sfx.sting(); shakeMag = 3; } },
+    { t: 2.6, fn(){ sfx.snip(); freeze = 0.16; flashA = 0.9; flashC = '#bfe6ff'; shakeMag = 7;
+      S.blueCut = true; altDefused = true; bombSafe = true;
+      spawnSpark(546, FY - 14, 22, 300, '#7fd1ff'); spawnSpark(546, FY - 14, 10, 200, '#fff'); } },
+    { t: 3.4, fn(){ tone(523.25, 0.18, 'triangle', 0.09); setTimeout(() => tone(783.99, 0.3, 'triangle', 0.09), 150); } }
+  ],
+  update(t, dt){
+    if (!S.blueCut){ timeLeft = Math.max(1, timeLeft - (dt || 0)); tickCheck(); }
+    if (t < 3) cam.tz = lerp(1.36, 1.44, seg(t, 1.2, 2.6));
+    else { cam.tz = lerp(1.44, 1.12, seg(t, 3, 6)); cam.ty = lerp(22, 0, seg(t, 3, 6)); cam.tx = lerp(172, 90, seg(t, 3, 6)); }
+    if (t > 4.8) showHud = false;
+    if (S.blueCut && t > 3.2 && wall - S.spk > 0.26){
+      S.spk = wall;
+      spawnSpark(280 + Math.random() * 400, 120 + Math.random() * 170, 5, 170,
+        ['#ffcf5c', '#7fd1ff', '#8fffce'][Math.floor(Math.random() * 3)]);
+    }
+  },
+  draw(t){
+    drawWarehouse(t);
+    applyCam(1);
+    drawBomb(ctx, t);
+    const cut = S.blueCut;
+    let cr = 0.85, ex = t > 0.9 && t < 2.6 ? 'grit' : 'focus', sweat = cut ? 0 : Math.max(0.5, seg(t, 0.4, 1.0));
+    if (cut){ ex = t > 3.2 ? 'smile' : 'focus'; cr = 0.85 * (1 - seg(t, 3.2, 4.4)); }
+    drawConan(ctx, { x: 486, dir: 1, crouch: cr, exp: ex,
+      armL: -0.4,
+      armR: cut ? lerp(1.12, -0.4, seg(t, 3.2, 4.3)) : lerp(0.9, 1.12, seg(t, 0.4, 2.5)),
+      foreR: cut ? lerp(0.5, 0.4, seg(t, 3.2, 4.3)) : 0.5,
+      tool: !cut || t < 3.4, toolOpen: cut ? 0.05 : 0.3 - seg(t, 1.8, 2.6) * 0.22, toolRot: 0.42,
+      sweat, head: 0.16 });
+    if (!cut){
+      if (t > 0.9){
+        const xa = subAlpha(t, 1.0, 2.6);
+        ctx.save(); ctx.globalAlpha = xa * (0.65 + Math.abs(Math.sin(wall * 8)) * 0.35);
+        ctx.translate(546, FY - 40);
+        ctx.strokeStyle = '#ff3333'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        ctx.shadowColor = '#ff3333'; ctx.shadowBlur = 12;
+        const xs = eOB(seg(t, 0.9, 1.25)) * 14;
+        ctx.beginPath(); ctx.moveTo(-xs, -xs); ctx.lineTo(xs, xs); ctx.moveTo(xs, -xs); ctx.lineTo(-xs, xs); ctx.stroke();
+        ctx.restore();
+      }
+      if (t > 1.5){
+        const ba = subAlpha(t, 1.6, 2.6);
+        ctx.save(); ctx.globalAlpha = ba * (0.6 + Math.abs(Math.sin(wall * 4)) * 0.4);
+        ctx.strokeStyle = '#66c2ff'; ctx.lineWidth = 3; ctx.shadowColor = '#3399ff'; ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.ellipse(546, FY - 14, 34, 15, 0, 0, 6.283); ctx.stroke();
+        ctx.restore();
+      }
+    } else {
+      // 剪斷的藍線兩截垂落 + 拆除線索
+      ctx.save();
+      ctx.strokeStyle = '#0c0d10'; ctx.lineWidth = 8; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(540, FY - 2); ctx.lineTo(552, FY); ctx.stroke();
+      ctx.strokeStyle = '#3399ff'; ctx.lineWidth = 5; ctx.shadowColor = '#3399ff'; ctx.shadowBlur = 6;
+      ctx.beginPath(); ctx.moveTo(530, FY - 24); ctx.quadraticCurveTo(538, FY - 8, 540, FY - 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(562, FY - 12); ctx.quadraticCurveTo(556, FY - 2, 552, FY + 2); ctx.stroke();
+      ctx.restore();
+      // 安全綠環（面板／燈號的綠色由 drawBomb 依 bombSafe 呈現）
+      ctx.save();
+      ctx.globalAlpha = 0.4 + 0.3 * Math.abs(Math.sin(wall * 4));
+      ctx.strokeStyle = '#7fffb0'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(600, FY - 52, 60 + Math.sin(wall * 3) * 4, 0, 6.283); ctx.stroke();
+      ctx.restore();
+    }
+    drawParts(ctx);
+    ctx.restore();
+    // 成功大字（螢幕空間）
+    if (cut && t > 3.0){
+      const fa = seg(t, 3.0, 3.5);
+      ctx.save();
+      ctx.globalAlpha = fa; ctx.textAlign = 'center';
+      ctx.translate(W / 2, 152); ctx.rotate(-0.03);
+      ctx.scale(lerp(1.8, 1, eOB(seg(t, 3.0, 3.5))), lerp(1.8, 1, eOB(seg(t, 3.0, 3.5))));
+      ctx.shadowColor = '#7fffd0'; ctx.shadowBlur = 28;
+      ctx.fillStyle = '#8fffce'; ctx.font = '900 58px "Noto Sans TC",sans-serif';
+      ctx.fillText('拆除成功！', 0, 0);
+      ctx.restore();
+      ctx.textAlign = 'center';
+      ctx.globalAlpha = seg(t, 3.6, 4.3);
+      ctx.save(); ctx.shadowColor = '#4fc3f7'; ctx.shadowBlur = 18;
+      ctx.fillStyle = '#eaf5ff'; ctx.font = '700 27px "Noto Sans TC",sans-serif';
+      ctx.fillText('真相只有一個！', W / 2, 208); ctx.restore();
+      ctx.globalAlpha = seg(t, 4.5, 5.2) * 0.95;
+      ctx.fillStyle = '#ffcf5c'; ctx.font = '700 18px "Noto Sans TC",sans-serif';
+      ctx.fillText('【第二結局】冷靜下來，就能改寫結局', W / 2, 250);
+      ctx.globalAlpha = 1;
+    }
+  }
+};
+
 const SCENES = [s0, s1, s2, s3, s4, s5, s6];
+const ALT = [sAlt];
+let curScenes = SCENES, altDefused = false;
 let sceneIdx = 0, tS = 0, freeze = 0, ended = false;
 function startScene(i){
   sceneIdx = i; tS = 0;
-  const sc = SCENES[i];
+  const sc = curScenes[i];
   sc._evt = 0;
   if (sc.init) sc.init();
 }
-document.getElementById('replayBtn').addEventListener('click', function(){
-  this.classList.remove('show');
-  parts.length = 0;
-  ended = false; freeze = 0; timeLeft = 20; exploded = false; cutP = 0; lastTickSec = -1;
+function resetHint(){
   const hint = document.getElementById('hint');
   hint.classList.remove('run'); void hint.offsetWidth; hint.classList.add('run');
+}
+document.getElementById('replayBtn').addEventListener('click', function(){
+  this.classList.remove('show');
+  document.getElementById('altBtn').classList.remove('show');
+  parts.length = 0;
+  curScenes = SCENES; altDefused = false;
+  ended = false; freeze = 0; timeLeft = 20; exploded = false; cutP = 0; bombSafe = false; lastTickSec = -1;
+  flashA = 0; shakeMag = 0;
+  resetHint();
+  startScene(0); camSnap();
+});
+document.getElementById('altBtn').addEventListener('click', function(){
+  this.classList.remove('show');
+  document.getElementById('replayBtn').classList.remove('show');
+  parts.length = 0;
+  curScenes = ALT; altDefused = false;
+  ended = false; freeze = 0; exploded = false; cutP = 0; bombSafe = false; lastTickSec = -1;
+  flashA = 0; shakeMag = 0;
+  resetHint();
   startScene(0); camSnap();
 });
 
@@ -1156,7 +1300,7 @@ function frame(now){
   last = now;
   wall += dtRaw;
   camUpdate(dtRaw);
-  const sc = SCENES[sceneIdx];
+  const sc = curScenes[sceneIdx];
   let eff = 0;
   if (ended){
     eff = dtRaw;
@@ -1173,12 +1317,13 @@ function frame(now){
     }
     if (sc.update) sc.update(Math.min(tS, sc.dur), eff);
     if (tS >= sc.dur){
-      if (sceneIdx < SCENES.length - 1) startScene(sceneIdx + 1);
-      else { ended = true; tS = sc.dur; document.getElementById('replayBtn').classList.add('show'); }
+      if (sceneIdx < curScenes.length - 1) startScene(sceneIdx + 1);
+      else { ended = true; tS = sc.dur; document.getElementById('replayBtn').classList.add('show');
+        if (curScenes === SCENES) document.getElementById('altBtn').classList.add('show'); }
     }
   }
   updateParts(eff || (ended ? dtRaw : 0));
-  const scNow = SCENES[sceneIdx];
+  const scNow = curScenes[sceneIdx];
   ctx.fillStyle = '#05070d'; ctx.fillRect(0, 0, W, H);
   scNow.draw(Math.min(tS, scNow.dur));
   overlays(scNow, Math.min(tS, scNow.dur));
@@ -1186,6 +1331,9 @@ function frame(now){
 startScene(0);
 camSnap();
 requestAnimationFrame(frame);
+/* QA 煙霧測試鉤子（唯讀狀態，不影響演出） */
+window.__smoke = () => ({ scene: sceneIdx, ended, parts: parts.length,
+  timeLeft: Math.round(timeLeft * 10) / 10, exploded, alt: curScenes === ALT, defused: altDefused });
 </script>
 </body>
 </html>

@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
 <title>👻 鬼屋大戰：幽靈 VS 老師</title>
+<meta name="author" content="AI未來創作營隊">
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <style>
   html, body {
@@ -74,6 +75,13 @@
     background: linear-gradient(180deg, #ff9d6f, #f06543);
     box-shadow: 0 5px 0 #a83c22, 0 8px 18px rgba(240,101,67,0.35);
   }
+  #mode3 {
+    background: linear-gradient(180deg, #f0d060, #b98a1e);
+    box-shadow: 0 5px 0 #7a5a12, 0 8px 18px rgba(185,138,30,0.4);
+    color: #2a1c00;
+  }
+  .modebtn.locked { opacity: 0.5; }
+  .modebtn small { display: block; font-size: 11px; font-weight: normal; opacity: 0.9; margin-top: 2px; letter-spacing: 0; }
   .bigbtn {
     display: inline-block;
     margin: 12px 6px 0;
@@ -123,11 +131,13 @@
     <div class="sub">午夜的鬼屋裡，幽靈和老師狹路相逢——<br>擊中對手集滿能量，放出必殺技吧！</div>
     <button id="mode1" class="modebtn">👻 單人挑戰（電腦扮老師）</button>
     <button id="mode2" class="modebtn">⚔️ 雙人對戰（同一鍵盤）</button>
+    <button id="mode3" class="modebtn locked">🏆 生存擂台 🔒<small id="survSub">先擊敗老師一次解鎖</small></button>
     <div class="sub">
       💻 幽靈：<kbd>A</kbd><kbd>D</kbd> 移動 <kbd>空白鍵</kbd> 攻擊 <kbd>S</kbd> 格擋 <kbd>W</kbd> 必殺<br>
       💻 老師（雙人）：<kbd>←</kbd><kbd>→</kbd> 移動 <kbd>Enter</kbd> 攻擊 <kbd>↑</kbd> 格擋 <kbd>↓</kbd> 必殺<br>
       📱 平板：左下 ◀▶ 移動｜右下 🛡 格擋 👊 攻擊 ✨ 必殺<br>
-      🍬 空投糖果：撿到回血！打中對手集能量，滿了放必殺！
+      🍬 空投糖果：撿到回血！打中對手集能量，滿了放必殺！<br>
+      🏆 <b style="color:#ffd54f">生存擂台</b>：擊退一波波越來越強的老師，挑戰最高連勝！
     </div>
   </div>
 
@@ -274,6 +284,12 @@ let introT = 0;               // 開場倒數
 let tutorialT = 0;            // 開場教學提示
 let candy = null, candyTimer = 6;   // 空投糖果
 let attackCount = 0;          // 測試掛鉤用
+// v4：生存擂台（無盡挑戰）
+let survival = false;
+let streak = 0;
+let newSurvivalBest = false;
+let cleared = localStorage.getItem('haunt-cleared') === '1';
+let survivalBest = parseInt(localStorage.getItem('haunt-survival-best') || '0', 10) || 0;
 const touchUI = matchMedia('(pointer: coarse)').matches;
 
 function makeFighter(name, emoji, x, dir, img) {
@@ -422,6 +438,7 @@ const overOverlay = document.getElementById('overOverlay');
 let overCooldown = 0;
 function startGame(ai) {
   if (typeof ai === 'boolean') vsAI = ai;
+  survival = false;
   resetGame();
   mode = 'play';
   introT = 1.8;               // 3-2-1 倒數
@@ -431,15 +448,52 @@ function startGame(ai) {
   sfx.start();
   sfx.count(3);
 }
+function startSurvival() {
+  survival = true; vsAI = true;
+  streak = 0; newSurvivalBest = false;
+  aiLevel = 1;
+  resetGame();
+  mode = 'play';
+  introT = 1.8;
+  tutorialT = localStorage.getItem('haunt-played') ? 4 : 8;
+  titleOverlay.classList.remove('show');
+  overOverlay.classList.remove('show');
+  sfx.start();
+  sfx.count(3);
+}
+function refreshTitle() {
+  const b = document.getElementById('mode3');
+  if (cleared) {
+    b.classList.remove('locked');
+    b.firstChild.textContent = '🏆 生存擂台（無盡）';
+    document.getElementById('survSub').textContent = survivalBest > 0 ? ('最佳連勝 ' + survivalBest + ' 關') : '能連勝幾關？';
+  } else {
+    b.classList.add('locked');
+    b.firstChild.textContent = '🏆 生存擂台 🔒';
+    document.getElementById('survSub').textContent = '先擊敗老師一次解鎖';
+  }
+}
 document.getElementById('mode1').addEventListener('click', () => startGame(true));
 document.getElementById('mode2').addEventListener('click', () => startGame(false));
+document.getElementById('mode3').addEventListener('click', () => {
+  if (!cleared) {
+    const b = document.getElementById('mode3');
+    if (b.animate) b.animate([{transform:'translateX(0)'},{transform:'translateX(-5px)'},{transform:'translateX(5px)'},{transform:'translateX(0)'}], {duration:260});
+    beep(200, 0.12, 'square', 0.08, -60);
+    return;
+  }
+  startSurvival();
+});
 document.getElementById('rematchBtn').addEventListener('click', () => {
-  if (overCooldown <= 0) startGame();
+  if (overCooldown > 0) return;
+  if (survival) startSurvival(); else startGame();
 });
 document.getElementById('menuBtn').addEventListener('click', () => {
   overOverlay.classList.remove('show');
   mode = 'title';
+  survival = false;
   resetGame();
+  refreshTitle();
   titleOverlay.classList.add('show');
 });
 
@@ -523,18 +577,59 @@ function startKO(loser, winner) {
   burst(loser.x, GROUND_Y - 100, '#ffea00', 26, 340);
   burst(loser.x, GROUND_Y - 100, loser === ghost ? '#8be9fd' : '#ffa94d', 18, 280);
   sfx.ko();
+  if (survival) return;   // 生存模式的計分與加成在 finishKO / nextWave 處理
   if (winner === ghost || loser === teacher) wins.ghost++;
   else wins.teacher++;
+  if (loser === teacher && !cleared) { cleared = true; localStorage.setItem('haunt-cleared', '1'); }
   if (vsAI) {
     if (loser === teacher) aiLevel = Math.min(5, aiLevel + 1);   // 玩家贏 → AI 變強
     else aiLevel = Math.max(0, aiLevel - 1);
   }
 }
-function finishKO() {
+function nextWave() {
+  streak++;
+  if (streak > survivalBest) {
+    survivalBest = streak; newSurvivalBest = true;
+    localStorage.setItem('haunt-survival-best', String(survivalBest));
+  }
+  if (!cleared) { cleared = true; localStorage.setItem('haunt-cleared', '1'); }
+  aiLevel = Math.min(12, 1 + streak);            // 每關越來越強
+  projectiles = [];
+  // 幽靈補血當作過關獎勵
+  ghost.hp = Math.min(100, ghost.hp + 35);
+  ghost.koFall = 0; ghost.hitFlash = 0; ghost.vx = 0;
+  ghost.combo = 0; ghost.comboTimer = 0; ghost.cool = 0;
+  // 新老師登場（滿血、更強）
+  teacher = makeFighter('老師', '👩‍🏫', 740, -1, IMG.teacher);
+  fighters = [ghost, teacher];
+  koTimer = -1; slowmo = 1; freeze = 0;
+  introT = 1.2;
+  shake = 6; flash = 0.2;
+  burst(teacher.x, GROUND_Y - 100, '#ffa94d', 20, 280);
+  addFloat(GAME_W / 2, 200, '第 ' + (streak + 1) + ' 關！新老師登場', '#ffea00', 34);
+  addFloat(ghost.x, GROUND_Y - 200, '🍬 +35 回血', '#7cfc9e', 24);
+  sfx.win();
+}
+function endSurvival() {
   mode = 'ko';
   overCooldown = 0.6;
   localStorage.setItem('haunt-played', '1');
+  document.getElementById('resultText').innerHTML = '🏆 生存擂台結束<br>擊退 ' + streak + ' 位老師！';
+  document.getElementById('scoreLine').textContent =
+    (newSurvivalBest && streak > 0 ? '⭐ 新紀錄！　' : '') + '連勝 ' + streak + ' 關 ｜ 最佳 ' + survivalBest + ' 關';
+  overOverlay.classList.add('show');
+  setTimeout(() => sfx.win(), 300);
+}
+function finishKO() {
   const loser = ghost.hp <= 0 ? ghost : teacher;
+  if (survival) {
+    if (loser === teacher) nextWave();   // 打贏這關 → 下一波
+    else endSurvival();                  // 幽靈倒下 → 結算
+    return;
+  }
+  mode = 'ko';
+  overCooldown = 0.6;
+  localStorage.setItem('haunt-played', '1');
   const msg = loser === ghost
     ? '👩‍🏫 老師獲勝！<br>鬼屋恢復平靜…'
     : '👻 幽靈獲勝！<br>老師落荒而逃！';
@@ -1181,10 +1276,11 @@ function drawHUD() {
   ctx.shadowBlur = 14;
   ctx.fillText('VS', GAME_W / 2, 52);
   ctx.shadowBlur = 0;
-  // 戰績
+  // 戰績 / 生存連勝
   ctx.font = '13px "Microsoft JhengHei", sans-serif';
-  ctx.fillStyle = '#b3a3d9';
-  ctx.fillText('👻 ' + wins.ghost + ' 勝　' + wins.teacher + ' 勝 👩‍🏫', GAME_W / 2, 74);
+  ctx.fillStyle = survival ? '#ffd54f' : '#b3a3d9';
+  if (survival) ctx.fillText('🏆 第 ' + (streak + 1) + ' 關　連勝 ' + streak + '　最佳 ' + survivalBest, GAME_W / 2, 74);
+  else ctx.fillText('👻 ' + wins.ghost + ' 勝　' + wins.teacher + ' 勝 👩‍🏫', GAME_W / 2, 74);
 
   // 開場教學提示
   if (tutorialT > 0 && mode === 'play' && introT <= 0) {
@@ -1304,11 +1400,14 @@ function frame(now) {
 
 resetGame();
 mode = 'title';
+refreshTitle();
 titleOverlay.classList.add('show');
 requestAnimationFrame(frame);
 
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
-window.__test = () => ({ mode, x: ghost.x, y: 0, attacked: attackCount, ghostHp: ghost.hp, teacherHp: teacher.hp, intro: introT });
+window.__test = () => ({ mode, x: ghost.x, y: 0, attacked: attackCount, ghostHp: ghost.hp, teacherHp: teacher.hp,
+  intro: introT, survival, streak, cleared, survivalBest, aiLevel, wins: wins.ghost + ':' + wins.teacher,
+  projectiles: projectiles.length, parts: parts.length, slowmo: +slowmo.toFixed(2) });
 </script>
 </body>
 </html>

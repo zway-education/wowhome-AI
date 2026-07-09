@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -240,6 +240,25 @@ let won = false;
 let round = 1, defused = 0, score = 0, scoreShow = 0, best = 0;
 try{ best = parseInt(localStorage.getItem('bombpro_best') || '0', 10) || 0; }catch(e){}
 let newBest = false;
+/* v4 關卡模式：5 關循序解鎖，每關引入新題型，星等存 localStorage */
+let mode = 'story';   // 'story' 劇情挑戰（連拆10顆） | 'level' 關卡模式
+let levelIndex = 0, levelMistakes = 0, levelCleared = false, earnedStars = 0;
+const LEVELS = [
+  { name: '基礎判讀', twist: '最大／最小數字', wires: 4, time: 15, bombs: 3, clues: ['max', 'min'] },
+  { name: '數字推理', twist: '新增「最接近 5」與唯一奇偶', wires: 4, time: 13, bombs: 3, clues: ['max', 'min', 'near5', 'even', 'oddnum'] },
+  { name: '顏色線索', twist: '新增「唯一不重複顏色」', wires: 5, time: 12, bombs: 3, clues: ['odd', 'near5', 'max', 'min'] },
+  { name: '雙重條件', twist: '新增「同色中數字最大」兩步驟', wires: 5, time: 11, bombs: 4, clues: ['colormax', 'odd', 'near5', 'even'] },
+  { name: '大師試煉', twist: '六線＋全題型＋限時 9 秒', wires: 6, time: 9, bombs: 4, clues: ['colormax', 'odd', 'near5', 'even', 'oddnum', 'max', 'min'] }
+];
+const LEVEL_COUNT = LEVELS.length;
+let levelStars = [0, 0, 0, 0, 0];
+try{
+  const s = JSON.parse(localStorage.getItem('bombpro_levelstars') || '[]');
+  if(Array.isArray(s)) for(let i = 0; i < LEVEL_COUNT; i++) levelStars[i] = s[i] || 0;
+}catch(e){}
+function saveStars(){ try{ localStorage.setItem('bombpro_levelstars', JSON.stringify(levelStars)); }catch(e){} }
+function levelUnlocked(i){ return i === 0 || levelStars[i - 1] >= 1; }
+function computeStars(){ return Math.max(1, 3 - Math.min(2, levelMistakes)); }
 let correctIndex = -1, clueText = '';
 let shields = 0, mags = 1;      /* v2：🛡 保險絲、🔍 排除鏡 */
 let timeLeft = 15, timeMax = 15, lastTick = 99;
@@ -255,7 +274,8 @@ const pick = arr => arr[Math.floor(Math.random() * arr.length)];
 
 /* ===== 回合構築（保證提示有唯一解）===== */
 function buildRound(){
-  const wireCount = Math.min(4 + Math.floor((round - 1) / 2), 6);
+  const lvl = mode === 'level' ? LEVELS[levelIndex] : null;
+  const wireCount = lvl ? lvl.wires : Math.min(4 + Math.floor((round - 1) / 2), 6);
   const numbers = new Set();
   while(numbers.size < wireCount) numbers.add(1 + Math.floor(Math.random() * 9));
   const nums = Array.from(numbers);
@@ -291,34 +311,58 @@ function buildRound(){
   const odds = wires.filter(w => w.number % 2 === 1);
   if(evens.length === 1) options.push({ type: 'even', idx: wires.indexOf(evens[0]), txt: '剪斷數字是「唯一偶數」的那條線。' });
   if(odds.length === 1) options.push({ type: 'oddnum', idx: wires.indexOf(odds[0]), txt: '剪斷數字是「唯一奇數」的那條線。' });
-  /* v2：兩步驟題（第 3 關起）——同色群組中數字最大 */
-  if(round >= 3){
+  /* v2：兩步驟題（第 3 關起 / 關卡模式）——同色群組中數字最大 */
+  if(round >= 3 || mode === 'level'){
     Object.keys(counts).filter(nm => counts[nm] >= 2).forEach(nm => {
       const group = wires.filter(w => w.color.name === nm);
       const mx = Math.max(...group.map(w => w.number));
       options.push({ type: 'colormax', idx: wires.findIndex(w => w.color.name === nm && w.number === mx), txt: '在「' + nm + '」的線中，剪斷數字最大的那條。' });
     });
   }
-  /* v3：第 1 關只出「最大／最小」最直覺題型（安全學習期） */
-  const pool = round === 1 ? options.filter(o => o.type === 'max' || o.type === 'min') : options;
+  /* 題型池：關卡模式依關卡設定挑題（新題型優先，找不到就退回全部確保有唯一解）；
+     劇情模式第 1 關只出「最大／最小」最直覺題型（安全學習期） */
+  let pool;
+  if(lvl){
+    pool = options.filter(o => lvl.clues.includes(o.type));
+  }else{
+    pool = round === 1 ? options.filter(o => o.type === 'max' || o.type === 'min') : options;
+  }
   const chosen = pick(pool.length ? pool : options);
   correctIndex = chosen.idx;
   clueText = chosen.txt;
-  timeMax = timeLeft = Math.max(6, 15 - (round - 1) * 0.7);
+  timeMax = timeLeft = lvl ? lvl.time : Math.max(6, 15 - (round - 1) * 0.7);
   lastTick = 99;
   phase = 'active'; phaseT = 0;
 }
 function startGame(){
+  mode = 'story';
   round = 1; defused = 0; score = 0; scoreShow = 0; newBest = false;
-  won = false;
+  won = false; levelCleared = false;
   shields = 1; mags = 1;   /* v3：開局送 1 個保險絲，第一次剪錯不會直接結束 */
   parts = []; floaters.length = 0; villagers = [];
   buildRound();
   stateName = 'play'; stateT = 0;
   sfx.ui();
 }
+/* v4：開始指定關卡（關卡模式） */
+function startLevel(i){
+  mode = 'level';
+  levelIndex = clamp(i, 0, LEVEL_COUNT - 1);
+  round = 1; defused = 0; score = 0; scoreShow = 0; newBest = false;
+  won = false; levelCleared = false; earnedStars = 0; levelMistakes = 0;
+  shields = 2; mags = 1;   /* 關卡模式給 2 個保險絲：容錯換星等 */
+  parts = []; floaters.length = 0; villagers = [];
+  buildRound();
+  stateName = 'play'; stateT = 0;
+  sfx.ui();
+}
+function toSelect(){
+  stateName = 'select'; stateT = 0;
+  parts = []; floaters.length = 0; villagers = [];
+  flash = 0; shake = 0;
+}
 function endGame(){
-  if(defused > best){ best = defused; newBest = true;
+  if(mode === 'story' && defused > best){ best = defused; newBest = true;
     try{ localStorage.setItem('bombpro_best', String(best)); }catch(e){}
   }
   stateName = 'over'; stateT = 0; overT = 0;
@@ -327,6 +371,7 @@ function endGame(){
 }
 function toTitle(){
   stateName = 'title'; stateT = 0;
+  mode = 'story';
   parts = []; floaters.length = 0; villagers = [];
   round = 1; flash = 0;
   buildRound();   // 重置裝置展示（phase 回到 active、電線復原）
@@ -380,17 +425,20 @@ function cutWire(i, x){
     shake = 3;
     sfx.success();
     spawnCrowd();
-  }else if(shields > 0){
-    /* v2：保險絲擋下爆炸 */
-    shields--;
-    freeze = 0.1; shake = 10; flash = 0.3;
-    addFloater(GAME_W / 2, GAME_H / 2 - 60, '🛡 保險絲擋下了爆炸！', '#8fb4e3', 26);
-    addFloater(GAME_W / 2, GAME_H / 2 - 24, '剩 ' + shields + ' 個，小心！', '#e8ecf1', 18);
-    sfx.shield();
-    if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
   }else{
-    boomReason = '剪錯線了…';
-    triggerBoom();
+    if(mode === 'level') levelMistakes++;   /* v4：剪錯計入星等扣分 */
+    if(shields > 0){
+      /* v2：保險絲擋下爆炸 */
+      shields--;
+      freeze = 0.1; shake = 10; flash = 0.3;
+      addFloater(GAME_W / 2, GAME_H / 2 - 60, '🛡 保險絲擋下了爆炸！', '#8fb4e3', 26);
+      addFloater(GAME_W / 2, GAME_H / 2 - 24, '剩 ' + shields + ' 個，小心！', '#e8ecf1', 18);
+      sfx.shield();
+      if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){}
+    }else{
+      boomReason = '剪錯線了…';
+      triggerBoom();
+    }
   }
 }
 /* v2：🔍 排除鏡——劃掉兩條錯誤的線 */
@@ -503,9 +551,19 @@ function playUpdate(dt){
     }
   }else if(phase === 'success'){
     if(phaseT > 1.7){
-      /* v3：拆滿 10 顆＝破案，進入勝利結算 */
-      if(defused >= WIN_GOAL){ won = true; endGame(); }
-      else{ round++; buildRound(); }
+      if(mode === 'level'){
+        /* v4：拆滿本關指定顆數＝過關，計算星等存檔 */
+        if(defused >= LEVELS[levelIndex].bombs){
+          won = true; levelCleared = true;
+          earnedStars = computeStars();
+          if(earnedStars > levelStars[levelIndex]){ levelStars[levelIndex] = earnedStars; saveStars(); }
+          endGame();
+        }else buildRound();
+      }else{
+        /* v3：拆滿 10 顆＝破案，進入勝利結算 */
+        if(defused >= WIN_GOAL){ won = true; endGame(); }
+        else{ round++; buildRound(); }
+      }
     }
   }else if(phase === 'boom'){
     if(phaseT > 1.3) endGame();
@@ -685,14 +743,14 @@ function drawCase(){
   ctx.fillStyle = '#7c8798';
   ctx.fillText('關卡', SX1, CASE_Y + 66);
   ctx.fillText('拆除', SX2, CASE_Y + 66);
-  ctx.fillText('最佳', SX3, CASE_Y + 66);
+  ctx.fillText(mode === 'level' ? '星等' : '最佳', SX3, CASE_Y + 66);
   ctx.font = 'bold 20px ' + MONO;
   ctx.fillStyle = '#e8ecf1';
-  ctx.fillText(String(round), SX1, CASE_Y + 88);
+  ctx.fillText(mode === 'level' ? 'Lv' + (levelIndex + 1) : String(round), SX1, CASE_Y + 88);
   ctx.fillStyle = '#33d1a6';
-  ctx.fillText(defused + '/' + WIN_GOAL, SX2, CASE_Y + 88);
+  ctx.fillText(mode === 'level' ? (defused + '/' + LEVELS[levelIndex].bombs) : (defused + '/' + WIN_GOAL), SX2, CASE_Y + 88);
   ctx.fillStyle = '#ffb020';
-  ctx.fillText(String(best), SX3, CASE_Y + 88);
+  ctx.fillText(mode === 'level' ? ('★' + (levelStars[levelIndex] || 0)) : String(best), SX3, CASE_Y + 88);
   /* 炸彈本體圖示（OpenMoji）＋引信火花 */
   const wob = phase === 'active' && timeLeft <= 5 ? Math.sin(T * 22) * 0.06 : Math.sin(T * 2.2) * 0.03;
   ctx.save();
@@ -721,7 +779,7 @@ function drawCase(){
   ctx.font = 'bold 13px ' + FONT;
   ctx.textAlign = 'right';
   ctx.fillStyle = '#ff4444';
-  ctx.fillText('危險 ' + '★'.repeat(Math.min(5, Math.ceil(round / 2))), CASE_X + CASE_W - 30, CASE_Y + 172);
+  ctx.fillText('危險 ' + '★'.repeat(Math.min(5, mode === 'level' ? levelIndex + 1 : Math.ceil(round / 2))), CASE_X + CASE_W - 30, CASE_Y + 172);
 }
 function drawWires(){
   for(let i = 0; i < wires.length; i++){
@@ -883,8 +941,13 @@ addEventListener('keydown', e => {
   if(e.repeat) return;
   if(c === 'KeyM'){ toggleMute(); return; }
   if(stateName === 'title' && (c === 'Enter' || c === 'Space')){ startGame(); return; }
+  if(stateName === 'select'){
+    if(c === 'Escape' || c === 'Backspace'){ toTitle(); return; }
+    const md = c.match(/^(Digit|Numpad)([1-5])$/);
+    if(md){ const i = parseInt(md[2], 10) - 1; if(levelUnlocked(i)) startLevel(i); return; }
+  }
   if(stateName === 'over' && (c === 'Enter' || c === 'Space' || c === 'KeyR')){
-    if(overT > 0.4) startGame();
+    if(overT > 0.4){ if(mode === 'level') startLevel(levelIndex); else startGame(); }
     return;
   }
   if(stateName === 'play' && phase === 'active'){
@@ -953,6 +1016,66 @@ function drawWorld(){
     ctx.fillRect(0, 0, GAME_W, GAME_H);
   }
 }
+/* v4：星等繪製（三顆★，前 n 顆點亮） */
+function drawStars(cx, cy, n, size){
+  ctx.font = 'bold ' + size + 'px ' + FONT;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const gap = size * 1.02;
+  for(let j = 0; j < 3; j++){
+    ctx.fillStyle = j < n ? '#ffd23d' : 'rgba(120,130,150,.4)';
+    ctx.fillText('★', cx + (j - 1) * gap, cy);
+  }
+  ctx.textBaseline = 'alphabetic';
+}
+/* v4：選關畫面 */
+function selectDraw(){
+  drawBG();
+  ctx.fillStyle = 'rgba(4,6,12,.62)';
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  const cw = Math.min(GAME_W - 60, 620);
+  const cx0 = GAME_W / 2 - cw / 2;
+  const ch = 62, gap = 12;
+  const totalH = LEVEL_COUNT * ch + (LEVEL_COUNT - 1) * gap;
+  const startY = Math.max(112, (GAME_H - totalH) / 2 - 4);
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 30px ' + FONT;
+  ctx.fillStyle = '#ffb020';
+  ctx.fillText('關卡模式・選擇關卡', GAME_W / 2, startY - 44);
+  ctx.font = '14px ' + FONT;
+  ctx.fillStyle = '#7c8798';
+  ctx.fillText('每關引入新題型，先過關解鎖下一關，挑戰三星！', GAME_W / 2, startY - 22);
+  for(let i = 0; i < LEVEL_COUNT; i++){
+    const y = startY + i * (ch + gap);
+    const unlocked = levelUnlocked(i);
+    const L = LEVELS[i];
+    if(unlocked) uiButtons.push({ x: cx0, y, w: cw, h: ch, cb: () => startLevel(i) });
+    rr(cx0, y, cw, ch, 12);
+    ctx.fillStyle = unlocked ? 'rgba(30,40,60,.9)' : 'rgba(20,24,34,.8)';
+    ctx.fill();
+    ctx.strokeStyle = unlocked ? '#ffb020' : '#3a4358'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx0 + 36, y + ch / 2, 20, 0, Math.PI * 2);
+    fill2(unlocked ? '#2a3345' : '#20242e', unlocked ? '#ffb020' : '#3a4358', 2);
+    ctx.font = 'bold 20px ' + MONO;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = unlocked ? '#ffd23d' : '#5a6478';
+    ctx.fillText(unlocked ? String(i + 1) : '🔒', cx0 + 36, y + ch / 2 + 1);
+    ctx.textBaseline = 'alphabetic';
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 17px ' + FONT;
+    ctx.fillStyle = unlocked ? '#e8ecf1' : '#5a6478';
+    ctx.fillText('關卡 ' + (i + 1) + '・' + L.name, cx0 + 68, y + 26);
+    ctx.font = '12px ' + FONT;
+    ctx.fillStyle = unlocked ? '#7c8798' : '#4a5364';
+    ctx.fillText(L.twist, cx0 + 68, y + 46);
+    if(unlocked) drawStars(cx0 + cw - 52, y + ch / 2, levelStars[i], 18);
+    else{
+      ctx.textAlign = 'center'; ctx.font = 'bold 13px ' + FONT; ctx.fillStyle = '#5a6478';
+      ctx.fillText('未解鎖', cx0 + cw - 52, y + ch / 2 + 4);
+    }
+  }
+  drawButton(GAME_W / 2 - 92, startY + totalH + 20, 184, 46, '返回主選單', toTitle, false);
+  drawMuteBtn();
+}
 function titleDraw(){
   drawWorld();
   ctx.fillStyle = 'rgba(4,6,12,.55)';
@@ -967,8 +1090,15 @@ function titleDraw(){
   ctx.fillStyle = '#e8ecf1';
   ctx.fillText('看清案情提示，在倒數歸零前剪斷正確的線。剪錯或超時——轟！', GAME_W / 2, 212);
   ctx.fillText('連續拆除 ' + WIN_GOAL + ' 顆就破案！關卡越深，線越多、時間越短。', GAME_W / 2, 240);
+  /* v4 關卡模式公告 */
+  const clearedLv = levelStars.filter(s => s > 0).length;
+  ctx.font = 'bold 15px ' + FONT;
+  ctx.fillStyle = '#33d1a6';
+  ctx.fillText('★ 新增關卡模式：5 關循序挑戰，每關新題型、比星等！' + (clearedLv ? '（已破 ' + clearedLv + '/5）' : ''), GAME_W / 2, 270);
   if(stateT > 0.35){
-    drawButton(GAME_W / 2 - 120, 282, 240, 58, '開始拆彈', startGame, true);
+    const bw = Math.min(230, (GAME_W - 80) / 2);
+    drawButton(GAME_W / 2 - 12 - bw, 290, bw, 54, '劇情挑戰', startGame, true);
+    drawButton(GAME_W / 2 + 12, 290, bw, 54, '關卡模式', toSelect, false);
   }
   ctx.font = 'bold 15px ' + FONT;
   ctx.fillStyle = '#e8ecf1';
@@ -976,10 +1106,12 @@ function titleDraw(){
   ctx.fillText('📱 平板：手指輕點要剪的電線', GAME_W / 2, 398);
   ctx.font = '14px ' + FONT;
   ctx.fillStyle = 'rgba(232,236,241,.75)';
-  ctx.fillText('🔍 排除鏡劃掉錯線（按 Q 或左下按鈕）　🛡 保險絲擋一次爆炸　按 M 靜音', GAME_W / 2, 426);
+  ctx.fillText('🔍 排除鏡劃掉錯線（按 Q 或左下按鈕）　🛡 保險絲擋一次爆炸　按 M 靜音', GAME_W / 2, 424);
+  ctx.fillStyle = '#ffd77e';
+  ctx.fillText('🗂 關卡模式：5 關循序解鎖、每關新題型，挑戰三星評價！', GAME_W / 2, 448);
   if(best > 0){
     ctx.fillStyle = '#ffb020';
-    ctx.fillText('最佳紀錄：連續拆除 ' + best + ' 顆', GAME_W / 2, 452);
+    ctx.fillText('劇情最佳紀錄：連續拆除 ' + best + ' 顆', GAME_W / 2, 472);
   }
   drawMuteBtn();
 }
@@ -992,8 +1124,8 @@ function playDraw(){
   ctx.strokeText('分數 ' + Math.round(scoreShow), 20, 34);
   ctx.fillStyle = '#ffd23d';
   ctx.fillText('分數 ' + Math.round(scoreShow), 20, 34);
-  /* v2：開局操作提示（第一關前 6 秒，漸淡） */
-  if(phase === 'active' && round === 1 && phaseT < 6){
+  /* v2：開局操作提示（第一次遊玩前 6 秒，漸淡） */
+  if(phase === 'active' && phaseT < 6 && (mode === 'story' ? round === 1 : (levelIndex === 0 && defused === 0))){
     ctx.globalAlpha = clamp((6 - phaseT) / 1.2, 0, 1);
     ctx.font = 'bold 16px ' + FONT;
     ctx.textAlign = 'center';
@@ -1026,30 +1158,77 @@ function overDraw(){
   ctx.fillStyle = 'rgba(18,24,38,.96)'; ctx.fill();
   ctx.strokeStyle = won ? '#33d1a6' : '#ff4444'; ctx.lineWidth = 3; ctx.stroke();
   ctx.textAlign = 'center';
-  ctx.font = 'bold 36px ' + FONT;
-  ctx.fillStyle = won ? '#33d1a6' : '#ff4444';
-  ctx.fillText(won ? '案件終結！' : '任務結束', 0, -88);
-  ctx.font = '16px ' + FONT;
-  ctx.fillStyle = '#7c8798';
-  ctx.fillText(won ? WIN_GOAL + ' 顆炸彈全數拆除，城市恢復和平！'
-    : boomReason + '炸彈爆炸了。（挑戰到第 ' + round + ' 關）', 0, -54);
-  ctx.font = 'bold 26px ' + FONT;
-  ctx.fillStyle = '#e8ecf1';
-  ctx.fillText('連續拆除　' + defused + '　顆炸彈', 0, -8);
-  ctx.font = 'bold 22px ' + FONT;
-  ctx.fillStyle = '#ffd23d';
-  ctx.fillText('分數　' + score, 0, 32);
-  ctx.font = '17px ' + FONT;
-  ctx.fillStyle = newBest ? '#33d1a6' : 'rgba(232,236,241,.7)';
-  ctx.fillText(newBest ? '★ 新紀錄！★' : '最佳紀錄　' + best + ' 顆', 0, 68);
-  ctx.font = '14px ' + FONT;
-  ctx.fillStyle = '#7c8798';
-  ctx.fillText(won ? '傳說中的名偵探，就是你！'
-    : defused >= 5 ? '名偵探等級的冷靜！' : '深呼吸，下次一定拆得掉！', 0, 100);
+  if(mode === 'level' && levelCleared){
+    ctx.font = 'bold 32px ' + FONT;
+    ctx.fillStyle = '#33d1a6';
+    ctx.fillText('關卡 ' + (levelIndex + 1) + ' 完成！', 0, -96);
+    ctx.font = '15px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText(LEVELS[levelIndex].name + '・' + LEVELS[levelIndex].twist, 0, -66);
+    drawStars(0, -28, earnedStars, 36);
+    ctx.font = 'bold 20px ' + FONT;
+    ctx.fillStyle = '#e8ecf1';
+    ctx.fillText('本關得分　' + score, 0, 22);
+    ctx.font = '14px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText(earnedStars >= 3 ? '完美拆除，零失誤！' : levelMistakes + ' 次失誤，再拚三星！', 0, 52);
+    if(levelIndex >= LEVEL_COUNT - 1){
+      ctx.fillStyle = '#ffd23d';
+      ctx.fillText('★ 五關全破！你是傳說中的拆彈名偵探！', 0, 80);
+    }
+  }else if(mode === 'level'){
+    ctx.font = 'bold 34px ' + FONT;
+    ctx.fillStyle = '#ff4444';
+    ctx.fillText('關卡失敗', 0, -84);
+    ctx.font = '16px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText(boomReason + '炸彈爆炸了。', 0, -50);
+    ctx.font = 'bold 18px ' + FONT;
+    ctx.fillStyle = '#e8ecf1';
+    ctx.fillText('關卡 ' + (levelIndex + 1) + '・' + LEVELS[levelIndex].name, 0, -12);
+    ctx.font = '14px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText('冷靜看清提示，再挑戰一次！', 0, 24);
+  }else{
+    ctx.font = 'bold 36px ' + FONT;
+    ctx.fillStyle = won ? '#33d1a6' : '#ff4444';
+    ctx.fillText(won ? '案件終結！' : '任務結束', 0, -88);
+    ctx.font = '16px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText(won ? WIN_GOAL + ' 顆炸彈全數拆除，城市恢復和平！'
+      : boomReason + '炸彈爆炸了。（挑戰到第 ' + round + ' 關）', 0, -54);
+    ctx.font = 'bold 26px ' + FONT;
+    ctx.fillStyle = '#e8ecf1';
+    ctx.fillText('連續拆除　' + defused + '　顆炸彈', 0, -8);
+    ctx.font = 'bold 22px ' + FONT;
+    ctx.fillStyle = '#ffd23d';
+    ctx.fillText('分數　' + score, 0, 32);
+    ctx.font = '17px ' + FONT;
+    ctx.fillStyle = newBest ? '#33d1a6' : 'rgba(232,236,241,.7)';
+    ctx.fillText(newBest ? '★ 新紀錄！★' : '最佳紀錄　' + best + ' 顆', 0, 68);
+    ctx.font = '14px ' + FONT;
+    ctx.fillStyle = '#7c8798';
+    ctx.fillText(won ? '傳說中的名偵探，就是你！'
+      : defused >= 5 ? '名偵探等級的冷靜！' : '深呼吸，下次一定拆得掉！', 0, 100);
+  }
   ctx.restore();
   if(overT > 0.3){
-    drawButton(GAME_W / 2 - 120, GAME_H / 2 + 128, 240, 54, '再玩一次', startGame, true);
-    drawButton(GAME_W / 2 - 100, GAME_H / 2 + 194, 200, 48, '回主選單', toTitle, false);
+    if(mode === 'level' && levelCleared){
+      if(levelIndex < LEVEL_COUNT - 1){
+        drawButton(GAME_W / 2 - 236, GAME_H / 2 + 128, 150, 50, '下一關', () => startLevel(levelIndex + 1), true);
+        drawButton(GAME_W / 2 - 78, GAME_H / 2 + 128, 150, 50, '重玩本關', () => startLevel(levelIndex), false);
+        drawButton(GAME_W / 2 + 86, GAME_H / 2 + 128, 150, 50, '選關', toSelect, false);
+      }else{
+        drawButton(GAME_W / 2 - 158, GAME_H / 2 + 128, 150, 50, '重玩本關', () => startLevel(levelIndex), true);
+        drawButton(GAME_W / 2 + 8, GAME_H / 2 + 128, 150, 50, '選關', toSelect, false);
+      }
+    }else if(mode === 'level'){
+      drawButton(GAME_W / 2 - 158, GAME_H / 2 + 128, 150, 52, '重試本關', () => startLevel(levelIndex), true);
+      drawButton(GAME_W / 2 + 8, GAME_H / 2 + 128, 150, 52, '選關', toSelect, false);
+    }else{
+      drawButton(GAME_W / 2 - 120, GAME_H / 2 + 128, 240, 54, '再玩一次', startGame, true);
+      drawButton(GAME_W / 2 - 100, GAME_H / 2 + 194, 200, 48, '回主選單', toTitle, false);
+    }
   }
   drawMuteBtn();
 }
@@ -1079,19 +1258,25 @@ function frame(now){
   }
   uiButtons = [];
   if(stateName === 'title') titleDraw();
+  else if(stateName === 'select') selectDraw();
   else if(stateName === 'play') playDraw();
   else overDraw();
 }
 requestAnimationFrame(frame);
-/* 測試掛鉤（唯讀，不影響遊戲） */
+/* 測試掛鉤（唯讀查詢＋測試專用啟動，不影響正常遊戲） */
 window.__test = {
   get state(){ return stateName; }, get phase(){ return phase; },
   get round(){ return round; }, get defused(){ return defused; },
   get score(){ return score; }, get mags(){ return mags; }, get shields(){ return shields; },
   get won(){ return won; },
+  get mode(){ return mode; }, get levelIndex(){ return levelIndex; },
+  get levelCleared(){ return levelCleared; }, get earnedStars(){ return earnedStars; },
+  get levelStars(){ return levelStars.slice(); },
+  get levelBombs(){ return mode === 'level' ? LEVELS[levelIndex].bombs : WIN_GOAL; },
   get correct(){ return correctIndex; },
   get dims(){ return { W: GAME_W, H: GAME_H, X1: WIRE_X1, X2: WIRE_X2 }; },
-  wires(){ return wires.map(w => ({ n: w.number, y: w.y, sag: w.sag, cut: w.cut, ruled: w.ruled })); }
+  wires(){ return wires.map(w => ({ n: w.number, y: w.y, sag: w.sag, cut: w.cut, ruled: w.ruled })); },
+  startLevel(i){ startLevel(i); }, startStory(){ startGame(); }, toSelect(){ toSelect(); }
 };
 </script>
 </body>

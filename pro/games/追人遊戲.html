@@ -1,10 +1,11 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v3 -->
+<!-- 專業AI升級 v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
 <title>追人遊戲</title>
+<meta name="author" content="AI未來創作營隊">
 <style>
   html, body {
     margin: 0; padding: 0;
@@ -87,6 +88,34 @@
     cursor: pointer;
     z-index: 30;
   }
+  #diffRow { display: flex; gap: 10px; justify-content: center; margin: 10px 0 2px; }
+  .diffbtn {
+    flex: 1; max-width: 160px;
+    padding: 10px 8px;
+    font-size: 16px; font-weight: bold; font-family: inherit;
+    letter-spacing: 1px;
+    border: 2px solid rgba(124, 140, 255, 0.5);
+    border-radius: 12px;
+    background: rgba(124, 140, 255, 0.08);
+    color: #b9c2ee;
+    cursor: pointer;
+    transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+  }
+  .diffbtn:active { transform: scale(0.95); }
+  .diffbtn.active {
+    border-color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.22);
+    color: #4fc3f7;
+    box-shadow: 0 0 16px rgba(79, 195, 247, 0.35);
+  }
+  .diffbtn.hard.active {
+    border-color: #ff5252;
+    background: rgba(255, 82, 82, 0.22);
+    color: #ff8a80;
+    box-shadow: 0 0 16px rgba(255, 82, 82, 0.35);
+  }
+  .diffbtn.locked { opacity: 0.55; }
+  .diffbtn small { display: block; font-size: 11px; letter-spacing: 0; opacity: 0.85; font-weight: normal; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -98,8 +127,13 @@
     <h1>追人遊戲</h1>
     <div class="sub" style="color:#ff5252;font-weight:bold">GINO 來了，快跑！</div>
     <div class="sub">在迷宮裡逃離 GINO，收集 💎 寶石進入下一回合！<br>⚡ 加速　❄ 冰凍 GINO　👻 隱形藥水<br>小心：GINO 會越跑越快……</div>
+    <div id="diffRow">
+      <button id="diffNormal" class="diffbtn active">普通<small id="bestNormalLbl">最佳 0 分</small></button>
+      <button id="diffHard" class="diffbtn hard locked">惡夢 🔒<small id="hardLbl">通關 1 回合解鎖</small></button>
+    </div>
+    <div class="sub" id="diffDesc" style="opacity:0.85; margin-top:2px"><b style="color:#ff8a80">惡夢模式</b>：GINO 更快、第 2 回合就雙人追捕、道具更少，另計最佳分數！</div>
     <button id="startBtn" class="bigbtn">開 始</button>
-    <div class="sub" style="opacity:0.85">💻 電腦：方向鍵 / WASD 移動（滑鼠指哪跑哪）<br>📱 平板：手指按住螢幕拖曳＝虛擬搖桿</div>
+    <div class="sub" style="opacity:0.85">💻 電腦：方向鍵 / WASD 移動（滑鼠指哪跑哪）・點按鈕選難度<br>📱 平板：手指按住螢幕拖曳＝虛擬搖桿<br>撐過 1 個回合即可解鎖 <b style="color:#ff8a80">惡夢模式</b>！</div>
   </div>
 
   <div id="overOverlay" class="overlay">
@@ -341,7 +375,29 @@ refreshMute();
 // ----- 遊戲狀態 -----
 let mode = 'title';
 let elapsed = 0, survive = 0;
-let best = parseFloat(localStorage.getItem('chase-best') || '0') || 0;
+// v4：惡夢模式（撐過 1 回合即解鎖），兩種難度各自記最佳
+let hard = false;
+let unlocked = localStorage.getItem('chase-unlock') === '1';
+let bestN = parseFloat(localStorage.getItem('chase-best') || '0') || 0;
+let bestH = parseFloat(localStorage.getItem('chase-best-hard') || '0') || 0;
+let best = bestN;
+// 難度參數（由 applyDifficulty 設定）
+let rampBase = 108, rampSurv = 1.1, rampRound = 12, rampCap = 228;
+let gino2Round = 3, itemFirst = 4, itemRefill = 5, itemMax = 3;
+let freezeDur = 2.5, ghostDur = 4;
+function applyDifficulty() {
+  if (hard) {
+    rampBase = 132; rampSurv = 1.45; rampRound = 16; rampCap = 256;
+    gino2Round = 2; itemFirst = 6; itemRefill = 7; itemMax = 2;
+    freezeDur = 1.8; ghostDur = 3;
+    best = bestH;
+  } else {
+    rampBase = 108; rampSurv = 1.1; rampRound = 12; rampCap = 228;
+    gino2Round = 3; itemFirst = 4; itemRefill = 5; itemMax = 3;
+    freezeDur = 2.5; ghostDur = 4;
+    best = bestN;
+  }
+}
 let shake = 0, freeze = 0, flash = 0;
 let deathTimer = -1;
 let overCooldown = 0;
@@ -393,7 +449,7 @@ function resetGame() {
   survive = 0;
   deathTimer = -1;
   items = [];
-  itemTimer = 4;
+  itemTimer = itemFirst;
   secondSpawned = false;
   round = 1; gemsGot = 0; bonus = 0;
   tutorialT = localStorage.getItem('chase-played') ? 3 : 9;
@@ -441,8 +497,8 @@ function nextRound() {
     ch.frozen = Math.max(ch.frozen, 1.6);
     burst(ch.x, ch.y, '#b3ecf5', 10, 200);
   });
-  // 第 3 回合：GINO 2號 登場
-  if (!secondSpawned && round >= 3) {
+  // GINO 2號 登場（普通第 3 回合、惡夢第 2 回合）
+  if (!secondSpawned && round >= gino2Round) {
     secondSpawned = true;
     const c2 = makeChaser('GINO 2號');
     c2.x = corners[1].x; c2.y = corners[1].y;
@@ -523,7 +579,45 @@ stage.addEventListener('touchcancel', endTouch, { passive: false });
 // ----- 狀態切換 -----
 const titleOverlay = document.getElementById('titleOverlay');
 const overOverlay = document.getElementById('overOverlay');
+
+// ----- 難度（普通 / 惡夢）-----
+const diffNormalBtn = document.getElementById('diffNormal');
+const diffHardBtn = document.getElementById('diffHard');
+function refreshTitle() {
+  document.getElementById('bestNormalLbl').textContent = '最佳 ' + Math.round(bestN) + ' 分';
+  const hl = document.getElementById('hardLbl');
+  if (unlocked) {
+    diffHardBtn.classList.remove('locked');
+    diffHardBtn.firstChild.textContent = '惡夢模式';
+    hl.textContent = '最佳 ' + Math.round(bestH) + ' 分';
+  } else {
+    diffHardBtn.classList.add('locked');
+    diffHardBtn.firstChild.textContent = '惡夢 🔒';
+    hl.textContent = '通關 1 回合解鎖';
+  }
+  diffNormalBtn.classList.toggle('active', !hard);
+  diffHardBtn.classList.toggle('active', hard);
+}
+function setDifficulty(h) {
+  if (h && !unlocked) {
+    if (diffHardBtn.animate) diffHardBtn.animate(
+      [{ transform: 'translateX(0)' }, { transform: 'translateX(-5px)' }, { transform: 'translateX(5px)' }, { transform: 'translateX(0)' }],
+      { duration: 260 });
+    beep(200, 0.12, 'square', 0.08, -60);
+    return;
+  }
+  hard = h;
+  applyDifficulty();
+  refreshTitle();
+  beep(h ? 480 : 660, 0.06, 'square', 0.08);
+}
+diffNormalBtn.addEventListener('click', () => setDifficulty(false));
+diffHardBtn.addEventListener('click', () => setDifficulty(true));
+applyDifficulty();
+refreshTitle();
+
 function startGame() {
+  applyDifficulty();
   resetGame();
   mode = 'play';
   titleOverlay.classList.remove('show');
@@ -538,12 +632,18 @@ function endGame() {
   const isBest = score > best;
   if (isBest) {
     best = score;
-    localStorage.setItem('chase-best', String(best));
+    if (hard) { bestH = score; localStorage.setItem('chase-best-hard', String(score)); }
+    else { bestN = score; localStorage.setItem('chase-best', String(score)); }
     setTimeout(() => sfx.best(), 400);
   }
+  // 撐過 1 個回合（進到第 2 回合以上）→ 解鎖惡夢模式
+  const justUnlocked = !unlocked && round >= 2;
+  if (justUnlocked) { unlocked = true; localStorage.setItem('chase-unlock', '1'); }
+  refreshTitle();
   document.getElementById('finalScore').textContent = score + ' 分';
   document.getElementById('bestLine').textContent =
-    '存活 ' + survive.toFixed(1) + ' 秒 ＋ 💎 ' + gemsGot + ' 顆（第 ' + round + ' 回合）｜最佳：' + Math.round(best) + ' 分';
+    (hard ? '惡夢｜' : '') + '存活 ' + survive.toFixed(1) + ' 秒 ＋ 💎 ' + gemsGot + ' 顆（第 ' + round + ' 回合）｜最佳：' + Math.round(best) + ' 分' +
+    (justUnlocked ? '　🔓 已解鎖惡夢模式！' : '');
   document.getElementById('newBest').style.display = isBest ? 'block' : 'none';
   overOverlay.classList.add('show');
 }
@@ -683,9 +783,9 @@ function update(dt) {
 
   // --- 道具生成與拾取 ---
   itemTimer -= dt;
-  if (itemTimer <= 0 && items.length < 3) {
+  if (itemTimer <= 0 && items.length < itemMax) {
     spawnItem();
-    itemTimer = 5;
+    itemTimer = itemRefill;
   }
   for (let i = items.length - 1; i >= 0; i--) {
     const it = items[i];
@@ -696,14 +796,14 @@ function update(dt) {
         burst(it.x, it.y, '#ffd54f', 14, 240);
         sfx.boost();
       } else if (it.type === 'freeze') {
-        for (const ch of chasers) ch.frozen = 2.5;
+        for (const ch of chasers) ch.frozen = freezeDur;
         addFloat(it.x, it.y - 16, '❄ 冰凍 GINO！', '#80deea');
         burst(it.x, it.y, '#80deea', 16, 260);
         for (const ch of chasers) burst(ch.x, ch.y, '#b3ecf5', 12, 200);
         sfx.freeze();
       } else {
-        player.ghost = 4;
-        addFloat(it.x, it.y - 16, '👻 隱形 4 秒！', '#ce93d8');
+        player.ghost = ghostDur;
+        addFloat(it.x, it.y - 16, '👻 隱形 ' + ghostDur + ' 秒！', '#ce93d8');
         burst(it.x, it.y, '#ce93d8', 16, 260);
         sfx.ghost();
       }
@@ -713,7 +813,7 @@ function update(dt) {
 
   // --- 追兵 AI ---
   // 時長曲線：約60秒追平玩家速度(175)，上限228＝玩家的1.3倍 → 多數場次1.5~3分鐘收尾
-  const rampSpeed = Math.min(228, 108 + survive * 1.1 + (round - 1) * 12);
+  const rampSpeed = Math.min(rampCap, rampBase + survive * rampSurv + (round - 1) * rampRound);
   for (const ch of chasers) {
     ch.frozen = Math.max(0, ch.frozen - dt);
     if (ch.frozen > 0) continue;
@@ -1403,6 +1503,17 @@ function drawHUD() {
     ctx.fillText('❄ ' + chasers[0].frozen.toFixed(1) + 's', ix + 12, 74);
   }
 
+  // 惡夢模式徽章
+  if (hard && mode === 'play') {
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(150,20,20,0.85)';
+    rr(GAME_W / 2 - 48, 62, 96, 22, 10);
+    ctx.fill();
+    ctx.fillStyle = '#ff8a80';
+    ctx.font = 'bold 14px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('惡夢模式', GAME_W / 2, 78);
+  }
+
   // 首次遊玩教學提示
   if (tutorialT > 0 && mode === 'play') {
     ctx.globalAlpha = Math.min(1, tutorialT);
@@ -1481,7 +1592,9 @@ titleOverlay.classList.add('show');
 requestAnimationFrame(frame);
 
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
-window.__test = () => ({ mode, x: player.x, y: player.y, survive, round, gemsLeft: gems.length, score: totalScore() });
+window.__test = () => ({ mode, x: player.x, y: player.y, survive, round, gemsLeft: gems.length,
+  score: totalScore(), hard, unlocked, bestN, bestH, chasers: chasers.length, items: items.length,
+  parts: parts.length, cap: rampCap, gino2: gino2Round });
 </script>
 </body>
 </html>
