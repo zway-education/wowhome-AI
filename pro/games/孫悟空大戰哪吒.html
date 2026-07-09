@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v2 -->
+<!-- 專業AI升級 v3 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -69,24 +69,33 @@ function fill2(fillStyle, lineStyle, lw){
 const FONT = '"Microsoft JhengHei","PingFang TC",sans-serif';
 
 /* ===== 音效（Web Audio 合成，零音檔）===== */
-let AC = null;
+let AC = null, master = null;
 let muted = false;
 try{ muted = localStorage.getItem('wn_muted') === '1'; }catch(e){}
 function initAudio(){
   if(!AC){
-    try{ AC = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+    try{
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      // master + 限制器：連擊/必殺多音效齊發不削峰爆音
+      master = AC.createGain(); master.gain.value = 0.85;
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      master.connect(comp); comp.connect(AC.destination);
+    }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
 }
 function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(muted || !AC) return;
+  freq *= 1 + (Math.random() * 2 - 1) * 0.04; // ±4% 音高隨機，連發不單調
   const o = AC.createOscillator(), g = AC.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, AC.currentTime);
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g).connect(AC.destination);
+  o.connect(g).connect(master);
   o.start();
   o.stop(AC.currentTime + dur);
 }
@@ -101,7 +110,7 @@ function noise(dur = 0.15, vol = 0.2){
   const g = AC.createGain();
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  src.connect(g).connect(AC.destination);
+  src.connect(g).connect(master);
   src.start();
 }
 const sfx = {
@@ -216,13 +225,14 @@ function burst(x, y, color, n = 12, speed = 240, life = 0.5){
   }
 }
 function updateParts(dt){
-  for(const p of parts){
+  for(let i = parts.length - 1; i >= 0; i--){
+    const p = parts[i];
     p.x += p.vx * dt;
     p.y += p.vy * dt;
     p.vy += 700 * dt;
     p.life -= dt;
+    if(p.life <= 0){ parts[i] = parts[parts.length - 1]; parts.pop(); } // swap-pop 免建新陣列
   }
-  parts = parts.filter(p => p.life > 0);
 }
 function drawParts(){
   for(const p of parts){
@@ -260,6 +270,7 @@ let mode = 'ai';           // 'ai' 單人挑戰 | '2p' 雙人對戰
 let T = 0;                 // 全域時間（環境動畫用）
 let shake = 0, freeze = 0;
 let round = 1;
+const FINAL_ROUND = 5; // 五回合挑戰制：全勝即結算，一場約 3 分鐘
 let score = 0, scoreShow = 0;
 let best = 0;
 try{ best = parseInt(localStorage.getItem('wn_best') || '0', 10) || 0; }catch(e){}
@@ -296,7 +307,8 @@ function resetRound(healed){
   p1.facing = 1; p2.facing = -1;
   if(mode === 'ai'){
     const r = round;
-    p2.maxHp = 90 + 25 * (r - 1);
+    // v3 時長調校：HP 成長 +25→+15/回合，單回合維持 25~50 秒
+    p2.maxHp = 90 + 15 * (r - 1);
     p2.hp = p2.hpShow = p2.maxHp;
     p2.speed = Math.min(390, 215 + 30 * (r - 1));
     p2.atkCdMax = Math.max(0.5, 1.05 - 0.09 * (r - 1));
@@ -527,8 +539,13 @@ function playUpdate(dt){
     }
   }
   if(phase === 'roundwin' && phaseT > 1.5){
-    round++;
-    resetRound(true);
+    if(round >= FINAL_ROUND){
+      score += 1000; // 完賽獎勵
+      endGame(true);
+    }else{
+      round++;
+      resetRound(true);
+    }
   }
   /* 數值緩動 */
   const k = 1 - Math.pow(0.02, dt);
@@ -538,26 +555,56 @@ function playUpdate(dt){
 }
 
 /* ===== 背景（漸層黃昏＋星光＋視差雲山＋寶塔竹林）===== */
-function drawBG(){
-  /* 黃昏漸層天空 */
-  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+/* 靜態層預繪：天空+夕陽、地面+石塊+草叢 只算一次（平板 60fps 關鍵） */
+const skyCv = document.createElement('canvas');
+skyCv.width = GAME_W; skyCv.height = GAME_H;
+(function(){
+  const c = skyCv.getContext('2d');
+  const g = c.createLinearGradient(0, 0, 0, GAME_H);
   g.addColorStop(0, '#241a52'); g.addColorStop(0.45, '#5c4796');
   g.addColorStop(0.75, '#9a6fb0'); g.addColorStop(1, '#c78ba8');
-  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, GAME_H);
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
+  const sunX = GAME_W * 0.76, sunY = 148;
+  for(const ra of [[92, 0.08], [70, 0.12], [50, 0.2]]){
+    c.fillStyle = 'rgba(255,214,130,' + ra[1] + ')'; c.beginPath(); c.arc(sunX, sunY, ra[0], 0, Math.PI * 2); c.fill();
+  }
+  const sunGrad = c.createRadialGradient(sunX - 8, sunY - 10, 5, sunX, sunY, 42);
+  sunGrad.addColorStop(0, '#fff3d0'); sunGrad.addColorStop(1, '#ffc766');
+  c.fillStyle = sunGrad; c.beginPath(); c.arc(sunX, sunY, 42, 0, Math.PI * 2); c.fill();
+})();
+const grdCv = document.createElement('canvas');
+grdCv.width = GAME_W; grdCv.height = GAME_H - GROUND_Y;
+(function(){
+  const c = grdCv.getContext('2d');
+  const gg = c.createLinearGradient(0, 0, 0, GAME_H - GROUND_Y);
+  gg.addColorStop(0, '#3a7350'); gg.addColorStop(1, '#1e3d28');
+  c.fillStyle = gg; c.fillRect(0, 0, GAME_W, GAME_H - GROUND_Y);
+  c.fillStyle = '#57a06f'; c.fillRect(0, 0, GAME_W, 4);
+  c.fillStyle = '#16301f'; c.fillRect(0, 4, GAME_W, 2);
+  for(let i = 0; i < 5; i++){
+    const rx = (i * 227 + 90) % GAME_W;
+    const ry = 24 + (i * 31) % 34;
+    c.fillStyle = '#26513a'; c.beginPath(); c.ellipse(rx, ry, 12, 6, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#3f7a57'; c.beginPath(); c.ellipse(rx - 3, ry - 2, 7, 3, 0, 0, Math.PI * 2); c.fill();
+  }
+  c.strokeStyle = '#2f6b45'; c.lineWidth = 2;
+  for(let i = 0; i < 14; i++){
+    const gx = (i * 149 + 40) % GAME_W;
+    const gy = 14 + (i * 53) % 44;
+    c.beginPath(); c.moveTo(gx, gy); c.lineTo(gx - 3, gy - 8);
+    c.moveTo(gx, gy); c.lineTo(gx + 1, gy - 10);
+    c.moveTo(gx, gy); c.lineTo(gx + 4, gy - 7); c.stroke();
+  }
+})();
+function drawBG(){
+  /* 天空+夕陽（預繪貼圖） */
+  ctx.drawImage(skyCv, 0, 0);
   /* 星星（緩慢閃爍） */
   for(let i = 0; i < 16; i++){
     const sx = (i * 173 + 60) % GAME_W;
     const sy = 18 + (i * 97) % 120;
     ctx.fillStyle = 'rgba(255,255,255,' + (0.25 + 0.25 * Math.sin(T * 2 + i)).toFixed(3) + ')'; ctx.fillRect(sx, sy, 2, 2);
   }
-  /* 夕陽（多層光暈＋球面漸層） */
-  const sunX = GAME_W * 0.76, sunY = 148;
-  for(const ra of [[92, 0.08], [70, 0.12], [50, 0.2]]){
-    ctx.fillStyle = 'rgba(255,214,130,' + ra[1] + ')'; ctx.beginPath(); ctx.arc(sunX, sunY, ra[0], 0, Math.PI * 2); ctx.fill();
-  }
-  const sunGrad = ctx.createRadialGradient(sunX - 8, sunY - 10, 5, sunX, sunY, 42);
-  sunGrad.addColorStop(0, '#fff3d0'); sunGrad.addColorStop(1, '#ffc766');
-  ctx.fillStyle = sunGrad; ctx.beginPath(); ctx.arc(sunX, sunY, 42, 0, Math.PI * 2); ctx.fill();
   /* 遠山（慢視差）＋山巔寶塔剪影 */
   ctx.fillStyle = '#3b2a66';
   drawHills(320, 110, T * 4);
@@ -568,28 +615,8 @@ function drawBG(){
   drawCloudLayer(T * 12, 70, 'rgba(255,255,255,.22)', 1.15);
   drawCloudLayer(T * 22, 130, 'rgba(255,255,255,.32)', 1);
   drawCloudLayer(T * 34, 200, 'rgba(255,255,255,.45)', 0.8);
-  /* 地面（漸層草地） */
-  const gg = ctx.createLinearGradient(0, GROUND_Y, 0, GAME_H);
-  gg.addColorStop(0, '#3a7350'); gg.addColorStop(1, '#1e3d28');
-  ctx.fillStyle = gg; ctx.fillRect(0, GROUND_Y, GAME_W, GAME_H - GROUND_Y);
-  ctx.fillStyle = '#57a06f'; ctx.fillRect(0, GROUND_Y, GAME_W, 4);
-  ctx.fillStyle = '#16301f'; ctx.fillRect(0, GROUND_Y + 4, GAME_W, 2);
-  /* 石塊（帶亮面） */
-  for(let i = 0; i < 5; i++){
-    const rx = (i * 227 + 90) % GAME_W;
-    const ry = GROUND_Y + 24 + (i * 31) % 34;
-    ctx.fillStyle = '#26513a'; ctx.beginPath(); ctx.ellipse(rx, ry, 12, 6, 0, 0, Math.PI * 2); ctx.fill();
-    ctx.fillStyle = '#3f7a57'; ctx.beginPath(); ctx.ellipse(rx - 3, ry - 2, 7, 3, 0, 0, Math.PI * 2); ctx.fill();
-  }
-  /* 草叢（三葉一撮） */
-  ctx.strokeStyle = '#2f6b45'; ctx.lineWidth = 2;
-  for(let i = 0; i < 14; i++){
-    const gx = (i * 149 + 40) % GAME_W;
-    const gy = GROUND_Y + 14 + (i * 53) % 44;
-    ctx.beginPath(); ctx.moveTo(gx, gy); ctx.lineTo(gx - 3, gy - 8);
-    ctx.moveTo(gx, gy); ctx.lineTo(gx + 1, gy - 10);
-    ctx.moveTo(gx, gy); ctx.lineTo(gx + 4, gy - 7); ctx.stroke();
-  }
+  /* 地面（預繪貼圖：漸層草地+石塊+草叢） */
+  ctx.drawImage(grdCv, 0, GROUND_Y);
   /* 兩側竹林（會隨風輕擺） */
   drawBamboo(30, 300, 0);
   drawBamboo(56, 240, 2.2);
@@ -657,19 +684,29 @@ function drawCloudLayer(off, y, color, scale){
 }
 
 /* ===== 角色繪製 ===== */
+/* 氣場光環貼圖（金/橘各一張，避免每幀建 radial gradient） */
+function makeAuraSprite(rgb){
+  const cv = document.createElement('canvas');
+  cv.width = 160; cv.height = 160;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(80, 80, 8, 80, 80, 80);
+  g.addColorStop(0, 'rgba(' + rgb + ',1)'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.beginPath(); c.arc(80, 80, 80, 0, Math.PI * 2); c.fill();
+  return cv;
+}
+const auraWk = makeAuraSprite('255,207,77');
+const auraNz = makeAuraSprite('255,140,58');
 function drawFighter(f){
   /* 地面陰影 */
   const hgt = GROUND_Y - f.y;
   ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(f.x, GROUND_Y + 9, Math.max(14, 34 - hgt * 0.07), 7, 0, 0, Math.PI * 2); ctx.fill();
-  /* 必殺氣場／氣滿光環 */
+  /* 必殺氣場／氣滿光環（貼圖縮放） */
   if(f.spActive || (f.sp >= 100 && !f.dead)){
-    const auraC = f.kind === 'wukong' ? '255,207,77' : '255,140,58';
     const ar = f.spActive ? 74 : 52 + Math.sin(T * 6) * 5;
-    const ag = ctx.createRadialGradient(f.x, f.y - 52, 8, f.x, f.y - 52, ar);
-    ag.addColorStop(0, 'rgba(' + auraC + ',' + (f.spActive ? 0.4 : 0.22) + ')');
-    ag.addColorStop(1, 'rgba(' + auraC + ',0)');
-    ctx.fillStyle = ag;
-    ctx.beginPath(); ctx.arc(f.x, f.y - 52, ar, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = f.spActive ? 0.4 : 0.22;
+    ctx.drawImage(f.kind === 'wukong' ? auraWk : auraNz, f.x - ar, f.y - 52 - ar, ar * 2, ar * 2);
+    ctx.globalAlpha = 1;
   }
   ctx.save();
   ctx.translate(f.x, f.y);
@@ -684,6 +721,14 @@ function drawFighter(f){
   ctx.restore();
 }
 
+/* 悟空常數漸層（局部座標恆定 → 建一次） */
+const wkBodyGrad = ctx.createLinearGradient(-20, -80, 16, -30);
+wkBodyGrad.addColorStop(0, '#ea6440'); wkBodyGrad.addColorStop(1, '#b13a22');
+const wkHeadGrad = ctx.createRadialGradient(-3, -103, 3, 2, -96, 19);
+wkHeadGrad.addColorStop(0, '#f4bd80'); wkHeadGrad.addColorStop(1, '#d8924a');
+const wkRodGrad = ctx.createLinearGradient(0, -5, 0, 5);
+wkRodGrad.addColorStop(0, '#fff2c0'); wkRodGrad.addColorStop(0.5, '#f4c952');
+wkRodGrad.addColorStop(1, '#c89428');
 function drawWukongBody(f){
   const bob = f.moving ? -Math.abs(Math.sin(f.walkT * 12)) * 4 : Math.sin(T * 2.6) * 1.6;
   const leg = f.moving ? Math.sin(f.walkT * 12) * 8 : 0;
@@ -724,13 +769,14 @@ function drawWukongBody(f){
     ctx.lineTo(sx + 6, -48 + bob);
     ctx.closePath(); ctx.fill();
   }
-  /* 身體（漸層戰袍） */
-  const bgGrad = ctx.createLinearGradient(-20, -80 + bob, 16, -30 + bob);
-  bgGrad.addColorStop(0, '#ea6440'); bgGrad.addColorStop(1, '#b13a22');
-  rr(-20, -80 + bob, 40, 54, 10);
-  ctx.fillStyle = bgGrad; ctx.fill();
+  /* 身體（漸層戰袍；常數漸層 + translate 跟隨 bob） */
+  ctx.save();
+  ctx.translate(0, bob);
+  rr(-20, -80, 40, 54, 10);
+  ctx.fillStyle = wkBodyGrad; ctx.fill();
   ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.restore();
   /* 胸甲＋金釦＋腰帶 */
   rr(-11, -76 + bob, 22, 20, 6); fill2('#f5e9c8', '#b99a5c', 2);
   ctx.beginPath(); ctx.arc(0, -66 + bob, 3, 0, Math.PI * 2);
@@ -740,12 +786,13 @@ function drawWukongBody(f){
   const hy = -96 + bob;
   ctx.beginPath(); ctx.arc(-14, hy, 6.5, 0, Math.PI * 2); fill2('#e8a45c', OUT, 2);
   ctx.fillStyle = '#c07a44'; ctx.beginPath(); ctx.arc(-14, hy, 3, 0, Math.PI * 2); ctx.fill();
-  const hGrad = ctx.createRadialGradient(-3, hy - 7, 3, 2, hy, 19);
-  hGrad.addColorStop(0, '#f4bd80'); hGrad.addColorStop(1, '#d8924a');
-  ctx.beginPath(); ctx.arc(2, hy, 17, 0, Math.PI * 2);
-  ctx.fillStyle = hGrad; ctx.fill();
+  ctx.save();
+  ctx.translate(0, bob);
+  ctx.beginPath(); ctx.arc(2, -96, 17, 0, Math.PI * 2);
+  ctx.fillStyle = wkHeadGrad; ctx.fill();
   ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.restore();
   /* 桃形口鼻 */
   ctx.fillStyle = '#f9d9a8'; ctx.beginPath(); ctx.ellipse(8, hy + 6, 10, 8, 0, 0, Math.PI * 2); ctx.fill();
   /* 表情（依狀態變化） */
@@ -769,17 +816,17 @@ function drawWukongBody(f){
     ctx.closePath(); ctx.fill();
   }
   ctx.rotate(ang);
-  if(atkP > 0){ ctx.shadowColor = '#ffcf4d'; ctx.shadowBlur = 14; }
-  const rodGrad = ctx.createLinearGradient(0, -5, 0, 5);
-  rodGrad.addColorStop(0, '#fff2c0'); rodGrad.addColorStop(0.5, '#f4c952');
-  rodGrad.addColorStop(1, '#c89428');
+  if(atkP > 0){
+    // 光暈形狀取代 shadowBlur（每幀省一次高斯模糊）
+    ctx.fillStyle = 'rgba(255,207,77,.32)';
+    rr(-15, -10, 110, 20, 9); ctx.fill();
+  }
   rr(-10, -5, 100, 10, 4);
-  ctx.fillStyle = rodGrad; ctx.fill();
+  ctx.fillStyle = wkRodGrad; ctx.fill();
   ctx.strokeStyle = '#7a5410'; ctx.lineWidth = 2;
   ctx.stroke();
   rr(-10, -5, 13, 10, 4); fill2('#c9302c', '#7a1512', 2);
   rr(77, -5, 13, 10, 4); fill2('#c9302c', '#7a1512', 2);
-  ctx.shadowBlur = 0;
   ctx.beginPath(); ctx.arc(6, 0, 6, 0, Math.PI * 2);
   fill2('#e8a45c', OUT, 2);
   ctx.restore();
@@ -835,6 +882,15 @@ function drawWukongFace(f, hy, atkP){
   }
 }
 
+/* 哪吒常數漸層（局部座標恆定 → 建一次） */
+const nzBodyGrad = ctx.createLinearGradient(-19, -76, 15, -26);
+nzBodyGrad.addColorStop(0, '#4fa3e0'); nzBodyGrad.addColorStop(1, '#20639c');
+const nzHeadGrad = ctx.createRadialGradient(-3, -6, 3, 2, 0, 18);
+nzHeadGrad.addColorStop(0, '#fbdcb6'); nzHeadGrad.addColorStop(1, '#e9b184');
+const nzSpearGrad = ctx.createLinearGradient(0, -4, 0, 4);
+nzSpearGrad.addColorStop(0, '#c85a42'); nzSpearGrad.addColorStop(1, '#8a2f22');
+const wheelGrad = ctx.createRadialGradient(0, 0, 3, 0, 0, 17);
+wheelGrad.addColorStop(0, 'rgba(255,230,150,.55)'); wheelGrad.addColorStop(1, 'rgba(255,110,40,.12)');
 function drawNezhaBody(f){
   const bob = f.moving ? -Math.abs(Math.sin(f.walkT * 12)) * 3 : Math.sin(T * 2.9 + 1) * 1.6;
   const oy = -8 + Math.sin(T * 5) * 2;   // 踩風火輪懸浮
@@ -852,9 +908,7 @@ function drawNezhaBody(f){
       ctx.fillStyle = i ? 'rgba(255,150,60,.4)' : 'rgba(255,220,120,.55)'; ctx.beginPath(); ctx.ellipse(-10 - i * 5 - Math.sin(fa) * 2, Math.sin(fa * 1.3) * 3, 6 - i, 3.5 - i * 0.7, 0, 0, Math.PI * 2); ctx.fill();
     }
     ctx.rotate(T * 10 + ox);
-    const wg = ctx.createRadialGradient(0, 0, 3, 0, 0, wr + 5);
-    wg.addColorStop(0, 'rgba(255,230,150,.55)'); wg.addColorStop(1, 'rgba(255,110,40,.12)');
-    ctx.fillStyle = wg; ctx.beginPath(); ctx.arc(0, 0, wr + 5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = wheelGrad; ctx.beginPath(); ctx.arc(0, 0, wr + 5, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#c96a1e'; ctx.lineWidth = 5;
     ctx.beginPath(); ctx.arc(0, 0, wr, 0, Math.PI * 2); ctx.stroke();
     ctx.strokeStyle = '#ffb454'; ctx.lineWidth = 2.5;
@@ -897,26 +951,28 @@ function drawNezhaBody(f){
   rr(-16, oy - 9, 14, 8, 3); fill2('#c9302c', OUT, 2);
   rr(3, oy - 9, 14, 8, 3); fill2('#c9302c', OUT, 2);
   /* 身體（漸層戰甲＋金領＋紅腰帶＋乾坤圈） */
-  const bGrad = ctx.createLinearGradient(-19, oy - 76 + bob, 15, oy - 26 + bob);
-  bGrad.addColorStop(0, '#4fa3e0'); bGrad.addColorStop(1, '#20639c');
-  rr(-19, oy - 76 + bob, 38, 54, 10);
-  ctx.fillStyle = bGrad; ctx.fill();
+  ctx.save();
+  ctx.translate(0, oy + bob);
+  rr(-19, -76, 38, 54, 10);
+  ctx.fillStyle = nzBodyGrad; ctx.fill();
   ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.restore();
   rr(-12, oy - 76 + bob, 24, 8, 4); fill2('#ffd447', '#b8860b', 2);
   rr(-19, oy - 44 + bob, 38, 8, 3); fill2('#e04747', '#8f1f2e', 2);
   ctx.strokeStyle = '#b8860b'; ctx.lineWidth = 4.5;
   ctx.beginPath(); ctx.arc(0, oy - 58 + bob, 7, 0, Math.PI * 2); ctx.stroke();
   ctx.strokeStyle = '#ffd447'; ctx.lineWidth = 2.5;
   ctx.beginPath(); ctx.arc(0, oy - 58 + bob, 7, 0, Math.PI * 2); ctx.stroke();
-  /* 頭（球面漸層） */
+  /* 頭（球面漸層；常數漸層 + translate 跟隨浮動） */
   const hy = oy - 92 + bob;
-  const hg = ctx.createRadialGradient(-3, hy - 6, 3, 2, hy, 18);
-  hg.addColorStop(0, '#fbdcb6'); hg.addColorStop(1, '#e9b184');
-  ctx.beginPath(); ctx.arc(2, hy, 16, 0, Math.PI * 2);
-  ctx.fillStyle = hg; ctx.fill();
+  ctx.save();
+  ctx.translate(0, hy);
+  ctx.beginPath(); ctx.arc(2, 0, 16, 0, Math.PI * 2);
+  ctx.fillStyle = nzHeadGrad; ctx.fill();
   ctx.strokeStyle = OUT; ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.restore();
   /* 瀏海與雙髮髻（高光＋紅繩） */
   ctx.beginPath(); ctx.arc(2, hy - 6, 15, Math.PI, Math.PI * 2);
   fill2('#2b3a5e', OUT, 2);
@@ -940,11 +996,13 @@ function drawNezhaBody(f){
       ctx.beginPath(); ctx.moveTo(20, ly); ctx.lineTo(52, ly); ctx.stroke();
     }
   }
-  if(atkP > 0){ ctx.shadowColor = '#ff8c3a'; ctx.shadowBlur = 12; }
-  const sGrad = ctx.createLinearGradient(0, -4, 0, 4);
-  sGrad.addColorStop(0, '#c85a42'); sGrad.addColorStop(1, '#8a2f22');
+  if(atkP > 0){
+    // 光暈形狀取代 shadowBlur
+    ctx.fillStyle = 'rgba(255,140,58,.3)';
+    rr(-34, -8, 118, 16, 7); ctx.fill();
+  }
   rr(-30, -3.5, 86, 7, 3);
-  ctx.fillStyle = sGrad; ctx.fill();
+  ctx.fillStyle = nzSpearGrad; ctx.fill();
   ctx.strokeStyle = '#5c1d15'; ctx.lineWidth = 1.8;
   ctx.stroke();
   ctx.beginPath(); ctx.moveTo(56, -8); ctx.lineTo(76, 0); ctx.lineTo(56, 8);
@@ -952,7 +1010,6 @@ function drawNezhaBody(f){
   fill2('#eef0f8', '#8b93aa', 1.8);
   ctx.beginPath(); ctx.arc(56, 0, 5 + (atkP > 0 ? 3 : 0), 0, Math.PI * 2);
   fill2('#ff6b3a', '#c9302c', 1.5);
-  ctx.shadowBlur = 0;
   ctx.beginPath(); ctx.arc(0, 0, 6, 0, Math.PI * 2);
   fill2('#f4c9a1', OUT, 2);
   ctx.restore();
@@ -1009,6 +1066,7 @@ function drawNezhaFace(f, hy, atkP){
 }
 
 /* ===== HUD ===== */
+const hpGrads = new Map();
 function drawHpBar(x, y, w, h, f, cTop, cBot, label, alignRight){
   ctx.font = 'bold 15px ' + FONT;
   ctx.textAlign = alignRight ? 'right' : 'left';
@@ -1025,8 +1083,12 @@ function drawHpBar(x, y, w, h, f, cTop, cBot, label, alignRight){
   ctx.fillStyle = 'rgba(255,120,110,.65)';
   if(alignRight) ctx.fillRect(x + w - showW, y, showW, h);
   else ctx.fillRect(x, y, showW, h);
-  const g = ctx.createLinearGradient(0, y, 0, y + h);
-  g.addColorStop(0, cTop); g.addColorStop(1, cBot);
+  let g = hpGrads.get(cTop);
+  if(!g){
+    g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, cTop); g.addColorStop(1, cBot);
+    hpGrads.set(cTop, g);
+  }
   ctx.fillStyle = g;
   if(alignRight) ctx.fillRect(x + w - realW, y, realW, h);
   else ctx.fillRect(x, y, realW, h);
@@ -1054,7 +1116,29 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.textBaseline = 'alphabetic';
 }
 function drawMuteBtn(){
-  drawButton(GAME_W / 2 - 27, GAME_H - 46, 54, 34, muted ? '🔇' : '🔊', toggleMute, false);
+  /* 手繪喇叭圖示（UI 不用表情符號） */
+  const x = GAME_W / 2 - 27, y = GAME_H - 46, w = 54, h = 34;
+  uiButtons.push({ x, y, w, h, cb: toggleMute });
+  rr(x, y, w, h, 10);
+  ctx.fillStyle = 'rgba(255,255,255,.14)'; ctx.fill();
+  ctx.strokeStyle = '#ffcf4d'; ctx.lineWidth = 2; ctx.stroke();
+  const cx2 = x + w / 2 - 7, cy2 = y + h / 2;
+  ctx.fillStyle = muted ? '#8f8aa8' : '#ffe9ad';
+  ctx.beginPath();
+  ctx.moveTo(cx2 - 7, cy2 - 4); ctx.lineTo(cx2 - 2, cy2 - 4); ctx.lineTo(cx2 + 4, cy2 - 9);
+  ctx.lineTo(cx2 + 4, cy2 + 9); ctx.lineTo(cx2 - 2, cy2 + 4); ctx.lineTo(cx2 - 7, cy2 + 4);
+  ctx.closePath(); ctx.fill();
+  if(muted){
+    ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(cx2 + 9, cy2 - 6); ctx.lineTo(cx2 + 17, cy2 + 6);
+    ctx.moveTo(cx2 + 17, cy2 - 6); ctx.lineTo(cx2 + 9, cy2 + 6);
+    ctx.stroke();
+  }else{
+    ctx.strokeStyle = '#ffe9ad'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx2 + 7, cy2, 5, -0.9, 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx2 + 7, cy2, 9, -0.9, 0.9); ctx.stroke();
+  }
 }
 function drawSpBar(x, y, w, f, alignRight){
   const h = 9;
@@ -1073,15 +1157,15 @@ function drawSpBar(x, y, w, f, alignRight){
   ctx.fillText(ready ? '氣滿！必殺 READY' : '氣', alignRight ? x + w : x, y + 21);
 }
 function drawHUD(){
-  drawHpBar(20, 28, 350, 20, p1, '#ffcf4d', '#c94c2c', '🐵 孫悟空' + (mode === '2p' ? '（P1）' : ''), false);
-  drawHpBar(GAME_W - 370, 28, 350, 20, p2, '#7ad1ff', '#2a7fbf', (mode === '2p' ? '（P2）' : '') + '哪吒 🔥', true);
+  drawHpBar(20, 28, 350, 20, p1, '#ffcf4d', '#c94c2c', '孫悟空' + (mode === '2p' ? '（P1）' : ''), false);
+  drawHpBar(GAME_W - 370, 28, 350, 20, p2, '#7ad1ff', '#2a7fbf', (mode === '2p' ? '（P2）' : '') + '哪吒', true);
   drawSpBar(20, 54, 210, p1, false);
   drawSpBar(GAME_W - 230, 54, 210, p2, true);
   ctx.textAlign = 'center';
   ctx.font = 'bold 18px ' + FONT;
   if(mode === 'ai'){
     ctx.fillStyle = '#fff';
-    ctx.fillText('第 ' + round + ' 回合', GAME_W / 2, 26);
+    ctx.fillText('第 ' + round + '/' + FINAL_ROUND + ' 回合', GAME_W / 2, 26);
     ctx.fillStyle = '#ffcf4d';
     ctx.fillText('分數 ' + Math.round(scoreShow), GAME_W / 2, 50);
   }else{
@@ -1157,7 +1241,7 @@ function titleDraw(){
   ctx.font = '20px ' + FONT;
   ctx.textAlign = 'center';
   ctx.fillStyle = '#e8ddff';
-  ctx.fillText('花果山之巔・巔峰對決', GAME_W / 2, 192);
+  ctx.fillText('花果山之巔・五回合巔峰挑戰', GAME_W / 2, 192);
   if(stateT > 0.35){
     drawButton(GAME_W / 2 - 120, 262, 240, 60, '開始', () => startGame('ai'), true);
     drawButton(GAME_W / 2 - 120, 340, 240, 50, '雙人對戰', () => startGame('2p'), false);
@@ -1181,7 +1265,7 @@ function playDraw(){
   if(touchMode) drawTouchUI();
   if(phase === 'intro'){
     const k = easeOutBack(Math.min(1, phaseT / 0.5));
-    bigText(mode === 'ai' ? '第 ' + round + ' 回合' : '雙人對戰', 236, 54, '#ffcf4d', k);
+    bigText(mode === 'ai' ? '第 ' + round + '/' + FINAL_ROUND + ' 回合' : '雙人對戰', 236, 54, '#ffcf4d', k);
     ctx.font = '22px ' + FONT;
     ctx.textAlign = 'center';
     ctx.fillStyle = '#fff';
@@ -1226,11 +1310,11 @@ function overDraw(){
   ctx.textAlign = 'center';
   if(mode === 'ai'){
     ctx.font = 'bold 40px ' + FONT;
-    ctx.fillStyle = '#ffcf4d';
-    ctx.fillText('挑戰結束！', 0, -100);
+    ctx.fillStyle = playerWon ? '#ffcf4d' : '#c9bfe8';
+    ctx.fillText(playerWon ? '挑戰成功！' : '挑戰結束！', 0, -100);
     ctx.font = '22px ' + FONT;
     ctx.fillStyle = '#fff';
-    ctx.fillText('你撐到了第 ' + round + ' 回合', 0, -58);
+    ctx.fillText(playerWon ? '五回合完全制霸，哪吒心服口服！（完賽 +1000）' : '你撐到了第 ' + round + ' 回合，再試一次！', 0, -58);
     ctx.font = 'bold 30px ' + FONT;
     ctx.fillStyle = '#ffe9ad';
     ctx.fillText('分數　' + score, 0, -12);
