@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>丟筆電大賽</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: #14181c;
+    overflow: hidden;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+  }
+  canvas {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    cursor: grab;
+  }
+  canvas.dragging { cursor: grabbing; }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+/* ============================================================
+   丟筆電大賽 — 專業AI升級版
+   拖曳筆電甩進回收桶。60 秒限時、連擊加分、完美空心加成。
+   固定時間步進 + 狀態機 + 粒子/震動/hit-stop + Web Audio 音效
+   ============================================================ */
+
+// ---------- 基本設定 ----------
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize);
+resize();
+
+// ---------- 調色盤（SWEETIE 16 精選）----------
+const PAL = {
+  bg0: '#1a1c2c', bg1: '#252a3f', wall: '#2b3050', wallLo: '#20243c',
+  ink: '#f4f4f4', dim: '#94a0b8', line: '#3a4166',
+  accent: '#ffcd75', accentDeep: '#ef7d57',
+  good: '#6ee2a0', bad: '#ff6b6b',
+  binBody: '#41a6f6', binDark: '#2b6cb0', binLite: '#7cc4ff',
+  lapLid: '#5d6b7a', lapBase: '#aab6c2', lapScreen: '#41a6f6',
+  sky: '#5c94fc', cloud: '#e8f2ff'
+};
+
+// ---------- 小工具 ----------
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const rnd = (a, b) => a + Math.random() * (b - a);
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---------- 音效（Web Audio 合成，零音檔）----------
+let AC = null, master = null, muted = false;
+function audio() {
+  if (!AC) {
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      master = AC.createGain();
+      master.gain.value = muted ? 0 : 1;
+      master.connect(AC.destination);
+    } catch (err) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function setMuted(m) {
+  muted = m;
+  if (master) master.gain.value = muted ? 0 : 1;
+}
+function beep(freq, dur, type, vol, slide) {
+  const ac = audio(); if (!ac || muted) return;
+  type = type || 'square'; vol = vol || 0.15; slide = slide || 0;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, ac.currentTime);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  o.connect(g).connect(master);
+  o.start(); o.stop(ac.currentTime + dur);
+}
+function noise(dur, vol) {
+  const ac = audio(); if (!ac || muted) return;
+  const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = ac.createBufferSource(), g = ac.createGain();
+  src.buffer = buf;
+  g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  src.connect(g).connect(master);
+  src.start();
+}
+const sfx = {
+  throw() { noise(0.14, 0.08); beep(180, 0.14, 'triangle', 0.08, 260); },
+  rim() { beep(620, 0.07, 'triangle', 0.14, -80); noise(0.04, 0.05); },
+  score() { beep(988, 0.08, 'square', 0.13); setTimeout(() => beep(1319, 0.16, 'square', 0.13), 80); },
+  perfect() { [1047, 1319, 1568, 2093].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.12), i * 70)); },
+  combo(n) { beep(660 + n * 80, 0.1, 'square', 0.1, 120); },
+  miss() { beep(200, 0.24, 'sawtooth', 0.12, -120); },
+  thud() { beep(110, 0.07, 'triangle', 0.1); },
+  tick() { beep(1200, 0.04, 'square', 0.07); },
+  click() { beep(520, 0.06, 'square', 0.08); },
+  over() { [523, 392, 330, 262].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'triangle', 0.12), i * 130)); },
+  best() { [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.11), i * 90)); }
+};
+
+// ---------- FX：震動 / hit-stop / 粒子 / 飄字 ----------
+let shake = 0, freeze = 0;
+const parts = [];
+function burst(x, y, color, n, speed, up) {
+  n = n || 12; speed = speed || 220;
+  for (let i = 0; i < n; i++) {
+    if (parts.length > 300) break;
+    const a = Math.random() * Math.PI * 2;
+    const s = speed * (0.3 + Math.random() * 0.7);
+    parts.push({
+      x, y,
+      vx: Math.cos(a) * s,
+      vy: Math.sin(a) * s - (up || 0),
+      life: rnd(0.35, 0.65), max: 0.65,
+      color, size: rnd(3, 6), spin: rnd(-8, 8), rot: rnd(0, 6.28)
+    });
+  }
+}
+function updateParts(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    p.vy += 700 * dt; p.rot += p.spin * dt;
+    p.life -= dt;
+    if (p.life <= 0) parts.splice(i, 1);
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    ctx.save();
+    ctx.globalAlpha = clamp(p.life * 2.2, 0, 1);
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+const floaters = [];
+function addFloat(x, y, text, color, big) {
+  floaters.push({ x, y, text, color, life: 0.9, big: !!big });
+}
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.y -= 55 * dt; f.life -= dt;
+    if (f.life <= 0) floaters.splice(i, 1);
+  }
+}
+function drawFloaters() {
+  for (const f of floaters) {
+    ctx.globalAlpha = clamp(f.life * 1.6, 0, 1);
+    ctx.fillStyle = f.color;
+    ctx.font = (f.big ? 'bold 30px' : 'bold 22px') + ' sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- 場景：辦公室背景（視差雲 + 漸層牆）----------
+const clouds = [];
+for (let i = 0; i < 5; i++) {
+  clouds.push({ x: rnd(0, 300), y: rnd(20, 120), s: rnd(0.5, 1.1), v: rnd(6, 16) });
+}
+let bgTime = 0;
+function updateBG(dt) {
+  bgTime += dt;
+  for (const c of clouds) {
+    c.x -= c.v * dt * c.s; // 遠的雲飄得慢 → 視差
+    if (c.x < -80) { c.x = 340; c.y = rnd(20, 120); }
+  }
+}
+const FLOOR_Y = GAME_H - 46;
+function drawBG() {
+  // 牆面漸層
+  const wall = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
+  wall.addColorStop(0, PAL.wall);
+  wall.addColorStop(1, PAL.wallLo);
+  ctx.fillStyle = wall;
+  ctx.fillRect(0, 0, GAME_W, FLOOR_Y);
+
+  // 窗戶（外面是天空 + 視差雲）
+  const wx = 60, wy = 60, ww = 300, wh = 180;
+  const sky = ctx.createLinearGradient(0, wy, 0, wy + wh);
+  sky.addColorStop(0, PAL.sky);
+  sky.addColorStop(1, '#8cc0ff');
+  ctx.fillStyle = sky;
+  ctx.fillRect(wx, wy, ww, wh);
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(wx, wy, ww, wh);
+  ctx.clip();
+  for (const c of clouds) {
+    ctx.fillStyle = PAL.cloud;
+    ctx.globalAlpha = 0.5 + c.s * 0.4;
+    const cx = wx + c.x, cy = wy + c.y, r = 14 * c.s;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, 6.29);
+    ctx.arc(cx + r, cy + r * 0.3, r * 0.8, 0, 6.29);
+    ctx.arc(cx - r, cy + r * 0.35, r * 0.75, 0, 6.29);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  // 遠方小山（最慢視差層）
+  ctx.fillStyle = 'rgba(60,110,80,0.85)';
+  ctx.beginPath();
+  ctx.moveTo(wx, wy + wh);
+  const off = (bgTime * 2) % 80;
+  for (let i = -1; i < 6; i++) {
+    ctx.lineTo(wx + i * 80 - off + 40, wy + wh - 46);
+    ctx.lineTo(wx + i * 80 - off + 80, wy + wh);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+  // 窗框
+  ctx.strokeStyle = PAL.line;
+  ctx.lineWidth = 8;
+  ctx.strokeRect(wx, wy, ww, wh);
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh);
+  ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2);
+  ctx.stroke();
+
+  // 回收海報
+  ctx.fillStyle = PAL.bg1;
+  roundRect(430, 80, 120, 150, 8);
+  ctx.fill();
+  ctx.strokeStyle = PAL.line; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = PAL.good;
+  ctx.font = 'bold 52px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('♻', 490, 160);
+  ctx.fillStyle = PAL.dim;
+  ctx.font = 'bold 18px sans-serif';
+  ctx.fillText('回收愛地球', 490, 205);
+
+  // 地板
+  const fl = ctx.createLinearGradient(0, FLOOR_Y, 0, GAME_H);
+  fl.addColorStop(0, '#343a5c'); fl.addColorStop(1, PAL.bg0);
+  ctx.fillStyle = fl;
+  ctx.fillRect(0, FLOOR_Y, GAME_W, GAME_H - FLOOR_Y);
+  ctx.strokeStyle = PAL.line;
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(0, FLOOR_Y); ctx.lineTo(GAME_W, FLOOR_Y);
+  ctx.stroke();
+  // 地板紋
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
+  for (let i = 1; i < 6; i++) {
+    ctx.beginPath();
+    ctx.moveTo(i * 180, FLOOR_Y);
+    ctx.lineTo(i * 180 + 30, GAME_H);
+    ctx.stroke();
+  }
+  // 踢腳板
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.fillRect(0, FLOOR_Y - 10, GAME_W, 10);
+
+  // 盆栽（左側環境小物，葉片會輕輕搖）
+  const px = 330, py = FLOOR_Y;
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';
+  ctx.beginPath(); ctx.ellipse(px, py + 4, 34, 7, 0, 0, 6.29); ctx.fill();
+  const potG = ctx.createLinearGradient(px - 26, 0, px + 26, 0);
+  potG.addColorStop(0, '#8a4a2c'); potG.addColorStop(0.4, '#c96b3c'); potG.addColorStop(1, '#8a4a2c');
+  ctx.fillStyle = potG;
+  ctx.beginPath();
+  ctx.moveTo(px - 26, py - 40); ctx.lineTo(px + 26, py - 40);
+  ctx.lineTo(px + 18, py); ctx.lineTo(px - 18, py);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = '#a85835'; ctx.fillRect(px - 28, py - 46, 56, 9);
+  const sway = Math.sin(bgTime * 1.5) * 0.06;
+  for (let i = -2; i <= 2; i++) {
+    const ang = -Math.PI / 2 + i * 0.42 + sway;
+    const lx = px + Math.cos(ang) * 52, ly = py - 44 + Math.sin(ang) * 52;
+    const leafG = ctx.createLinearGradient(px, py - 44, lx, ly);
+    leafG.addColorStop(0, '#2c6e3f'); leafG.addColorStop(1, '#5fbf6e');
+    ctx.strokeStyle = '#2c6e3f'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(px, py - 42);
+    ctx.quadraticCurveTo(px + Math.cos(ang) * 26, py - 44 + Math.sin(ang) * 30, lx, ly);
+    ctx.stroke();
+    ctx.fillStyle = leafG;
+    ctx.save(); ctx.translate(lx, ly); ctx.rotate(ang + Math.PI / 2);
+    ctx.beginPath(); ctx.ellipse(0, 0, 9, 17, 0, 0, 6.29); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.restore();
+  }
+
+  // 天花板吊燈光暈
+  const lampX = GAME_W / 2 + 130;
+  ctx.strokeStyle = '#444c74'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(lampX, 0); ctx.lineTo(lampX, 34); ctx.stroke();
+  const lampG = ctx.createRadialGradient(lampX, 46, 4, lampX, 46, 90);
+  lampG.addColorStop(0, 'rgba(255,220,140,0.5)'); lampG.addColorStop(1, 'rgba(255,220,140,0)');
+  ctx.fillStyle = lampG;
+  ctx.beginPath(); ctx.arc(lampX, 46, 90, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#565f8c';
+  ctx.beginPath(); ctx.moveTo(lampX - 22, 44);
+  ctx.quadraticCurveTo(lampX, 12, lampX + 22, 44);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#ffe9b0';
+  ctx.beginPath(); ctx.arc(lampX, 46, 7, 0, 6.29); ctx.fill();
+
+  // 全場氛圍暗角
+  const vig = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.45, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  vig.addColorStop(0, 'rgba(10,10,30,0)'); vig.addColorStop(1, 'rgba(10,10,30,0.32)');
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+// ---------- 回收桶 ----------
+const bin = {
+  w: 96, h: 116, baseX: 720, x: 720, t: 0,
+  oscA: 0, oscS: 1, squash: 1
+};
+bin.y = FLOOR_Y - bin.h;
+function mouthY() { return bin.y + bin.h * 0.12; }
+function updateBin(dt, hits) {
+  // 難度爬升：命中越多，桶子擺動幅度與速度越大（前 2 球不動，先教學）
+  const lv = Math.max(0, hits - 2);
+  bin.oscA = Math.min(150, lv * 22);
+  bin.oscS = Math.min(2.2, 0.9 + lv * 0.16);
+  bin.t += dt * bin.oscS;
+  bin.x = bin.baseX + Math.sin(bin.t) * bin.oscA;
+  bin.x = clamp(bin.x, 430, GAME_W - bin.w - 20);
+  bin.squash += (1 - bin.squash) * 10 * dt;
+}
+function drawBinShadow() {
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(bin.x + bin.w / 2, bin.y + bin.h + 5, bin.w * 0.56, 8, 0, 0, 6.29); ctx.fill();
+}
+function drawBinBack() {
+  const { x, y, w, h } = bin;
+  ctx.save();
+  ctx.translate(x + w / 2, y + h);
+  ctx.scale(2 - bin.squash, bin.squash);
+  ctx.translate(-(x + w / 2), -(y + h));
+  // 內壁
+  ctx.fillStyle = PAL.binDark;
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.06, y + h * 0.12); ctx.lineTo(x + w * 0.94, y + h * 0.12);
+  ctx.lineTo(x + w * 0.82, y + h); ctx.lineTo(x + w * 0.18, y + h);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.ellipse(x + w / 2, y + h * 0.12, w * 0.44, h * 0.05, 0, 0, 6.29); ctx.fill();
+  ctx.restore();
+}
+function drawBinFront() {
+  const { x, y, w, h } = bin;
+  ctx.save();
+  ctx.translate(x + w / 2, y + h);
+  ctx.scale(2 - bin.squash, bin.squash);
+  ctx.translate(-(x + w / 2), -(y + h));
+  // 桶身正面（左暗右暗中間亮 → 圓柱感）
+  const g = ctx.createLinearGradient(x, 0, x + w, 0);
+  g.addColorStop(0, PAL.binDark); g.addColorStop(0.35, PAL.binBody); g.addColorStop(1, PAL.binDark);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(x + w * 0.06, y + h * 0.17); ctx.lineTo(x + w * 0.94, y + h * 0.17);
+  ctx.lineTo(x + w * 0.82, y + h); ctx.lineTo(x + w * 0.18, y + h);
+  ctx.closePath(); ctx.fill();
+  // 橫紋
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 2;
+  for (let i = 1; i < 4; i++) {
+    const yy = y + h * 0.17 + h * 0.8 * (i / 4);
+    ctx.beginPath();
+    ctx.moveTo(x + w * (0.1 + i * 0.02), yy); ctx.lineTo(x + w * (0.9 - i * 0.02), yy);
+    ctx.stroke();
+  }
+  // 回收符號
+  ctx.fillStyle = PAL.accent;
+  ctx.font = 'bold ' + w * 0.3 + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('♻', x + w / 2, y + h * 0.62);
+  // 桶口
+  ctx.fillStyle = PAL.binLite;
+  ctx.beginPath(); ctx.ellipse(x + w / 2, y + h * 0.14, w * 0.5, h * 0.06, 0, 0, 6.29); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.ellipse(x + w / 2, y + h * 0.14, w * 0.42, h * 0.042, 0, 0, 6.29); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- 筆電 ----------
+function makeLaptop() {
+  return {
+    x: 130, y: FLOOR_Y - 48, w: 76, h: 48,
+    vx: 0, vy: 0, rot: 0, vrot: 0,
+    sx: 1, sy: 1,
+    thrown: false, inBin: false, done: false,
+    touchedRim: false, airTime: 0,
+    trail: []
+  };
+}
+let laptop = makeLaptop();
+function drawLaptop(l) {
+  // 殘影
+  for (let i = 0; i < l.trail.length; i++) {
+    const t = l.trail[i];
+    ctx.globalAlpha = 0.14 * (i / l.trail.length);
+    ctx.save();
+    ctx.translate(t.x, t.y);
+    ctx.rotate(t.rot);
+    ctx.fillStyle = PAL.lapScreen;
+    ctx.fillRect(-l.w / 2, -l.h / 2, l.w, l.h);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  // 地面陰影（越高越小）
+  if (!l.inBin) {
+    const hgt = clamp((FLOOR_Y - (l.y + l.h / 2)) / 300, 0, 1);
+    ctx.fillStyle = 'rgba(0,0,0,' + (0.28 * (1 - hgt * 0.6)) + ')';
+    ctx.beginPath(); ctx.ellipse(l.x, FLOOR_Y + 4, l.w * 0.5 * (1 - hgt * 0.45), 6, 0, 0, 6.29); ctx.fill();
+  }
+  ctx.save();
+  ctx.translate(l.x, l.y);
+  ctx.rotate(l.rot);
+  ctx.scale(l.sx, l.sy);
+  const w = l.w, h = l.h;
+  // 底座（鍵盤面）：金屬漸層 + 外框線
+  const baseG = ctx.createLinearGradient(0, h * 0.08, 0, h * 0.48);
+  baseG.addColorStop(0, '#cfd8e0'); baseG.addColorStop(0.5, PAL.lapBase); baseG.addColorStop(1, '#7e8a96');
+  ctx.fillStyle = baseG;
+  roundRect(-w / 2, h * 0.08, w, h * 0.4, 5);
+  ctx.fill();
+  ctx.strokeStyle = '#3d4650'; ctx.lineWidth = 2.5; ctx.stroke();
+  // 鍵盤鍵帽（小格子）
+  ctx.fillStyle = 'rgba(40,48,58,0.55)';
+  for (let r = 0; r < 2; r++)
+    for (let c = 0; c < 7; c++)
+      ctx.fillRect(-w * 0.36 + c * w * 0.105, h * 0.14 + r * h * 0.1, w * 0.08, h * 0.07);
+  // 觸控板
+  ctx.fillStyle = 'rgba(255,255,255,0.25)';
+  roundRect(-w * 0.1, h * 0.35, w * 0.2, h * 0.09, 2);
+  ctx.fill();
+  // 螢幕（上蓋）：漸層 + 外框線 + 鉸鏈陰影
+  const lidG = ctx.createLinearGradient(0, -h * 0.5, 0, h * 0.1);
+  lidG.addColorStop(0, '#727f8e'); lidG.addColorStop(1, '#48545f');
+  ctx.fillStyle = lidG;
+  roundRect(-w * 0.46, -h * 0.5, w * 0.92, h * 0.58, 6);
+  ctx.fill();
+  ctx.strokeStyle = '#2b333c'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
+  ctx.fillRect(-w * 0.46, h * 0.05, w * 0.92, 3);
+  // 螢幕面板：發光漸層
+  const scrG = ctx.createLinearGradient(-w * 0.4, -h * 0.42, w * 0.4, 0);
+  scrG.addColorStop(0, '#6fc0ff'); scrG.addColorStop(0.5, PAL.lapScreen); scrG.addColorStop(1, '#2b7cd0');
+  ctx.fillStyle = scrG;
+  roundRect(-w * 0.4, -h * 0.42, w * 0.8, h * 0.42, 4);
+  ctx.fill();
+  // 螢幕反光斜條
+  ctx.save();
+  ctx.beginPath();
+  roundRect(-w * 0.4, -h * 0.42, w * 0.8, h * 0.42, 4);
+  ctx.clip();
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.beginPath();
+  ctx.moveTo(-w * 0.4, -h * 0.05); ctx.lineTo(-w * 0.05, -h * 0.42);
+  ctx.lineTo(w * 0.12, -h * 0.42); ctx.lineTo(-w * 0.25, -h * 0.05);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+  // 螢幕上的表情（會眨眼、眼睛看向移動方向）
+  const blink = (bgTime % 3) > 2.9;
+  ctx.fillStyle = '#fff';
+  if (blink) {
+    ctx.fillRect(-w * 0.18, -h * 0.24, w * 0.1, 2.5);
+    ctx.fillRect(w * 0.08, -h * 0.24, w * 0.1, 2.5);
+  } else {
+    ctx.beginPath();
+    ctx.arc(-w * 0.13, -h * 0.22, 4.5, 0, 6.29);
+    ctx.arc(w * 0.13, -h * 0.22, 4.5, 0, 6.29);
+    ctx.fill();
+    ctx.fillStyle = '#1a1c2c';
+    ctx.beginPath();
+    ctx.arc(-w * 0.13 + clamp(l.vx * 0.004, -2, 2), -h * 0.22, 2, 0, 6.29);
+    ctx.arc(w * 0.13 + clamp(l.vx * 0.004, -2, 2), -h * 0.22, 2, 0, 6.29);
+    ctx.fill();
+  }
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0, -h * 0.14, 5, 0.2, Math.PI - 0.2); ctx.stroke();
+  // 電源燈
+  ctx.fillStyle = PAL.accent;
+  ctx.beginPath(); ctx.arc(0, h * 0.4, 3, 0, 6.29); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- 輸入 ----------
+const uiButtons = [];
+function button(x, y, w, h, label, cb, opts) {
+  opts = opts || {};
+  uiButtons.push({ x, y, w, h, cb });
+  ctx.save();
+  ctx.fillStyle = opts.bg || PAL.accent;
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.lineWidth = 3;
+  roundRect(x, y, w, h, 12);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = opts.fg || '#1a1400';
+  ctx.font = 'bold ' + (opts.size || 24) + 'px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.restore();
+  ctx.textBaseline = 'alphabetic';
+}
+function muteButton() {
+  const x = GAME_W - 56, y = 12, s = 42;
+  uiButtons.push({ x, y, w: s, h: s, cb: () => { setMuted(!muted); if (!muted) sfx.click(); } });
+  ctx.save();
+  ctx.fillStyle = 'rgba(26,28,44,0.7)';
+  roundRect(x, y, s, s, 10);
+  ctx.fill();
+  ctx.strokeStyle = PAL.line; ctx.lineWidth = 2; ctx.stroke();
+  // 喇叭圖示
+  ctx.fillStyle = muted ? PAL.dim : PAL.accent;
+  ctx.beginPath();
+  ctx.moveTo(x + 12, y + 17); ctx.lineTo(x + 18, y + 17);
+  ctx.lineTo(x + 25, y + 10); ctx.lineTo(x + 25, y + 32);
+  ctx.lineTo(x + 18, y + 25); ctx.lineTo(x + 12, y + 25);
+  ctx.closePath(); ctx.fill();
+  if (muted) {
+    ctx.strokeStyle = PAL.bad; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x + 29, y + 15); ctx.lineTo(x + 38, y + 27);
+    ctx.moveTo(x + 38, y + 15); ctx.lineTo(x + 29, y + 27);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = PAL.accent; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x + 27, y + 21, 6, -0.9, 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + 27, y + 21, 10, -0.9, 0.9); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+function toLogical(e) {
+  const r = canvas.getBoundingClientRect();
+  const s = r.width / GAME_W;
+  return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s };
+}
+let dragging = false, dragPoints = [];
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  audio();
+  const p = toLogical(e);
+  for (const b of uiButtons) {
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
+      b.cb();
+      return;
+    }
+  }
+  if (state.onDown) state.onDown(p);
+}, { passive: false });
+addEventListener('pointermove', e => {
+  const p = toLogical(e);
+  if (state.onMove) state.onMove(p);
+}, { passive: false });
+addEventListener('pointerup', e => {
+  const p = toLogical(e);
+  if (state.onUp) state.onUp(p);
+}, { passive: false });
+
+// 鍵盤：←→ 瞄準、空白鍵蓄力投擲、M 靜音
+const kb = { angle: -Math.PI * 0.32, power: 0, charging: false, dir: 0, used: false };
+addEventListener('keydown', e => {
+  if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.code)) e.preventDefault();
+  audio();
+  if (e.code === 'KeyM') { setMuted(!muted); return; }
+  if (e.repeat) return;
+  if (state.onKey) state.onKey(e.code, true);
+});
+addEventListener('keyup', e => {
+  if (state.onKey) state.onKey(e.code, false);
+});
+
+// ---------- 遊戲數值 ----------
+const GRAVITY = 1500;
+const ROUND_TIME = 60;
+let score = 0, hits = 0, throws = 0, combo = 0, timeLeft = ROUND_TIME;
+let best = 0;
+try { best = parseInt(localStorage.getItem('丟筆電大賽.best') || '0', 10) || 0; } catch (err) { best = 0; }
+let newBest = false;
+let lastTickSec = -1;
+let respawnT = 0;
+
+// ---------- 狀態機 ----------
+let state = null;
+function setState(s) { state = s; if (s.enter) s.enter(); }
+
+// ===== 標題畫面 =====
+const titleState = {
+  enter() {
+    this.t = 0;
+    this.demoT = 0;
+  },
+  update(dt) {
+    this.t += dt;
+    this.demoT += dt;
+    if (this.demoT > 2.2) this.demoT = 0;
+    updateBG(dt);
+    updateBin(dt, 0);
+  },
+  onKey(code, down) {
+    if (down && (code === 'Space' || code === 'Enter')) startGame();
+  },
+  draw() {
+    uiButtons.length = 0;
+    drawBG();
+    drawBinShadow();
+    drawBinBack();
+    // 示範動畫：筆電畫拋物線飛進桶
+    const dt2 = this.demoT / 1.4;
+    if (dt2 <= 1) {
+      const sx = 150, sy = FLOOR_Y - 60;
+      const ex = bin.x + bin.w / 2, ey = mouthY();
+      const dx = lerp(sx, ex, dt2);
+      const dy = lerp(sy, ey, dt2) - Math.sin(dt2 * Math.PI) * 230;
+      const demo = { x: dx, y: dy, w: 66, h: 42, rot: dt2 * 5, sx: 1, sy: 1, vx: 0, trail: [], inBin: true };
+      drawLaptop(demo);
+      if (dt2 > 0.97 && !this.popped) { burst(ex, ey, PAL.accent, 10, 200, 120); this.popped = true; }
+    } else this.popped = false;
+    drawBinFront();
+    drawParts();
+
+    // 標題（彈跳進場）
+    const tt = clamp(this.t / 0.6, 0, 1);
+    const ts = easeOutBack(tt);
+    ctx.save();
+    ctx.translate(GAME_W / 2, 150);
+    ctx.scale(ts, ts);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.font = 'bold 64px sans-serif';
+    ctx.fillText('丟筆電大賽', 4, 4 + Math.sin(bgTime * 2) * 4);
+    ctx.fillStyle = PAL.accent;
+    ctx.fillText('丟筆電大賽', 0, Math.sin(bgTime * 2) * 4);
+    ctx.restore();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.ink;
+    ctx.font = '20px sans-serif';
+    ctx.fillText('60 秒內把筆電甩進回收桶，連擊越多分數越高！', GAME_W / 2, 210);
+    ctx.fillStyle = PAL.dim;
+    ctx.font = '16px sans-serif';
+    ctx.fillText('滑鼠 / 手指：拖曳筆電甩出　｜　鍵盤：← → 瞄準、按住空白鍵蓄力放開投擲', GAME_W / 2, 240);
+    if (best > 0) {
+      ctx.fillStyle = PAL.accent;
+      ctx.font = 'bold 18px sans-serif';
+      ctx.fillText('最佳紀錄：' + best + ' 分', GAME_W / 2, 270);
+    }
+    // 開始按鈕（呼吸縮放）
+    const bw = 220, bh = 64;
+    const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
+    ctx.save();
+    ctx.translate(GAME_W / 2, 330 + bh / 2);
+    ctx.scale(pulse, pulse);
+    ctx.translate(-GAME_W / 2, -(330 + bh / 2));
+    button(GAME_W / 2 - bw / 2, 330, bw, bh, '開 始', startGame, { size: 30 });
+    ctx.restore();
+    muteButton();
+  }
+};
+
+function startGame() {
+  sfx.click();
+  setState(playState);
+}
+
+// ===== 遊戲進行 =====
+const playState = {
+  enter() {
+    score = 0; hits = 0; throws = 0; combo = 0;
+    timeLeft = ROUND_TIME;
+    newBest = false;
+    lastTickSec = -1;
+    respawnT = 0;
+    bin.t = 0; bin.x = bin.baseX;
+    laptop = makeLaptop();
+    dragging = false; dragPoints = [];
+    kb.charging = false; kb.power = 0; kb.used = false; kb.dir = 0;
+    parts.length = 0; floaters.length = 0;
+    this.bannerT = 0;
+    this.hudScore = 0;
+  },
+  onDown(p) {
+    if (laptop.thrown || laptop.done) return;
+    const d = Math.hypot(p.x - laptop.x, p.y - laptop.y);
+    if (d < 110) {
+      dragging = true;
+      dragPoints = [{ x: p.x, y: p.y, t: performance.now() }];
+      canvas.classList.add('dragging');
+    }
+  },
+  onMove(p) {
+    if (!dragging) return;
+    laptop.x = clamp(p.x, 30, GAME_W - 30);
+    laptop.y = clamp(p.y, 30, FLOOR_Y - 10);
+    dragPoints.push({ x: p.x, y: p.y, t: performance.now() });
+    if (dragPoints.length > 6) dragPoints.shift();
+  },
+  onUp() {
+    if (!dragging) return;
+    dragging = false;
+    canvas.classList.remove('dragging');
+    let vx = 0, vy = 0;
+    if (dragPoints.length >= 2) {
+      const a = dragPoints[0], b = dragPoints[dragPoints.length - 1];
+      const dt = Math.max(16, b.t - a.t) / 1000;
+      vx = (b.x - a.x) / dt;
+      vy = (b.y - a.y) / dt;
+    }
+    const sp = Math.hypot(vx, vy);
+    if (sp < 120) return; // 太輕：不算投擲，放回
+    const cap = 1650;
+    if (sp > cap) { vx *= cap / sp; vy *= cap / sp; }
+    throwLaptop(vx, vy);
+  },
+  onKey(code, down) {
+    if (laptop.thrown || laptop.done) return;
+    if (code === 'ArrowLeft') kb.dir = down ? -1 : (kb.dir === -1 ? 0 : kb.dir);
+    if (code === 'ArrowRight') kb.dir = down ? 1 : (kb.dir === 1 ? 0 : kb.dir);
+    if (code === 'Space') {
+      if (down) { kb.charging = true; kb.power = 0; kb.used = true; }
+      else if (kb.charging) {
+        kb.charging = false;
+        const P = 500 + kb.power * 1100;
+        throwLaptop(Math.cos(kb.angle) * P, Math.sin(kb.angle) * P);
+      }
+    }
+  },
+  update(dt) {
+    updateBG(dt);
+    updateBin(dt, hits);
+    this.bannerT += dt;
+    this.hudScore += (score - this.hudScore) * (1 - Math.pow(0.001, dt));
+
+    // 倒數
+    timeLeft -= dt;
+    const sec = Math.ceil(timeLeft);
+    if (timeLeft <= 5.2 && sec !== lastTickSec && sec > 0) { sfx.tick(); lastTickSec = sec; }
+    if (timeLeft <= 0) {
+      timeLeft = 0;
+      endGame();
+      return;
+    }
+
+    // 鍵盤瞄準
+    if (!laptop.thrown && !laptop.done) {
+      kb.angle = clamp(kb.angle + kb.dir * 1.6 * dt, -Math.PI * 0.5, -0.06);
+      if (kb.charging) {
+        kb.power += dt * 1.4;
+        if (kb.power > 1) kb.power = 2 - kb.power; // 來回擺盪
+        kb.power = clamp(kb.power, 0, 1);
+        if (kb.power >= 0.999) kb.power = 0.999;
+      }
+    }
+
+    // 筆電回彈縮放
+    laptop.sx += (1 - laptop.sx) * 12 * dt;
+    laptop.sy += (1 - laptop.sy) * 12 * dt;
+
+    // 重生計時
+    if (laptop.done) {
+      respawnT -= dt;
+      if (respawnT <= 0) {
+        laptop = makeLaptop();
+        laptop.sy = 1.3; laptop.sx = 0.75; // 登場彈跳
+      }
+      return;
+    }
+    if (!laptop.thrown) {
+      // 待機呼吸
+      if (!dragging) laptop.sy = 1 + Math.sin(bgTime * 4) * 0.03;
+      return;
+    }
+
+    // --- 投擲物理 ---
+    laptop.airTime += dt;
+    laptop.vy += GRAVITY * dt;
+    laptop.x += laptop.vx * dt;
+    laptop.y += laptop.vy * dt;
+    laptop.rot += laptop.vrot * dt;
+    laptop.trail.push({ x: laptop.x, y: laptop.y, rot: laptop.rot });
+    if (laptop.trail.length > 7) laptop.trail.shift();
+
+    if (laptop.inBin) {
+      // 已進桶：往下掉到桶底就完成
+      if (laptop.y > bin.y + bin.h * 0.55) finishThrow(true);
+      return;
+    }
+
+    // 進桶判定（桶口線 + 往下掉）
+    const mY = mouthY();
+    if (laptop.vy > 0 &&
+        laptop.y > mY - 14 && laptop.y < mY + 26 &&
+        laptop.x > bin.x + 14 && laptop.x < bin.x + bin.w - 14) {
+      laptop.inBin = true;
+      laptop.vx *= 0.15;
+      laptop.vy = Math.max(laptop.vy * 0.4, 220);
+      laptop.vrot *= 0.3;
+      scoreHit();
+      return;
+    }
+
+    // 桶緣碰撞（左右緣視為小圓）
+    const rimR = 9, lapR = laptop.w * 0.36;
+    for (const rx of [bin.x + 8, bin.x + bin.w - 8]) {
+      const dx = laptop.x - rx, dy = laptop.y - mY;
+      const d = Math.hypot(dx, dy);
+      if (d < rimR + lapR && d > 0.01) {
+        const nx = dx / d, ny = dy / d;
+        laptop.x = rx + nx * (rimR + lapR);
+        laptop.y = mY + ny * (rimR + lapR);
+        const dot = laptop.vx * nx + laptop.vy * ny;
+        if (dot < 0) {
+          laptop.vx -= 1.5 * dot * nx;
+          laptop.vy -= 1.5 * dot * ny;
+          laptop.vx *= 0.72; laptop.vy *= 0.72;
+          laptop.touchedRim = true;
+          sfx.rim();
+          shake = Math.max(shake, 3);
+          burst(rx, mY, PAL.binLite, 6, 160);
+        }
+      }
+    }
+
+    // 牆壁
+    if (laptop.x < 20) { laptop.x = 20; laptop.vx *= -0.45; sfx.thud(); }
+    if (laptop.x > GAME_W - 20) { laptop.x = GAME_W - 20; laptop.vx *= -0.45; sfx.thud(); }
+
+    // 地板
+    const fy = FLOOR_Y - laptop.h * 0.35;
+    if (laptop.y > fy) {
+      laptop.y = fy;
+      if (Math.abs(laptop.vy) > 90) {
+        laptop.vy *= -0.38;
+        laptop.vx *= 0.62;
+        laptop.vrot *= 0.5;
+        laptop.sx = 1.35; laptop.sy = 0.6; // 落地壓扁
+        sfx.thud();
+        shake = Math.max(shake, 2.5);
+        burst(laptop.x, FLOOR_Y, '#6a7290', 5, 130, 60);
+      } else {
+        laptop.vy = 0;
+        laptop.vx *= 0.86;
+        laptop.vrot *= 0.8;
+        if (Math.abs(laptop.vx) < 8) finishThrow(false);
+      }
+    }
+    if (laptop.airTime > 7) finishThrow(false); // 保險
+  },
+  draw() {
+    uiButtons.length = 0;
+    ctx.save();
+    ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+    drawBG();
+    drawBinShadow();
+    drawBinBack();
+    if (laptop.inBin) drawLaptop(laptop);
+    drawBinFront();
+    if (!laptop.inBin) drawLaptop(laptop);
+    drawAim();
+    drawParts();
+    drawFloaters();
+    ctx.restore();
+    drawHUD(this);
+    muteButton();
+    // 開場橫幅
+    if (this.bannerT < 1.6) {
+      const a = this.bannerT < 1.1 ? 1 : 1 - (this.bannerT - 1.1) / 0.5;
+      ctx.globalAlpha = clamp(a, 0, 1);
+      ctx.fillStyle = PAL.accent;
+      ctx.font = 'bold 34px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText('把筆電丟進回收桶！', GAME_W / 2, 200);
+      ctx.globalAlpha = 1;
+    }
+  }
+};
+
+function throwLaptop(vx, vy) {
+  laptop.vx = vx;
+  laptop.vy = vy;
+  laptop.vrot = clamp(vx * 0.012, -9, 9);
+  laptop.thrown = true;
+  laptop.sx = 1.25; laptop.sy = 0.8;
+  throws++;
+  sfx.throw();
+}
+function scoreHit() {
+  hits++;
+  combo++;
+  const comboMul = Math.min(combo, 5);
+  let pts = 10 * comboMul;
+  let perfect = !laptop.touchedRim;
+  if (perfect) pts += 10;
+  score += pts;
+  bin.squash = 1.25;
+  freeze = perfect ? 0.09 : 0.05;
+  shake = Math.max(shake, perfect ? 8 : 5);
+  const cx = bin.x + bin.w / 2, cy = mouthY();
+  burst(cx, cy, PAL.accent, perfect ? 26 : 14, 260, 180);
+  burst(cx, cy, PAL.good, 8, 200, 150);
+  if (perfect) {
+    addFloat(cx, cy - 40, '完美空心！+' + pts, PAL.accent, true);
+    sfx.perfect();
+  } else {
+    addFloat(cx, cy - 40, '+' + pts, PAL.good, true);
+    sfx.score();
+  }
+  if (combo >= 2) {
+    addFloat(cx, cy - 74, '連擊 x' + combo, PAL.accentDeep, false);
+    sfx.combo(Math.min(combo, 6));
+  }
+}
+function finishThrow(scored) {
+  if (laptop.done) return;
+  laptop.done = true;
+  if (!scored) {
+    if (combo >= 2) addFloat(laptop.x, laptop.y - 30, '連擊中斷', PAL.bad, false);
+    else addFloat(laptop.x, laptop.y - 30, '沒中，再來！', PAL.bad, false);
+    combo = 0;
+    sfx.miss();
+  }
+  respawnT = 0.45; // 不到 1 秒就有新筆電
+}
+function endGame() {
+  if (score > best) {
+    best = score;
+    newBest = true;
+    try { localStorage.setItem('丟筆電大賽.best', String(best)); } catch (err) {}
+  }
+  setState(overState);
+}
+
+function drawAim() {
+  if (dragging && dragPoints.length >= 2) {
+    // 拖曳軌跡預測
+    const a = dragPoints[0], b = dragPoints[dragPoints.length - 1];
+    const dtm = Math.max(16, b.t - a.t) / 1000;
+    let vx = (b.x - a.x) / dtm, vy = (b.y - a.y) / dtm;
+    const sp = Math.hypot(vx, vy), cap = 1650;
+    if (sp > cap) { vx *= cap / sp; vy *= cap / sp; }
+    if (sp > 120) {
+      let px = laptop.x, py = laptop.y, pvx = vx, pvy = vy;
+      ctx.fillStyle = PAL.accent;
+      for (let i = 0; i < 16; i++) {
+        pvy += GRAVITY * 0.05;
+        px += pvx * 0.05; py += pvy * 0.05;
+        if (py > FLOOR_Y) break;
+        ctx.globalAlpha = 0.55 * (1 - i / 16);
+        ctx.beginPath(); ctx.arc(px, py, 5 - i * 0.2, 0, 6.29); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+  } else if (kb.used && !laptop.thrown && !laptop.done) {
+    // 鍵盤瞄準箭頭 + 力度條
+    const len = 60 + kb.power * 70;
+    const ex = laptop.x + Math.cos(kb.angle) * len;
+    const ey = laptop.y + Math.sin(kb.angle) * len;
+    ctx.strokeStyle = PAL.accent; ctx.lineWidth = 4;
+    ctx.setLineDash([7, 6]);
+    ctx.beginPath(); ctx.moveTo(laptop.x, laptop.y); ctx.lineTo(ex, ey); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = PAL.accent;
+    ctx.save();
+    ctx.translate(ex, ey);
+    ctx.rotate(Math.atan2(ey - laptop.y, ex - laptop.x));
+    ctx.beginPath();
+    ctx.moveTo(10, 0); ctx.lineTo(-6, -7); ctx.lineTo(-6, 7);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    if (kb.charging) {
+      ctx.fillStyle = 'rgba(0,0,0,0.5)';
+      roundRect(laptop.x - 40, laptop.y - 70, 80, 12, 6);
+      ctx.fill();
+      ctx.fillStyle = kb.power > 0.8 ? PAL.bad : PAL.accent;
+      roundRect(laptop.x - 38, laptop.y - 68, 76 * kb.power, 8, 4);
+      ctx.fill();
+    }
+  }
+}
+
+function drawHUD(st) {
+  // 分數板
+  ctx.save();
+  ctx.fillStyle = 'rgba(26,28,44,0.72)';
+  roundRect(14, 12, 150, 58, 10);
+  ctx.fill();
+  ctx.strokeStyle = PAL.line; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = PAL.dim;
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('得分', 28, 32);
+  ctx.fillStyle = PAL.accent;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(String(Math.round(st.hudScore)), 28, 60);
+  // 連擊
+  if (combo >= 2) {
+    const pulse = 1 + Math.sin(bgTime * 10) * 0.08;
+    ctx.save();
+    ctx.translate(210, 44);
+    ctx.scale(pulse, pulse);
+    ctx.fillStyle = PAL.accentDeep;
+    ctx.font = 'bold 24px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('x' + Math.min(combo, 5), 0, 8);
+    ctx.restore();
+  }
+  // 時間
+  const urgent = timeLeft <= 5.2;
+  ctx.fillStyle = 'rgba(26,28,44,0.72)';
+  roundRect(GAME_W / 2 - 75, 12, 150, 58, 10);
+  ctx.fill();
+  ctx.strokeStyle = urgent ? PAL.bad : PAL.line;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = PAL.dim;
+  ctx.font = 'bold 12px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('時間', GAME_W / 2, 32);
+  const tScale = urgent ? 1 + Math.abs(Math.sin(timeLeft * Math.PI)) * 0.15 : 1;
+  ctx.save();
+  ctx.translate(GAME_W / 2, 54);
+  ctx.scale(tScale, tScale);
+  ctx.fillStyle = urgent ? PAL.bad : PAL.ink;
+  ctx.font = 'bold 28px sans-serif';
+  ctx.fillText(String(Math.ceil(timeLeft)), 0, 6);
+  ctx.restore();
+  // 時間條
+  ctx.fillStyle = 'rgba(255,255,255,0.12)';
+  roundRect(GAME_W / 2 - 65, 74, 130, 6, 3);
+  ctx.fill();
+  ctx.fillStyle = urgent ? PAL.bad : PAL.good;
+  roundRect(GAME_W / 2 - 65, 74, 130 * (timeLeft / ROUND_TIME), 6, 3);
+  ctx.fill();
+  // 操作提示
+  ctx.fillStyle = 'rgba(148,160,184,0.85)';
+  ctx.font = '13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('拖曳筆電甩向回收桶　｜　鍵盤：← → 瞄準、空白鍵蓄力', GAME_W / 2, GAME_H - 12);
+  ctx.restore();
+}
+
+// ===== 結算畫面 =====
+const overState = {
+  enter() {
+    this.t = 0;
+    sfx.over();
+    if (newBest) setTimeout(() => sfx.best(), 600);
+    this.confettiT = 0;
+  },
+  onKey(code, down) {
+    if (down && this.t > 0.5 && (code === 'Space' || code === 'Enter')) startGame();
+  },
+  update(dt) {
+    this.t += dt;
+    updateBG(dt);
+    updateBin(dt, 0);
+    if (newBest) {
+      this.confettiT -= dt;
+      if (this.confettiT <= 0 && parts.length < 240) {
+        this.confettiT = 0.12;
+        parts.push({
+          x: rnd(0, GAME_W), y: -10,
+          vx: rnd(-40, 40), vy: rnd(60, 160),
+          life: rnd(1.2, 2), max: 2,
+          color: [PAL.accent, PAL.good, PAL.binLite, PAL.accentDeep][Math.floor(rnd(0, 4))],
+          size: rnd(4, 7), spin: rnd(-10, 10), rot: rnd(0, 6.28)
+        });
+      }
+    }
+  },
+  draw() {
+    uiButtons.length = 0;
+    drawBG();
+    drawBinShadow();
+    drawBinBack();
+    drawBinFront();
+    drawParts();
+    // 暗幕
+    ctx.fillStyle = 'rgba(10,12,24,' + (0.6 * clamp(this.t / 0.3, 0, 1)) + ')';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    // 面板彈入
+    const pt = clamp(this.t / 0.45, 0, 1);
+    const ps = easeOutBack(pt);
+    ctx.save();
+    ctx.translate(GAME_W / 2, GAME_H / 2);
+    ctx.scale(ps, ps);
+    ctx.translate(-GAME_W / 2, -GAME_H / 2);
+    ctx.fillStyle = PAL.bg1;
+    roundRect(GAME_W / 2 - 220, 90, 440, 340, 18);
+    ctx.fill();
+    ctx.strokeStyle = newBest ? PAL.accent : PAL.line;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText('時間到！', GAME_W / 2, 148);
+    if (newBest) {
+      const bp = 1 + Math.sin(bgTime * 6) * 0.06;
+      ctx.save();
+      ctx.translate(GAME_W / 2, 184);
+      ctx.scale(bp, bp);
+      ctx.fillStyle = PAL.accent;
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText('★ 新紀錄！★', 0, 0);
+      ctx.restore();
+    }
+    ctx.fillStyle = PAL.dim;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('得分', GAME_W / 2, 220);
+    ctx.fillStyle = PAL.accent;
+    ctx.font = 'bold 56px sans-serif';
+    ctx.fillText(String(score), GAME_W / 2, 274);
+    ctx.fillStyle = PAL.dim;
+    ctx.font = '16px sans-serif';
+    const acc = throws > 0 ? Math.round(hits / throws * 100) : 0;
+    ctx.fillText('命中 ' + hits + ' 球 ／ 投擲 ' + throws + ' 次（命中率 ' + acc + '%）', GAME_W / 2, 306);
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('最佳紀錄：' + best + ' 分', GAME_W / 2, 336);
+    if (this.t > 0.5) {
+      button(GAME_W / 2 - 110, 356, 220, 54, '再玩一次', startGame, { size: 26 });
+    }
+    ctx.restore();
+    muteButton();
+  }
+};
+
+// ---------- 主迴圈：固定時間步進 ----------
+const STEP = 1 / 60;
+let last = performance.now(), acc = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while (acc >= STEP) {
+    acc -= STEP;
+    if (freeze > 0) { freeze -= STEP; continue; }
+    shake *= Math.pow(0.001, STEP);
+    if (shake < 0.1) shake = 0;
+    state.update(STEP);
+    updateParts(STEP);
+    updateFloaters(STEP);
+  }
+  state.draw();
+}
+setState(titleState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

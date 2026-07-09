@@ -1,0 +1,1363 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>海牛 VS 尼克星 自由搏擊對決</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    height:100%; overflow:hidden;
+    background:radial-gradient(circle at 50% 30%, #1c0b08 0%, #0a0505 55%, #030303 100%);
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif;
+    -webkit-user-select:none; user-select:none; touch-action:manipulation;
+  }
+  #stage{ position:fixed; inset:0; }
+  canvas{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+
+  /* ---------- 字幕 ---------- */
+  #subtitle{
+    position:absolute; left:50%; bottom:7.5%;
+    transform:translate(-50%, 14px) scale(.96);
+    max-width:86%;
+    padding:10px 30px;
+    font-size:clamp(15px, 2.6vw, 23px);
+    font-weight:900; letter-spacing:2px; text-align:center;
+    color:#fff; white-space:nowrap;
+    background:linear-gradient(180deg, rgba(16,12,26,.92), rgba(10,8,18,.72));
+    border:1px solid rgba(255,176,32,.55);
+    border-radius:999px;
+    box-shadow:0 6px 24px rgba(0,0,0,.6), 0 0 18px rgba(255,176,32,.18) inset;
+    text-shadow:0 2px 6px rgba(0,0,0,.8);
+    opacity:0; pointer-events:none;
+    transition:opacity .38s ease, transform .38s cubic-bezier(.22,1.2,.36,1);
+  }
+  #subtitle.show{ opacity:1; transform:translate(-50%,0) scale(1); }
+  #subtitle.blue{ border-color:rgba(94,180,255,.75); box-shadow:0 6px 24px rgba(0,0,0,.6), 0 0 22px rgba(63,169,255,.28); color:#cfe9ff; }
+  #subtitle.red { border-color:rgba(255,110,90,.75); box-shadow:0 6px 24px rgba(0,0,0,.6), 0 0 22px rgba(255,59,48,.28); color:#ffd9d4; }
+  #subtitle.gold{ border-color:rgba(255,205,80,.9);  box-shadow:0 6px 24px rgba(0,0,0,.6), 0 0 26px rgba(255,176,32,.38); color:#ffe9b0; }
+
+  /* ---------- 按鈕 ---------- */
+  .uibtn{
+    position:absolute; z-index:9;
+    font-family:inherit; font-weight:900; letter-spacing:2px;
+    color:#ffe9b0; cursor:pointer;
+    background:linear-gradient(180deg, rgba(40,28,16,.85), rgba(20,14,10,.85));
+    border:1px solid rgba(255,176,32,.5); border-radius:999px;
+    text-shadow:0 1px 3px rgba(0,0,0,.7);
+    transition:transform .18s cubic-bezier(.22,1.4,.36,1), box-shadow .18s ease, opacity .3s ease;
+  }
+  .uibtn:hover{ transform:scale(1.06); box-shadow:0 0 18px rgba(255,176,32,.35); }
+  .uibtn:active{ transform:scale(.94); }
+  #sndBtn{ top:14px; right:14px; font-size:14px; padding:8px 16px; }
+  #replayBtn{
+    left:50%; top:64%;
+    transform:translate(-50%,0) scale(.6);
+    font-size:clamp(18px,3.2vw,26px);
+    padding:14px 44px;
+    background:linear-gradient(180deg,#ffb020,#e8582f);
+    color:#2a1004; border:2px solid #ffe9b0;
+    box-shadow:0 8px 30px rgba(232,88,47,.5);
+    opacity:0; pointer-events:none;
+  }
+  #replayBtn.show{
+    opacity:1; pointer-events:auto;
+    transform:translate(-50%,0) scale(1);
+    transition:transform .5s cubic-bezier(.22,1.6,.36,1), opacity .4s ease;
+  }
+  #replayBtn:hover{ transform:translate(-50%,0) scale(1.08); }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="cv"></canvas>
+  <div id="subtitle"></div>
+  <button id="sndBtn" class="uibtn">🔇 聲音：關</button>
+  <button id="replayBtn" class="uibtn">▶ 重新播放</button>
+</div>
+<script>
+'use strict';
+/* =====================================================================
+   海牛 VS 尼克星 自由搏擊對決 ── 專業AI升級版
+   三幕劇：Ⅰ 開場海報與選手進場 → Ⅱ 擂台激戰 → Ⅲ 終極對撞與英雄惜英雄
+   ===================================================================== */
+const W = 960, H = 540, CX = 480, CY = 300, FLOOR = 430;
+const cv = document.getElementById('cv');
+const ctx = cv.getContext('2d');
+const subEl = document.getElementById('subtitle');
+const sndBtn = document.getElementById('sndBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+/* ---------- 自適應縮放（devicePixelRatio） ---------- */
+function resize(){
+  const s = Math.min(innerWidth / W, innerHeight / H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  cv.width  = Math.round(W * s * dpr);
+  cv.height = Math.round(H * s * dpr);
+  cv.style.width  = W * s + 'px';
+  cv.style.height = H * s + 'px';
+  cv._base = s * dpr;
+}
+addEventListener('resize', resize);
+resize();
+
+/* ---------- 緩動函式庫（禁止線性補間） ---------- */
+const E = {
+  inQuad : t => t*t,
+  outQuad: t => 1-(1-t)*(1-t),
+  inCubic: t => t*t*t,
+  outCubic: t => 1-Math.pow(1-t,3),
+  inOutCubic: t => t<.5 ? 4*t*t*t : 1-Math.pow(-2*t+2,3)/2,
+  outQuart: t => 1-Math.pow(1-t,4),
+  outBack: t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2),
+  outElastic: t => t===0?0 : t===1?1 : Math.pow(2,-10*t)*Math.sin((t*10-0.75)*(Math.PI*2/3))+1,
+  inExpo: t => t===0?0:Math.pow(2,10*t-10),
+  outExpo: t => t===1?1:1-Math.pow(2,-10*t)
+};
+const clamp = (v,a,b)=> v<a?a : v>b?b : v;
+const lerp = (a,b,t)=> a+(b-a)*t;
+const ss = (t,a,b)=> clamp((t-a)/(b-a),0,1);   // 區段進度 0→1
+const rnd = (a,b)=> a+Math.random()*(b-a);
+const TAU = Math.PI*2;
+
+/* ---------- 全域時間軸 ---------- */
+const TOTAL = 34;
+let T = 0;        // 劇情時間（可慢動作、可凍結）
+let WT = 0;       // 牆鐘時間（環境動畫永遠流動）
+let freeze = 0;   // 命中停頓
+let shake = 0;    // 鏡頭震動
+let flash = 0;    // 白閃
+let excite = 0.15;// 觀眾情緒 0~1
+let ropeFlexR = 0, ropeFlexL = 0; // 圍繩受撞彈性
+let ended = false;
+
+function timeScaleAt(t){
+  if(t>20.55 && t<20.8) return 0.45;   // 絕招前慢動作
+  if(t>25.35 && t<26.0) return 0.36;   // 終極對撞前的慢動作
+  if(t>=26.0 && t<26.6) return 0.6;    // 對撞後餘韻
+  return 1;
+}
+
+/* =====================================================================
+   Web Audio 合成音效（預設靜音，按「聲音」鈕後才建立 AudioContext）
+   ===================================================================== */
+let AC = null, master = null, crowdGain = null, audioOn = false;
+function initAudio(){
+  AC = new (window.AudioContext || window.webkitAudioContext)();
+  master = AC.createGain();
+  master.gain.value = 0;
+  master.connect(AC.destination);
+  // 觀眾環境聲：迴圈噪音 + 帶通濾波
+  const len = AC.sampleRate * 2;
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * (0.6 + 0.4*Math.sin(i/4000));
+  const src = AC.createBufferSource();
+  src.buffer = buf; src.loop = true;
+  const bp = AC.createBiquadFilter();
+  bp.type='bandpass'; bp.frequency.value = 750; bp.Q.value = 0.5;
+  crowdGain = AC.createGain(); crowdGain.gain.value = 0.03;
+  src.connect(bp); bp.connect(crowdGain); crowdGain.connect(master);
+  src.start();
+}
+function noiseBurst(dur, freq, type, vol){
+  if(!audioOn || !AC) return;
+  const len = Math.max(1, AC.sampleRate * dur) | 0;
+  const buf = AC.createBuffer(1, len, AC.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = Math.random()*2-1;
+  const src = AC.createBufferSource(); src.buffer = buf;
+  const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+  const g = AC.createGain();
+  g.gain.setValueAtTime(vol, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start();
+}
+function tone(freq, dur, type, vol, slide, delay){
+  if(!audioOn || !AC) return;
+  const t0 = AC.currentTime + (delay||0);
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+0.012);
+  g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+  o.connect(g); g.connect(master);
+  o.start(t0); o.stop(t0+dur+0.05);
+}
+const sfx = {
+  bell(n){ for(let i=0;i<(n||1);i++){ tone(1568,1.0,'triangle',0.22,0,i*0.4); tone(1046,1.1,'sine',0.14,0,i*0.4); } },
+  thud(p){ const big = p>=40; tone(big?150:170, big?0.3:0.16, 'sine', big?0.4:0.28, big?-110:-120); noiseBurst(big?0.22:0.1, 300, 'lowpass', big?0.35:0.2); },
+  whoosh(){ noiseBurst(0.22, 1500, 'bandpass', 0.16); },
+  cheer(){ noiseBurst(1.3, 900, 'bandpass', 0.3); },
+  ding(){ tone(880,0.35,'sine',0.2); tone(1318,0.5,'sine',0.15,0,0.1); },
+  charge(){ tone(90,1.6,'sawtooth',0.1,140); }
+};
+
+/* =====================================================================
+   粒子・衝擊波・漫畫字
+   ===================================================================== */
+let parts = [], waves = [], comics = [];
+function spawnSparks(x,y,n,base){
+  for(let i=0;i<n;i++){
+    const a = rnd(0,TAU), s = rnd(90,340);
+    parts.push({kind:'spark', x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s-60,
+      life:rnd(.3,.62), max:.62, size:rnd(2,4.6),
+      col: Math.random()<.5 ? '#ffe27a' : (base||'#ff8c42')});
+  }
+}
+function spawnDust(x,y,n){
+  for(let i=0;i<n;i++){
+    const a = rnd(-Math.PI, 0);
+    parts.push({kind:'dust', x:x+rnd(-16,16), y, vx:Math.cos(a)*rnd(20,90), vy:rnd(-70,-20),
+      life:rnd(.4,.8), max:.8, size:rnd(4,9), col:'rgba(200,190,180,'});
+  }
+}
+function spawnAura(x,y,col){
+  parts.push({kind:'aura', x:x+rnd(-34,34), y:y+rnd(-8,8), vx:rnd(-12,12), vy:rnd(-140,-70),
+    life:rnd(.4,.75), max:.75, size:rnd(3,7), col});
+}
+function spawnConfetti(){
+  for(let i=0;i<130;i++){
+    parts.push({kind:'conf', x:rnd(80,880), y:rnd(-160,-10),
+      vx:rnd(-25,25), vy:rnd(50,130), spin:rnd(2,7)*(Math.random()<.5?-1:1),
+      rot:rnd(0,TAU), life:rnd(3.5,6), max:6, size:rnd(5,9), sway:rnd(0,TAU),
+      col:['#ffb020','#ff3b30','#3fa9ff','#41d97a','#ff2975','#fff5d6'][i%6]});
+  }
+}
+function updateParts(dt){
+  for(const p of parts){
+    p.life -= dt;
+    if(p.kind==='conf'){
+      p.sway += dt*3;
+      p.x += (p.vx + Math.sin(p.sway)*36) * dt;
+      p.y += p.vy * dt;
+      p.rot += p.spin * dt;
+      if(p.y > FLOOR+60) p.life = Math.min(p.life, 0.25);
+    }else{
+      p.x += p.vx*dt; p.y += p.vy*dt;
+      if(p.kind==='spark') p.vy += 620*dt;
+      if(p.kind==='dust'){ p.vx *= (1-2.2*dt); p.vy += 30*dt; }
+    }
+  }
+  parts = parts.filter(p=> p.life > 0);
+  for(const w of waves){ w.r += w.vr*dt; w.life -= dt; }
+  waves = waves.filter(w=> w.life > 0);
+  for(const c of comics) c.t += dt;
+  comics = comics.filter(c=> c.t < c.dur);
+}
+function drawParts(){
+  for(const p of parts){
+    const a = clamp(p.life / p.max, 0, 1);
+    if(p.kind==='spark'){
+      ctx.globalAlpha = a;
+      ctx.fillStyle = p.col;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size*a+0.6, 0, TAU); ctx.fill();
+    }else if(p.kind==='dust'){
+      ctx.fillStyle = p.col + (a*0.5) + ')';
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.size*(1.6-a), 0, TAU); ctx.fill();
+    }else if(p.kind==='aura'){
+      ctx.globalAlpha = a*0.85;
+      ctx.fillStyle = p.col;
+      ctx.beginPath(); ctx.ellipse(p.x, p.y, p.size*0.7, p.size*1.5, 0, 0, TAU); ctx.fill();
+    }else if(p.kind==='conf'){
+      ctx.globalAlpha = clamp(a*3,0,1);
+      ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.rot);
+      ctx.fillStyle = p.col;
+      ctx.fillRect(-p.size/2, -p.size/3, p.size, p.size*0.66);
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha = 1;
+  for(const w of waves){
+    const a = clamp(w.life/w.max, 0, 1);
+    ctx.strokeStyle = 'rgba(255,220,140,'+ (a*0.8) +')';
+    ctx.lineWidth = 5*a+1;
+    ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
+  }
+}
+function comic(x,y,text,col){
+  comics.push({x, y, text, col:col||'#ffe27a', t:0, dur:0.75, ang:rnd(-0.18,0.18)});
+}
+function drawComics(){
+  for(const c of comics){
+    const k = c.t / c.dur;
+    const sc = E.outBack(clamp(k*2.6,0,1)) * (1 - E.inCubic(ss(k,0.7,1))*0.4);
+    ctx.save();
+    ctx.translate(c.x, c.y - k*28);
+    ctx.rotate(c.ang); ctx.scale(sc, sc);
+    ctx.globalAlpha = 1 - E.inCubic(ss(k,0.6,1));
+    // 漫畫爆炸底框
+    ctx.beginPath();
+    for(let i=0;i<16;i++){
+      const ang = i/16*TAU, r = (i%2===0)? 46:30;
+      const px = Math.cos(ang)*r*1.25, py = Math.sin(ang)*r*0.8;
+      i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+    }
+    ctx.closePath();
+    ctx.fillStyle = c.col; ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = '#3a1204'; ctx.stroke();
+    ctx.fillStyle = '#3a1204';
+    ctx.font = '900 30px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(c.text, 0, 2);
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* =====================================================================
+   觀眾席（兩層視差人群）
+   ===================================================================== */
+function makeCrowd(y0, n, s0, tones){
+  const arr = [];
+  for(let i=0;i<n;i++){
+    arr.push({
+      x: 20 + (i+rnd(-0.3,0.3)) * (920/n),
+      y: y0 + rnd(-10,10),
+      s: s0 * rnd(0.85,1.2),
+      col: tones[i % tones.length],
+      ph: rnd(0,TAU), spd: rnd(1.6,3),
+      jumpy: Math.random(), stick: Math.random()<0.3 ? (Math.random()<.5?'#3fa9ff':'#ff2975') : null
+    });
+  }
+  return arr;
+}
+const crowdFar  = makeCrowd(208, 44, 8,  ['#241a33','#1d2338','#2a1d2e','#20263d']);
+const crowdMid  = makeCrowd(238, 36, 11, ['#31264a','#28304f','#3a2740','#2d3555']);
+const crowdNear = makeCrowd(272, 28, 15, ['#413361','#354068','#4c3355','#3b4674']);
+function drawCrowdRow(row, alpha){
+  for(const m of row){
+    const jump = (m.jumpy < excite) ? Math.abs(Math.sin(WT*5+m.ph)) * 10 * excite : 0;
+    const bob = Math.sin(WT*m.spd + m.ph) * 2.2;
+    const y = m.y + bob - jump;
+    ctx.globalAlpha = alpha;
+    // 身體（肩）
+    ctx.fillStyle = m.col;
+    ctx.beginPath();
+    ctx.moveTo(m.x - m.s, y + m.s*2.4);
+    ctx.quadraticCurveTo(m.x, y + m.s*0.4, m.x + m.s, y + m.s*2.4);
+    ctx.closePath(); ctx.fill();
+    // 頭
+    ctx.beginPath(); ctx.arc(m.x, y, m.s*0.72, 0, TAU); ctx.fill();
+    // 螢光棒
+    if(m.stick){
+      const wav = Math.sin(WT*4 + m.ph) * 0.5 * (0.4+excite);
+      ctx.strokeStyle = m.stick; ctx.lineWidth = m.s*0.22; ctx.lineCap='round';
+      ctx.beginPath();
+      ctx.moveTo(m.x + m.s*0.8, y + m.s*0.8);
+      ctx.lineTo(m.x + m.s*0.8 + Math.sin(wav)*m.s*1.4, y - m.s*1.2*Math.cos(wav));
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* =====================================================================
+   鏡頭（關鍵格 + 緩動 + 震動）
+   ===================================================================== */
+const camKF = [
+  {t:0,   x:480,y:308,z:1.5},
+  {t:1.2, x:480,y:300,z:1.28},
+  {t:4.2, x:480,y:296,z:1.05},
+  {t:4.5, x:340,y:352,z:1.5, cut:true},
+  {t:6.4, x:344,y:344,z:1.62},
+  {t:6.6, x:624,y:352,z:1.5, cut:true},
+  {t:8.5, x:618,y:344,z:1.62},
+  {t:8.8, x:480,y:330,z:1.0, cut:true},
+  {t:10.1,x:480,y:346,z:1.2},
+  {t:14.6,x:468,y:352,z:1.27},
+  {t:17.6,x:490,y:340,z:1.1},
+  {t:18.6,x:368,y:352,z:1.38},
+  {t:20.5,x:430,y:348,z:1.2},
+  {t:21.2,x:594,y:346,z:1.33},
+  {t:22.8,x:480,y:334,z:1.03},
+  {t:25.4,x:480,y:356,z:1.32},
+  {t:26.1,x:480,y:362,z:1.52},
+  {t:27.5,x:480,y:330,z:1.0},
+  {t:29.6,x:480,y:342,z:1.12},
+  {t:31.3,x:480,y:352,z:1.3},
+  {t:33.0,x:480,y:306,z:1.06},
+  {t:34.0,x:480,y:300,z:1.03}
+];
+const cam = {x:480, y:308, z:1.5, sx:0, sy:0};
+function camAt(t){
+  let i = 0;
+  while(i < camKF.length-1 && camKF[i+1].t <= t) i++;
+  const a = camKF[i], b = camKF[Math.min(i+1, camKF.length-1)];
+  if(a===b || b.cut) return {x:a.x, y:a.y, z:a.z};
+  const k = E.inOutCubic(ss(t, a.t, b.t));
+  return {x:lerp(a.x,b.x,k), y:lerp(a.y,b.y,k), z:lerp(a.z,b.z,k)};
+}
+function layer(p, fn){
+  ctx.save();
+  const lz = 1 + (cam.z-1)*(0.55 + 0.45*p);
+  const lx = CX + (cam.x-CX)*p + cam.sx*p;
+  const ly = CY + (cam.y-CY)*p + cam.sy*p;
+  ctx.translate(W/2, H/2);
+  ctx.scale(lz, lz);
+  ctx.translate(-lx, -ly);
+  fn();
+  ctx.restore();
+}
+
+/* =====================================================================
+   字幕
+   ===================================================================== */
+const subs = [
+  {t0:0.6, t1:3.9,  cls:'',     text:'傳說實況主系列 ── 自由搏擊擂台賽'},
+  {t0:4.5, t1:6.4,  cls:'blue', text:'藍方登場：海牛 ──「深海重量級」'},
+  {t0:6.7, t1:8.5,  cls:'red',  text:'紅方登場：尼克星 ──「閃電連擊之星」'},
+  {t0:8.8, t1:10.0, cls:'gold', text:'第一回合 ── 開始！'},
+  {t0:12.6,t1:14.2, cls:'',     text:'兩位選手互不相讓，你來我往！'},
+  {t0:14.6,t1:15.7, cls:'red',  text:'尼克星靈巧閃過重拳！'},
+  {t0:16.5,t1:18.1, cls:'red',  text:'流星連擊命中！海牛陷入苦戰……'},
+  {t0:18.5,t1:20.4, cls:'blue', text:'海牛蓄力絕招 ──「深海衝擊」！'},
+  {t0:21.1,t1:22.7, cls:'blue', text:'正面命中！尼克星被轟上圍繩！'},
+  {t0:23.4,t1:25.3, cls:'gold', text:'最後關頭 ── 兩人同時使出全力一擊！'},
+  {t0:27.2,t1:28.7, cls:'',     text:'雙雙倒地……全場屏息……'},
+  {t0:29.3,t1:31.0, cls:'gold', text:'勢均力敵，不分勝負！'},
+  {t0:31.3,t1:33.5, cls:'gold', text:'平手！英雄惜英雄！'}
+];
+let curSub = null;
+function updateSubtitle(){
+  let hit = null;
+  for(const s of subs) if(T >= s.t0 && T < s.t1){ hit = s; break; }
+  if(hit !== curSub){
+    curSub = hit;
+    if(hit){
+      subEl.textContent = hit.text;
+      subEl.className = hit.cls + ' show';
+    }else{
+      subEl.classList.remove('show');
+    }
+  }
+}
+
+/* =====================================================================
+   選手
+   ===================================================================== */
+function makeFighter(id, x, dir){
+  return { id, x, dir, home:x,
+    dx:0, dy:0, rot:0, lean:0, ext:0, extUp:0, duck:0, down:0,
+    sx:1, sy:1, kb:0, hurt:0, expr:'calm', aura:0, dizzy:0, bobPh:rnd(0,TAU) };
+}
+const cow  = makeFighter('cow', 326, 1);
+const star = makeFighter('star', 634, -1);
+function hitFighter(f, power, dir){
+  f.hurt = 1;
+  f.kb = dir * power * 2.0;
+  f.sx = 1.28; f.sy = 0.74;
+  f.expr = 'hurt';
+}
+function impactFX(x, y, power, victim, vdir){
+  shake = Math.min(15, 4 + power*0.22);
+  flash = power >= 40 ? 0.5 : 0.2;
+  freeze = power >= 40 ? 0.16 : 0.05;
+  spawnSparks(x, y, power >= 40 ? 34 : 14, power>=40 ? '#7fd0ff' : null);
+  waves.push({x, y, r:8, vr: power>=40? 620:380, life:.35, max:.35});
+  comic(x, y-64, power>=40 ? '轟！！' : (Math.random()<.5?'碰！':'咚！'), power>=40?'#8fd0ff':'#ffe27a');
+  excite = clamp(excite + (power>=40? .45 : .2), 0, 1);
+  sfx.thud(power);
+  hitFighter(victim, power, vdir);
+}
+
+/* ---------- 出拳節拍表 ---------- */
+const beats = [
+  {t:10.2, a:'cow',  reach:118, power:26},
+  {t:11.9, a:'star', reach:118, power:26},
+  {t:13.4, a:'cow',  reach:138, power:34},
+  {t:15.1, a:'cow',  reach:150, power:0, miss:true},
+  {t:15.9, a:'star', reach:116, power:22},
+  {t:16.28,a:'star', reach:132, power:30},
+  {t:20.8, a:'cow',  reach:168, power:55, mega:true}
+];
+
+/* ---------- 事件表（一次性觸發） ---------- */
+let events = [];
+function ev(t, fn){ events.push({t, fn, done:false}); }
+function buildEvents(){
+  events = [];
+  ev(0.2, ()=>{ excite = 0.2; });
+  ev(8.72, ()=>{ sfx.bell(1); excite = 0.5; });
+  for(const b of beats){
+    const atk = b.a==='cow' ? cow : star;
+    const vic = b.a==='cow' ? star : cow;
+    ev(b.t - 0.16, ()=> sfx.whoosh());
+    if(b.miss){
+      ev(b.t + 0.05, ()=>{ excite = clamp(excite+0.12,0,1); });
+    }else{
+      ev(b.t, ()=>{
+        const ix = vic.x + vic.dx - vic.dir*46;
+        impactFX(ix, FLOOR-96, b.power, vic, -vic.dir);
+      });
+    }
+  }
+  ev(18.5, ()=>{ sfx.charge(); });
+  ev(21.15, ()=>{ ropeFlexR = 1; });
+  ev(24.7, ()=>{ sfx.charge(); });
+  ev(26.0, ()=>{  // 終極對撞
+    const ix = 480, iy = FLOOR-100;
+    shake = 18; flash = 0.9; freeze = 0.28;
+    spawnSparks(ix, iy, 60, '#8fd0ff');
+    spawnSparks(ix, iy, 30, '#ffb020');
+    waves.push({x:ix,y:iy,r:10,vr:760,life:.5,max:.5});
+    waves.push({x:ix,y:iy,r:4, vr:440,life:.6,max:.6});
+    comic(ix, iy-80, '轟！！！', '#fff5d6');
+    excite = 1;
+    sfx.thud(70); sfx.cheer();
+    hitFighter(cow, 30, -1); hitFighter(star, 30, 1);
+  });
+  ev(26.62, ()=>{ spawnDust(cow.x-120, FLOOR+4, 12); spawnDust(star.x+120, FLOOR+4, 12); shake = 8; sfx.thud(30); });
+  ev(29.9, ()=>{ excite = 0.85; });
+  ev(31.2, ()=>{ sfx.ding(); sfx.bell(3); sfx.cheer(); spawnConfetti(); waves.push({x:480,y:FLOOR-96,r:6,vr:420,life:.45,max:.45}); excite = 1; });
+  ev(33.3, ()=>{ replayBtn.classList.add('show'); ended = true; });
+}
+
+/* =====================================================================
+   編舞：依 T 計算兩位選手的姿態
+   ===================================================================== */
+function applyPunchBeats(f){
+  for(const b of beats){
+    if(b.a !== f.id) continue;
+    if(T < b.t - 0.6 || T > b.t + 0.8) continue;
+    const wu = ss(T, b.t-0.55, b.t-0.16);
+    const st = ss(T, b.t-0.16, b.t);
+    const rc = ss(T, b.t, b.t+0.7);
+    let dx, ext, lean;
+    if(T < b.t){
+      const back = -32 * E.outCubic(wu);
+      const k = E.inCubic(st);
+      dx = lerp(back, b.reach, k);
+      ext = k;
+      lean = lerp(-0.13*E.outCubic(wu), 0.24, k);
+      if(st===0) f.sy *= (1 - 0.05*E.outCubic(wu));
+    }else{
+      const r = E.outBack(rc);
+      dx = b.reach * (1-r);
+      ext = 1 - E.outCubic(rc);
+      lean = 0.24 * (1-r);
+    }
+    f.dx += dx * f.dir;
+    f.ext = Math.max(f.ext, ext);
+    f.lean += lean;
+    if(T > b.t-0.55 && T < b.t+0.4) f.expr = 'fierce';
+  }
+}
+function choreo(){
+  for(const f of [cow, star]){
+    f.dx = 0; f.dy = 0; f.rot = 0; f.lean = 0;
+    f.ext = 0; f.extUp = 0; f.duck = 0; f.down = 0;
+    f.aura = 0; f.dizzy = 0;
+    if(f.expr!=='hurt' || f.hurt<0.4) f.expr = 'calm';
+    // 待機呼吸與彈跳
+    f.dy += Math.sin(WT*2.8 + f.bobPh) * 2;
+  }
+  /* ---- 第一幕：進場 ---- */
+  if(T < 8.8){
+    // 海牛耍帥：舉臂 + 小跳
+    if(T > 4.6 && T < 6.4){
+      const k = ss(T, 4.6, 5.0);
+      cow.extUp = E.outBack(k) * Math.abs(Math.sin((T-4.6)*3.4))*0.4 + E.outBack(k)*0.6;
+      cow.dy -= Math.abs(Math.sin((T-4.6)*4.4)) * 12 * E.outCubic(k);
+      cow.expr = 'fierce';
+    }
+    // 尼克星旋轉入鏡
+    if(T > 6.7 && T < 8.5){
+      const k = ss(T, 6.7, 7.6);
+      star.rot = TAU * E.outCubic(k) * star.dir;
+      star.dy -= Math.sin(Math.PI * ss(T,6.7,7.4)) * 40;
+      if(T > 7.6){ star.extUp = E.outBack(ss(T,7.6,8.0)); star.expr = 'fierce'; }
+      if(T < 7.5 && Math.random() < 0.3) spawnSparks(star.x+rnd(-30,30), FLOOR-90+rnd(-40,40), 1, '#ffe27a');
+    }
+  }
+  /* ---- 第二幕：戰鬥 ---- */
+  if(T >= 8.8 && T < 23.2){
+    // 戰鬥站姿：微蹲、面對面小彈跳
+    for(const f of [cow, star]){
+      f.dy += Math.abs(Math.sin(WT*4.6 + f.bobPh)) * -3;
+      f.lean += 0.045 * f.dir * 0; // 保持姿態基準
+    }
+    applyPunchBeats(cow);
+    applyPunchBeats(star);
+    // 尼克星閃避海牛的第 15.1 秒重拳（下蹲）
+    const dk = E.outCubic(ss(T,14.78,15.02)) * (1 - E.inOutCubic(ss(T,15.25,15.6)));
+    star.duck = Math.max(star.duck, dk);
+    // 星星連擊後海牛暈眩搖晃
+    if(T > 16.3 && T < 18.3){
+      const k = 1 - ss(T,17.6,18.3);
+      cow.rot += Math.sin(WT*9) * 0.06 * k;
+      cow.dizzy = k > 0.3 ? 1 : 0;
+      if(k>0.3) cow.expr = 'hurt';
+    }
+    // 海牛蓄力「深海衝擊」
+    if(T > 18.4 && T < 20.8){
+      const k = ss(T, 18.4, 19.2);
+      cow.aura = E.outCubic(k);
+      cow.sy *= 1 - 0.06*Math.sin(WT*14)*cow.aura;
+      cow.lean += -0.1 * cow.aura * (1 - ss(T,20.5,20.8));
+      cow.expr = 'fierce';
+      if(Math.random() < cow.aura*0.75) spawnAura(cow.x+cow.dx, FLOOR-30, '#5ec8ff');
+      // 尼克星挑釁小彈跳
+      if(T < 20.3) star.dy -= Math.abs(Math.sin(WT*6))*8;
+    }
+    // 尼克星被絕招轟飛到圍繩再彈回
+    if(T >= 20.8 && T < 23.2){
+      const fly = ss(T, 20.8, 21.18);
+      const back = ss(T, 21.18, 22.5);
+      star.dx += (150*E.outCubic(fly) - 150*E.outElastic(back)*(back>0?1:0)) * 1;
+      star.rot += -0.5 * E.outCubic(fly) * (1 - E.outCubic(back)) * star.dir;
+      if(fly>0 && fly<1) star.dy -= Math.sin(Math.PI*fly)*34;
+      if(T > 21.2 && T < 22.5) star.expr = 'hurt';
+    }
+    // 22.6~23.2 兩人喘息
+    if(T > 22.5){ cow.expr = 'tired'; star.expr = 'tired';
+      cow.sy *= 1 + Math.sin(WT*7)*0.025; star.sy *= 1 + Math.sin(WT*7+1)*0.025; }
+  }
+  /* ---- 第三幕：終極對撞 → 英雄惜英雄 ---- */
+  if(T >= 23.2){
+    // 蓄勢（後傾、光環）
+    if(T > 23.6 && T < 25.05){
+      const k = E.outCubic(ss(T,23.6,24.4));
+      for(const f of [cow,star]){
+        f.dx += -26 * k * f.dir;
+        f.lean += -0.18 * k;
+        f.sy *= 1 - 0.05*k;
+        f.aura = k; f.expr = 'fierce';
+      }
+      if(Math.random()<0.5) spawnAura(cow.x-26, FLOOR-30, '#5ec8ff');
+      if(Math.random()<0.5) spawnAura(star.x+26, FLOOR-30, '#ffd447');
+    }
+    // 衝刺對撞（慢動作由 timeScaleAt 處理）
+    if(T >= 25.05 && T < 26.0){
+      const k = E.inCubic(ss(T,25.05,26.0));
+      cow.dx  += (-26 + 130*k) * 1;
+      star.dx += (-26 + 130*k) * -1 * -1 * 1; // 對稱
+      star.dx  = -Math.abs(star.dx===0? 0 : star.dx); // 保底
+      cow.dx = -26*(1-k)*1 + 130*k;
+      star.dx = 26*(1-k)*-1*0 - (-26*(1-k)) - 130*k;
+      cow.ext = E.inCubic(ss(T,25.5,26.0));
+      star.ext = cow.ext;
+      cow.lean += 0.3*k; star.lean += 0.3*k;
+      cow.expr = 'fierce'; star.expr = 'fierce';
+      cow.aura = 1-k*0.5; star.aura = 1-k*0.5;
+    }
+    // 對撞後飛出 → 倒地
+    if(T >= 26.0 && T < 26.62){
+      const fb = E.outCubic(ss(T,26.0,26.62));
+      cow.dx  += 104 - 224*fb; star.dx += -104 + 224*fb;
+      cow.dy  -= Math.sin(Math.PI*clamp(fb,0,1))*66;
+      star.dy -= Math.sin(Math.PI*clamp(fb,0,1))*66;
+      cow.rot  = -1.35*fb*cow.dir*-1*-1; star.rot = 1.35*fb;
+      cow.rot = -1.35*fb; star.rot = 1.35*fb;
+      cow.ext = 1-fb; star.ext = 1-fb;
+    }
+    // 倒地
+    if(T >= 26.62 && T < 28.7){
+      cow.down = 1; star.down = 1;
+      cow.dx -= 120; star.dx += 120;
+      cow.dizzy = 1; star.dizzy = 1;
+      cow.expr = 'hurt'; star.expr = 'hurt';
+    }
+    // 起身（outBack 過衝）
+    if(T >= 28.7 && T < 30.1){
+      const k = E.outBack(ss(T,28.7,29.9));
+      cow.down = 1-k; star.down = 1-k;
+      cow.dx -= 120*(1-k*0.35); star.dx += 120*(1-k*0.35);
+      cow.expr = 'tired'; star.expr = 'tired';
+    }
+    // 走向中央碰拳
+    if(T >= 30.1){
+      const wk = E.inOutCubic(ss(T,30.1,31.15));
+      cow.dx += lerp(-78, 96, wk); star.dx += lerp(78, -96, wk);
+      const reach = E.outCubic(ss(T,30.85,31.2));
+      cow.ext = Math.max(cow.ext, reach*0.72);
+      star.ext = Math.max(star.ext, reach*0.72);
+      // 走路小顛
+      if(wk<1){ cow.dy -= Math.abs(Math.sin(WT*9))*4*(1-wk*0.5); star.dy -= Math.abs(Math.sin(WT*9+1))*4*(1-wk*0.5); }
+      cow.expr = T>31.1 ? 'happy':'tired';
+      star.expr = T>31.1 ? 'happy':'tired';
+      // 舉起另一隻手致意
+      const up = E.outBack(ss(T,31.7,32.3));
+      cow.extUp = up; star.extUp = up;
+    }
+  }
+  // 擊退回彈（阻尼衰減）
+  for(const f of [cow, star]){
+    f.dx += f.kb;
+    if(f.hurt > 0){
+      f.rot += Math.sin(WT*26) * 0.05 * f.hurt;
+    }
+  }
+}
+
+/* =====================================================================
+   繪圖：拳套、選手、擂台、場景
+   ===================================================================== */
+function rr(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+function drawGlove(x, y, ang, col, colDark, s){
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(ang); ctx.scale(s, s);
+  // 手腕束帶
+  ctx.fillStyle = '#f2ede4';
+  rr(-9, 6, 18, 11, 4); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = colDark; ctx.stroke();
+  // 拳套主體（漸層 + 描邊）
+  const g = ctx.createRadialGradient(-5,-7,3, 0,0,20);
+  g.addColorStop(0, '#ffffff');
+  g.addColorStop(0.25, col);
+  g.addColorStop(1, colDark);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.ellipse(0, -3, 15, 13.5, 0, 0, TAU); ctx.fill();
+  ctx.lineWidth = 2.4; ctx.strokeStyle = colDark; ctx.stroke();
+  // 大拇指
+  ctx.beginPath(); ctx.ellipse(-11, 1, 6, 5, 0.6, 0, TAU);
+  ctx.fillStyle = g; ctx.fill(); ctx.stroke();
+  // 高光
+  ctx.strokeStyle = 'rgba(255,255,255,.75)'; ctx.lineWidth = 2.4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.arc(-2, -6, 8, Math.PI*1.05, Math.PI*1.6); ctx.stroke();
+  ctx.restore();
+}
+function drawArm(sx, sy, gx, gy, w, col, dark){
+  ctx.strokeStyle = dark; ctx.lineWidth = w+3; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(sx, sy);
+  ctx.quadraticCurveTo((sx+gx)/2, (sy+gy)/2 + 8, gx, gy); ctx.stroke();
+  ctx.strokeStyle = col; ctx.lineWidth = w;
+  ctx.beginPath(); ctx.moveTo(sx, sy);
+  ctx.quadraticCurveTo((sx+gx)/2, (sy+gy)/2 + 8, gx, gy); ctx.stroke();
+}
+function drawDizzyStars(x, y){
+  for(let i=0;i<3;i++){
+    const a = WT*4 + i*TAU/3;
+    const px = x + Math.cos(a)*26, py = y + Math.sin(a)*8 - 4;
+    ctx.save(); ctx.translate(px,py); ctx.rotate(a);
+    ctx.fillStyle = '#ffe27a';
+    ctx.beginPath();
+    for(let j=0;j<10;j++){
+      const ang = -Math.PI/2 + j*Math.PI/5, r = j%2===0?6:2.6;
+      j===0?ctx.moveTo(Math.cos(ang)*r,Math.sin(ang)*r):ctx.lineTo(Math.cos(ang)*r,Math.sin(ang)*r);
+    }
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+}
+/* ---------- 海牛（藍方）：多部件、漸層、表情 ---------- */
+function drawCow(f){
+  const px = f.x + f.dx, py = FLOOR + f.dy;
+  // 地面陰影
+  ctx.fillStyle = 'rgba(0,0,10,.4)';
+  ctx.beginPath(); ctx.ellipse(px, FLOOR+8, 62*(1-(-f.dy)*0.002), 11, 0, 0, TAU); ctx.fill();
+  ctx.save();
+  ctx.translate(px, py);
+  if(f.down > 0){
+    const k = f.down;
+    ctx.translate(-30*k, -20*k);
+    ctx.rotate(-1.4*k*f.dir);
+  }
+  ctx.rotate((f.rot + f.lean*f.dir));
+  ctx.scale(f.sx * f.dir, f.sy);
+  ctx.translate(0, 0);
+  if(f.hurt > 0.05){ ctx.translate(rnd(-2,2)*f.hurt, rnd(-2,2)*f.hurt); }
+  // 蓄力光環
+  if(f.aura > 0){
+    ctx.save();
+    ctx.globalAlpha = f.aura * (0.4 + 0.15*Math.sin(WT*16));
+    const ag = ctx.createRadialGradient(0,-60,10, 0,-60,95);
+    ag.addColorStop(0,'rgba(120,210,255,.8)'); ag.addColorStop(1,'rgba(120,210,255,0)');
+    ctx.fillStyle = ag;
+    ctx.beginPath(); ctx.ellipse(0,-62, 88, 100, 0, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  const bodyDark = '#2b4a5e';
+  // 尾鰭（身後）
+  ctx.fillStyle = '#5b93b0';
+  ctx.beginPath();
+  ctx.moveTo(-40, -34);
+  ctx.quadraticCurveTo(-84, -30 + Math.sin(WT*5)*4, -78, -6);
+  ctx.quadraticCurveTo(-66, -14, -44, -14);
+  ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = bodyDark; ctx.stroke();
+  // 後臂（護頭防禦）
+  const shBX = -8, shBY = -74;
+  const upA = f.extUp;
+  let bgx = -20, bgy = -96;   // 後拳套預設在臉旁
+  if(upA > 0){ bgx = lerp(-20, -30, upA); bgy = lerp(-96, -148, upA); }
+  drawArm(shBX, shBY, bgx+6, bgy+8, 13, '#6aa7c4', bodyDark);
+  drawGlove(bgx, bgy, upA>0? -0.5 : -0.4, '#2a7fff', '#123f8a', 1);
+  // 腿
+  ctx.fillStyle = '#5b93b0';
+  rr(-30, -26, 22, 28, 9); ctx.fill(); ctx.strokeStyle=bodyDark; ctx.lineWidth=3; ctx.stroke();
+  rr(8, -26, 22, 28, 9); ctx.fill(); ctx.stroke();
+  // 短褲
+  const trG = ctx.createLinearGradient(0,-52,0,-18);
+  trG.addColorStop(0,'#2a7fff'); trG.addColorStop(1,'#1a4fb0');
+  ctx.fillStyle = trG;
+  rr(-34, -52, 68, 30, 10); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffe9b0'; rr(-34, -54, 68, 7, 3); ctx.fill();
+  // 身體（漸層大橢圓）
+  const bg = ctx.createRadialGradient(-16,-100,12, 0,-84,86);
+  bg.addColorStop(0, '#b8dcec');
+  bg.addColorStop(0.45, '#7fb3cd');
+  bg.addColorStop(1, '#4f86a3');
+  ctx.fillStyle = bg;
+  ctx.beginPath(); ctx.ellipse(0, -84, 52, 62, 0, 0, TAU); ctx.fill();
+  ctx.lineWidth = 3.4; ctx.strokeStyle = bodyDark; ctx.stroke();
+  // 肚皮
+  ctx.fillStyle = 'rgba(226,243,248,.85)';
+  ctx.beginPath(); ctx.ellipse(6, -64, 30, 36, 0, 0, TAU); ctx.fill();
+  // 耳朵與小角（呼應乳牛）
+  ctx.fillStyle = '#6aa7c4';
+  ctx.beginPath(); ctx.ellipse(-26, -136, 9, 6, -0.5, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#e8dfC9'.toLowerCase();
+  ctx.beginPath(); ctx.moveTo(-12,-142); ctx.quadraticCurveTo(-14,-156,-2,-152);
+  ctx.quadraticCurveTo(-6,-144,-4,-140); ctx.closePath(); ctx.fill(); ctx.stroke();
+  // 頭帶
+  ctx.fillStyle = '#2a7fff';
+  ctx.save(); ctx.rotate(-0.06);
+  rr(-34, -134, 68, 12, 6); ctx.fill(); ctx.strokeStyle=bodyDark; ctx.stroke();
+  ctx.restore();
+  // 口鼻部
+  const mzG = ctx.createRadialGradient(30,-104,4, 26,-100,26);
+  mzG.addColorStop(0,'#d9edf4'); mzG.addColorStop(1,'#9cc4d6');
+  ctx.fillStyle = mzG;
+  ctx.beginPath(); ctx.ellipse(28, -100, 24, 18, 0, 0, TAU); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = bodyDark;
+  ctx.beginPath(); ctx.ellipse(22, -104, 2.6, 3.6, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(34, -104, 2.6, 3.6, 0, 0, TAU); ctx.fill();
+  // 嘴（依表情）
+  ctx.strokeStyle = bodyDark; ctx.lineWidth = 2.6; ctx.lineCap='round';
+  ctx.beginPath();
+  if(f.expr==='hurt'){ ctx.arc(28, -88, 7, Math.PI*1.1, Math.PI*1.9); }
+  else if(f.expr==='fierce'){ ctx.moveTo(18,-90); ctx.lineTo(38,-86); }
+  else if(f.expr==='happy'){ ctx.arc(28, -94, 8, 0.15, Math.PI-0.15); }
+  else if(f.expr==='tired'){ ctx.arc(28, -86, 6, Math.PI*1.15, Math.PI*1.85); }
+  else { ctx.arc(28, -92, 6, 0.2, Math.PI-0.4); }
+  ctx.stroke();
+  // 眼睛與眉毛
+  const blink = (Math.sin(WT*0.9 + 1.3) > 0.985) ? 0.15 : 1;
+  for(const [ex, dirEye] of [[4, 1],[26, 1]]){
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(ex, -118, 8, 9*blink*(f.expr==='fierce'?0.72:1), 0, 0, TAU); ctx.fill();
+    ctx.strokeStyle = bodyDark; ctx.lineWidth=2; ctx.stroke();
+    if(f.expr==='hurt' && blink===1){
+      ctx.strokeStyle = bodyDark; ctx.lineWidth = 2.4;
+      ctx.beginPath(); ctx.moveTo(ex-4,-122); ctx.lineTo(ex+4,-114);
+      ctx.moveTo(ex+4,-122); ctx.lineTo(ex-4,-114); ctx.stroke();
+    }else{
+      ctx.fillStyle = '#1a2733';
+      ctx.beginPath(); ctx.arc(ex+2.5, -117, 3.6*blink, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(ex+3.6, -119, 1.3, 0, TAU); ctx.fill();
+    }
+  }
+  // 眉毛
+  ctx.strokeStyle = bodyDark; ctx.lineWidth = 3;
+  ctx.beginPath();
+  if(f.expr==='fierce'){ ctx.moveTo(-3,-132); ctx.lineTo(11,-127); ctx.moveTo(20,-128); ctx.lineTo(33,-131); }
+  else if(f.expr==='hurt' || f.expr==='tired'){ ctx.moveTo(-3,-127); ctx.lineTo(11,-131); ctx.moveTo(21,-131); ctx.lineTo(33,-128); }
+  else { ctx.moveTo(-2,-130); ctx.lineTo(11,-130); ctx.moveTo(21,-130); ctx.lineTo(33,-130); }
+  ctx.stroke();
+  // 臉頰紅暈
+  ctx.fillStyle = 'rgba(255,140,120,.35)';
+  ctx.beginPath(); ctx.ellipse(2, -102, 7, 4.6, 0, 0, TAU); ctx.fill();
+  // 前臂（出拳臂）
+  const ext = f.ext;
+  const shFX = 22, shFY = -78;
+  const gx = lerp(44, 108, E.outCubic(clamp(ext,0,1)));
+  const gy = lerp(-72, -92, E.outCubic(clamp(ext,0,1)));
+  drawArm(shFX, shFY, gx-8, gy+4, 14, '#7fb3cd', bodyDark);
+  drawGlove(gx, gy, lerp(0.35, 1.55, clamp(ext,0,1)), '#2a7fff', '#123f8a', 1.12);
+  ctx.restore();
+  if(f.dizzy) drawDizzyStars(px, py-158);
+}
+/* ---------- 尼克星（紅方）：金色星星、緞帶、表情 ---------- */
+function starShape(R, r, rot){
+  ctx.beginPath();
+  for(let i=0;i<10;i++){
+    const ang = -Math.PI/2 + i*Math.PI/5 + (rot||0);
+    const rad = i%2===0 ? R : r;
+    const px = Math.cos(ang)*rad, py = Math.sin(ang)*rad;
+    i===0 ? ctx.moveTo(px,py) : ctx.lineTo(px,py);
+  }
+  ctx.closePath();
+}
+function drawStar(f){
+  const px = f.x + f.dx, py = FLOOR + f.dy;
+  ctx.fillStyle = 'rgba(0,0,10,.4)';
+  ctx.beginPath(); ctx.ellipse(px, FLOOR+8, 54*(1-(-f.dy)*0.002), 10, 0, 0, TAU); ctx.fill();
+  ctx.save();
+  ctx.translate(px, py);
+  if(f.down > 0){
+    const k = f.down;
+    ctx.translate(30*k*-f.dir*-1, -16*k);
+    ctx.rotate(1.4*k);
+  }
+  ctx.rotate(f.rot + f.lean*f.dir);
+  ctx.scale(f.sx*f.dir, f.sy);
+  if(f.hurt > 0.05){ ctx.translate(rnd(-2,2)*f.hurt, rnd(-2,2)*f.hurt); }
+  const dark = '#8a4b00';
+  // 光暈
+  ctx.save();
+  ctx.globalAlpha = 0.35 + f.aura*0.45 + 0.08*Math.sin(WT*12);
+  const gg = ctx.createRadialGradient(0,-88,20, 0,-88,110);
+  gg.addColorStop(0,'rgba(255,214,90,.65)'); gg.addColorStop(1,'rgba(255,214,90,0)');
+  ctx.fillStyle = gg;
+  ctx.beginPath(); ctx.arc(0,-88, 108, 0, TAU); ctx.fill();
+  ctx.restore();
+  // 腿與紅靴
+  ctx.strokeStyle = dark; ctx.lineWidth = 11; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-18,-46); ctx.lineTo(-20,-12); ctx.moveTo(18,-46); ctx.lineTo(20,-12); ctx.stroke();
+  for(const lx of [-20, 20]){
+    const btG = ctx.createLinearGradient(lx,-16,lx,0);
+    btG.addColorStop(0,'#ff5a4e'); btG.addColorStop(1,'#c22318');
+    ctx.fillStyle = btG;
+    rr(lx-13, -14, 26, 15, 6); ctx.fill();
+    ctx.lineWidth = 2.6; ctx.strokeStyle = dark; ctx.stroke();
+    ctx.fillStyle = '#ffe9b0'; rr(lx-13, -14, 26, 4, 2); ctx.fill();
+  }
+  // 後臂
+  const upA = f.extUp;
+  let bgx = -34, bgy = -108;
+  if(upA>0){ bgx = lerp(-34,-44,upA); bgy = lerp(-108,-166,upA); }
+  drawArm(-30, -84, bgx+6, bgy+8, 11, '#e8a020', dark);
+  drawGlove(bgx, bgy, -0.5, '#ff3b30', '#8a1410', 0.95);
+  // 星星本體（漸層 + 圓角描邊）
+  ctx.lineJoin = 'round';
+  const sg = ctx.createRadialGradient(-12,-104,8, 0,-88,66);
+  sg.addColorStop(0, '#fff3b8');
+  sg.addColorStop(0.4, '#ffd447');
+  sg.addColorStop(1, '#efa010');
+  ctx.save();
+  ctx.translate(0,-88);
+  starShape(62, 33, Math.sin(WT*2.2)*0.03);
+  ctx.fillStyle = sg; ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = dark; ctx.stroke();
+  // 星角亮邊
+  ctx.lineWidth = 2; ctx.strokeStyle = 'rgba(255,255,255,.5)';
+  starShape(54, 28, Math.sin(WT*2.2)*0.03); ctx.stroke();
+  ctx.restore();
+  // 紅頭帶與飄帶
+  ctx.save(); ctx.translate(0,-88);
+  ctx.fillStyle = '#e02b1e';
+  ctx.save(); ctx.rotate(-0.1);
+  rr(-30, -46, 60, 11, 5); ctx.fill();
+  ctx.lineWidth=2.4; ctx.strokeStyle=dark; ctx.stroke(); ctx.restore();
+  ctx.beginPath();
+  ctx.moveTo(-28,-40);
+  ctx.quadraticCurveTo(-52,-36+Math.sin(WT*6)*6, -66,-20+Math.sin(WT*6+1)*8);
+  ctx.quadraticCurveTo(-50,-26, -34,-31);
+  ctx.closePath(); ctx.fillStyle = '#e02b1e'; ctx.fill(); ctx.stroke();
+  // 臉：眼睛
+  const blink = (Math.sin(WT*1.1) > 0.982) ? 0.15 : 1;
+  for(const ex of [-13, 13]){
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(ex, -8, 9, 10*blink*(f.expr==='fierce'?0.7:1), 0, 0, TAU); ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle=dark; ctx.stroke();
+    if(f.expr==='hurt' && blink===1){
+      ctx.lineWidth=2.6;
+      ctx.beginPath(); ctx.moveTo(ex-4,-12); ctx.lineTo(ex+4,-4);
+      ctx.moveTo(ex+4,-12); ctx.lineTo(ex-4,-4); ctx.stroke();
+    }else{
+      ctx.fillStyle = '#221208';
+      ctx.beginPath(); ctx.arc(ex+ (f.dir>0? -2.5:2.5)*-1, -7, 4*blink, 0, TAU); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(ex-1, -9, 1.4, 0, TAU); ctx.fill();
+    }
+  }
+  // 眉
+  ctx.lineWidth=3; ctx.strokeStyle=dark; ctx.lineCap='round';
+  ctx.beginPath();
+  if(f.expr==='fierce'){ ctx.moveTo(-21,-22); ctx.lineTo(-6,-16); ctx.moveTo(6,-16); ctx.lineTo(21,-22); }
+  else if(f.expr==='hurt'||f.expr==='tired'){ ctx.moveTo(-21,-16); ctx.lineTo(-6,-21); ctx.moveTo(6,-21); ctx.lineTo(21,-16); }
+  else { ctx.moveTo(-20,-19); ctx.lineTo(-6,-19); ctx.moveTo(6,-19); ctx.lineTo(20,-19); }
+  ctx.stroke();
+  // 嘴
+  ctx.lineWidth=3;
+  ctx.beginPath();
+  if(f.expr==='fierce'){
+    ctx.arc(0, 8, 11, 0.25, Math.PI-0.25);
+    ctx.stroke();
+    ctx.fillStyle='#fff'; rr(-6, 10, 12, 4.6, 2); ctx.fill();  // 牙
+    ctx.lineWidth=1.6; ctx.strokeStyle=dark; ctx.stroke();
+  }
+  else if(f.expr==='hurt'){ ctx.beginPath(); ctx.ellipse(0,12,6,7.5,0,0,TAU); ctx.fillStyle='#5c1408'; ctx.fill(); }
+  else if(f.expr==='happy'){ ctx.beginPath(); ctx.arc(0, 6, 12, 0.2, Math.PI-0.2); ctx.stroke(); }
+  else if(f.expr==='tired'){ ctx.beginPath(); ctx.arc(0, 16, 7, Math.PI*1.15, Math.PI*1.85); ctx.stroke(); }
+  else { ctx.beginPath(); ctx.arc(0, 8, 8, 0.3, Math.PI-0.3); ctx.stroke(); }
+  // 腮紅
+  ctx.fillStyle = 'rgba(255,90,60,.4)';
+  ctx.beginPath(); ctx.ellipse(-20, 2, 6, 4, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(20, 2, 6, 4, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+  // 前臂與紅拳套
+  const ext = f.ext;
+  const gx = lerp(46, 112, E.outCubic(clamp(ext,0,1)));
+  const gy = lerp(-84, -96, E.outCubic(clamp(ext,0,1)));
+  drawArm(34, -92, gx-8, gy+4, 12, '#e8a020', dark);
+  drawGlove(gx, gy, lerp(0.35,1.55,clamp(ext,0,1)), '#ff3b30', '#8a1410', 1.06);
+  ctx.restore();
+  if(f.dizzy) drawDizzyStars(px, py-176);
+}
+
+/* ---------- 場景 ---------- */
+function drawBackdrop(){
+  // 體育館牆面
+  const g = ctx.createLinearGradient(0, 0, 0, 320);
+  g.addColorStop(0, '#0c0508');
+  g.addColorStop(0.55, '#1c0b10');
+  g.addColorStop(1, '#2a1218');
+  ctx.fillStyle = g;
+  ctx.fillRect(-200, -160, 1360, 480);
+  // 巨型看板
+  const bw = 560;
+  ctx.fillStyle = '#160a12';
+  rr(480-bw/2, -20, bw, 96, 10); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,176,32,.4)'; ctx.lineWidth = 3; ctx.stroke();
+  const pulse = 0.72 + 0.28*Math.sin(WT*2.4);
+  ctx.fillStyle = 'rgba(255,176,32,'+pulse+')';
+  ctx.font = '900 34px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline='middle';
+  ctx.fillText('傳說實況主自由搏擊對決', 480, 22);
+  ctx.font = '700 18px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = 'rgba(143,208,255,'+(pulse*0.9)+')';
+  ctx.fillText('海牛　★ VS ★　尼克星', 480, 56);
+  // 警示斜紋（呼應原海報）
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-200, 100, 1360, 16); ctx.clip();
+  for(let x=-220; x<1180; x+=32){
+    ctx.fillStyle = (x/32|0)%2===0 ? '#ffb020' : '#151515';
+    ctx.save(); ctx.translate(x, 108); ctx.rotate(0.6); ctx.fillRect(-10,-24,20,48); ctx.restore();
+  }
+  ctx.restore();
+}
+function drawSpotlights(){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const beams = [
+    {x:150, sw: Math.sin(WT*0.6)*90,      col:'rgba(255,190,120,'},
+    {x:810, sw: Math.sin(WT*0.6+2.2)*-90, col:'rgba(140,190,255,'},
+    {x:480, sw: Math.sin(WT*0.4+1)*60,    col:'rgba(255,140,110,'}
+  ];
+  for(const b of beams){
+    const tx = 480 + b.sw;
+    const g = ctx.createLinearGradient(b.x, -40, tx, 400);
+    g.addColorStop(0, b.col + '0.28)');
+    g.addColorStop(1, b.col + '0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(b.x-14, -40); ctx.lineTo(b.x+14, -40);
+    ctx.lineTo(tx+120, 420); ctx.lineTo(tx-120, 420);
+    ctx.closePath(); ctx.fill();
+    // 燈具
+    ctx.fillStyle = '#0a0a0a';
+    ctx.beginPath(); ctx.ellipse(b.x, -36, 20, 12, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = b.col+'0.9)';
+    ctx.beginPath(); ctx.ellipse(b.x, -32, 10, 6, 0, 0, TAU); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawRing(){
+  // 擂台檯座（前緣裙板）
+  const apron = ctx.createLinearGradient(0, 400, 0, 500);
+  apron.addColorStop(0, '#3a1220');
+  apron.addColorStop(1, '#180810');
+  ctx.fillStyle = apron;
+  ctx.beginPath();
+  ctx.moveTo(96, 446); ctx.lineTo(864, 446);
+  ctx.lineTo(902, 522); ctx.lineTo(58, 522);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,176,32,.75)';
+  ctx.font = '900 24px "Noto Sans TC",sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('巔 峰 對 決', 480, 488);
+  ctx.strokeStyle = 'rgba(255,176,32,.3)'; ctx.lineWidth=2;
+  ctx.strokeRect(370, 468, 220, 40);
+  // 台面（含中央聚光）
+  const mat = ctx.createRadialGradient(480, 420, 40, 480, 430, 420);
+  mat.addColorStop(0, '#40567c');
+  mat.addColorStop(0.5, '#2b3a55');
+  mat.addColorStop(1, '#1a2334');
+  ctx.fillStyle = mat;
+  ctx.beginPath();
+  ctx.moveTo(140, 386); ctx.lineTo(820, 386);
+  ctx.lineTo(864, 446); ctx.lineTo(96, 446);
+  ctx.closePath(); ctx.fill();
+  // 台面中央標誌
+  ctx.save();
+  ctx.translate(480, 420); ctx.scale(1, 0.34);
+  ctx.strokeStyle = 'rgba(255,214,90,.35)'; ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.arc(0,0, 96, 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,214,90,.18)';
+  ctx.beginPath(); ctx.arc(0,0, 140, 0, TAU); ctx.stroke();
+  ctx.restore();
+  // 角柱與圍繩
+  const postL = 128, postR = 832;
+  for(const [x, colTop] of [[postL, '#3fa9ff'], [postR, '#ff3b30']]){
+    const pg = ctx.createLinearGradient(x-9, 0, x+9, 0);
+    pg.addColorStop(0, '#666e7c'); pg.addColorStop(0.5, '#c9d2dd'); pg.addColorStop(1, '#4a5260');
+    ctx.fillStyle = pg;
+    rr(x-8, 268, 16, 172, 5); ctx.fill();
+    // 角柱护垫
+    const cg = ctx.createLinearGradient(x-16, 0, x+16, 0);
+    cg.addColorStop(0, colTop); cg.addColorStop(1, '#111');
+    ctx.fillStyle = cg;
+    rr(x-15, 258, 30, 46, 10); ctx.fill();
+    ctx.lineWidth=2.4; ctx.strokeStyle='rgba(0,0,0,.5)'; ctx.stroke();
+    // 柱頂燈
+    ctx.fillStyle = colTop;
+    ctx.save(); ctx.shadowBlur = 16; ctx.shadowColor = colTop;
+    ctx.beginPath(); ctx.arc(x, 252, 6, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  // 三條圍繩（受撞側彈性凸出）
+  for(let i=0;i<3;i++){
+    const y = 292 + i*44;
+    const bendR = ropeFlexR * Math.sin(WT*18) * 0; // 穩定形變
+    const fR = ropeFlexR * (24 - i*4);
+    const fL = ropeFlexL * (24 - i*4);
+    const ropeCol = ['#d94f5c','#e8e8f0','#5c8fd9'][i];
+    ctx.strokeStyle = ropeCol; ctx.lineWidth = 4.6;
+    ctx.beginPath();
+    ctx.moveTo(postL-2, y);
+    ctx.quadraticCurveTo(300, y+5+fL, 480, y+6);
+    ctx.quadraticCurveTo(660, y+5+fR, postR+2, y);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,.25)'; ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(postL-2, y-1.4);
+    ctx.quadraticCurveTo(480, y+4+((fL+fR)/2), postR+2, y-1.4);
+    ctx.stroke();
+  }
+}
+function drawForeground(){
+  // 前排觀眾剪影（最近視差層）
+  ctx.fillStyle = 'rgba(4,2,8,.88)';
+  for(let i=0;i<9;i++){
+    const x = 30 + i*118 + Math.sin(i*3.7)*22;
+    const y = 560 + Math.sin(WT*1.4+i)*4 - (excite* (i%3===0? 14:6) * Math.abs(Math.sin(WT*4.5+i)));
+    ctx.beginPath(); ctx.arc(x, y, 46, 0, TAU); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(x, y+70, 68, 50, 0, 0, TAU); ctx.fill();
+  }
+}
+
+/* ---------- 片頭海報卡 / 片尾卡 ---------- */
+function drawStripes(y, h, alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.rect(0, y, W, h); ctx.clip();
+  for(let x=-40; x<W+80; x+=44){
+    ctx.fillStyle = (x/44|0)%2===0 ? '#ffb020' : '#141414';
+    ctx.save(); ctx.translate(x, y+h/2); ctx.rotate(0.62); ctx.fillRect(-14, -h, 28, h*2); ctx.restore();
+  }
+  ctx.restore();
+}
+function drawTitleCard(){
+  if(T > 4.6) return;
+  const inK = E.outCubic(ss(T, 0.9, 1.7));
+  const outK = E.inCubic(ss(T, 3.9, 4.5));
+  const a = inK * (1-outK);
+  if(a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a * 0.82;
+  ctx.fillStyle = '#0a0406';
+  ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha = a;
+  // 聚光環（呼應原海報）
+  ctx.strokeStyle = 'rgba(255,120,40,.3)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(W/2, H*0.44, 300 + 30*Math.sin(WT*1.5), 0, TAU); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,120,40,.16)';
+  ctx.beginPath(); ctx.arc(W/2, H*0.44, 210, 0, TAU); ctx.stroke();
+  drawStripes(0, 34, a);
+  drawStripes(H-34, 34, a);
+  // 標題
+  const ty = lerp(H*0.36+26, H*0.36, E.outBack(ss(T,1.0,1.9)));
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.font = '900 66px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+  const tg = ctx.createLinearGradient(0, ty-36, 0, ty+36);
+  tg.addColorStop(0,'#ffe9b0'); tg.addColorStop(0.5,'#ffb020'); tg.addColorStop(1,'#ff3b30');
+  ctx.save();
+  ctx.shadowBlur = 26; ctx.shadowColor = 'rgba(255,90,30,.8)';
+  ctx.fillStyle = tg;
+  ctx.fillText('海牛 VS 尼克星', W/2, ty);
+  ctx.restore();
+  ctx.lineWidth = 1.6; ctx.strokeStyle='rgba(60,16,4,.9)';
+  ctx.strokeText('海牛 VS 尼克星', W/2, ty);
+  // 副標
+  const sy2 = ss(T, 1.5, 2.2);
+  ctx.globalAlpha = a * E.outCubic(sy2);
+  ctx.font = '900 30px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = '#fff';
+  ctx.fillText('自 由 搏 擊 對 決', W/2, ty + 62 + (1-E.outCubic(sy2))*14);
+  ctx.font = '700 15px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.55)';
+  ctx.fillText('FREE FIGHT SHOWDOWN ── 傳說實況主系列', W/2, ty + 100);
+  // VS 圖章
+  const vsK = E.outBack(ss(T, 2.0, 2.6));
+  if(vsK > 0){
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.translate(W/2, H*0.72);
+    ctx.rotate(-0.1);
+    ctx.scale(vsK, vsK);
+    ctx.font = '900 64px "Arial Black",sans-serif';
+    ctx.lineWidth = 8; ctx.strokeStyle = '#ffb020';
+    ctx.strokeText('VS', 0, 0);
+    ctx.fillStyle = '#fff';
+    ctx.fillText('VS', 0, 0);
+    ctx.restore();
+  }
+  ctx.restore();
+}
+function drawEndCard(){
+  const a = E.outCubic(ss(T, 32.6, 33.4));
+  if(a <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = a * 0.62;
+  const g = ctx.createRadialGradient(W/2, H/2, 60, W/2, H/2, 560);
+  g.addColorStop(0, 'rgba(8,4,8,.3)'); g.addColorStop(1, 'rgba(4,2,6,.95)');
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  ctx.globalAlpha = a;
+  drawStripes(0, 26, a*0.9);
+  drawStripes(H-26, 26, a*0.9);
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  const ty = lerp(H*0.30+18, H*0.30, E.outBack(ss(T,32.7,33.5)));
+  ctx.font = '900 52px "Noto Sans TC","Microsoft JhengHei",sans-serif';
+  const tg = ctx.createLinearGradient(0,ty-30,0,ty+30);
+  tg.addColorStop(0,'#ffe9b0'); tg.addColorStop(1,'#ffb020');
+  ctx.save(); ctx.shadowBlur=22; ctx.shadowColor='rgba(255,176,32,.7)';
+  ctx.fillStyle = tg;
+  ctx.fillText('巔峰對決 ── 全劇終', W/2, ty);
+  ctx.restore();
+  ctx.font = '700 20px "Noto Sans TC",sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  ctx.fillText('海牛 與 尼克星 ── 平手收場，友誼長存', W/2, ty+52);
+  ctx.restore();
+}
+
+/* =====================================================================
+   主渲染
+   ===================================================================== */
+function render(){
+  ctx.setTransform(cv._base, 0, 0, cv._base, 0, 0);
+  ctx.fillStyle = '#030204';
+  ctx.fillRect(0, 0, W, H);
+  layer(0.16, drawBackdrop);
+  layer(0.34, ()=> drawCrowdRow(crowdFar, 0.8));
+  layer(0.46, ()=> drawCrowdRow(crowdMid, 0.9));
+  layer(0.6,  ()=>{ drawCrowdRow(crowdNear, 1); });
+  layer(0.72, drawSpotlights);
+  layer(1, ()=>{
+    drawRing();
+    drawCow(cow);
+    drawStar(star);
+    drawParts();
+    drawComics();
+  });
+  layer(1.25, drawForeground);
+  // 螢幕空間效果
+  if(flash > 0){
+    ctx.globalAlpha = Math.min(1, flash);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0,0,W,H);
+    ctx.globalAlpha = 1;
+  }
+  // 氛圍色 + 暗角
+  ctx.fillStyle = 'rgba(40,10,50,.08)';
+  ctx.fillRect(0,0,W,H);
+  const vg = ctx.createRadialGradient(W/2, H/2, H*0.42, W/2, H/2, H*0.95);
+  vg.addColorStop(0, 'rgba(0,0,0,0)');
+  vg.addColorStop(1, 'rgba(0,0,0,.55)');
+  ctx.fillStyle = vg;
+  ctx.fillRect(0,0,W,H);
+  // 電影黑邊
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, 24);
+  ctx.fillRect(0, H-24, W, 24);
+  drawTitleCard();
+  drawEndCard();
+}
+
+/* =====================================================================
+   主迴圈
+   ===================================================================== */
+let last = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  let dt = Math.min((now - last)/1000, 0.05);
+  last = now;
+  WT += dt;
+  if(freeze > 0){
+    freeze -= dt;
+  }else{
+    const sc = timeScaleAt(T);
+    const step = dt * sc;
+    const prevT = T;
+    T = Math.min(T + step, TOTAL);
+    for(const e of events){
+      if(!e.done && T >= e.t && prevT <= e.t + 0.5){ e.done = true; e.fn(); }
+      else if(!e.done && T >= e.t){ e.done = true; e.fn(); }
+    }
+    choreo();
+    updateParts(step);
+    // 彈簧回彈
+    for(const f of [cow, star]){
+      f.sx += (1 - f.sx) * Math.min(1, 10*dt);
+      f.sy += (1 - f.sy) * Math.min(1, 10*dt);
+      f.kb *= Math.pow(0.004, dt);
+      f.hurt = Math.max(0, f.hurt - dt*2.2);
+    }
+    ropeFlexR *= Math.pow(0.008, dt);
+    ropeFlexL *= Math.pow(0.008, dt);
+    excite = Math.max(0.15, excite - dt*0.05);
+  }
+  // 鏡頭
+  const c = camAt(T);
+  const k = 1 - Math.pow(0.002, dt);
+  cam.x += (c.x - cam.x) * k;
+  cam.y += (c.y - cam.y) * k;
+  cam.z += (c.z - cam.z) * k;
+  shake *= Math.pow(0.0015, dt);
+  cam.sx = (Math.random()*2-1) * shake;
+  cam.sy = (Math.random()*2-1) * shake;
+  flash = Math.max(0, flash - dt*2.6);
+  // 音訊環境
+  if(AC && crowdGain) crowdGain.gain.value = 0.02 + excite*0.08;
+  updateSubtitle();
+  render();
+}
+buildEvents();
+requestAnimationFrame(frame);
+
+/* ---------- 控制 ---------- */
+sndBtn.addEventListener('click', ()=>{
+  if(!AC) initAudio();
+  if(AC.state === 'suspended') AC.resume();
+  audioOn = !audioOn;
+  master.gain.value = audioOn ? 0.9 : 0;
+  sndBtn.textContent = audioOn ? '🔊 聲音：開' : '🔇 聲音：關';
+});
+replayBtn.addEventListener('click', ()=>{
+  T = 0; freeze = 0; shake = 0; flash = 0;
+  excite = 0.15; ended = false;
+  parts = []; waves = []; comics = [];
+  ropeFlexR = ropeFlexL = 0;
+  for(const f of [cow, star]){
+    f.dx=0; f.dy=0; f.rot=0; f.lean=0; f.ext=0; f.extUp=0;
+    f.sx=1; f.sy=1; f.kb=0; f.hurt=0; f.down=0; f.dizzy=0; f.expr='calm';
+  }
+  cam.x=480; cam.y=308; cam.z=1.5;
+  curSub = null; subEl.classList.remove('show');
+  replayBtn.classList.remove('show');
+  buildEvents();
+});
+</script>
+</body>
+</html>
