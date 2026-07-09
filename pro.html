@@ -364,15 +364,19 @@ async function fillNums(el) {
   const key = el.dataset.key;
   if (!key || el.dataset.done) return;
   el.dataset.done = '1';
-  const [views, plays, love, like] = await Promise.all([
-    readCount(key + '-v'), readCount(key + '-p'), readCount(key + '-love'), readCount(key + '-like'),
+  const [views, plays, love, loveC, like, likeC] = await Promise.all([
+    readCount(key + '-v'), readCount(key + '-p'),
+    readCount(key + '-love'), readCount(key + '-love-c'),
+    readCount(key + '-like'), readCount(key + '-like-c'),
   ]);
   if (views === null && plays === null) return;
+  const netLove = Math.max(0, (love || 0) - (loveC || 0));
+  const netLike = Math.max(0, (like || 0) - (likeC || 0));
   const parts = [];
   if (views !== null) parts.push(numSpan('v', '瀏覽', views));
   if (plays !== null && plays > 0) parts.push(numSpan('p', '遊玩', plays));
-  if (love !== null && love > 0) parts.push(numSpan('love', '非常好玩', love));
-  if (like !== null && like > 0) parts.push(numSpan('like', '好玩', like));
+  if (netLove > 0) parts.push(numSpan('love', '非常好玩', netLove));
+  if (netLike > 0) parts.push(numSpan('like', '好玩', netLike));
   el.innerHTML = parts.join('');
 }
 
@@ -413,39 +417,47 @@ function scheduleFit() {
   fitTimers = [200, 700, 1500].map(ms => setTimeout(fitFrame, ms));
 }
 
-/* ===== 好玩投票（每個作品每台裝置限投一次） ===== */
+/* ===== 好玩投票（可取消、可改投；每裝置每作品一票） ===== */
 let voteKey = '';
-async function setupVotes(key) {
-  voteKey = key || '';
+function refreshVoteButtons() {
   const b2 = document.getElementById('pvote2');
   const b1 = document.getElementById('pvote1');
   const voted = voteKey && localStorage.getItem('voted-' + voteKey);
   for (const [btn, suffix, label] of [[b2, '-love', '非常好玩'], [b1, '-like', '好玩']]) {
-    btn.classList.remove('voted');
     btn.disabled = !voteKey;
-    btn.textContent = label;
-    if (!voteKey) continue;
-    readCount(voteKey + suffix).then(n => {
-      if (n !== null && n > 0 && btn.dataset.key === voteKey) btn.textContent = label + ' ' + n;
-    });
+    btn.classList.toggle('voted', voted === suffix);
     btn.dataset.key = voteKey;
-    if (voted) {
-      btn.disabled = true;
-      if (voted === suffix) btn.classList.add('voted');
-    }
+    if (!voteKey) { btn.textContent = label; continue; }
+    const base = voted === suffix ? label + '（取消）' : label;
+    btn.textContent = base;
+    Promise.all([readCount(voteKey + suffix), readCount(voteKey + suffix + '-c')]).then(([n, c]) => {
+      if (btn.dataset.key !== voteKey) return;
+      const net = Math.max(0, (n || 0) - (c || 0));
+      if (net > 0) btn.textContent = base + ' ' + net;
+    });
   }
 }
+function setupVotes(key) { voteKey = key || ''; refreshVoteButtons(); }
 function castVote(suffix) {
-  if (!voteKey || localStorage.getItem('voted-' + voteKey)) return;
-  localStorage.setItem('voted-' + voteKey, suffix);
-  bumpCount(voteKey + suffix);
-  delete countCache[voteKey + suffix];
-  const btn = document.getElementById(suffix === '-love' ? 'pvote2' : 'pvote1');
-  const other = document.getElementById(suffix === '-love' ? 'pvote1' : 'pvote2');
-  btn.classList.add('voted');
-  btn.textContent = (suffix === '-love' ? '非常好玩' : '好玩') + '，已投！';
-  btn.disabled = true;
-  other.disabled = true;
+  if (!voteKey) return;
+  const lsKey = 'voted-' + voteKey;
+  const prev = localStorage.getItem(lsKey);
+  if (prev === suffix) { // 再點一次同鈕＝取消
+    bumpCount(voteKey + suffix + '-c');
+    countCache[voteKey + suffix + '-c'] = (countCache[voteKey + suffix + '-c'] || 0) + 1;
+    localStorage.removeItem(lsKey);
+  } else if (prev) { // 點另一鈕＝改投
+    bumpCount(voteKey + prev + '-c');
+    bumpCount(voteKey + suffix);
+    countCache[voteKey + prev + '-c'] = (countCache[voteKey + prev + '-c'] || 0) + 1;
+    countCache[voteKey + suffix] = (countCache[voteKey + suffix] || 0) + 1;
+    localStorage.setItem(lsKey, suffix);
+  } else { // 第一次投票
+    bumpCount(voteKey + suffix);
+    countCache[voteKey + suffix] = (countCache[voteKey + suffix] || 0) + 1;
+    localStorage.setItem(lsKey, suffix);
+  }
+  refreshVoteButtons();
 }
 document.getElementById('pvote2').addEventListener('click', () => castVote('-love'));
 document.getElementById('pvote1').addEventListener('click', () => castVote('-like'));
@@ -529,9 +541,13 @@ async function hotSort() {
     for (const item of (DATA[listName] || [])) {
       const k = workKey(item, dirName);
       jobs.push(Promise.all([
-        readCount(k + '-v'), readCount(k + '-p'), readCount(k + '-love'), readCount(k + '-like'),
-      ]).then(([v, p, l, g]) => {
-        item._score = (l || 0) * 3 + (g || 0) * 2 + (p || 0) + (v || 0) * 0.5;
+        readCount(k + '-v'), readCount(k + '-p'),
+        readCount(k + '-love'), readCount(k + '-love-c'),
+        readCount(k + '-like'), readCount(k + '-like-c'),
+      ]).then(([v, p, l, lc, g, gc]) => {
+        const nl = Math.max(0, (l || 0) - (lc || 0));
+        const ng = Math.max(0, (g || 0) - (gc || 0));
+        item._score = nl * 3 + ng * 2 + (p || 0) + (v || 0) * 0.5;
       }).catch(() => { item._score = 0; }));
     }
   }
