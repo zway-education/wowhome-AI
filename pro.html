@@ -87,6 +87,9 @@
   .sec-head .count { font-size: 12.5px; color: var(--muted); background: var(--card); border: 1px solid var(--card-border); border-radius: 999px; padding: 4px 14px; white-space: nowrap; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
+  .datehead { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin: 8px 0 2px; font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: 1px; }
+  .datehead::after { content: ''; flex: 1; height: 1px; background: linear-gradient(90deg, var(--card-border), transparent); }
+  .datehead .badge-today { font-size: 11px; font-weight: 700; color: #241a05; background: linear-gradient(92deg, var(--gold), var(--gold2)); border-radius: 999px; padding: 2px 10px; letter-spacing: 1px; }
   .card {
     background: var(--card); border: 1px solid var(--card-border);
     border-radius: 16px; overflow: hidden; cursor: pointer;
@@ -216,6 +219,17 @@
 <script>
 let DATA = { games: [], videos: [] };
 
+const TODAY = (() => {
+  const d = new Date();
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+})();
+function dateLabel(d) {
+  if (!d) return '🗓 其他';
+  const p = d.split('-');
+  const short = parseInt(p[1], 10) + '/' + parseInt(p[2], 10);
+  return '🗓 ' + short + (d === TODAY ? ' <span class="badge-today">今天</span>' : '');
+}
+
 /* ===== 複製程式碼 ===== */
 async function copyCode(src, btn) {
   const original = btn.textContent;
@@ -251,7 +265,7 @@ function render(filter) {
   for (const c of conf) {
     const grid = document.getElementById(c.id);
     grid.innerHTML = '';
-    const list = (DATA[c.id] || []).filter(it => {
+    let list = (DATA[c.id] || []).filter(it => {
       const t = it.title || it.file;
       return !q || t.toLowerCase().includes(q);
     });
@@ -259,7 +273,16 @@ function render(filter) {
       grid.innerHTML = '<div class="empty">' + (q ? '沒有符合的作品' : '專業版製作中，稍後就會出現') + '</div>';
       continue;
     }
+    list = list.slice().sort((a, b) => (b.created || '').localeCompare(a.created || ''));
+    let lastDate = null;
     for (const item of list) {
+      if ((item.created || '') !== lastDate) {
+        lastDate = item.created || '';
+        const head = document.createElement('div');
+        head.className = 'datehead';
+        head.innerHTML = dateLabel(lastDate);
+        grid.appendChild(head);
+      }
       const title = item.title || item.file.replace(/\.html?$/i, '');
       const src = c.dir + '/' + item.file;
       const thumbSrc = item.thumb ? 'thumbs/' + c.dir + '/' + item.thumb : '';
@@ -373,10 +396,14 @@ function numSpan(type, label, n) {
   return '<span class="numit ' + type + '" title="' + label + '">' + NUM_ICONS[type] + Math.max(0, parseInt(n) || 0) + '</span>';
 }
 
-async function fillNums(el) {
+async function fillNums(el, force) {
   const key = el.dataset.key;
-  if (!key || el.dataset.done) return;
+  if (!key) return;
+  if (el.dataset.done && !force) return;
   el.dataset.done = '1';
+  if (force) {
+    ['-v','-p','-love','-love-c','-like','-like-c'].forEach(sfx => { delete countCache[key + sfx]; delete countCacheAt[key + sfx]; });
+  }
   const [views, plays, love, loveC, like, likeC] = await Promise.all([
     readCount(key + '-v'), readCount(key + '-p'),
     readCount(key + '-love'), readCount(key + '-love-c'),
@@ -393,11 +420,26 @@ async function fillNums(el) {
   el.innerHTML = parts.join('');
 }
 
+const visibleNums = new Set();
 const countObserver = new IntersectionObserver(entries => {
   for (const en of entries) {
-    if (en.isIntersecting) { fillNums(en.target); countObserver.unobserve(en.target); }
+    if (en.isIntersecting) { fillNums(en.target); visibleNums.add(en.target); }
+    else { visibleNums.delete(en.target); }
   }
 }, { rootMargin: '120px' });
+
+// 即時統計：每 30 秒刷新可見卡片數字
+setInterval(() => {
+  if (document.hidden) return;
+  for (const el of visibleNums) if (el.isConnected) fillNums(el, true);
+  delete countCache['site-total-plays']; delete countCacheAt['site-total-plays'];
+  readCount('site-total-plays').then(n => {
+    if (n !== null) {
+      document.getElementById('tplays').textContent = n;
+      document.getElementById('tplaysWrap').style.display = '';
+    }
+  });
+}, 30000);
 
 /* ===== 播放器（含自動縮放與複製按鈕） ===== */
 function resetFrame() { document.getElementById('pframe').style.cssText = ''; }

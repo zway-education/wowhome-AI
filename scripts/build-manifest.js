@@ -17,6 +17,15 @@ function lastUpdated(relPath) {
   } catch (e) { return ''; }
 }
 
+// 取檔案首次 git 提交日期（YYYY-MM-DD）作為建立/發布日期，用來分組
+function firstCreated(relPath) {
+  try {
+    const out = execFileSync('git', ['log', '--diff-filter=A', '--format=%cs', '--', relPath],
+      { cwd: ROOT, encoding: 'utf8' }).trim().split('\n').filter(Boolean);
+    return out.length ? out[out.length - 1] : '';
+  } catch (e) { return ''; }
+}
+
 let overrides = {};
 const overridePath = path.join(ROOT, 'authors.json');
 if (fs.existsSync(overridePath)) {
@@ -61,6 +70,9 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
     if (pv) entry.preview = pv;
     const upd = lastUpdated(cat + '/' + f);
     if (upd) entry.updated = upd;
+    // 分組日期：原作用首次提交日；pro 版沿用原作首次提交日（同一作品同一發布日）
+    const created = firstCreated(baseCat + '/' + f) || firstCreated(cat + '/' + f);
+    if (created) entry.created = created;
     manifest[cat].push(entry);
   }
 }
