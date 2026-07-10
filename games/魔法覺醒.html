@@ -140,6 +140,39 @@
     position:absolute; inset:0; background:rgba(0,0,0,0.62);
   }
   .skillLabel{ font-size:10px; color:#dfe9ff; font-weight:700; text-align:center; max-width:64px; }
+
+  #petPanel{
+    position:fixed; top:14px; right:14px; z-index:6;
+    width:230px; max-height:82vh; overflow-y:auto;
+    background:rgba(10,14,26,0.86); border:1px solid rgba(56,225,255,0.3);
+    border-radius:16px; padding:12px; pointer-events:auto;
+    box-shadow:0 12px 30px rgba(0,0,0,0.45);
+  }
+  #petPanel h3{ margin:0 0 6px; font-size:13px; color:#9db3d8; font-weight:800; letter-spacing:1px; }
+  #petGrid{ display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin-bottom:10px; }
+  .petCell{
+    width:46px; height:46px; border-radius:10px; font-size:22px;
+    background:rgba(255,255,255,0.05); border:2px solid rgba(255,255,255,0.15);
+    display:flex; align-items:center; justify-content:center; cursor:pointer;
+    transition:transform .12s, border-color .12s, background .12s;
+  }
+  .petCell:hover{ transform:scale(1.08); }
+  .petCell.selected{ border-color:#ffcf5c; background:rgba(255,207,92,0.18); box-shadow:0 0 10px rgba(255,207,92,0.5); }
+  #petCount{ font-size:11px; color:#7488a8; margin-bottom:8px; }
+  #hardModeRow{
+    padding-top:8px; border-top:1px solid rgba(255,255,255,0.12);
+  }
+  #hardModeRow span{ font-size:12px; font-weight:800; color:#fff; }
+  #diffRow{ display:flex; gap:6px; margin-top:6px; }
+  .diffBtn{
+    flex:1; text-align:center; padding:7px 0; border-radius:8px; font-size:12px; font-weight:800;
+    background:rgba(255,255,255,0.06); border:2px solid rgba(255,255,255,0.15); color:#dfe9ff;
+    cursor:pointer; transition:border-color .12s, background .12s;
+  }
+  .diffBtn[data-diff="easy"].selected{ border-color:#7fffb0; background:rgba(127,255,176,0.18); }
+  .diffBtn[data-diff="normal"].selected{ border-color:#38e1ff; background:rgba(56,225,255,0.18); }
+  .diffBtn[data-diff="hard"].selected{ border-color:#ff6b6b; background:rgba(255,107,107,0.18); }
+  .petHint{ font-size:11px; color:#7488a8; margin-top:6px; line-height:1.5; }
 </style>
 </head>
 <body>
@@ -154,6 +187,7 @@
     <div id="muteBtn">🔊</div>
     <div id="scoreLabel">分數 0</div>
     <div id="waveLabel">第 1 波</div>
+    <div id="hardTag" class="hidden" style="color:#ff6b6b;">🔥 困難模式</div>
   </div>
 </div>
 
@@ -171,6 +205,21 @@
       <span class="touch-hint">平板：拖曳畫面移動，魔法自動鎖定最近敵人施放</span>
     </div>
   </div>
+</div>
+
+<div id="petPanel">
+  <h3>選擇寵物（最多 2 隻）</h3>
+  <div id="petGrid"></div>
+  <div id="petCount">已選 0 / 2</div>
+  <div id="hardModeRow">
+    <span>難度</span>
+  </div>
+  <div id="diffRow">
+    <div class="diffBtn" data-diff="easy">簡單</div>
+    <div class="diffBtn selected" data-diff="normal">普通</div>
+    <div class="diffBtn" data-diff="hard">困難</div>
+  </div>
+  <div id="diffDesc" class="petHint">天神降臨：每關一次</div>
 </div>
 
 <div class="ui-layer hidden" id="screenGacha">
@@ -338,6 +387,22 @@ function buildSkillKit(magic){
   ];
 }
 
+/* ---------- Pets: large pool, effect archetype cycles through attack/heal/guard ---------- */
+const PET_POOL = [
+  {id:'p1', icon:'🐉', name:'幼龍',   type:'attack', color:'#ff7e3d'},
+  {id:'p2', icon:'🦉', name:'夜梟',   type:'heal',   color:'#7fffb0'},
+  {id:'p3', icon:'🦊', name:'靈狐',   type:'guard',  color:'#38e1ff'},
+  {id:'p4', icon:'🐺', name:'冰狼',   type:'attack', color:'#8fe3ff'},
+  {id:'p5', icon:'🐇', name:'月兔',   type:'heal',   color:'#ffd9f6'},
+  {id:'p6', icon:'🐢', name:'龜靈',   type:'guard',  color:'#9db3d8'},
+  {id:'p7', icon:'🦄', name:'獨角獸', type:'heal',   color:'#c58bff'},
+  {id:'p8', icon:'🐬', name:'海豚',   type:'attack', color:'#38e1ff'},
+  {id:'p9', icon:'🐲', name:'雷龍',   type:'attack', color:'#ffe066'},
+  {id:'p10',icon:'🐱', name:'黑貓',   type:'guard',  color:'#9a6bff'},
+  {id:'p11',icon:'🦋', name:'魂蝶',   type:'heal',   color:'#ff6cc7'},
+  {id:'p12',icon:'🦅', name:'蒼鷹',   type:'attack', color:'#ffcf5c'},
+];
+
 /* ---------- Stages ---------- */
 const STAGES = [
   {name:'新手森林', top:'#1b3a2a', bottom:'#0a1810', accent:'#7fffb0', deco:'forest', bossName:'森林領主', bossColor:'#5d8a4a', bossIcon:'🌳'},
@@ -351,6 +416,9 @@ const WAVES_PER_STAGE = 4; // 最後一波為 boss 波
 let gender = 'girl';
 let chosenMagic = null;
 let chosenKit = [];
+let chosenPets = [];
+let difficulty = 'normal'; // 'easy' | 'normal' | 'hard'
+const DIFF_DESC = {easy:'天神降臨：無限次', normal:'天神降臨：每關一次', hard:'天神降臨：不會出現'};
 let chosenChar = CHARACTERS[0];
 let state = 'title'; // title, gacha, playing, over
 let best = parseInt(localStorage.getItem('mojue_best')||'0',10);
@@ -396,13 +464,53 @@ CHARACTERS.forEach(ch=>{
     rEl.style.color = m.rarityColor;
     document.getElementById('gachaDesc').textContent = m.desc;
     if(m.rarity==='傳說') sfx.legendary(); else sfx.score();
+    document.getElementById('petPanel').classList.add('hidden');
   });
   charRow.appendChild(btn);
+});
+
+/* ---------- Build pet select grid + hard mode toggle ---------- */
+const petPanel = document.getElementById('petPanel');
+const petGrid = document.getElementById('petGrid');
+const petCount = document.getElementById('petCount');
+PET_POOL.forEach(pet=>{
+  const cell = document.createElement('div');
+  cell.className = 'petCell';
+  cell.textContent = pet.icon;
+  cell.title = pet.name;
+  cell.addEventListener('click', ()=>{
+    ensureAudio();
+    const idx = chosenPets.findIndex(p=>p.id===pet.id);
+    if(idx>=0){
+      chosenPets.splice(idx,1);
+      cell.classList.remove('selected');
+    } else {
+      if(chosenPets.length>=2){
+        const removed = chosenPets.shift();
+        petGrid.querySelector(`[data-pet-id="${removed.id}"]`)?.classList.remove('selected');
+      }
+      chosenPets.push(pet);
+      cell.classList.add('selected');
+    }
+    petCount.textContent = '已選 '+chosenPets.length+' / 2';
+  });
+  cell.dataset.petId = pet.id;
+  petGrid.appendChild(cell);
+});
+
+document.querySelectorAll('.diffBtn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    ensureAudio();
+    difficulty = btn.dataset.diff;
+    document.querySelectorAll('.diffBtn').forEach(b=>b.classList.toggle('selected', b===btn));
+    document.getElementById('diffDesc').textContent = DIFF_DESC[difficulty];
+  });
 });
 
 document.getElementById('backBtn').addEventListener('click', ()=>{
   screenGacha.classList.add('hidden');
   screenTitle.classList.remove('hidden');
+  petPanel.classList.remove('hidden');
 });
 
 document.getElementById('startBtn').addEventListener('click', ()=>{
@@ -416,6 +524,7 @@ document.getElementById('retryBtn').addEventListener('click', ()=>{
 document.getElementById('regachaBtn').addEventListener('click', ()=>{
   screenOver.classList.add('hidden');
   screenTitle.classList.remove('hidden');
+  petPanel.classList.remove('hidden');
 });
 
 /* ---------- Input ---------- */
@@ -471,6 +580,7 @@ makeTouchZones();
 /* ---------- Game entities ---------- */
 let player, enemies, bullets, particles, wave, score, spawnTimer, waveTimer, shakeT, shakeMag, hitstop;
 let divineFlashT = 0;
+let activePets = [];
 let stageIndex, bossWave, bossSpawned, bannerText, bannerSub, bannerT, decos;
 
 function stagePos(w){ return (w-1) % WAVES_PER_STAGE; }
@@ -542,14 +652,18 @@ function startGame(){
     x:W/2, y:H/2, r:16, hp:100, maxHp:100, invuln:0,
     color: chosenChar.outfit,
     facing:{x:0,y:1}, walkPhase:0, blinkT:120+Math.random()*160,
-    divineReady:true, divineBuffT:0
+    divineReady:true, divineBuffT:0, divineUsedThisStage:false
   };
   enemies=[]; bullets=[]; particles=[];
   wave=1; score=0; spawnTimer=0; waveTimer=0; shakeT=0; shakeMag=0; hitstop=0;
   stageIndex=0; bossWave=false; bossSpawned=false;
   divineFlashT=0;
+  activePets = chosenPets.map((p,i)=>({def:p, timer:800+i*400, angle:i*Math.PI}));
+  const hardTag = document.getElementById('hardTag');
+  hardTag.classList.toggle('hidden', difficulty==='normal');
+  hardTag.textContent = difficulty==='hard' ? '🔥 困難模式' : (difficulty==='easy' ? '⭐ 簡單模式' : '');
   buildDecos();
-  showBanner('第 1 關：'+STAGES[0].name, '存活下去，擊敗魔王過關！');
+  showBanner('第 1 關：'+STAGES[0].name, difficulty==='hard' ? '困難模式：小心應戰，沒有天神救援！' : '存活下去，擊敗魔王過關！');
   updateHud();
   state='playing';
   lastTime = performance.now();
@@ -569,6 +683,7 @@ function enterWave(){
   waveTimer = 0;
   if(stagePos(wave)===0){
     buildDecos();
+    player.divineUsedThisStage = false;
     showBanner('第 '+(stageIndex+1)+' 關：'+STAGES[stageIndex].name, '存活下去，擊敗魔王過關！');
   } else if(bossWave){
     showBanner('魔王出現！', STAGES[stageIndex].bossName);
@@ -577,6 +692,9 @@ function enterWave(){
   updateHud();
 }
 
+function diffHpMul(){ return difficulty==='hard' ? 1.6 : (difficulty==='easy' ? 0.8 : 1); }
+function diffSpeedMul(){ return difficulty==='hard' ? 1.2 : (difficulty==='easy' ? 0.9 : 1); }
+
 function spawnEnemy(){
   const edge = Math.floor(Math.random()*4);
   let x,y;
@@ -584,8 +702,8 @@ function spawnEnemy(){
   else if(edge===1){ x=W+30; y=Math.random()*H; }
   else if(edge===2){ x=Math.random()*W; y=-30; }
   else { x=Math.random()*W; y=H+30; }
-  const hp = 20 + wave*6;
-  const speed = 1.1 + Math.min(wave*0.08, 2.2);
+  const hp = (20 + wave*6) * diffHpMul();
+  const speed = (1.1 + Math.min(wave*0.08, 2.2)) * diffSpeedMul();
   enemies.push({x,y,r:14+Math.random()*4,hp,maxHp:hp,speed,slowT:0,hitT:0,type: Math.random()<0.15+wave*0.01 ? 'tank':'normal'});
 }
 
@@ -596,15 +714,22 @@ function spawnBoss(){
   else if(edge===1){ x=W+40; y=Math.random()*H; }
   else if(edge===2){ x=Math.random()*W; y=-40; }
   else { x=Math.random()*W; y=H+40; }
-  const hp = 260 + stageIndex*180 + wave*20;
+  const hp = (260 + stageIndex*180 + wave*20) * (difficulty==='hard' ? 1.5 : (difficulty==='easy' ? 0.8 : 1));
   enemies.push({
-    x,y,r:34,hp,maxHp:hp,speed:0.85+stageIndex*0.1,slowT:0,hitT:0,
+    x,y,r:34,hp,maxHp:hp,speed:(0.85+stageIndex*0.1) * diffSpeedMul(),slowT:0,hitT:0,
     type:'boss', color:STAGES[stageIndex].bossColor, icon:STAGES[stageIndex].bossIcon
   });
 }
 
+function canTriggerDivine(){
+  if(difficulty==='hard') return false;
+  if(difficulty==='normal') return !player.divineUsedThisStage;
+  return player.divineReady; // easy: unlimited, re-arms once hp recovers above half
+}
+
 function triggerDivine(){
   player.divineReady = false;
+  player.divineUsedThisStage = true;
   player.divineBuffT = 15000;
   player.hp = Math.min(player.maxHp, player.hp + player.maxHp*0.4);
   player.invuln = Math.max(player.invuln, 2200);
@@ -698,6 +823,35 @@ function castBurst(){
   sfx.burst();
 }
 
+/* ---------- Pet effects ---------- */
+const PET_COOLDOWN = {attack:1400, heal:6000, guard:9000};
+function petPos(pet, t){
+  const r = player.r + 34;
+  const a = pet.angle + t*0.0018;
+  return {x:player.x+Math.cos(a)*r, y:player.y+Math.sin(a)*r};
+}
+function runPetEffect(pet, pos){
+  if(pet.def.type==='attack'){
+    if(!enemies.length) return false;
+    let nearest=null, nd=Infinity;
+    for(const en of enemies){
+      const d = Math.hypot(en.x-pos.x, en.y-pos.y);
+      if(d<nd){ nd=d; nearest=en; }
+    }
+    const dx=nearest.x-pos.x, dy=nearest.y-pos.y, d=Math.hypot(dx,dy)||1;
+    bullets.push({x:pos.x, y:pos.y, vx:dx/d*8, vy:dy/d*8, r:6, dmg:8*dmgMult(), color:pet.def.color, life:80});
+    spawnParticles(pos.x, pos.y, pet.def.color, 3);
+  } else if(pet.def.type==='heal'){
+    if(player.hp >= player.maxHp) return false;
+    player.hp = Math.min(player.maxHp, player.hp + player.maxHp*0.08);
+    spawnParticles(pos.x, pos.y, pet.def.color, 8);
+    updateHud();
+  } else if(pet.def.type==='guard'){
+    player.invuln = Math.max(player.invuln, 900);
+    spawnParticles(pos.x, pos.y, pet.def.color, 8);
+  }
+}
+
 function spawnParticles(x,y,color,n){
   for(let i=0;i<n;i++){
     const a = Math.random()*Math.PI*2, sp = 1+Math.random()*3;
@@ -755,12 +909,22 @@ function update(dt){
   }
   updateSkillUI();
 
+  // pets
+  for(const pet of activePets){
+    pet.timer -= dt;
+    if(pet.timer<=0){
+      const pos = petPos(pet, performance.now());
+      const fired = runPetEffect(pet, pos) !== false;
+      pet.timer = fired ? PET_COOLDOWN[pet.def.type] : 300;
+    }
+  }
+
   // spawn
   if(bossWave){
     if(!bossSpawned){ spawnBoss(); bossSpawned=true; }
   } else {
     spawnTimer -= dt;
-    const spawnRate = Math.max(1500 - wave*80, 450);
+    const spawnRate = Math.max(1500 - wave*80, 450) * (difficulty==='hard' ? 0.7 : (difficulty==='easy' ? 1.25 : 1));
     if(spawnTimer<=0){
       spawnEnemy();
       spawnTimer = spawnRate;
@@ -837,7 +1001,7 @@ function update(dt){
       spawnParticles(player.x,player.y,'#ff3b6b',8);
       updateHud();
       if(player.hp<=0){ gameOver(); return; }
-      if(player.divineReady && player.hp <= player.maxHp*0.5){ triggerDivine(); }
+      if(player.hp <= player.maxHp*0.5 && canTriggerDivine()){ triggerDivine(); }
     }
   }
   if(!player.divineReady && player.hp > player.maxHp*0.5){ player.divineReady = true; }
@@ -986,6 +1150,20 @@ function render(){
 
   // player
   drawPlayer();
+
+  // pets orbiting player
+  for(const pet of activePets){
+    const pos = petPos(pet, t);
+    ctx.save();
+    ctx.translate(pos.x, pos.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(0, 10, 9, 3, 0, 0, 7); ctx.fill();
+    ctx.font='22px sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.shadowColor = pet.def.color; ctx.shadowBlur = 8;
+    ctx.fillText(pet.def.icon, 0, Math.sin(t*0.005+pet.angle)*3);
+    ctx.restore();
+  }
 
   ctx.restore();
 
