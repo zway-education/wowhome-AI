@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <!-- 專業AI升級 v4 -->
+<!-- 本次調整：防頭暈（移除持續 screen shake、每幀隨機閃爍與脈動紅暈，shake 只在受擊/被抓短促出現）；阿嬤加入「蓄力❗→衝刺」讀招、被球棒打會滑倒躺平＋暈眩星星＋起身氣噗噗、追丟時東張西望困惑 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -314,7 +315,8 @@
   <h1>恐怖校園追逐 PRO</h1>
   <div class="howto">
     找到地圖另一端的<b>逃生門</b>離開恐怖校園，途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤，
-    危急時躲進<b>櫃子</b>裡，但她偶爾會翻找櫃子……共 <b>5 個關卡</b>，難度逐關提升！<br><br>
+    危急時躲進<b>櫃子</b>裡，但她偶爾會翻找櫃子……共 <b>5 個關卡</b>，難度逐關提升！<br>
+    阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了，趕快閃進轉角！用球棒打她會<b>滑倒躺平</b>，追丟你時還會東張西望……<br><br>
     💻 <b>電腦</b>：方向鍵/WASD 移動、滑鼠拖曳看方向、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
     📱 <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
   </div>
@@ -539,7 +541,7 @@ function bfsPath(startR, startC, goalR, goalC) {
 
 // ---------- entities ----------
 const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: -Infinity };
-const chaser = { x: 0, y: 0, r: 0.32, speed: 1.0, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, pathTimer: 0, cachedPath: null };
+const chaser = { x: 0, y: 0, r: 0.32, speed: 1.0, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, pathTimer: 0, cachedPath: null, charge: 'none', chargeT: 0, dashDx: 0, dashDy: 0, nextChargeOk: 0, confusedUntil: 0, angryUntil: 0 };
 const SEARCH_RANGE = 1.4;
 const weapon = { x: 0, y: 0, collected: false };
 const exitDoor = { x: 0, y: 0 };
@@ -587,6 +589,17 @@ function placeCabinets(density) {
 function moveWithCollision(entity, nx, ny) {
   if (!isSolid(nx, entity.y)) entity.x = nx;
   if (!isSolid(entity.x, ny)) entity.y = ny;
+}
+
+// 直線視線檢查（給阿嬤「蓄力→衝刺」讀招用）
+function hasLineOfSight(x1, y1, x2, y2) {
+  const d = Math.hypot(x2 - x1, y2 - y1);
+  const steps = Math.max(2, Math.ceil(d * 6));
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    if (isSolid(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return false;
+  }
+  return true;
 }
 
 // ---------- particle pool (screen-space, swap-pop) ----------
@@ -871,6 +884,8 @@ function swing() {
   const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
   if (dist < SWING_RANGE) {
     chaser.stunnedUntil = elapsed + STUN_DURATION;
+    chaser.angryUntil = elapsed + STUN_DURATION + 1.5; // 爬起來後氣噗噗
+    chaser.charge = 'none';
     playHitSound();
     freeze = Math.max(freeze, 0.05);
     shakeMag = Math.max(shakeMag, 6);
@@ -1080,6 +1095,11 @@ function startLevel(idx) {
   chaser.searchCabinet = null;
   chaser.pathTimer = 0;
   chaser.cachedPath = null;
+  chaser.charge = 'none';
+  chaser.chargeT = 0;
+  chaser.nextChargeOk = 0;
+  chaser.confusedUntil = 0;
+  chaser.angryUntil = 0;
 
   const wc = cellCenter(Math.floor(MAZE_ROWS / 2), Math.floor(MAZE_COLS / 2));
   weapon.x = wc.x; weapon.y = wc.y; weapon.collected = false;
@@ -1208,7 +1228,31 @@ function updatePlay(dt) {
   const stunned = elapsed < (chaser.stunnedUntil || 0);
   const active = elapsed >= SAFE_TIME;
   if (active && !stunned) {
-    if (chaser.searching) {
+    if (chaser.charge === 'windup') {
+      // 蓄力：原地後仰抖動，玩家可讀招閃避
+      chaser.chargeT -= dt;
+      if (chaser.chargeT <= 0) {
+        chaser.charge = 'dash';
+        chaser.chargeT = 0.7;
+        const ddx = player.x - chaser.x, ddy = player.y - chaser.y, dd = Math.hypot(ddx, ddy) || 1;
+        chaser.dashDx = ddx / dd; chaser.dashDy = ddy / dd;
+        playScream();
+      }
+    } else if (chaser.charge === 'dash') {
+      chaser.chargeT -= dt;
+      const px0 = chaser.x, py0 = chaser.y;
+      const step = chaser.speed * 2.4 * dt;
+      moveWithCollision(chaser, chaser.x + chaser.dashDx * step, chaser.y + chaser.dashDy * step);
+      const blocked = Math.hypot(chaser.x - px0, chaser.y - py0) < step * 0.3;
+      if (chaser.chargeT <= 0 || blocked) {
+        chaser.charge = 'none';
+        chaser.nextChargeOk = elapsed + 4.5;
+        chaser.cachedPath = null;
+        if (blocked) chaser.confusedUntil = elapsed + 0.9; // 衝過頭撞牆，愣住
+      }
+    } else if (elapsed < (chaser.confusedUntil || 0)) {
+      // 追丟了：原地東張西望（滑稽），不移動
+    } else if (chaser.searching) {
       if (elapsed >= chaser.searchUntil) {
         const caught = player.hiding && chaser.searchCabinet === player.hidingCabinet;
         chaser.searching = false;
@@ -1232,23 +1276,36 @@ function updatePlay(dt) {
         chaser.searchCabinet = targetCabinet;
         chaser.searchUntil = elapsed + (targetCabinet === player.hidingCabinet && player.hiding ? 1.1 : 0.6);
       } else {
-        chaser.pathTimer -= dt;
-        const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
-        if (chaser.pathTimer <= 0 || !chaser.cachedPath) {
-          const cc = worldToCell(chaser.x, chaser.y);
-          chaser.cachedPath = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
-          chaser.pathTimer = 0.22;
-        }
-        const path = chaser.cachedPath;
-        if (path && path.length > 1) {
-          const target = cellCenter(path[1][0], path[1][1]);
-          const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
-          const tdist = Math.hypot(tdx, tdy);
-          if (tdist > 0.05) {
-            const step = Math.min(chaser.speed * dt, tdist);
-            chaser.x += (tdx / tdist) * step;
-            chaser.y += (tdy / tdist) * step;
-          } else { chaser.pathTimer = 0; }
+        const dNow = Math.hypot(player.x - chaser.x, player.y - chaser.y);
+        if (!player.hiding && dNow < 3.4 && dNow > 1.0 && elapsed > (chaser.nextChargeOk || 0) &&
+            hasLineOfSight(chaser.x, chaser.y, player.x, player.y)) {
+          // 看到你了！先蓄力再衝刺（可讀招）
+          chaser.charge = 'windup';
+          chaser.chargeT = 0.9;
+          playHeartbeat(0.3);
+        } else {
+          chaser.pathTimer -= dt;
+          const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
+          if (chaser.pathTimer <= 0 || !chaser.cachedPath) {
+            const cc = worldToCell(chaser.x, chaser.y);
+            chaser.cachedPath = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
+            chaser.pathTimer = 0.22;
+          }
+          const path = chaser.cachedPath;
+          if (path && path.length > 1) {
+            const target = cellCenter(path[1][0], path[1][1]);
+            const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
+            const tdist = Math.hypot(tdx, tdy);
+            if (tdist > 0.05) {
+              const step = Math.min(chaser.speed * dt, tdist);
+              chaser.x += (tdx / tdist) * step;
+              chaser.y += (tdy / tdist) * step;
+            } else { chaser.pathTimer = 0; }
+          } else if (player.hiding) {
+            // 抵達玩家最後出現的位置卻找不到人 → 困惑東張西望
+            chaser.confusedUntil = elapsed + 1.4;
+            chaser.cachedPath = null;
+          }
         }
       }
     }
@@ -1267,7 +1324,8 @@ function updatePlay(dt) {
   } else if (cdist > 2.5) wasInDanger = false;
 
   const dread = active ? clamp(1 - cdist / DREAD_RANGE, 0, 1) : 0;
-  shakeMag *= Math.pow(0.001, dt);
+  shakeMag *= Math.pow(0.0001, dt); // 短促衰減（約 0.25 秒內消失）
+  if (shakeMag < 0.2) shakeMag = 0;
   updateDreadAudio(dt, dread, player.hiding ? Infinity : cdist, moving);
   updateParticles(dt);
 }
@@ -1319,9 +1377,9 @@ function drawScene() {
   const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
   const active = elapsed >= SAFE_TIME;
   const dread = dying ? 1 : (active ? clamp(1 - chaserDist / DREAD_RANGE, 0, 1) : 0);
-  const totalShake = Math.max(shakeMag, dread * dread * 10);
-  const shakeX = (Math.random() - 0.5) * totalShake;
-  const shakeY = (Math.random() - 0.5) * totalShake;
+  // 防頭暈：不再依距離持續晃動，只有受擊/被抓瞬間的短促 shake（shakeMag 快速衰減）
+  const shakeX = (Math.random() - 0.5) * shakeMag;
+  const shakeY = (Math.random() - 0.5) * shakeMag;
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
@@ -1376,9 +1434,8 @@ function drawScene() {
 
   ctx.drawImage(fogCanvas, 0, 0);
 
-  const pulseSpeed = 2.2 + dread * 6;
-  const pulse = 0.5 + 0.5 * Math.sin(elapsed * pulseSpeed);
-  ctx.globalAlpha = clamp(0.15 + pulse * (0.15 + dread * 0.45), 0, 1);
+  // 防頭暈：紅暈不脈動，只隨距離平滑加深
+  ctx.globalAlpha = clamp(0.12 + dread * 0.3, 0, 1);
   ctx.drawImage(vignetteCanvas, 0, 0);
   ctx.globalAlpha = 1;
 
@@ -1456,9 +1513,37 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
 
   if (kind === 'chaser') {
     const stunned = elapsed < (chaser.stunnedUntil || 0);
-    const twitch = Math.sin(elapsed * 14) * size * 0.01;
+    const angry = !stunned && elapsed < (chaser.angryUntil || 0);
+    const windup = !stunned && chaser.charge === 'windup';
+    const dash = !stunned && chaser.charge === 'dash';
+    const confused = !stunned && !windup && !dash && elapsed < (chaser.confusedUntil || 0);
     ctx.save();
-    ctx.translate(screenX + twitch, horizon + size * 0.18);
+    ctx.translate(screenX, horizon + size * 0.18);
+    // 狀態表情/標示（讀招與搞笑反應）
+    ctx.textAlign = 'center';
+    ctx.font = `${Math.max(14, size * 0.12)}px sans-serif`;
+    if (stunned) {
+      // 被戲弄：暈眩星星繞頭轉 + 暈臉
+      ctx.fillStyle = `rgba(255,224,102,${shade})`;
+      for (let s = 0; s < 3; s++) {
+        const a = elapsed * 5 + s * (Math.PI * 2 / 3);
+        ctx.fillText('✦', Math.cos(a) * size * 0.18, -size * 0.58 + Math.sin(a) * size * 0.05);
+      }
+      ctx.fillText('😵', 0, -size * 0.72);
+    } else if (windup && Math.sin(elapsed * 18) > -0.3) {
+      ctx.fillStyle = '#ff5050';
+      ctx.font = `bold ${Math.max(18, size * 0.16)}px sans-serif`;
+      ctx.fillText('❗', 0, -size * 0.74);
+    } else if (confused) {
+      ctx.fillStyle = '#ffd24a';
+      ctx.fillText('❓', Math.sin(elapsed * 4) * size * 0.12, -size * 0.74);
+    } else if (angry) {
+      ctx.fillText('😤', 0, -size * 0.74);
+    }
+    ctx.save();
+    if (windup) { ctx.rotate(-0.1 + Math.sin(elapsed * 20) * 0.02); ctx.scale(0.94, 1.06); } // 蓄力後仰
+    if (dash) ctx.rotate(0.16); // 衝刺前傾
+    if (stunned) { ctx.translate(0, size * 0.3); ctx.scale(1.25, 0.45); } // 滑倒躺平
     const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(28 * shade)},${Math.floor(6 * shade)},${Math.floor(6 * shade)},${shade})`;
     ctx.fillStyle = bodyColor;
     ctx.beginPath();
@@ -1474,24 +1559,27 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     ctx.lineWidth = Math.max(1, size * 0.03);
     ctx.beginPath();
     ctx.moveTo(size * 0.2, -size * 0.1);
-    ctx.lineTo(size * 0.42, size * 0.05 + twitch);
-    ctx.lineTo(size * 0.5, -size * 0.02 + twitch);
+    ctx.lineTo(size * 0.42, size * 0.05);
+    ctx.lineTo(size * 0.5, -size * 0.02);
     ctx.stroke();
+    // head：困惑時左右東張西望
+    const headX = confused ? Math.sin(elapsed * 4) * size * 0.07 - size * 0.02 : -size * 0.02;
     ctx.beginPath();
-    ctx.arc(-size * 0.02, -size * 0.5, size * 0.1, 0, Math.PI * 2);
+    ctx.arc(headX, -size * 0.5, size * 0.1, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
     ctx.fill();
-    const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 9);
-    ctx.fillStyle = `rgba(255,${stunned ? 200 : Math.floor(20 + eyeGlow * 30)},${stunned ? 200 : 0},${shade})`;
+    // eyes：平常兇（紅）、蓄力/生氣放大、被打暈變粉紅
+    const eyeR = size * ((windup || angry) ? 0.022 : 0.016);
+    ctx.fillStyle = `rgba(255,${stunned ? 200 : 20},${stunned ? 200 : 0},${shade})`;
     ctx.beginPath();
-    ctx.arc(-size * 0.055, -size * 0.505, size * 0.016, 0, Math.PI * 2);
-    ctx.arc(size * 0.01, -size * 0.505, size * 0.016, 0, Math.PI * 2);
+    ctx.arc(headX - size * 0.035, -size * 0.505, eyeR, 0, Math.PI * 2);
+    ctx.arc(headX + size * 0.03, -size * 0.505, eyeR, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${Math.max(10, size * 0.06)}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('恐怖阿嬤', 0, -size * 0.64);
-    if (stunned) ctx.fillText('暈', 0, -size * 0.7);
+    ctx.fillText('恐怖阿嬤', 0, -size * 0.62);
     ctx.restore();
   } else if (kind === 'exit') {
     const glow = 0.6 + 0.4 * Math.sin(elapsed * 3);
@@ -1556,7 +1644,8 @@ function frame(now) {
   lastNow = now;
   if (dt > 0.1) dt = 0.1;
   acc += dt;
-  flicker = 0.85 + Math.random() * 0.15;
+  // 防頭暈：燈光改為緩慢柔和的呼吸，不再每幀隨機閃爍
+  flicker = 0.93 + 0.07 * Math.sin(now * 0.0011);
 
   if (gameState === 'play') {
     while (acc >= STEP) {
