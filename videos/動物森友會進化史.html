@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>動物森友會進化史</title>
+<style>
+  html,body{margin:0;height:100%;background:#070b14;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);cursor:pointer}
+  #muteBtn{
+    position:fixed;right:16px;top:16px;width:48px;height:48px;border-radius:50%;
+    background:rgba(10,14,24,.65);border:2px solid rgba(255,255,255,.25);color:#fff;
+    font-size:20px;display:flex;align-items:center;justify-content:center;z-index:10;
+  }
+  #hint{
+    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    color:#fff;font-size:14px;opacity:.85;background:rgba(10,14,24,.5);
+    padding:6px 14px;border-radius:999px;z-index:10;pointer-events:none;transition:opacity .5s;
+  }
+  #replayBtn{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(0);
+    padding:16px 32px;font-size:20px;font-weight:bold;color:#070b14;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);border:none;border-radius:999px;
+    z-index:11;box-shadow:0 8px 30px rgba(79,124,255,.5);transition:transform .35s cubic-bezier(.2,1.6,.4,1);
+  }
+  #replayBtn.show{transform:translate(-50%,-50%) scale(1)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="muteBtn">🔇</button>
+<div id="hint">點聲音鈕開啟音效</div>
+<button id="replayBtn">重新播放</button>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ===== Audio =====
+let AC = null, muted = true;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+function beep(freq=440, dur=0.12, type='square', vol=0.12, slide=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function chime(){ beep(880,0.1,'sine',0.1); setTimeout(()=>beep(1318,0.16,'sine',0.09),90); }
+
+const muteBtn = document.getElementById('muteBtn');
+const hint = document.getElementById('hint');
+function setMuted(v){
+  muted = v; muteBtn.textContent = muted ? '🔇' : '🔊';
+  audio();
+}
+muteBtn.addEventListener('click', ()=>{ setMuted(!muted); hint.style.opacity=0; });
+setTimeout(()=>{ hint.style.opacity=0; }, 4000);
+
+// ===== Eras data: 動森進化史（虛構風格化演出，非官方素材）=====
+const easeOutCubic = t => 1 - Math.pow(1-t,3);
+const easeOutBack = t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2);
+const easeInOutSine = t => -(Math.cos(Math.PI*t)-1)/2;
+function clamp01(t){ return Math.max(0, Math.min(1, t)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+
+const ERAS = [
+  { year:'2001', name:'第一代：どうぶつの森', console:'N64 / GameCube', pixel:6, palette:['#5c94fc','#7ec850','#3a7d33','#c8925a'], detail:0 },
+  { year:'2005', name:'第二代：おいでよ どうぶつの森', console:'Nintendo DS', pixel:4, palette:['#8fd3ff','#8fd05a','#4f9e3f','#d9a66c'], detail:1 },
+  { year:'2008', name:'第三代：街を作ろう', console:'Wii', pixel:3, palette:['#a7e0ff','#9bd66a','#5aa848','#e0b47c'], detail:2 },
+  { year:'2012', name:'第四代：とびだせ どうぶつの森', console:'Nintendo 3DS', pixel:1.6, palette:['#bfe9ff','#a7de78','#68b755','#efc38c'], detail:3 },
+  { year:'2020', name:'第五代：あつまれ どうぶつの森', console:'Nintendo Switch', pixel:1, palette:['#dff4ff','#bdeb95','#7ecf68','#ffd9a0'], detail:4 },
+  { year:'2026', name:'未來版：動物森友會 3D 4K', console:'次世代主機', pixel:1, palette:['#eafbff','#d2f7ac','#8fe07a','#ffe6b8'], detail:5 },
+];
+const SEG = 5.6; // seconds per era on screen
+const XFADE = 0.7;
+
+// ===== Villager (simple canvas character, scales with "detail" level) =====
+function drawVillager(x, y, s, detail, t, bounce){
+  ctx.save();
+  ctx.translate(x, y);
+  const bob = Math.sin(t*3 + bounce)*3*s;
+  ctx.translate(0, bob);
+  // shadow
+  ctx.globalAlpha = 0.25;
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(0, 34*s, 20*s, 6*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+
+  const bodyColor = detail < 2 ? '#f4d38a' : detail < 4 ? '#ffdca0' : '#ffe6bd';
+  const earColor = detail < 2 ? '#e0b06a' : '#f2c98a';
+
+  // ears
+  ctx.fillStyle = earColor;
+  ctx.beginPath(); ctx.ellipse(-16*s, -34*s, 8*s, 10*s, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(16*s, -34*s, 8*s, 10*s, 0, 0, Math.PI*2); ctx.fill();
+
+  // body (rounded)
+  if(detail >= 3){
+    const grad = ctx.createLinearGradient(0,-20*s,0,30*s);
+    grad.addColorStop(0, bodyColor);
+    grad.addColorStop(1, detail>=4 ? '#f4b96e' : '#e8b878');
+    ctx.fillStyle = grad;
+  } else {
+    ctx.fillStyle = bodyColor;
+  }
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 22*s, 30*s, 0, 0, Math.PI*2);
+  ctx.fill();
+
+  if(detail >= 2){
+    ctx.globalAlpha = 0.18; ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(6*s, 10*s, 14*s, 18*s, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // eyes
+  const blink = (Math.sin(t*1.3+bounce) > 0.97) ? 0.15 : 1;
+  ctx.fillStyle = '#2a2a2a';
+  ctx.save(); ctx.translate(-8*s, -6*s); ctx.scale(1, blink);
+  ctx.beginPath(); ctx.arc(0,0,3.2*s,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(8*s, -6*s); ctx.scale(1, blink);
+  ctx.beginPath(); ctx.arc(0,0,3.2*s,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // nose/cheeks
+  if(detail >= 3){
+    ctx.fillStyle = 'rgba(255,150,150,.35)';
+    ctx.beginPath(); ctx.ellipse(-13*s, 2*s, 4*s, 3*s, 0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(13*s, 2*s, 4*s, 3*s, 0,0,Math.PI*2); ctx.fill();
+  }
+  ctx.fillStyle = '#c76a3f';
+  ctx.beginPath(); ctx.ellipse(0, 2*s, 3*s, 2.4*s, 0,0,Math.PI*2); ctx.fill();
+
+  ctx.restore();
+}
+
+// ===== Scene: village backdrop per era =====
+function drawSky(p, t){
+  const grad = ctx.createLinearGradient(0,0,0,GAME_H);
+  grad.addColorStop(0, p[0]);
+  grad.addColorStop(1, '#ffffff');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0,0,GAME_W,GAME_H*0.62);
+}
+
+function drawClouds(t, detail){
+  ctx.save();
+  ctx.globalAlpha = detail >= 3 ? 0.9 : 0.7;
+  for(let i=0;i<4;i++){
+    const cx = ((t*14 + i*260) % (GAME_W+200)) - 100;
+    const cy = 60 + i*28;
+    ctx.fillStyle = '#fff';
+    const r = detail >= 3 ? 22 : 16;
+    for(let j=-1;j<=1;j++){
+      ctx.beginPath();
+      ctx.ellipse(cx + j*r*0.9, cy, r, r*0.62, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawGround(p, detail){
+  const groundY = GAME_H*0.62;
+  ctx.fillStyle = p[1];
+  ctx.fillRect(0, groundY, GAME_W, GAME_H-groundY);
+  if(detail >= 1){
+    ctx.strokeStyle = p[2]; ctx.globalAlpha = 0.5; ctx.lineWidth = 2;
+    for(let i=0;i<6;i++){
+      ctx.beginPath();
+      const yy = groundY + 14 + i*(GAME_H-groundY-14)/6;
+      ctx.ellipse(GAME_W/2, yy, GAME_W*0.6 - i*10, 6, 0, 0, Math.PI*2);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  if(detail >= 4){
+    ctx.globalAlpha = 0.15;
+    const grad2 = ctx.createRadialGradient(GAME_W/2, groundY+40, 10, GAME_W/2, groundY+40, 400);
+    grad2.addColorStop(0, '#ffffff'); grad2.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = grad2;
+    ctx.fillRect(0, groundY, GAME_W, GAME_H-groundY);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawTree(x, y, s, p, detail, t, seed){
+  ctx.save();
+  ctx.translate(x,y);
+  const sway = Math.sin(t*0.8+seed)*2*(detail>=3?1:0.4);
+  ctx.globalAlpha = 0.2; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(0, 4, 26*s, 7*s, 0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = detail<2 ? '#8c5a3c' : '#a06a44';
+  ctx.fillRect(-5*s, -34*s, 10*s, 38*s);
+  ctx.save();
+  ctx.translate(0, -46*s + sway);
+  ctx.rotate(sway*0.01);
+  if(detail >= 3){
+    const g = ctx.createRadialGradient(-8*s,-8*s,4*s, 0,0,34*s);
+    g.addColorStop(0, p[3] === undefined ? '#9bd66a' : lightenLeaf(p));
+    g.addColorStop(1, p[2]);
+    ctx.fillStyle = g;
+  } else {
+    ctx.fillStyle = p[2];
+  }
+  ctx.beginPath(); ctx.arc(0,0,26*s,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-16*s,10*s,18*s,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(16*s,10*s,18*s,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+function lightenLeaf(p){ return '#c8ea9a'; }
+
+function drawHouse(x, y, s, detail, t){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.globalAlpha = 0.2; ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(0, 4, 46*s, 8*s, 0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  // walls
+  const wallColor = detail < 2 ? '#e7d3a0' : detail < 4 ? '#f2e0b0' : '#fbeecb';
+  if(detail >= 3){
+    const g = ctx.createLinearGradient(-40*s,0,40*s,0);
+    g.addColorStop(0, '#d8c48a'); g.addColorStop(1, wallColor);
+    ctx.fillStyle = g;
+  } else ctx.fillStyle = wallColor;
+  ctx.fillRect(-40*s, -40*s, 80*s, 44*s);
+  // roof
+  ctx.fillStyle = detail < 2 ? '#c0503a' : '#d8654a';
+  ctx.beginPath();
+  ctx.moveTo(-50*s, -40*s); ctx.lineTo(0, -78*s); ctx.lineTo(50*s, -40*s);
+  ctx.closePath(); ctx.fill();
+  if(detail >= 3){
+    ctx.globalAlpha=.25; ctx.fillStyle='#000';
+    ctx.beginPath(); ctx.moveTo(0,-78*s); ctx.lineTo(50*s,-40*s); ctx.lineTo(20*s,-40*s); ctx.closePath(); ctx.fill();
+    ctx.globalAlpha=1;
+  }
+  // door
+  const glow = detail >= 4 ? (0.5+0.5*Math.sin(t*2)) : 0;
+  ctx.fillStyle = detail>=4 ? `rgba(255,224,150,${0.6+glow*0.3})` : '#8a5a3a';
+  ctx.fillRect(-10*s, -26*s, 20*s, 26*s);
+  // window
+  ctx.fillStyle = detail>=3 ? '#bfe8ff' : '#9fd6f0';
+  ctx.beginPath(); ctx.arc(-24*s, -22*s, 7*s, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(24*s, -22*s, 7*s, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawFlowers(x, y, colors, t, seed){
+  for(let i=0;i<5;i++){
+    const fx = x + Math.cos(i*1.3+seed)*14, fy = y + Math.sin(i*1.3+seed)*5;
+    const wob = Math.sin(t*3+i+seed)*1.5;
+    ctx.fillStyle = colors[i % colors.length];
+    ctx.beginPath(); ctx.arc(fx+wob, fy, 3.4, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#fff59a';
+    ctx.beginPath(); ctx.arc(fx+wob, fy, 1.2, 0, Math.PI*2); ctx.fill();
+  }
+}
+
+function drawSparkles(t, detail){
+  if(detail < 5) return;
+  ctx.save();
+  for(let i=0;i<18;i++){
+    const seed = i*37.1;
+    const sx = (Math.sin(seed)*0.5+0.5)*GAME_W;
+    const sy = (Math.sin(seed*1.7)*0.5+0.5)*(GAME_H*0.6);
+    const a = (Math.sin(t*2 + seed)*0.5+0.5)*0.7;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(sx, sy, 1.6, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+const FLOWER_COLORS = ['#ff8ea3','#ffd76b','#8ecbff','#ff9f5c'];
+
+function drawScene(era, t, camX){
+  const p = era.palette, d = era.detail;
+  ctx.save();
+  ctx.translate(-camX, 0);
+  drawSky(p, t);
+  drawClouds(t, d);
+  drawGround(p, d);
+  drawTree(140, GAME_H*0.62-4, 1.1, p, d, t, 1);
+  drawTree(GAME_W-120, GAME_H*0.62-2, 1.3, p, d, t, 2.4);
+  drawTree(GAME_W*0.55, GAME_H*0.6+10, 0.9, p, d, t, 4.1);
+  drawHouse(GAME_W*0.28, GAME_H*0.86, 1, d, t);
+  drawFlowers(GAME_W*0.5, GAME_H*0.9, FLOWER_COLORS, t, 0.5);
+  drawFlowers(GAME_W*0.72, GAME_H*0.82, FLOWER_COLORS, t, 2.1);
+  drawVillager(GAME_W*0.62, GAME_H*0.83, d>=4?1.15:1, d, t, 0);
+  drawSparkles(t, d);
+  ctx.restore();
+}
+
+// ===== Title card =====
+function drawTitleCard(era, alpha, revealT){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const bw = 560, bh = 108;
+  const bx = GAME_W/2 - bw/2, by = 24;
+  const slide = lerp(-40, 0, easeOutBack(clamp01(revealT)));
+  ctx.translate(0, slide<0?0:0);
+  ctx.fillStyle = 'rgba(7,11,20,0.62)';
+  roundRect(bx, by, bw, bh, 18); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2;
+  roundRect(bx, by, bw, bh, 18); ctx.stroke();
+
+  ctx.textAlign = 'center';
+  const grad = ctx.createLinearGradient(bx, 0, bx+bw, 0);
+  grad.addColorStop(0,'#38e1ff'); grad.addColorStop(0.5,'#4f7cff'); grad.addColorStop(1,'#9a6bff');
+  ctx.fillStyle = grad;
+  ctx.font = 'bold 30px sans-serif';
+  ctx.fillText(era.year + '　' + era.name, GAME_W/2, by+46);
+  ctx.fillStyle = '#dfe8ff';
+  ctx.font = '18px sans-serif';
+  ctx.fillText(era.console, GAME_W/2, by+78);
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+// ===== Opening / closing cards =====
+function drawBrandCard(alpha, t){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#070b14';
+  ctx.fillRect(0,0,GAME_W,GAME_H);
+  ctx.textAlign='center';
+  const grad = ctx.createLinearGradient(GAME_W*0.2,0,GAME_W*0.8,0);
+  grad.addColorStop(0,'#38e1ff'); grad.addColorStop(0.5,'#4f7cff'); grad.addColorStop(1,'#9a6bff');
+  ctx.fillStyle = grad;
+  ctx.font = 'bold 52px sans-serif';
+  const scale = lerp(0.85,1,easeOutBack(clamp01(t/0.8)));
+  ctx.save(); ctx.translate(GAME_W/2, GAME_H*0.42); ctx.scale(scale,scale);
+  ctx.fillText('動物森友會', 0, 0);
+  ctx.restore();
+  ctx.fillStyle = '#dfe8ff';
+  ctx.font = '24px sans-serif';
+  ctx.fillText('進化史　2001 → 2026', GAME_W/2, GAME_H*0.42+50);
+  ctx.font = '15px sans-serif';
+  ctx.fillStyle = 'rgba(255,255,255,.55)';
+  ctx.fillText('AI未來創作營隊　風格化演出・非官方素材', GAME_W/2, GAME_H*0.42+90);
+  ctx.restore();
+}
+
+function drawEndCard(alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#070b14';
+  ctx.fillRect(0,0,GAME_W,GAME_H);
+  ctx.textAlign = 'center';
+  const grad = ctx.createLinearGradient(GAME_W*0.2,0,GAME_W*0.8,0);
+  grad.addColorStop(0,'#38e1ff'); grad.addColorStop(0.5,'#4f7cff'); grad.addColorStop(1,'#9a6bff');
+  ctx.fillStyle = grad;
+  ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('20 多年的島嶼夢想', GAME_W/2, GAME_H*0.4);
+  ctx.fillStyle = '#dfe8ff';
+  ctx.font = '20px sans-serif';
+  ctx.fillText('2001　→　2005　→　2008　→　2012　→　2020　→　2026', GAME_W/2, GAME_H*0.4+46);
+  ctx.restore();
+}
+
+// ===== Timeline =====
+const T_INTRO = 2.4;
+const T_ERAS_START = T_INTRO;
+const T_ERAS_END = T_ERAS_START + ERAS.length*SEG;
+const T_END = T_ERAS_END + 3.2;
+let startTime = null;
+let playing = true;
+let lastEraIdx = -1;
+let shakeT = 0;
+
+function eraAt(elapsed){
+  const rel = elapsed - T_ERAS_START;
+  const idx = Math.floor(rel / SEG);
+  const localT = rel - idx*SEG;
+  return { idx: Math.max(0, Math.min(ERAS.length-1, idx)), localT: Math.max(0, localT) };
+}
+
+function draw(elapsed){
+  ctx.clearRect(0,0,GAME_W,GAME_H);
+
+  if(elapsed < T_INTRO){
+    const t = elapsed;
+    let alpha = 1;
+    if(t > T_INTRO - 0.5) alpha = clamp01((T_INTRO - t)/0.5);
+    drawBrandCard(alpha, t);
+    return;
+  }
+
+  if(elapsed < T_ERAS_END){
+    const { idx, localT } = eraAt(elapsed);
+    const era = ERAS[idx];
+
+    if(idx !== lastEraIdx){
+      lastEraIdx = idx;
+      chime();
+      shakeT = 0.18;
+    }
+
+    let camX = Math.sin(localT*0.35)*18;
+    ctx.save();
+    if(shakeT > 0){
+      shakeT -= 1/60;
+      ctx.translate((Math.random()*2-1)*2, (Math.random()*2-1)*2);
+    }
+    drawScene(era, elapsed, camX);
+    ctx.restore();
+
+    // crossfade to next era near segment end
+    if(idx < ERAS.length-1 && localT > SEG - XFADE){
+      const fadeT = (localT - (SEG-XFADE)) / XFADE;
+      const nextEra = ERAS[idx+1];
+      ctx.save();
+      ctx.globalAlpha = easeInOutSine(clamp01(fadeT));
+      drawScene(nextEra, elapsed, camX);
+      ctx.restore();
+    }
+
+    let cardAlpha = 1;
+    const revealT = localT / 0.5;
+    if(localT < 0.15) cardAlpha = 0;
+    if(localT > SEG - XFADE) cardAlpha = clamp01((SEG-localT)/XFADE);
+    drawTitleCard(era, cardAlpha, revealT);
+
+    // progress dots
+    ctx.save();
+    for(let i=0;i<ERAS.length;i++){
+      const dx = GAME_W/2 - (ERAS.length-1)*11 + i*22;
+      ctx.fillStyle = i===idx ? '#38e1ff' : 'rgba(255,255,255,.35)';
+      ctx.beginPath(); ctx.arc(dx, GAME_H-18, i===idx?5:3.4, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+
+  // ending
+  const t = elapsed - T_ERAS_END;
+  let alpha = clamp01(t/0.6);
+  drawEndCard(alpha);
+  if(t > 1.0 && !document.getElementById('replayBtn').classList.contains('show')){
+    document.getElementById('replayBtn').classList.add('show');
+    beep(660,0.1,'sine',0.1); setTimeout(()=>beep(990,0.16,'sine',0.09),100); setTimeout(()=>beep(1320,0.2,'sine',0.08),200);
+  }
+}
+
+function frame(now){
+  if(startTime === null) startTime = now;
+  const elapsed = (now - startTime)/1000;
+  if(playing){
+    draw(Math.min(elapsed, T_END));
+    if(elapsed < T_END) requestAnimationFrame(frame);
+    else playing = false;
+  }
+}
+requestAnimationFrame(frame);
+
+document.getElementById('replayBtn').addEventListener('click', ()=>{
+  document.getElementById('replayBtn').classList.remove('show');
+  startTime = null; lastEraIdx = -1; playing = true;
+  requestAnimationFrame(frame);
+});
+
+canvas.addEventListener('click', ()=>{ audio(); });
+</script>
+</body>
+</html>
