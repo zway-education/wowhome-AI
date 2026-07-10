@@ -1,0 +1,1588 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="author" content="Claude">
+<title>冰火大戰3D</title>
+<style>
+  :root{
+    --ice-deep:#0b1730; --ice-deep2:#122341; --ice-ice:#bdeeff; --ice-ice2:#7fd6f2; --ice-cyan:#2fd8e8; --ice-accent:#ff6a3d; --ice-white:#f2fcff;
+    --fire-lava-dark:#1a0500; --fire-lava-mid:#3a0d02; --fire-fire1:#ff5a1f; --fire-fire2:#ff9d2e; --fire-fire3:#ffd23c; --fire-accent:#ff2d55; --fire-ink:#fff2e0;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#05070f;
+    font-family:"Microsoft JhengHei","PingFang TC",sans-serif;
+    color:var(--ice-white);
+    user-select:none; -webkit-user-select:none;
+    touch-action:none;
+  }
+  button{ font-family:inherit; }
+  /* shared 3D cuboid primitives (used by both game modes) */
+  .cuboid{ position:absolute; transform-style:preserve-3d; will-change:transform; }
+  .face{ position:absolute; background-size:100% 100%; box-sizing:border-box; backface-visibility:hidden; border-radius:2px; }
+  .hidden{ display:none !important; }
+  .tag{
+    display:inline-block; border-radius:8px; padding:2px 8px; margin:0 3px; font-weight:bold;
+  }
+
+  /* ================= 標題 / 模式選擇畫面 ================= */
+  #titleScreen{
+    position:fixed; inset:0; z-index:100;
+    display:flex; align-items:center; justify-content:center;
+    background:radial-gradient(circle at 50% 18%, #1c2b52 0%, #0b1730 55%, #05070f 100%);
+  }
+  #titleScreen .titleWrap{ max-width:760px; width:92vw; text-align:center; }
+  #titleScreen h1{
+    font-size:clamp(28px,6vw,46px); margin:0 0 6px; letter-spacing:2px;
+    background:linear-gradient(92deg,#7fd6f2,#ffd23f,#ff6a3d);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    text-shadow:0 0 24px rgba(127,214,242,.35);
+  }
+  #titleScreen .subtitle{ color:#bdeeff; font-size:15px; margin:0 0 26px; }
+  #modeCards{ display:flex; gap:22px; justify-content:center; flex-wrap:wrap; }
+  .modeCard{
+    pointer-events:auto; cursor:pointer; width:250px; border-radius:20px; padding:22px 18px;
+    border:3px solid rgba(255,255,255,.22); background:rgba(15,25,50,.72);
+    transition:transform .15s ease, border-color .15s ease, box-shadow .15s ease;
+  }
+  .modeCard .emoji{ font-size:44px; line-height:1; }
+  .modeCard h2{ margin:8px 0 6px; font-size:21px; }
+  .modeCard p{ margin:4px 0; font-size:13px; line-height:1.6; color:#dfeeff; }
+  .modeCard.selected{
+    border-color:#ffd23f; transform:translateY(-6px) scale(1.04);
+    box-shadow:0 0 28px rgba(255,210,63,.55), 0 10px 0 rgba(0,0,0,.25);
+  }
+  #modeInstr{ margin-top:22px; min-height:70px; font-size:14px; color:#ffe9c4; line-height:1.8; }
+  #modeInstr .tag{ background:rgba(255,255,255,.12); border:1px solid rgba(255,255,255,.35); }
+  #modeConfirmBtn{
+    pointer-events:auto; margin-top:16px; padding:12px 36px; border:none; border-radius:14px;
+    font-size:18px; font-weight:900; color:#2a0800; cursor:pointer; letter-spacing:2px;
+    background:linear-gradient(180deg,#ffd23f,#ff9d2e); box-shadow:0 4px 0 #a34a00;
+  }
+  #modeConfirmBtn:active{ transform:translateY(3px); box-shadow:0 1px 0 #a34a00; }
+  #titleScreen .hint{ margin-top:14px; font-size:12px; color:#9fb6d8; }
+  .backBtn{
+    pointer-events:auto; position:absolute; left:16px; top:14px; z-index:60;
+    background:rgba(10,10,20,.55); border:2px solid rgba(255,255,255,.5); color:#fff;
+    font-weight:bold; font-size:13px; padding:8px 14px; border-radius:12px; cursor:pointer;
+  }
+  .backBtn:active{ transform:translateY(2px); }
+
+  /* ================= 冰人床戰 3D ================= */
+  #iceGame{ position:fixed; inset:0; }
+  #iceStage{ position:fixed; inset:0; overflow:hidden; background:radial-gradient(circle at 50% 30%, var(--ice-deep2), var(--ice-deep) 70%); }
+  #iceScene{ position:absolute; left:50%; top:50%; width:10px; height:10px; perspective:900px; perspective-origin:50% 50%; }
+  #iceCamera{ position:absolute; left:0; top:0; transform-style:preserve-3d; will-change:transform; }
+  #iceWorld{ position:absolute; left:0; top:0; transform-style:preserve-3d; }
+  #iceUi{ position:fixed; inset:0; pointer-events:none; display:flex; flex-direction:column; font-weight:bold; }
+  #iceHud{ display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; gap:10px; }
+  .ice-hud-box{
+    background:rgba(11,23,48,0.72); border:2px solid var(--ice-ice2); border-radius:12px;
+    padding:8px 14px; box-shadow:0 0 12px rgba(127,214,242,0.4) inset; font-size:15px; line-height:1.5;
+  }
+  #iceBedHealthWrap{ width:150px; }
+  #iceBedHealthBar{ width:100%; height:12px; background:#0b1730; border-radius:6px; overflow:hidden; border:1px solid var(--ice-ice2); margin-top:3px; }
+  #iceBedHealthFill{ height:100%; width:100%; background:linear-gradient(90deg,#ff6a3d,#ffd23f); transition:width .15s; }
+  #icePlayerHealthBar{ width:130px; height:10px; background:#0b1730; border-radius:6px; overflow:hidden; border:1px solid var(--ice-ice2); margin-top:3px; }
+  #icePlayerHealthFill{ height:100%; width:100%; background:linear-gradient(90deg,#2fd8e8,#bdeeff); transition:width .15s; }
+  #iceCenterMsgs{ position:absolute; left:50%; top:14%; transform:translateX(-50%); text-align:center; pointer-events:none; }
+  .ice-floatText{
+    position:absolute; font-size:20px; font-weight:900; color:#fff;
+    text-shadow:0 0 6px #000, 0 0 10px var(--ice-cyan); pointer-events:none;
+    animation:iceFloatUp 0.9s ease-out forwards; white-space:nowrap;
+  }
+  @keyframes iceFloatUp{ 0%{ transform:translateY(0); opacity:1; } 100%{ transform:translateY(-60px); opacity:0; } }
+  .ice-crosshair{ position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:22px; height:22px; pointer-events:none; }
+  .ice-crosshair::before,.ice-crosshair::after{ content:""; position:absolute; background:var(--ice-ice); box-shadow:0 0 4px var(--ice-cyan); }
+  .ice-crosshair::before{ left:50%; top:0; width:2px; height:100%; transform:translateX(-50%); }
+  .ice-crosshair::after{ top:50%; left:0; height:2px; width:100%; transform:translateY(-50%); }
+  .ice-screen{
+    position:fixed; inset:0; display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(160deg, rgba(11,23,48,0.96), rgba(18,35,65,0.96)); z-index:50; pointer-events:auto;
+  }
+  .ice-panel{
+    background:rgba(11,23,48,0.9); border:3px solid var(--ice-ice2); border-radius:20px;
+    padding:26px 30px; max-width:92vw; width:480px; text-align:center;
+    box-shadow:0 0 40px rgba(47,216,232,0.35); max-height:88vh; overflow-y:auto;
+  }
+  .ice-panel h1{ margin:0 0 6px; font-size:30px; color:var(--ice-white); text-shadow:0 0 12px var(--ice-cyan); letter-spacing:2px; }
+  .ice-panel h2{ margin:0 0 10px; font-size:22px; color:var(--ice-ice); }
+  .ice-panel p{ font-size:14px; line-height:1.7; color:var(--ice-ice); margin:6px 0; }
+  .ice-panel .tag{ background:var(--ice-deep2); border:1px solid var(--ice-ice2); color:var(--ice-white); }
+  .ice-btn{
+    pointer-events:auto; background:linear-gradient(180deg,var(--ice-accent),#c94a20); border:none; color:#fff;
+    font-weight:900; font-size:18px; padding:12px 30px; border-radius:14px; margin-top:14px; cursor:pointer;
+    box-shadow:0 4px 0 #8a2f14, 0 0 16px rgba(255,106,61,0.6); letter-spacing:2px;
+  }
+  .ice-btn:active{ transform:translateY(3px); box-shadow:0 1px 0 #8a2f14; }
+  .ice-btn-secondary{ background:linear-gradient(180deg,#557,#334); box-shadow:0 4px 0 #223, 0 0 12px rgba(127,214,242,0.4); }
+  #iceTouchLayer{ position:fixed; inset:0; pointer-events:none; z-index:20; display:none; }
+  #iceTouchLayer.on{ display:block; }
+  #iceJoyZone{
+    position:absolute; left:22px; bottom:22px; width:130px; height:130px; border-radius:50%;
+    background:rgba(189,238,255,0.12); border:2px solid rgba(189,238,255,0.5); pointer-events:auto;
+  }
+  #iceJoyStick{
+    position:absolute; left:35px; top:35px; width:60px; height:60px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, var(--ice-ice), var(--ice-ice2)); box-shadow:0 0 10px rgba(0,0,0,0.5);
+  }
+  #iceLookZone{ position:absolute; right:0; top:0; width:55%; height:70%; pointer-events:auto; }
+  #iceFireBtn{
+    position:absolute; right:26px; bottom:34px; width:86px; height:86px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%, var(--ice-accent), #a83c1c);
+    border:3px solid #ffd6c4; color:#fff; font-weight:900; font-size:15px;
+    pointer-events:auto; box-shadow:0 4px 0 #7a2c14;
+  }
+  #iceFireBtn:active{ transform:translateY(3px); }
+  #iceVignette{ position:fixed; inset:0; pointer-events:none; z-index:15; box-shadow:inset 0 0 160px rgba(0,0,0,0.55); }
+  #iceHitFlash{ position:fixed; inset:0; pointer-events:none; z-index:16; background:rgba(255,60,40,0); transition:background .1s; }
+  @media (max-width:820px){
+    .ice-hud-box{ font-size:12px; padding:6px 10px; }
+    #iceBedHealthWrap{ width:110px; }
+    #icePlayerHealthBar{ width:100px; }
+  }
+
+  /* ================= 火人跑酷 3D ================= */
+  #fireGame{ position:fixed; inset:0; }
+  #fireStage{ position:absolute; inset:0; overflow:hidden;
+    background:radial-gradient(ellipse at 50% 0%, #4a1608 0%, #1a0500 55%, #0a0200 100%); }
+  #fireSceneWrap{ position:absolute; inset:0; perspective:900px; perspective-origin:50% 40%; }
+  #fireWorld{ position:absolute; left:50%; top:55%; width:0; height:0; transform-style:preserve-3d; will-change:transform; }
+  #fireUi{ position:absolute; inset:0; pointer-events:none; z-index:5; }
+  #fireHud{ position:absolute; top:10px; left:0; right:0; display:flex; justify-content:space-between;
+    padding:0 16px; font-weight:bold; font-size:18px; text-shadow:0 2px 4px rgba(0,0,0,.6); }
+  #fireHud .box{ background:rgba(20,5,0,.55); border:1px solid rgba(255,157,46,.5); border-radius:10px; padding:6px 12px; }
+  #fireScreens{ position:absolute; inset:0; display:flex; align-items:center; justify-content:center; pointer-events:auto; }
+  .fire-panel{
+    background:rgba(15,3,0,.82); border:2px solid var(--fire-fire2); border-radius:20px;
+    padding:28px 34px; max-width:min(560px,90vw); text-align:center;
+    box-shadow:0 0 40px rgba(255,90,31,.35), inset 0 0 30px rgba(255,157,46,.08);
+  }
+  .fire-panel h1{ margin:0 0 8px; font-size:clamp(26px,6vw,40px);
+    background:linear-gradient(92deg,var(--fire-fire3),var(--fire-fire2),var(--fire-accent));
+    -webkit-background-clip:text; background-clip:text; color:transparent; }
+  .fire-panel p{ margin:6px 0; font-size:15px; line-height:1.6; color:#ffe3c4; }
+  .fire-panel .tag{ background:rgba(255,157,46,.15); border:1px solid var(--fire-fire2); font-size:13px; }
+  .fire-btn{
+    pointer-events:auto; margin-top:14px; padding:12px 30px; border:none; border-radius:14px;
+    font-size:19px; font-weight:bold; color:#2a0800; cursor:pointer;
+    background:linear-gradient(180deg,var(--fire-fire3),var(--fire-fire2));
+    box-shadow:0 4px 0 #a34a00, 0 6px 14px rgba(0,0,0,.4);
+  }
+  .fire-btn:active{ transform:translateY(3px); box-shadow:0 1px 0 #a34a00; }
+  #fireToast{
+    position:absolute; left:50%; top:26%; transform:translateX(-50%);
+    font-size:clamp(20px,4.5vw,30px); font-weight:bold; color:var(--fire-fire3);
+    text-shadow:0 0 12px rgba(255,90,31,.8),0 2px 4px rgba(0,0,0,.7);
+    opacity:0; pointer-events:none; white-space:nowrap;
+  }
+  #fireSoundBtn{
+    position:absolute; top:10px; right:10px; pointer-events:auto; width:40px; height:40px;
+    border-radius:50%; border:1px solid var(--fire-fire2); background:rgba(20,5,0,.6); color:var(--fire-ink);
+    font-size:18px; z-index:6;
+  }
+  #fireTouchLayer{ position:absolute; inset:0; z-index:4; }
+  #fireJoyZone{ position:absolute; left:0; bottom:0; width:48%; height:52%; pointer-events:auto; }
+  #fireCamZone{ position:absolute; right:0; bottom:0; width:52%; height:52%; pointer-events:auto; }
+  #fireJoyBase{ position:absolute; width:104px; height:104px; border-radius:50%;
+    background:rgba(255,157,46,.14); border:2px solid rgba(255,157,46,.5); display:none; }
+  #fireJoyStick{ position:absolute; width:48px; height:48px; border-radius:50%;
+    background:rgba(255,157,46,.55); border:2px solid #fff2e0; display:none; }
+  #fireJumpBtn{ position:absolute; right:24px; bottom:24px; width:78px; height:78px; border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,var(--fire-fire3),var(--fire-fire1) 70%);
+    border:3px solid #ffe3c4; pointer-events:auto; font-weight:bold; color:#2a0800; font-size:15px;
+    box-shadow:0 4px 0 #a34a00; }
+  @media (hover:hover) and (pointer:fine){ #fireTouchLayer{ display:none; } }
+</style>
+</head>
+<body>
+
+<!-- ===================== 標題 / 模式選擇 ===================== -->
+<div id="titleScreen">
+  <div class="titleWrap">
+    <h1>❄️🔥 冰火大戰 3D 🔥❄️</h1>
+    <p class="subtitle">選一個模式開始吧！用方向鍵／WASD 切換，Enter 或空白鍵確認，也可以直接點一下。</p>
+    <div id="modeCards">
+      <div class="modeCard selected" id="cardIce" data-mode="ice" tabindex="0">
+        <div class="emoji">❄️</div>
+        <h2>冰人床戰</h2>
+        <p>敵人衝向你的床，發射冰彈保護床撐到最後！</p>
+      </div>
+      <div class="modeCard" id="cardFire" data-mode="fire" tabindex="0">
+        <div class="emoji">🔥</div>
+        <h2>火人跑酷</h2>
+        <p>跳過熔岩與浮空平台，衝向終點！</p>
+      </div>
+    </div>
+    <div id="modeInstr"></div>
+    <div><button id="modeConfirmBtn">開始遊戲！</button></div>
+    <p class="hint">電腦：方向鍵/WASD 選擇＋Enter 確認　手機：點一下卡片再點「開始遊戲」</p>
+  </div>
+</div>
+
+<!-- ===================== 冰人床戰 3D ===================== -->
+<div id="iceGame" class="hidden">
+  <button class="backBtn" id="iceBackBtn">← 返回選單</button>
+  <div id="iceStage">
+    <div id="iceScene">
+      <div id="iceCamera">
+        <div id="iceWorld"></div>
+      </div>
+    </div>
+  </div>
+  <div id="iceVignette"></div>
+  <div id="iceHitFlash"></div>
+  <div id="iceUi">
+    <div id="iceHud" class="hidden">
+      <div class="ice-hud-box">
+        ❤️ 冰人生命
+        <div id="icePlayerHealthBar"><div id="icePlayerHealthFill"></div></div>
+      </div>
+      <div class="ice-hud-box" style="text-align:center;">
+        🏆 分數<br><span id="iceScoreVal">0</span>
+      </div>
+      <div class="ice-hud-box" id="iceBedHealthWrap">
+        🛏️ 床的耐久
+        <div id="iceBedHealthBar"><div id="iceBedHealthFill"></div></div>
+      </div>
+    </div>
+    <div id="iceCenterMsgs"></div>
+    <div class="ice-crosshair hidden" id="iceCrosshair"></div>
+  </div>
+  <div id="iceTouchLayer">
+    <div id="iceJoyZone"><div id="iceJoyStick"></div></div>
+    <div id="iceLookZone"></div>
+    <div id="iceFireBtn">發射❄️</div>
+  </div>
+
+  <div class="ice-screen" id="iceMenuScreen">
+    <div class="ice-panel">
+      <h1>❄️ 冰人床戰 3D ❄️</h1>
+      <p>你是「冰人」，敵人正衝向你的床！用冰彈把他們打飛，保護床撐到最後。</p>
+      <p>
+        <span class="tag">WASD/方向鍵</span> 移動
+        <span class="tag">滑鼠</span> 看/瞄準
+        <span class="tag">空白鍵/左鍵</span> 發射冰彈
+      </p>
+      <p>手機：左下角<span class="tag">虛擬搖桿</span> 移動，右側滑動看鏡頭，右下角<span class="tag">按鈕</span>發射！</p>
+      <p>最高分：<b id="iceBestScoreMenu">0</b></p>
+      <button class="ice-btn" id="iceStartBtn">開始防守！</button>
+      <div><button class="ice-btn ice-btn-secondary" id="iceMenuBackBtn">返回選單</button></div>
+    </div>
+  </div>
+
+  <div class="ice-screen hidden" id="iceEndScreen">
+    <div class="ice-panel">
+      <h2 id="iceEndTitle">再挑戰一次！</h2>
+      <p id="iceEndDesc">床撐不住了，別灰心，冰人再冰一次一定行！</p>
+      <p>本次分數：<b id="iceFinalScore">0</b>　最高分：<b id="iceBestScoreEnd">0</b></p>
+      <button class="ice-btn" id="iceRetryBtn">再玩一次</button>
+      <div><button class="ice-btn ice-btn-secondary" id="iceEndBackBtn">返回選單</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 火人跑酷 3D ===================== -->
+<div id="fireGame" class="hidden">
+  <button class="backBtn" id="fireBackBtn">← 返回選單</button>
+  <div id="fireStage">
+    <div id="fireSceneWrap"><div id="fireWorld"></div></div>
+    <div id="fireUi">
+      <div id="fireHud" class="hidden">
+        <div class="box">⏱ <span id="fireTimer">0.0</span>s</div>
+        <div class="box">📍 檢查點 <span id="fireCpNum">0</span>/<span id="fireCpTotal">0</span></div>
+        <div class="box">🏆 最佳 <span id="fireBest">--</span></div>
+      </div>
+      <div id="fireToast"></div>
+      <button id="fireSoundBtn">🔊</button>
+      <div id="fireScreens">
+        <div class="fire-panel" id="fireMenuPanel">
+          <h1>🔥 火人跑酷 3D</h1>
+          <p>操控「火人」跳過熔岩與浮空平台，衝向終點！</p>
+          <p><b>電腦：</b><span class="tag">W A S D</span>移動　<span class="tag">Space</span>跳躍（長按跳更高）　<span class="tag">← →</span>轉鏡頭</p>
+          <p><b>平板／手機：</b>左下角<span class="tag">虛擬搖桿</span>移動　右下角<span class="tag">跳躍鈕</span>　拖曳右半螢幕轉鏡頭</p>
+          <p>掉進熔岩會立刻回到最近的檢查點，放心大膽跳！</p>
+          <button class="fire-btn" id="fireStartBtn">開始挑戰</button>
+          <div><button class="fire-btn ice-btn-secondary" id="fireMenuBackBtn">返回選單</button></div>
+        </div>
+        <div class="fire-panel hidden" id="fireWinPanel">
+          <h1>🏁 抵達終點！</h1>
+          <p>完成時間：<b id="fireFinalTime">0.0</b> 秒</p>
+          <p>最佳紀錄：<b id="fireFinalBest">0.0</b> 秒</p>
+          <button class="fire-btn" id="fireAgainBtn">再玩一次</button>
+          <div><button class="fire-btn ice-btn-secondary" id="fireEndBackBtn">返回選單</button></div>
+        </div>
+      </div>
+    </div>
+    <div id="fireTouchLayer">
+      <div id="fireJoyZone"></div>
+      <div id="fireCamZone"></div>
+      <div id="fireJoyBase"></div>
+      <div id="fireJoyStick"></div>
+      <button id="fireJumpBtn">跳!</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   共用 3D 立方體渲染引擎（兩個模式共用，避免重複實作）
+   ============================================================ */
+"use strict";
+const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+const lerp=(a,b,t)=>a+(b-a)*t;
+const rand=(a,b)=>a+Math.random()*(b-a);
+const DEG=Math.PI/180;
+
+function shadeRGB(rgb,mul){
+  return `rgb(${clamp(Math.round(rgb[0]*mul),0,255)},${clamp(Math.round(rgb[1]*mul),0,255)},${clamp(Math.round(rgb[2]*mul),0,255)})`;
+}
+function hslToRgb(h,s,l){
+  h=((h%360)+360)%360; s=clamp(s,0,100)/100; l=clamp(l,0,100)/100;
+  const c=(1-Math.abs(2*l-1))*s;
+  const x=c*(1-Math.abs((h/60)%2-1));
+  const m=l-c/2;
+  let r=0,g=0,b=0;
+  if(h<60){r=c;g=x;b=0;} else if(h<120){r=x;g=c;b=0;} else if(h<180){r=0;g=c;b=x;}
+  else if(h<240){r=0;g=x;b=c;} else if(h<300){r=x;g=0;b=c;} else {r=c;g=0;b=x;}
+  return [Math.round((r+m)*255),Math.round((g+m)*255),Math.round((b+m)*255)];
+}
+/* 建立一個六面各自受光/陰影的長方體 DOM 元素（不自動掛載，由呼叫端決定放進哪個容器） */
+function buildCuboidEl(w,h,d,rgb,opts){
+  opts=opts||{};
+  const el=document.createElement("div");
+  el.className="cuboid";
+  el.style.width=w+"px"; el.style.height=h+"px";
+  const topM = opts.topM!=null?opts.topM:1.35;
+  const frontM = opts.frontM!=null?opts.frontM:1.05;
+  const sideM = opts.sideM!=null?opts.sideM:0.8;
+  const backM = opts.backM!=null?opts.backM:0.65;
+  const botM = opts.botM!=null?opts.botM:0.42;
+  const faces=[
+    {name:"front", w:w,h:h, tf:`translate3d(${-w/2}px,${-h/2}px,${d/2}px)`, m:frontM},
+    {name:"back",  w:w,h:h, tf:`translate3d(${-w/2}px,${-h/2}px,${-d/2}px) rotateY(180deg)`, m:backM},
+    {name:"right", w:d,h:h, tf:`translate3d(${w/2-d/2}px,${-h/2}px,0px) rotateY(90deg) translateZ(${d/2}px)` , m:sideM},
+    {name:"left",  w:d,h:h, tf:`translate3d(${-w/2+d/2}px,${-h/2}px,0px) rotateY(-90deg) translateZ(${d/2}px)`, m:sideM*0.95},
+    {name:"top",   w:w,h:d, tf:`translate3d(${-w/2}px,${-h/2}px,0px) rotateX(90deg) translateZ(${d/2}px)`, m:topM},
+    {name:"bottom",w:w,h:d, tf:`translate3d(${-w/2}px,${h/2-d/2}px,0px) rotateX(-90deg) translateZ(${d/2}px) translateY(${-d}px)`, m:botM}
+  ];
+  faces.forEach(f=>{
+    const fc=document.createElement("div");
+    fc.className="face f-"+f.name;
+    fc.style.width=(f.name==="right"||f.name==="left"?d:w)+"px";
+    fc.style.height=(f.name==="top"||f.name==="bottom"?d:h)+"px";
+    fc.style.transform=f.tf;
+    fc.style.background=shadeRGB(rgb,f.m);
+    fc.style.boxShadow="inset 0 0 8px rgba(0,0,0,0.25)";
+    el.appendChild(fc);
+  });
+  if(opts.glow){ el.style.filter=`drop-shadow(0 0 ${opts.glow}px ${shadeRGB(rgb,1.7)})`; }
+  return el;
+}
+
+/* ============================================================
+   頂層 App 狀態機：modeSelect → iceGame / fireGame → 返回 modeSelect
+   ============================================================ */
+const APP={ state:"modeSelect", selectedMode:"ice" };
+const titleScreen=document.getElementById("titleScreen");
+const iceGameEl=document.getElementById("iceGame");
+const fireGameEl=document.getElementById("fireGame");
+const cardIce=document.getElementById("cardIce");
+const cardFire=document.getElementById("cardFire");
+const modeInstr=document.getElementById("modeInstr");
+const modeConfirmBtn=document.getElementById("modeConfirmBtn");
+
+const MODE_INSTR={
+  ice:`<span class="tag">WASD/方向鍵</span>移動　<span class="tag">滑鼠/觸控拖曳</span>看/瞄準　<span class="tag">空白鍵/左鍵/發射鈕</span>發射冰彈<br>保護床不被打壞，撐到最後就贏！`,
+  fire:`<span class="tag">WASD</span>移動　<span class="tag">Space</span>跳躍（長按跳更高）　<span class="tag">←→/拖曳</span>轉鏡頭<br>跳過熔岩抵達終點，掉下去會回到最近的檢查點！`
+};
+
+function updateModeSelectUI(){
+  cardIce.classList.toggle("selected", APP.selectedMode==="ice");
+  cardFire.classList.toggle("selected", APP.selectedMode==="fire");
+  modeInstr.innerHTML = MODE_INSTR[APP.selectedMode];
+}
+function selectMode(mode){ APP.selectedMode=mode; updateModeSelectUI(); }
+cardIce.addEventListener("click",()=>selectMode("ice"));
+cardFire.addEventListener("click",()=>selectMode("fire"));
+cardIce.addEventListener("touchstart",e=>{ e.preventDefault(); selectMode("ice"); },{passive:false});
+cardFire.addEventListener("touchstart",e=>{ e.preventDefault(); selectMode("fire"); },{passive:false});
+
+function enterMode(mode){
+  APP.state=mode;
+  titleScreen.classList.add("hidden");
+  if(mode==="ice"){
+    iceGameEl.classList.remove("hidden");
+    fireGameEl.classList.add("hidden");
+    if(window.IceGame) window.IceGame.onEnter();
+  } else {
+    fireGameEl.classList.remove("hidden");
+    iceGameEl.classList.add("hidden");
+    if(window.FireGame) window.FireGame.onEnter();
+  }
+}
+function backToModeSelect(){
+  APP.state="modeSelect";
+  if(window.IceGame) window.IceGame.onExit();
+  if(window.FireGame) window.FireGame.onExit();
+  iceGameEl.classList.add("hidden");
+  fireGameEl.classList.add("hidden");
+  titleScreen.classList.remove("hidden");
+  updateModeSelectUI();
+}
+modeConfirmBtn.addEventListener("click",()=>{ enterMode(APP.selectedMode); });
+
+/* 標題畫面鍵盤操作：方向鍵/WASD 切換卡片，Enter/空白確認 */
+window.addEventListener("keydown",e=>{
+  if(APP.state!=="modeSelect"){
+    if(e.code==="Escape"){ backToModeSelect(); }
+    return;
+  }
+  if(["ArrowLeft","ArrowRight","ArrowUp","ArrowDown","KeyA","KeyD","KeyW","KeyS"].includes(e.code)){
+    e.preventDefault();
+    selectMode(APP.selectedMode==="ice"?"fire":"ice");
+  } else if(e.code==="Enter" || e.code==="Space"){
+    e.preventDefault();
+    enterMode(APP.selectedMode);
+  }
+});
+
+document.getElementById("iceBackBtn").addEventListener("click", backToModeSelect);
+document.getElementById("iceMenuBackBtn").addEventListener("click", backToModeSelect);
+document.getElementById("iceEndBackBtn").addEventListener("click", backToModeSelect);
+document.getElementById("fireBackBtn").addEventListener("click", backToModeSelect);
+document.getElementById("fireMenuBackBtn").addEventListener("click", backToModeSelect);
+document.getElementById("fireEndBackBtn").addEventListener("click", backToModeSelect);
+
+updateModeSelectUI();
+</script>
+
+<!-- ===================== 冰人床戰 3D 邏輯 ===================== -->
+<script>
+(function(){
+"use strict";
+
+/* ============ Web Audio 音效（全程式合成，無檔案） ============ */
+let actx=null;
+function ensureAudio(){
+  if(!actx){
+    try{ actx=new (window.AudioContext||window.webkitAudioContext)(); }catch(e){ actx=null; }
+  }
+}
+function beep(freq,dur,type,vol,slideTo){
+  if(!actx) return;
+  const t0=actx.currentTime;
+  const osc=actx.createOscillator();
+  const gain=actx.createGain();
+  osc.type=type||"sine";
+  osc.frequency.setValueAtTime(freq,t0);
+  if(slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(20,slideTo),t0+dur);
+  gain.gain.setValueAtTime(0.0001,t0);
+  gain.gain.exponentialRampToValueAtTime(vol||0.2,t0+0.015);
+  gain.gain.exponentialRampToValueAtTime(0.0001,t0+dur);
+  osc.connect(gain).connect(actx.destination);
+  osc.start(t0); osc.stop(t0+dur+0.02);
+}
+function sfxShoot(){ beep(760,0.13,"triangle",0.18,1400); }
+function sfxHit(){ beep(220,0.18,"sawtooth",0.22,80); beep(1200,0.06,"square",0.12,600); }
+function sfxFreeze(){ beep(1600,0.25,"sine",0.15,2600); }
+function sfxHurt(){ beep(140,0.25,"sawtooth",0.25,60); }
+function sfxScore(){ beep(660,0.09,"square",0.15,990); setTimeout(()=>beep(990,0.12,"square",0.15,1320),80); }
+function sfxWin(){ [660,880,1100,1320].forEach((f,i)=>setTimeout(()=>beep(f,0.22,"triangle",0.2),i*120)); }
+function sfxLose(){ [440,330,220].forEach((f,i)=>setTimeout(()=>beep(f,0.3,"sawtooth",0.2,f*0.6),i*140)); }
+
+/* ============ 3D 引擎（共用 buildCuboidEl，掛載進 iceWorld） ============ */
+const world=document.getElementById("iceWorld");
+const camera=document.getElementById("iceCamera");
+const scene=document.getElementById("iceScene");
+
+function makeCuboid(w,h,d,rgb,opts){
+  const el=buildCuboidEl(w,h,d,rgb,opts);
+  world.appendChild(el);
+  return el;
+}
+function setCuboid(el,x,y,z,ry,rx,sx,sy,sz){
+  ry=ry||0; rx=rx||0; sx=sx==null?1:sx; sy=sy==null?1:sy; sz=sz==null?1:sz;
+  el.style.transform=`translate3d(${x}px,${y}px,${z}px) rotateY(${ry}deg) rotateX(${rx}deg) scale3d(${sx},${sy},${sz})`;
+}
+
+/* 建立場景範圍：世界座標 y 軸向下為正（螢幕慣例），地面 y=0 */
+const ARENA_HALF=520;
+
+/* 地板：多片拼接方磚，做出冰面感與網格 */
+(function buildGround(){
+  const tile=90;
+  for(let gx=-ARENA_HALF;gx<ARENA_HALF;gx+=tile){
+    for(let gz=-ARENA_HALF;gz<ARENA_HALF;gz+=tile){
+      const light=((gx/tile + gz/tile) % 2 === 0);
+      const c = light? [70,150,190]:[54,120,160];
+      const t=makeCuboid(tile-2,14,tile-2,c,{topM:1.5,frontM:1.0,sideM:0.75,botM:0.3});
+      setCuboid(t, gx+tile/2, 7, gz+tile/2, 0,0);
+    }
+  }
+})();
+
+/* 場地邊界矮牆 (避免玩家一直往外跑) */
+(function buildWalls(){
+  const h=140, wallColor=[30,55,90];
+  const n=makeCuboid(ARENA_HALF*2, h, 26, wallColor); setCuboid(n, 0, -h/2+7, -ARENA_HALF-13, 0,0);
+  const s=makeCuboid(ARENA_HALF*2, h, 26, wallColor); setCuboid(s, 0, -h/2+7, ARENA_HALF+13, 0,0);
+  const e=makeCuboid(26, h, ARENA_HALF*2, wallColor); setCuboid(e, ARENA_HALF+13, -h/2+7, 0, 0,0);
+  const w=makeCuboid(26, h, ARENA_HALF*2, wallColor); setCuboid(w, -ARENA_HALF-13, -h/2+7, 0, 0,0);
+})();
+
+/* 中央幾座平台，增加立體層次 */
+const icePlatforms=[
+  {x:220,z:-160,w:160,h:34,d:160},
+  {x:-230,z:140,w:150,h:34,d:150},
+  {x:-40,z:-260,w:130,h:26,d:130},
+];
+icePlatforms.forEach(p=>{
+  const c=makeCuboid(p.w,p.h,p.d,[110,190,220],{topM:1.4});
+  setCuboid(c,p.x,-p.h/2+7,p.z,0,0);
+});
+
+/* 床 (要保護的目標) 位於場地中心 */
+const bedGroupPos={x:0,z:0};
+(function buildBed(){
+  const frame=makeCuboid(150,30,90,[200,70,60],{topM:1.3}); setCuboid(frame,0,-30+7,0,0,0);
+  const mattress=makeCuboid(140,20,80,[236,236,255],{topM:1.5}); setCuboid(mattress,0,-30-10+7,0,0,0);
+  const pillow=makeCuboid(40,16,70,[189,238,255],{topM:1.6}); setCuboid(pillow,-45,-30-24+7,0,0,0);
+  const headboard=makeCuboid(150,70,16,[120,60,55]); setCuboid(headboard,0,-70/2-30+7,-45-8,0,0);
+  const glow=makeCuboid(160,4,100,[130,220,255],{topM:2}); setCuboid(glow,0,7-46,0,0,0);
+})();
+
+/* ============ 角色建構 ============ (簡化 Roblox 風方塊人：頭/身/雙手/雙腳，多面受光) */
+function buildCharacter(accentRGB, sizeMul){
+  sizeMul=sizeMul||1;
+  const group={};
+  const legH=34*sizeMul, torsoH=46*sizeMul, headS=30*sizeMul, armH=40*sizeMul, limbW=16*sizeMul;
+  group.legL=makeCuboid(limbW,legH,limbW,[40,60,90]);
+  group.legR=makeCuboid(limbW,legH,limbW,[40,60,90]);
+  group.torso=makeCuboid(34*sizeMul,torsoH,20*sizeMul,accentRGB,{topM:1.25});
+  group.armL=makeCuboid(limbW*0.85,armH,limbW*0.85,accentRGB.map(v=>v*0.85));
+  group.armR=makeCuboid(limbW*0.85,armH,limbW*0.85,accentRGB.map(v=>v*0.85));
+  group.head=makeCuboid(headS,headS,headS,[220,235,245],{topM:1.5});
+  group.legH=legH; group.torsoH=torsoH; group.headS=headS; group.armH=armH; group.sizeMul=sizeMul;
+  return group;
+}
+function poseCharacter(g,x,y,z,facingDeg,walkPhase,hitStretch){
+  hitStretch = hitStretch||1;
+  const legSwing = Math.sin(walkPhase)*20;
+  const armSwing = Math.sin(walkPhase)*24;
+  const feetY = y;
+  const legY = feetY - g.legH/2;
+  setCuboid(g.legL, x, legY, z, facingDeg, legSwing*0.5, 1,1,1);
+  setCuboid(g.legR, x, legY, z, facingDeg, -legSwing*0.5, 1,1,1);
+  const torsoY = feetY - g.legH - g.torsoH/2*hitStretch;
+  setCuboid(g.torso, x, torsoY, z, facingDeg,0, 1, hitStretch, 1/Math.sqrt(hitStretch));
+  const armY = feetY - g.legH - g.torsoH*0.75;
+  setCuboid(g.armL, x, armY, z, facingDeg, -armSwing*0.4,1,1,1);
+  setCuboid(g.armR, x, armY, z, facingDeg, armSwing*0.4,1,1,1);
+  const headY = feetY - g.legH - g.torsoH - g.headS/2*hitStretch;
+  setCuboid(g.head, x, headY, z, facingDeg,0,1,1,1);
+}
+
+/* ============ 遊戲狀態機 ============ */
+const STATE={MENU:"menu",PLAY:"play",OVER:"over"};
+let gameState=STATE.MENU;
+
+/* 玩家 */
+const player={
+  x:0, z:220, y:0, facing:180,
+  hp:100, maxHp:100,
+  speed:210,
+  fireCooldown:0,
+  char:null,
+  walkPhase:0,
+  invuln:0,
+  stretch:1,
+};
+
+/* 攝影機（第三人稱越肩） */
+const camState={ dist:230, height:150, yaw:180, pitch:14, x:0,z:0,y:0 };
+
+/* 敵人 */
+let enemies=[];
+function spawnEnemy(){
+  const angle=rand(0,360)*DEG;
+  const r=rand(380,480);
+  const ex=Math.sin(angle)*r, ez=Math.cos(angle)*r;
+  const e={
+    x:ex, z:ez, hp:40, maxHp:40, speed:rand(55,85),
+    facing:0, walkPhase:rand(0,10), frozen:0, alive:true,
+    char:buildCharacter([90,200,230],0.95),
+    hitFlash:0, stretch:1,
+  };
+  enemies.push(e);
+}
+
+/* 冰彈 */
+let projectiles=[];
+function spawnProjectile(x,y,z,dirDeg,fromPlayer){
+  const rad=dirDeg*DEG;
+  const speed=520;
+  const el=makeCuboid(14,14,14,[190,245,255],{topM:1.8});
+  projectiles.push({
+    x,y,z, vx:Math.sin(rad)*speed, vz:Math.cos(rad)*speed, vy:-40,
+    life:1.4, el, fromPlayer
+  });
+}
+
+/* 粒子（擊中特效） */
+let particles=[];
+function spawnBurst(x,y,z,color,count){
+  for(let i=0;i<(count||10);i++){
+    const el=makeCuboid(6,6,6,color,{topM:1.6});
+    const ang=rand(0,360)*DEG;
+    const spd=rand(60,220);
+    particles.push({
+      x,y,z, vx:Math.sin(ang)*spd, vz:Math.cos(ang)*spd, vy:-rand(120,260),
+      gravity:520, life:rand(0.4,0.8), maxLife:0.8, el
+    });
+  }
+}
+
+/* 床耐久與分數 */
+let bedHp=100, bedMaxHp=100;
+let score=0;
+let bestScore=0;
+try{ bestScore=parseInt(localStorage.getItem("iceBedBest")||"0",10)||0; }catch(e){ bestScore=0; }
+
+/* 螢幕震動 / hit-stop */
+let shakeTime=0, shakeMag=0;
+let hitStopTimer=0;
+
+/* ============ 輸入 ============ */
+const keys={};
+window.addEventListener("keydown",e=>{
+  keys[e.code]=true;
+  if(gameState===STATE.PLAY && ["Space","ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+  if(e.code==="Space" && gameState===STATE.PLAY) tryFire();
+});
+window.addEventListener("keyup",e=>{ keys[e.code]=false; });
+
+let mouseYaw=0, mousePitchAdj=0;
+let dragging=false, lastMX=0,lastMY=0;
+scene.parentElement.addEventListener("mousedown",e=>{
+  if(gameState!==STATE.PLAY) return;
+  dragging=true; lastMX=e.clientX; lastMY=e.clientY;
+});
+window.addEventListener("mouseup",()=>{ dragging=false; });
+window.addEventListener("mousemove",e=>{
+  if(!dragging) return;
+  const dx=e.clientX-lastMX, dy=e.clientY-lastMY;
+  lastMX=e.clientX; lastMY=e.clientY;
+  mouseYaw += dx*0.25;
+  mousePitchAdj = clamp(mousePitchAdj + dy*0.12, -20, 20);
+});
+document.getElementById("iceStage").addEventListener("click",()=>{
+  if(gameState===STATE.PLAY) tryFire();
+});
+
+/* 觸控搖桿 */
+const touchLayer=document.getElementById("iceTouchLayer");
+let joyActive=false, joyVec={x:0,y:0}, joyTouchId=null;
+const joyZone=document.getElementById("iceJoyZone");
+const joyStick=document.getElementById("iceJoyStick");
+function isTouchDevice(){
+  return ('ontouchstart' in window) || navigator.maxTouchPoints>0;
+}
+joyZone.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  joyTouchId=t.identifier; joyActive=true;
+  updateJoy(t);
+},{passive:false});
+joyZone.addEventListener("touchmove",e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){ if(t.identifier===joyTouchId) updateJoy(t); }
+},{passive:false});
+joyZone.addEventListener("touchend",e=>{
+  for(const t of e.changedTouches){ if(t.identifier===joyTouchId){ joyActive=false; joyVec={x:0,y:0}; joyStick.style.transform="translate(0,0)"; } }
+});
+function updateJoy(t){
+  const rect=joyZone.getBoundingClientRect();
+  const cx=rect.left+rect.width/2, cy=rect.top+rect.height/2;
+  let dx=t.clientX-cx, dy=t.clientY-cy;
+  const max=48;
+  const dist=Math.min(Math.hypot(dx,dy),max);
+  const ang=Math.atan2(dy,dx);
+  dx=Math.cos(ang)*dist; dy=Math.sin(ang)*dist;
+  joyStick.style.transform=`translate(${dx}px,${dy}px)`;
+  joyVec={x:dx/max, y:dy/max};
+}
+
+const lookZone=document.getElementById("iceLookZone");
+let lookTouchId=null, lastLX=0,lastLY=0;
+lookZone.addEventListener("touchstart",e=>{
+  e.preventDefault();
+  const t=e.changedTouches[0];
+  lookTouchId=t.identifier; lastLX=t.clientX; lastLY=t.clientY;
+},{passive:false});
+lookZone.addEventListener("touchmove",e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier===lookTouchId){
+      const dx=t.clientX-lastLX, dy=t.clientY-lastLY;
+      lastLX=t.clientX; lastLY=t.clientY;
+      mouseYaw += dx*0.35;
+      mousePitchAdj = clamp(mousePitchAdj + dy*0.18, -20, 20);
+    }
+  }
+},{passive:false});
+lookZone.addEventListener("touchend",e=>{
+  for(const t of e.changedTouches){ if(t.identifier===lookTouchId) lookTouchId=null; }
+});
+
+const fireBtn=document.getElementById("iceFireBtn");
+fireBtn.addEventListener("touchstart",e=>{ e.preventDefault(); if(gameState===STATE.PLAY) tryFire(); },{passive:false});
+fireBtn.addEventListener("mousedown",e=>{ if(gameState===STATE.PLAY) tryFire(); });
+
+/* ============ 發射冰彈 ============ */
+function tryFire(){
+  ensureAudio();
+  if(player.fireCooldown>0) return;
+  player.fireCooldown=0.32;
+  const originY = -100;
+  const dir=player.facing;
+  spawnProjectile(player.x + Math.sin(dir*DEG)*26, originY, player.z + Math.cos(dir*DEG)*26, dir, true);
+  sfxShoot();
+  player.stretch=0.75;
+}
+
+/* ============ 浮動文字 ============ */
+function floatText(text,screenX,screenY,color){
+  const el=document.createElement("div");
+  el.className="ice-floatText";
+  el.textContent=text;
+  el.style.left=screenX+"px";
+  el.style.top=screenY+"px";
+  el.style.color=color||"#fff";
+  document.getElementById("iceCenterMsgs").appendChild(el);
+  setTimeout(()=>el.remove(),950);
+}
+
+/* ============ 碰撞/工具 ============ */
+function dist2D(x1,z1,x2,z2){ return Math.hypot(x1-x2,z1-z2); }
+
+/* ============ 重置/開始 ============ */
+function resetGame(){
+  player.x=0; player.z=220; player.facing=180; player.hp=player.maxHp; player.fireCooldown=0; player.invuln=1.0; player.stretch=1;
+  camState.yaw=180; mouseYaw=0; mousePitchAdj=0;
+  bedHp=bedMaxHp; score=0;
+  enemies.forEach(e=>{ e.char && Object.values(e.char).forEach(v=>{ if(v && v.remove) v.remove(); }); });
+  enemies=[];
+  projectiles.forEach(p=>p.el.remove()); projectiles=[];
+  particles.forEach(p=>p.el.remove()); particles=[];
+  for(let i=0;i<3;i++) spawnEnemy();
+  updateHUD();
+  document.getElementById("iceCrosshair").classList.remove("hidden");
+}
+
+function updateHUD(){
+  document.getElementById("iceScoreVal").textContent=score;
+  document.getElementById("icePlayerHealthFill").style.width=clamp(player.hp/player.maxHp*100,0,100)+"%";
+  document.getElementById("iceBedHealthFill").style.width=clamp(bedHp/bedMaxHp*100,0,100)+"%";
+}
+
+/* ============ 遊戲結束 ============ */
+function endGame(win){
+  gameState=STATE.OVER;
+  if(score>bestScore){ bestScore=score; try{ localStorage.setItem("iceBedBest",String(bestScore)); }catch(e){} }
+  document.getElementById("iceFinalScore").textContent=score;
+  document.getElementById("iceBestScoreEnd").textContent=bestScore;
+  document.getElementById("iceEndTitle").textContent= win? "床守住了！你贏了！" : "再挑戰一次！";
+  document.getElementById("iceEndDesc").textContent= win? "冰人成功守護了床，太厲害了！" : "床撐不住了，別灰心，冰人再冰一次一定行！";
+  document.getElementById("iceEndScreen").classList.remove("hidden");
+  document.getElementById("iceHud").classList.add("hidden");
+  document.getElementById("iceCrosshair").classList.add("hidden");
+  if(win) sfxWin(); else sfxLose();
+}
+
+/* ============ 主迴圈：固定時間步進 ============ */
+let lastTime=performance.now();
+let acc=0;
+const STEP=1/60;
+
+function update(dt){
+  if(gameState!==STATE.PLAY) return;
+
+  if(hitStopTimer>0){ hitStopTimer-=dt; dt*=0.15; }
+
+  let mx=0, mz=0;
+  if(keys["KeyW"]||keys["ArrowUp"]) mz-=1;
+  if(keys["KeyS"]||keys["ArrowDown"]) mz+=1;
+  if(keys["KeyA"]||keys["ArrowLeft"]) mx-=1;
+  if(keys["KeyD"]||keys["ArrowRight"]) mx+=1;
+  if(joyActive){ mx+=joyVec.x; mz+=joyVec.y; }
+  const mlen=Math.hypot(mx,mz);
+  if(mlen>0.001){
+    mx/=Math.max(mlen,1); mz/=Math.max(mlen,1);
+    const yawRad=camState.yaw*DEG;
+    const worldX = mx*Math.cos(yawRad) - mz*Math.sin(yawRad);
+    const worldZ = mx*Math.sin(yawRad) + mz*Math.cos(yawRad);
+    player.x += worldX*player.speed*dt;
+    player.z += worldZ*player.speed*dt;
+    player.facing = Math.atan2(worldX,worldZ)/DEG;
+    player.walkPhase += dt*8;
+  }
+  player.x=clamp(player.x,-ARENA_HALF+30,ARENA_HALF-30);
+  player.z=clamp(player.z,-ARENA_HALF+30,ARENA_HALF-30);
+
+  camState.yaw = (180 + mouseYaw) % 360;
+
+  player.fireCooldown=Math.max(0,player.fireCooldown-dt);
+  player.invuln=Math.max(0,player.invuln-dt);
+  player.stretch = lerp(player.stretch,1,dt*10);
+
+  enemies.forEach(en=>{
+    if(!en.alive) return;
+    if(en.frozen>0){ en.frozen-=dt; en.stretch=lerp(en.stretch,1,dt*6); return; }
+    const targetX=bedGroupPos.x, targetZ=bedGroupPos.z;
+    const dx=targetX-en.x, dz=targetZ-en.z;
+    const d=Math.hypot(dx,dz);
+    if(d>70){
+      const nx=dx/d, nz=dz/d;
+      en.x+=nx*en.speed*dt; en.z+=nz*en.speed*dt;
+      en.facing=Math.atan2(nx,nz)/DEG;
+      en.walkPhase+=dt*6;
+    } else {
+      en.attackTimer=(en.attackTimer||0)-dt;
+      if(en.attackTimer<=0){
+        en.attackTimer=1.1;
+        bedHp=clamp(bedHp-6,0,bedMaxHp);
+        shakeMag=Math.max(shakeMag,10); shakeTime=0.25;
+        sfxHurt();
+        updateHUD();
+        if(bedHp<=0){ endGame(false); }
+      }
+    }
+    if(player.invuln<=0 && dist2D(player.x,player.z,en.x,en.z)<38){
+      player.hp=clamp(player.hp-10,0,player.maxHp);
+      player.invuln=0.9;
+      shakeMag=Math.max(shakeMag,14); shakeTime=0.3; hitStopTimer=0.05;
+      document.getElementById("iceHitFlash").style.background="rgba(255,60,40,0.35)";
+      setTimeout(()=>{ document.getElementById("iceHitFlash").style.background="rgba(255,60,40,0)"; },100);
+      sfxHurt();
+      updateHUD();
+      if(player.hp<=0){ endGame(false); }
+    }
+    en.stretch=lerp(en.stretch,1,dt*8);
+  });
+
+  for(let i=projectiles.length-1;i>=0;i--){
+    const p=projectiles[i];
+    p.x+=p.vx*dt; p.z+=p.vz*dt; p.y+=p.vy*dt;
+    p.life-=dt;
+    let hit=false;
+    if(p.fromPlayer){
+      for(const en of enemies){
+        if(!en.alive || en.frozen>0) continue;
+        if(dist2D(p.x,p.z,en.x,en.z)<34){
+          en.hp-=20;
+          en.frozen=1.1;
+          en.stretch=1.4;
+          hit=true;
+          spawnBurst(p.x,p.y,p.z,[190,245,255],14);
+          const sx=window.innerWidth/2, sy=window.innerHeight*0.4;
+          floatText("命中！",sx+rand(-30,30),sy,"#bdeeff");
+          shakeMag=Math.max(shakeMag,6); shakeTime=0.15; hitStopTimer=0.04;
+          sfxHit(); sfxFreeze();
+          if(en.hp<=0 && en.alive){
+            en.alive=false;
+            score+=100;
+            sfxScore();
+            floatText("+100 擊退成功！",sx+rand(-30,30),sy-20,"#ffd23f");
+            spawnBurst(en.x,-70,en.z,[255,255,255],20);
+            setTimeout(()=>respawnEnemyLater(en),900);
+          }
+          updateHUD();
+          break;
+        }
+      }
+    }
+    if(hit || p.life<=0 || Math.abs(p.x)>ARENA_HALF+40 || Math.abs(p.z)>ARENA_HALF+40){
+      p.el.remove();
+      projectiles.splice(i,1);
+      continue;
+    }
+    setCuboid(p.el, p.x, p.y, p.z, 0, performance.now()*0.3%360);
+  }
+
+  for(let i=particles.length-1;i>=0;i--){
+    const pt=particles[i];
+    pt.vy+=pt.gravity*dt;
+    pt.x+=pt.vx*dt;
+    pt.y+=pt.vy*dt;
+    pt.z+=pt.vz*dt;
+    pt.life-=dt;
+    if(pt.life<=0){ pt.el.remove(); particles.splice(i,1); continue; }
+    const sc=clamp(pt.life/pt.maxLife,0,1);
+    setCuboid(pt.el, pt.x, pt.y, pt.z, 0,0, sc,sc,sc);
+  }
+
+  enemies=enemies.filter(e=>e.alive || e.pendingRemove);
+  if(enemies.filter(e=>e.alive).length < 3 && enemies.length<4 && Math.random()<0.01){
+    spawnEnemy();
+  }
+
+  if(shakeTime>0){ shakeTime-=dt; } else { shakeMag=lerp(shakeMag,0,dt*8); }
+}
+
+function respawnEnemyLater(oldEn){
+  Object.values(oldEn.char).forEach(v=>{ if(v && v.remove) v.remove(); });
+  const idx=enemies.indexOf(oldEn);
+  if(idx>=0) enemies.splice(idx,1);
+  if(gameState===STATE.PLAY) spawnEnemy();
+}
+
+/* ============ 渲染 ============ */
+function render(alpha){
+  const legPhase=player.walkPhase;
+  poseCharacter(player.char, player.x, player.y, player.z, player.facing, legPhase, player.stretch);
+  if(player.invuln>0 && Math.floor(player.invuln*12)%2===0){
+    Object.values(player.char).forEach(v=>{ if(v&&v.style) v.style.opacity="0.35"; });
+  } else {
+    Object.values(player.char).forEach(v=>{ if(v&&v.style) v.style.opacity="1"; });
+  }
+
+  enemies.forEach(en=>{
+    if(!en.alive){ Object.values(en.char).forEach(v=>{ if(v&&v.style) v.style.opacity="0"; }); return; }
+    poseCharacter(en.char, en.x, 0, en.z, en.facing, en.walkPhase, en.stretch);
+    Object.values(en.char).forEach(v=>{
+      if(v&&v.style){
+        v.style.opacity="1";
+        v.style.filter = en.frozen>0 ? "brightness(1.6) saturate(0.4) drop-shadow(0 0 6px #bdeeff)" : "none";
+      }
+    });
+  });
+
+  const yawRad=camState.yaw*DEG;
+  const pitch=camState.pitch+mousePitchAdj;
+  const camDist=camState.dist;
+  const camX = player.x - Math.sin(yawRad)*camDist;
+  const camZ = player.z - Math.cos(yawRad)*camDist;
+  const camY = -camState.height - pitch*2.2;
+
+  let shakeX=0, shakeY=0;
+  if(shakeMag>0.2){
+    shakeX=rand(-shakeMag,shakeMag);
+    shakeY=rand(-shakeMag,shakeMag);
+  }
+
+  world.style.transform =
+    `translate3d(${-camX+shakeX}px, ${-camY+shakeY}px, ${-camZ}px)`;
+  camera.style.transform =
+    `rotateX(${-pitch}deg) rotateY(${-camState.yaw}deg) translate3d(0,0,${0}px)`;
+}
+
+let iceRunning=true;
+function loop(now){
+  requestAnimationFrame(loop);
+  let dt=(now-lastTime)/1000;
+  lastTime=now;
+  dt=Math.min(dt,0.05);
+  if(!iceRunning) return;
+  acc+=dt;
+  let steps=0;
+  while(acc>=STEP && steps<6){
+    update(STEP);
+    acc-=STEP;
+    steps++;
+  }
+  render(acc/STEP);
+}
+requestAnimationFrame(loop);
+
+/* ============ 視窗尺寸適應（畫布/場景隨視窗縮放） ============ */
+function resize(){
+  const w=window.innerWidth, h=window.innerHeight;
+  scene.style.left=(w/2)+"px";
+  scene.style.top=(h/2)+"px";
+  scene.style.perspective= (h<600? 700: 900)+"px";
+}
+window.addEventListener("resize",resize);
+resize();
+
+/* ============ 觸控偵測，切換操作說明/顯示虛擬控制 ============ */
+if(isTouchDevice()){ touchLayer.classList.add("on"); }
+
+/* ============ 畫面切換按鈕 ============ */
+document.getElementById("iceStartBtn").addEventListener("click",()=>{
+  ensureAudio();
+  document.getElementById("iceMenuScreen").classList.add("hidden");
+  document.getElementById("iceHud").classList.remove("hidden");
+  gameState=STATE.PLAY;
+  resetGame();
+});
+document.getElementById("iceRetryBtn").addEventListener("click",()=>{
+  ensureAudio();
+  document.getElementById("iceEndScreen").classList.add("hidden");
+  document.getElementById("iceHud").classList.remove("hidden");
+  gameState=STATE.PLAY;
+  resetGame();
+});
+document.getElementById("iceBestScoreMenu").textContent=bestScore;
+
+/* 建立玩家角色（冰人：飽和 accent 色軀幹＋冰白頭部） */
+player.char=buildCharacter([255,106,61],1.05);
+
+/* ============ 對外介面（供 App 狀態機呼叫） ============ */
+window.IceGame={
+  onEnter(){
+    lastTime=performance.now(); acc=0; iceRunning=true;
+    document.getElementById("iceMenuScreen").classList.remove("hidden");
+    document.getElementById("iceEndScreen").classList.add("hidden");
+    document.getElementById("iceHud").classList.add("hidden");
+    gameState=STATE.MENU;
+    resize();
+  },
+  onExit(){
+    gameState=STATE.MENU;
+    document.getElementById("iceHud").classList.add("hidden");
+    document.getElementById("iceCrosshair").classList.add("hidden");
+  }
+};
+
+})();
+</script>
+
+<!-- ===================== 火人跑酷 3D 邏輯 ===================== -->
+<script>
+(function(){
+'use strict';
+
+const worldEl = document.getElementById('fireWorld');
+const sceneWrap = document.getElementById('fireSceneWrap');
+
+/* ---------- 音效（Web Audio 合成）---------- */
+let AC = null, muted = false;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+function beep(freq=440,dur=0.12,type='square',vol=0.13,slide=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function noiseBurst(dur=0.3, vol=0.15){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const n = Math.floor(ac.sampleRate*dur);
+  const buf = ac.createBuffer(1,n,ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1-i/n);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain(); g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  src.connect(g).connect(ac.destination); src.start();
+}
+document.getElementById('fireSoundBtn').addEventListener('click', ()=>{
+  muted = !muted;
+  document.getElementById('fireSoundBtn').textContent = muted ? '🔇' : '🔊';
+});
+
+/* ---------- 立方體建構（共用 buildCuboidEl，HSL 介面包一層） ---------- */
+function makeCuboid(w,h,d,hue,sat,light,opts){
+  const rgb = hslToRgb(hue,sat,light);
+  return buildCuboidEl(w,h,d,rgb,opts);
+}
+// 定位一個 cuboid wrapper 到世界座標 (x 右, y 上, z 前)，可加旋轉/縮放
+function place(el,x,y,z,ry,sx,sy,sz){
+  const t = `translate3d(${x}px, ${-y}px, ${z}px) rotateY(${ry||0}deg) scale3d(${sx||1},${sy||1},${sz||1})`;
+  el.style.transform = t;
+}
+
+/* ============================================================
+   關卡設計（起承轉合）：地板 tile 220px 間距，熔岩填補缺口
+   ============================================================ */
+const TILE = 220;
+const platforms = [];
+function addPlat(i, opts){
+  const p = Object.assign({ x:0, z:-i*TILE, w:180, d:180, y:0, type:'normal' }, opts);
+  p.baseZ = p.z; p.baseX = p.x;
+  platforms.push(p);
+  return p;
+}
+
+addPlat(0, { w:260, d:260, type:'start' });
+addPlat(1, {});
+addPlat(2, {});
+addPlat(3, { d:150 });
+addPlat(4, { d:150 });
+addPlat(5, { d:150, type:'checkpoint' });
+addPlat(6, { d:130, x:70 });
+addPlat(7, { d:130, x:-70 });
+addPlat(8, { d:140, w:140, moving:true, axis:'x', range:110, speed:1.1 });
+addPlat(9, { d:130, w:130 });
+addPlat(10,{ d:130, w:130, type:'checkpoint' });
+addPlat(11,{ d:120, w:120, moving:true, axis:'z', range:60, speed:1.6 });
+addPlat(12,{ d:120, w:120, x:90 });
+addPlat(13,{ d:120, w:120, x:-90 });
+addPlat(14,{ d:110, w:110, type:'checkpoint' });
+addPlat(15,{ d:110, w:110, moving:true, axis:'x', range:130, speed:1.9 });
+addPlat(16,{ d:110, w:110 });
+addPlat(17,{ w:300, d:300, type:'finish' });
+
+document.getElementById('fireCpTotal').textContent = platforms.filter(p=>p.type==='checkpoint').length + 1;
+
+/* ---------- 建立平台 DOM ---------- */
+platforms.forEach(p=>{
+  let hue=18, sat=70, light=40, glow=0;
+  if(p.type==='start') { hue=32; light=46; }
+  if(p.type==='checkpoint'){ hue=48; sat=85; light=52; glow=14; }
+  if(p.type==='finish'){ hue=140; sat=55; light=42; glow=22; }
+  if(p.moving){ hue=6; sat=80; light=45; }
+  const thick = 34;
+  p.el = makeCuboid(p.w, thick, p.d, hue, sat, light, glow?{glow}:null);
+  p.thick = thick;
+  worldEl.appendChild(p.el);
+  if(p.type==='checkpoint'){
+    const flag = makeCuboid(10,60,10,48,90,60,{glow:10});
+    p.flagEl = flag; worldEl.appendChild(flag);
+  }
+  if(p.type==='finish'){
+    const flag = makeCuboid(14,90,14,50,20,85,{glow:18});
+    p.flagEl = flag; worldEl.appendChild(flag);
+  }
+});
+
+// 熔岩海：一片巨大、微微起伏的發光平面鋪在整個關卡下方
+const lava = makeCuboid(2200, 20, TILE*(platforms.length+2), 14, 90, 42, {glow:26});
+worldEl.appendChild(lava);
+const LAVA_Y = -260;
+
+/* ---------- 火人角色（多部件立方體人偶，四面受光）---------- */
+const player = {
+  x:0, y:0, z:0, vx:0, vy:0, vz:0,
+  facing:0, grounded:false, coyote:0, jumpBuf:0, jumpHeld:false,
+  sx:1, sy:1, sz:1, groundPlat:null,
+  checkpoint:{x:0,y:0,z:0}, cpIndex:0,
+  alive:true, won:false,
+};
+const bodyGroup = document.createElement('div');
+bodyGroup.className='cuboid';
+worldEl.appendChild(bodyGroup);
+const torso = makeCuboid(34,40,22, 4, 90, 52, {glow:8});
+const head  = makeCuboid(26,26,26, 42, 95, 62, {glow:12});
+const armL  = makeCuboid(10,30,10, 4, 85, 42);
+const armR  = makeCuboid(10,30,10, 4, 85, 42);
+const legL  = makeCuboid(12,26,12, 14, 60, 22);
+const legR  = makeCuboid(12,26,12, 14, 60, 22);
+const flame = makeCuboid(16,20,16, 40, 100, 65, {glow:16});
+[torso,head,armL,armR,legL,legR,flame].forEach(e=>{ e.style.position='absolute'; bodyGroup.appendChild(e); });
+
+function shadowDisc(){
+  const d = document.createElement('div');
+  d.className='cuboid';
+  d.style.width='40px'; d.style.height='40px';
+  d.style.borderRadius='50%';
+  d.style.background='radial-gradient(ellipse at center, rgba(0,0,0,.55), transparent 70%)';
+  worldEl.appendChild(d);
+  return d;
+}
+const groundShadow = shadowDisc();
+
+/* ---------- 粒子（世界內小方塊，代表塵土/火花/慶祝彩帶）---------- */
+const particles = [];
+function spawnParticles(x,y,z,hue,n,speed,life,size){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2;
+    const up = Math.random()*speed*0.8+speed*0.3;
+    const el = makeCuboid(size,size,size, hue, 85, 60, null);
+    worldEl.appendChild(el);
+    particles.push({
+      el, x,y,z,
+      vx:Math.cos(a)*speed*(0.4+Math.random()*0.6),
+      vz:Math.sin(a)*speed*(0.4+Math.random()*0.6),
+      vy: up,
+      life, maxLife:life
+    });
+  }
+}
+function updateParticles(dt){
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx*dt; p.z += p.vz*dt; p.y += p.vy*dt; p.vy -= 900*dt;
+    p.life -= dt;
+    if(p.life<=0 || p.y < LAVA_Y-40){ p.el.remove(); particles.splice(i,1); continue; }
+    const a = Math.max(0, p.life/p.maxLife);
+    p.el.style.opacity = a;
+    place(p.el, p.x, p.y, p.z, 0, a*1.2+0.2, a*1.2+0.2, a*1.2+0.2);
+  }
+  if(particles.length>260){
+    const extra = particles.splice(0, particles.length-260);
+    extra.forEach(p=>p.el.remove());
+  }
+}
+
+/* ---------- 飄字 ---------- */
+function floatText(msg, color){
+  const t = document.getElementById('fireToast');
+  t.textContent = msg;
+  t.style.color = color || 'var(--fire-fire3)';
+  t.style.transition = 'none';
+  t.style.opacity = '1';
+  t.style.transform = 'translate(-50%,0px)';
+  requestAnimationFrame(()=>{
+    t.style.transition = 'opacity .9s ease, transform .9s ease';
+    t.style.opacity = '0';
+    t.style.transform = 'translate(-50%,-40px)';
+  });
+}
+
+/* ---------- 輸入：鍵盤 ---------- */
+const key = {};
+addEventListener('keydown', e=>{
+  if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Space','KeyW','KeyA','KeyS','KeyD'].includes(e.code) && running) e.preventDefault();
+  if(e.code==='Space' && !key['Space']) input.jumpBuffer = 0.12;
+  key[e.code] = true;
+});
+addEventListener('keyup', e=>{ key[e.code]=false; if(e.code==='Space') player.jumpHeld=false; });
+
+const input = { mx:0, mz:0, camYawDelta:0, jump:false, jumpBuffer:0 };
+
+/* ---------- 觸控：浮動搖桿 + 拖曳轉鏡頭 + 跳躍鈕 ---------- */
+const joyZone = document.getElementById('fireJoyZone');
+const camZone = document.getElementById('fireCamZone');
+const joyBase = document.getElementById('fireJoyBase');
+const joyStick = document.getElementById('fireJoyStick');
+let joyTouchId = null, joyOrigin = {x:0,y:0};
+let camTouchId = null, camLastX = 0;
+
+function showJoy(x,y){
+  joyBase.style.display='block'; joyStick.style.display='block';
+  joyBase.style.left = (x-52)+'px'; joyBase.style.top = (y-52)+'px';
+  joyStick.style.left = (x-24)+'px'; joyStick.style.top = (y-24)+'px';
+}
+function hideJoy(){ joyBase.style.display='none'; joyStick.style.display='none'; input.mx=0; input.mz=0; }
+
+joyZone.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  joyTouchId = t.identifier; joyOrigin = { x:t.clientX, y:t.clientY };
+  showJoy(t.clientX, t.clientY);
+}, {passive:false});
+joyZone.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier!==joyTouchId) continue;
+    let dx = t.clientX - joyOrigin.x, dy = t.clientY - joyOrigin.y;
+    const dist = Math.min(60, Math.hypot(dx,dy));
+    const ang = Math.atan2(dy,dx);
+    dx = Math.cos(ang)*dist; dy = Math.sin(ang)*dist;
+    joyStick.style.left = (joyOrigin.x+dx-24)+'px';
+    joyStick.style.top = (joyOrigin.y+dy-24)+'px';
+    input.mx = dx/60; input.mz = dy/60;
+  }
+}, {passive:false});
+function joyEnd(e){
+  for(const t of e.changedTouches){ if(t.identifier===joyTouchId){ joyTouchId=null; hideJoy(); } }
+}
+joyZone.addEventListener('touchend', joyEnd, {passive:false});
+joyZone.addEventListener('touchcancel', joyEnd, {passive:false});
+
+camZone.addEventListener('touchstart', e=>{
+  e.preventDefault();
+  const t = e.changedTouches[0]; camTouchId = t.identifier; camLastX = t.clientX;
+}, {passive:false});
+camZone.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(t.identifier!==camTouchId) continue;
+    input.camYawDelta += (t.clientX - camLastX) * 0.35;
+    camLastX = t.clientX;
+  }
+}, {passive:false});
+function camEnd(e){ for(const t of e.changedTouches){ if(t.identifier===camTouchId) camTouchId=null; } }
+camZone.addEventListener('touchend', camEnd, {passive:false});
+camZone.addEventListener('touchcancel', camEnd, {passive:false});
+
+const jumpBtn = document.getElementById('fireJumpBtn');
+jumpBtn.addEventListener('touchstart', e=>{ e.preventDefault(); if(!input.jump) input.jumpBuffer=0.12; input.jump=true; }, {passive:false});
+jumpBtn.addEventListener('touchend', e=>{ e.preventDefault(); input.jump=false; player.jumpHeld=false; }, {passive:false});
+
+// 滑鼠拖曳轉鏡頭（桌機加分手感）
+let mouseDown=false, mouseLastX=0;
+sceneWrap.addEventListener('mousedown', e=>{ mouseDown=true; mouseLastX=e.clientX; });
+addEventListener('mouseup', ()=>mouseDown=false);
+addEventListener('mousemove', e=>{ if(mouseDown){ input.camYawDelta += (e.clientX-mouseLastX)*0.3; mouseLastX=e.clientX; } });
+
+/* ---------- 物理參數（依指南公式：由設計值反推）---------- */
+const JUMP_H = 150, JUMP_T = 0.36;
+const GRAV_UP = 2*JUMP_H/(JUMP_T*JUMP_T);
+const GRAV_DN = GRAV_UP*1.6;
+const MAX_FALL = 900;
+const RUN_SPEED = 210;
+const ACCEL = 2400, DECEL = 3000, AIR_ACCEL = ACCEL*0.65;
+const COYOTE_T = 0.09, BUFFER_T = 0.12;
+
+/* ---------- 相機 ---------- */
+let camYaw = 0, camPitch = -24, camDist = 340, camHeight = 260;
+let camX=0, camY=90, camZ=0;
+
+/* ---------- 遊戲狀態機 ---------- */
+let timeElapsed = 0, running = false;
+let shakeMag = 0, freeze = 0, hitstop = 0;
+
+function resetPlayerTo(pt){
+  player.x = pt.x; player.y = pt.y + (pt.thick||34)/2; player.z = pt.z;
+  player.vx=player.vy=player.vz=0;
+  player.groundPlat = pt;
+  camX = player.x; camZ = player.z;
+}
+
+function startRun(){
+  timeElapsed = 0; running = true; player.won=false; player.alive=true;
+  const start = platforms[0];
+  player.checkpoint = { x:start.x, y:start.y, z:start.z, thick:start.thick };
+  player.cpIndex = 0;
+  document.getElementById('fireCpNum').textContent = '0';
+  resetPlayerTo(player.checkpoint);
+  document.getElementById('fireHud').classList.remove('hidden');
+  document.getElementById('fireScreens').style.display='none';
+  const best = localStorage.getItem('fireParkourBest');
+  document.getElementById('fireBest').textContent = best? Number(best).toFixed(1)+'s' : '--';
+}
+
+function respawn(){
+  hitstop = 0.15; shakeMag = 10;
+  noiseBurst(0.3, 0.18); beep(160,0.25,'sawtooth',0.16,-120);
+  spawnParticles(player.x, player.y+10, player.z, 12, 22, 260, 0.6, 8);
+  resetPlayerTo(player.checkpoint);
+  floatText('掉下去了，重新開始！', '#ff9d2e');
+}
+
+function reachCheckpoint(p, idx){
+  if(idx <= player.cpIndex) return;
+  player.cpIndex = idx;
+  player.checkpoint = { x:p.x, y:p.y, z:p.z, thick:p.thick };
+  document.getElementById('fireCpNum').textContent = String(idx);
+  beep(700,0.09,'square',0.14); setTimeout(()=>beep(980,0.14,'square',0.14),90);
+  spawnParticles(p.x, p.y+40, p.z, 48, 18, 200, 0.7, 7);
+  floatText('檢查點！', '#ffd23c');
+}
+
+function winRun(){
+  running = false; player.won = true;
+  const best = Number(localStorage.getItem('fireParkourBest')||Infinity);
+  if(timeElapsed < best){ localStorage.setItem('fireParkourBest', timeElapsed.toFixed(2)); }
+  document.getElementById('fireFinalTime').textContent = timeElapsed.toFixed(1);
+  document.getElementById('fireFinalBest').textContent = Math.min(timeElapsed, isFinite(best)?best:timeElapsed).toFixed(1);
+  document.getElementById('fireScreens').style.display='flex';
+  document.getElementById('fireWinPanel').classList.remove('hidden');
+  document.getElementById('fireMenuPanel').classList.add('hidden');
+  spawnParticles(player.x, player.y+60, player.z, 50, 60, 320, 1.4, 9);
+  spawnParticles(player.x, player.y+60, player.z, 6, 40, 300, 1.2, 8);
+  beep(523,0.12,'square',0.16); setTimeout(()=>beep(659,0.12,'square',0.16),120);
+  setTimeout(()=>beep(784,0.12,'square',0.16),240); setTimeout(()=>beep(1047,0.22,'square',0.18),360);
+}
+
+document.getElementById('fireStartBtn').addEventListener('click', ()=>{ audio(); startRun(); });
+document.getElementById('fireAgainBtn').addEventListener('click', ()=>{
+  document.getElementById('fireWinPanel').classList.add('hidden');
+  document.getElementById('fireMenuPanel').classList.remove('hidden');
+  startRun();
+});
+
+/* ---------- 碰撞：AABB 找出玩家腳下平台 ---------- */
+function updateMovingPlatforms(t){
+  platforms.forEach(p=>{
+    if(!p.moving) return;
+    const off = Math.sin(t*p.speed) * p.range;
+    if(p.axis==='x') p.x = p.baseX + off; else p.z = p.baseZ + off;
+    place(p.el, p.x, p.y - p.thick/2, p.z, 0);
+  });
+}
+function findSupport(){
+  const px=player.x, pz=player.z;
+  let best=null, bestDist=Infinity;
+  for(const p of platforms){
+    const hw=p.w/2+18, hd=p.d/2+18;
+    if(px>p.x-hw && px<p.x+hw && pz>p.z-hd && pz<p.z+hd){
+      const top = p.y + p.thick/2;
+      const dist = player.y - top;
+      if(dist>=-40 && dist<40 && dist<bestDist){ bestDist=dist; best=p; }
+    }
+  }
+  return best;
+}
+
+/* ---------- 固定時間步進主迴圈 ---------- */
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+let animT = 0;
+
+function physicsStep(dt){
+  animT += dt;
+  if(!running) return;
+  timeElapsed += dt;
+  document.getElementById('fireTimer').textContent = timeElapsed.toFixed(1);
+
+  if(key['ArrowLeft']) camYaw -= 110*dt;
+  if(key['ArrowRight']) camYaw += 110*dt;
+  camYaw += input.camYawDelta * 0.6; input.camYawDelta *= Math.pow(0.0001, dt);
+
+  let mx = input.mx, mz = input.mz;
+  if(key['KeyA']) mx -= 1; if(key['KeyD']) mx += 1;
+  if(key['KeyW']) mz -= 1; if(key['KeyS']) mz += 1;
+  const mlen = Math.hypot(mx,mz);
+  if(mlen>1){ mx/=mlen; mz/=mlen; }
+
+  const sinY = Math.sin(camYaw*Math.PI/180), cosY = Math.cos(camYaw*Math.PI/180);
+  const worldMX = mx*cosY - mz*sinY;
+  const worldMZ = mx*sinY + mz*cosY;
+  const wantSpeed = mlen>0.05 ? RUN_SPEED : 0;
+  const targetVX = worldMX*wantSpeed, targetVZ = worldMZ*wantSpeed;
+  const accel = player.grounded ? ACCEL : AIR_ACCEL;
+  const rate = wantSpeed>0 ? accel : DECEL;
+  player.vx += clampStep(targetVX-player.vx, rate*dt);
+  player.vz += clampStep(targetVZ-player.vz, rate*dt);
+
+  if(mlen>0.05){ player.facing = Math.atan2(worldMX, worldMZ)*180/Math.PI; }
+
+  if(player.grounded) player.coyote = COYOTE_T; else player.coyote -= dt;
+  input.jumpBuffer = Math.max(0, input.jumpBuffer - dt);
+  if(key['Space'] && !player.jumpHeld){ input.jumpBuffer = 0.12; }
+  const wantJump = input.jumpBuffer>0;
+  if(wantJump && player.coyote>0){
+    player.vy = Math.sqrt(2*GRAV_UP*JUMP_H);
+    player.grounded = false; player.coyote = 0; input.jumpBuffer = 0; player.jumpHeld = true;
+    player.sy = 1.35; player.sx = 0.72; player.sz = 0.72;
+    beep(220,0.15,'square',0.13, 380);
+    spawnParticles(player.x, player.y+4, player.z, 24, 6, 90, 0.35, 6);
+  }
+  if(!key['Space'] && !input.jump && player.vy>0 && player.jumpHeld){ player.vy *= 0.5; }
+
+  let g = player.vy>0 ? GRAV_UP : GRAV_DN;
+  if(Math.abs(player.vy) < 60) g *= 0.5;
+  player.vy -= g*dt;
+  if(player.vy < -MAX_FALL) player.vy = -MAX_FALL;
+
+  player.x += player.vx*dt;
+  player.z += player.vz*dt;
+  player.y += player.vy*dt;
+
+  updateMovingPlatforms(animT);
+
+  const support = (player.vy<=0) ? findSupport() : null;
+  const wasGrounded = player.grounded;
+  if(support){
+    const top = support.y + support.thick/2;
+    if(player.y <= top+2){
+      player.y = top;
+      if(!wasGrounded){
+        beep(120,0.07,'triangle',0.11);
+        spawnParticles(player.x, player.y+2, player.z, 20, 5, 90, 0.4, 6);
+        player.sy = 0.65; player.sx = 1.3; player.sz = 1.3;
+      }
+      player.vy = 0; player.grounded = true; player.jumpHeld = false; player.groundPlat = support;
+      const idx = platforms.indexOf(support);
+      if(support.type==='checkpoint') reachCheckpoint(support, idx);
+      if(support.type==='finish' && !player.won) winRun();
+    }
+  } else {
+    player.grounded = false;
+  }
+
+  if(player.y < LAVA_Y+30){ respawn(); }
+
+  player.sx += (1-player.sx)*10*dt; player.sy += (1-player.sy)*10*dt; player.sz += (1-player.sz)*10*dt;
+
+  camX += (player.x-camX) * (1-Math.pow(0.0008, dt));
+  camZ += (player.z-camZ) * (1-Math.pow(0.0008, dt));
+  camY += (player.y-camY) * (1-Math.pow(0.002, dt));
+
+  updateParticles(dt);
+  shakeMag *= Math.pow(0.002, dt);
+}
+function clampStep(delta, maxStep){
+  if(delta>maxStep) return maxStep;
+  if(delta<-maxStep) return -maxStep;
+  return delta;
+}
+
+function render(){
+  const shx = (Math.random()*2-1)*shakeMag, shy=(Math.random()*2-1)*shakeMag;
+  worldEl.style.transform =
+    `translateZ(${camDist}px) rotateX(${camPitch}deg) rotateY(${camYaw}deg) `+
+    `translate3d(${-camX+shx}px, ${-(camY+camHeight)+shy}px, ${-camZ}px)`;
+
+  for(const p of platforms){
+    place(p.el, p.x, p.y - p.thick/2, p.z, 0);
+    if(p.flagEl) place(p.flagEl, p.x, p.y+45, p.z-p.d/2+16, 0);
+  }
+  place(lava, 0, LAVA_Y-10, -TILE*(platforms.length-2)/2, 0);
+
+  const bob = player.grounded ? Math.sin(animT*10)*3*Math.min(1,Math.hypot(player.vx,player.vz)/RUN_SPEED) : 0;
+  place(bodyGroup, player.x, player.y, player.z, player.facing, player.sx, player.sy, player.sz);
+  torso.style.transform = `translate3d(0px, ${-(20+bob)}px, 0px)`;
+  head.style.transform  = `translate3d(0px, ${-(53+bob)}px, 0px)`;
+  const swing = player.grounded ? Math.sin(animT*10)*22*Math.min(1,Math.hypot(player.vx,player.vz)/RUN_SPEED) : 8;
+  armL.style.transform = `translate3d(-22px, ${-(24+bob)}px, 0px) rotateX(${swing}deg)`;
+  armR.style.transform = `translate3d(22px, ${-(24+bob)}px, 0px) rotateX(${-swing}deg)`;
+  legL.style.transform = `translate3d(-9px, ${-6}px, 0px) rotateX(${-swing*1.1}deg)`;
+  legR.style.transform = `translate3d(9px, ${-6}px, 0px) rotateX(${swing*1.1}deg)`;
+  flame.style.transform = `translate3d(0px, ${-(74+bob+Math.sin(animT*14)*2)}px, 0px) scale3d(1,${1+Math.sin(animT*16)*0.15},1)`;
+
+  place(groundShadow, player.x, LAVA_Y+31, player.z, 0);
+  groundShadow.style.opacity = Math.max(0.15, 1-(player.y-LAVA_Y)/400)+'';
+
+  document.getElementById('fireBest').textContent = (function(){
+    const b = localStorage.getItem('fireParkourBest'); return b? Number(b).toFixed(1)+'s':'--';
+  })();
+}
+
+let fireActive=true;
+function frame(now){
+  requestAnimationFrame(frame);
+  let delta = Math.min((now-last)/1000, 0.1);
+  last = now;
+  if(!fireActive) return;
+  if(hitstop>0){ hitstop -= delta; render(); return; }
+  acc += delta;
+  while(acc>=STEP){ physicsStep(STEP); acc -= STEP; }
+  render();
+}
+requestAnimationFrame(frame);
+
+/* ---------- 響應式：依視窗大小微調視角距離，畫面永不變形 ---------- */
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  const small = Math.min(w,h) < 480;
+  camDist = small ? 300 : 360;
+  sceneWrap.style.perspective = (small? 780 : 900) + 'px';
+}
+addEventListener('resize', resize); resize();
+
+/* ============ 對外介面（供 App 狀態機呼叫） ============ */
+window.FireGame={
+  onEnter(){
+    last=performance.now(); acc=0; fireActive=true;
+    document.getElementById('fireMenuPanel').classList.remove('hidden');
+    document.getElementById('fireWinPanel').classList.add('hidden');
+    document.getElementById('fireScreens').style.display='flex';
+    document.getElementById('fireHud').classList.add('hidden');
+    running=false;
+    resize();
+  },
+  onExit(){
+    running=false;
+    document.getElementById('fireHud').classList.add('hidden');
+  }
+};
+
+})();
+</script>
+</body>
+</html>
