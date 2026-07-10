@@ -1,0 +1,580 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>Roblox障礙賽</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1c2c;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #muteBtn{position:absolute;top:10px;right:10px;width:48px;height:48px;border-radius:50%;
+    background:rgba(20,20,40,.6);border:2px solid #41a6f6;color:#fff;font-size:20px;z-index:5;
+    display:flex;align-items:center;justify-content:center;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="muteBtn">🔊</button>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+// ===== 輸入 =====
+const input = { left:false, right:false, action:false, actionBuffer:0 };
+const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
+                 Space:'action', ArrowUp:'action', KeyW:'action' };
+addEventListener('keydown', e => {
+  const a = KEYMAP[e.code]; if(!a) return; e.preventDefault();
+  if(a === 'action' && !input.action) input.actionBuffer = 0.12;
+  input[a] = true;
+});
+addEventListener('keyup', e => { const a = KEYMAP[e.code]; if(a) input[a] = false; });
+
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX - r.left) / canvas._scale, y:(t.clientY - r.top) / canvas._scale };
+}
+function handleTouches(e){
+  e.preventDefault();
+  const wasAction = input.action;
+  input.left = input.right = input.action = false;
+  for(const t of e.touches){
+    const p = touchPos(t);
+    if(p.x < GAME_W * 0.25) input.left = true;
+    else if(p.x < GAME_W * 0.5) input.right = true;
+    else input.action = true;
+  }
+  if(input.action && !wasAction) input.actionBuffer = 0.12;
+}
+for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
+  canvas.addEventListener(ev, handleTouches, { passive:false });
+
+// ===== 音效 =====
+let AC = null, muted = false;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime + dur);
+}
+const sndJump = () => beep(220, 0.13, 'square', 0.12, +380);
+const sndLand = () => beep(120, 0.06, 'triangle', 0.08);
+const sndCoin = () => { beep(988, 0.07, 'square', 0.12); setTimeout(()=>beep(1319,0.13,'square',0.12), 70); };
+const sndCheckpoint = () => { beep(660,0.08,'square',0.13); setTimeout(()=>beep(880,0.1,'square',0.13),90); setTimeout(()=>beep(1100,0.15,'square',0.13),180); };
+const sndHurt = () => beep(180, 0.22, 'sawtooth', 0.18, -140);
+const sndWin = () => { [660,880,1100,1320].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.15),i*110)); };
+document.getElementById('muteBtn').addEventListener('click', ()=>{
+  muted = !muted; document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+});
+
+// ===== 調色盤：夜色霓虹（Roblox 感） =====
+const PAL = { bg1:'#0d0221', bg2:'#261447', block:'#3d2b6b', blockTop:'#5a3fa0',
+  accent:'#00f0ff', pink:'#ff2975', gold:'#fff700', white:'#f6f6f6', danger:'#ff2975' };
+
+// ===== 粒子 =====
+const parts = [];
+function burst(x, y, color, n = 12, speed = 220){
+  for(let i = 0; i < n; i++){
+    const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7);
+    parts.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0.5, color });
+  }
+}
+function updateParts(dt){
+  for(const p of parts){ p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 600*dt; p.life -= dt; }
+  for(let i = parts.length-1; i>=0; i--) if(parts[i].life<=0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life*2);
+    ctx.fillStyle = p.color; ctx.fillRect(p.x-3, p.y-3, 6, 6);
+  }
+  ctx.globalAlpha = 1;
+}
+// 飄字
+const floaters = [];
+function addFloater(x,y,text,color){ floaters.push({x,y,text,color,life:0.6}); }
+function updateFloaters(dt){
+  for(const f of floaters){ f.y -= 40*dt; f.life -= dt; }
+  for(let i=floaters.length-1;i>=0;i--) if(floaters[i].life<=0) floaters.splice(i,1);
+}
+function drawFloaters(){
+  ctx.textAlign='center'; ctx.font='bold 18px sans-serif';
+  for(const f of floaters){ ctx.globalAlpha = Math.max(0,f.life/0.6); ctx.fillStyle=f.color; ctx.fillText(f.text, f.x, f.y); }
+  ctx.globalAlpha = 1;
+}
+
+// ===== 關卡資料：三段起承轉合，橫向捲軸 obby =====
+// platforms: {x,y,w,h,move:{axis,range,speed}}  spikes: {x,y,w,h}  coins:{x,y}  checkpoints:{x,y}
+const LEVEL_LEN = 5400;
+const GROUND_Y = 460;
+function buildLevel(){
+  const platforms = [];
+  const spikes = [];
+  const coins = [];
+  const checkpoints = [];
+  // 起：安全地面 + 教學跳躍
+  platforms.push({x:0,y:GROUND_Y,w:520,h:80});
+  platforms.push({x:600,y:GROUND_Y,w:160,h:80});
+  coins.push({x:660,y:GROUND_Y-60});
+  platforms.push({x:840,y:GROUND_Y,w:160,h:80});
+  spikes.push({x:770,y:GROUND_Y-24,w:60,h:24});
+  checkpoints.push({x:900,y:GROUND_Y-70});
+
+  // 承：坑加深、加浮空平台
+  platforms.push({x:1080,y:GROUND_Y-40,w:120,h:40});
+  platforms.push({x:1280,y:GROUND_Y-90,w:120,h:40});
+  coins.push({x:1340,y:GROUND_Y-140});
+  platforms.push({x:1480,y:GROUND_Y-40,w:120,h:40});
+  spikes.push({x:1200,y:GROUND_Y+40,w:80,h:24}); // 坑底裝飾用（視覺上在地面缺口）
+  platforms.push({x:1680,y:GROUND_Y,w:260,h:80});
+  checkpoints.push({x:1760,y:GROUND_Y-70});
+
+  // 移動平台段落
+  platforms.push({x:2020,y:GROUND_Y-60,w:110,h:30,move:{axis:'y',range:90,speed:1.1,base:GROUND_Y-60}});
+  platforms.push({x:2220,y:GROUND_Y-60,w:110,h:30,move:{axis:'y',range:90,speed:1.3,phase:2,base:GROUND_Y-60}});
+  coins.push({x:2065,y:GROUND_Y-110}); coins.push({x:2265,y:GROUND_Y-110});
+  platforms.push({x:2420,y:GROUND_Y,w:220,h:80});
+  checkpoints.push({x:2480,y:GROUND_Y-70});
+
+  // 轉：尖刺連續跳 + 水平移動平台
+  spikes.push({x:2640,y:GROUND_Y-24,w:200,h:24});
+  platforms.push({x:2900,y:GROUND_Y-30,w:130,h:120});
+  platforms.push({x:3120,y:GROUND_Y-110,w:110,h:26,move:{axis:'x',range:140,speed:0.9,base:3120}});
+  coins.push({x:3175,y:GROUND_Y-160});
+  platforms.push({x:3420,y:GROUND_Y-60,w:120,h:40});
+  spikes.push({x:3260,y:GROUND_Y+40,w:140,h:24});
+  platforms.push({x:3620,y:GROUND_Y,w:200,h:80});
+  checkpoints.push({x:3680,y:GROUND_Y-70});
+
+  // 高塔攀爬
+  platforms.push({x:3900,y:GROUND_Y-40,w:110,h:26});
+  platforms.push({x:4060,y:GROUND_Y-130,w:110,h:26});
+  platforms.push({x:3900,y:GROUND_Y-220,w:110,h:26});
+  coins.push({x:3955,y:GROUND_Y-270});
+  platforms.push({x:4060,y:GROUND_Y-310,w:110,h:26});
+  spikes.push({x:3820,y:GROUND_Y+40,w:400,h:24});
+
+  // 合：終點展示
+  platforms.push({x:4300,y:GROUND_Y-260,w:300,h:26,move:{axis:'y',range:60,speed:1.0,base:GROUND_Y-260}});
+  coins.push({x:4380,y:GROUND_Y-310});
+  coins.push({x:4460,y:GROUND_Y-310});
+  platforms.push({x:4700,y:GROUND_Y-40,w:600,h:120});
+  checkpoints.push({x:4760,y:GROUND_Y-110});
+  const goal = {x:5180,y:GROUND_Y-160,w:60,h:120};
+  return {platforms, spikes, coins, checkpoints, goal};
+}
+let LV = buildLevel();
+
+// ===== 玩家：Roblox 風方塊人（頭+軀幹+四肢） =====
+function makePlayer(){
+  return {
+    x:60, y:GROUND_Y-56, w:30, h:56, vx:0, vy:0,
+    grounded:false, coyote:0, facing:1,
+    sx:1, sy:1, walkT:0,
+    respawnX:60, respawnY:GROUND_Y-56,
+    dead:false, deadT:0,
+    color:'#ff2975',
+  };
+}
+let player = makePlayer();
+
+const G_UP = 1660, G_DOWN = G_UP*1.6, V0 = -630, MAX_FALL = 900;
+const RUN_SPEED = 300, GROUND_ACC = 2400, GROUND_DEC = 3000, AIR_ACC = GROUND_ACC*0.65, TURN_ACC = GROUND_ACC*2;
+
+let cam = { x:0, y:0 };
+let shake = 0, freeze = 0;
+let score = { coins:0, best: Number(localStorage.getItem('roblox_obby_best')||0) };
+let lastCheckpoint = null;
+let elapsed = 0;
+
+function movePlatform(p, t){
+  if(!p.move) return;
+  const ph = p.move.phase || 0;
+  const off = Math.sin(t*p.move.speed + ph) * p.move.range;
+  if(p.move.axis === 'y') p.y = p.move.base + off;
+  else p.x = p.move.base + off;
+}
+
+function aabb(a,b){ return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+
+function resetPlayerToCheckpoint(){
+  player.x = player.respawnX; player.y = player.respawnY;
+  player.vx = 0; player.vy = 0; player.dead = false;
+}
+
+function killPlayer(){
+  if(player.dead) return;
+  player.dead = true; player.deadT = 0;
+  shake = 10; freeze = 0.15;
+  burst(player.x+player.w/2, player.y+player.h/2, PAL.pink, 24, 260);
+  sndHurt();
+}
+
+// ===== 狀態機 =====
+let state, timeElapsed = 0;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+const menuState = {
+  t:0,
+  enter(){ this.t = 0; },
+  update(dt){ this.t += dt; if(input.actionBuffer > 0){ input.actionBuffer = 0; setState(playState); } },
+  draw(){
+    drawSky();
+    ctx.fillStyle = PAL.white; ctx.textAlign='center';
+    ctx.font = 'bold 52px sans-serif';
+    ctx.fillStyle = PAL.accent;
+    ctx.fillText('Roblox 障礙賽', GAME_W/2, 170);
+    ctx.fillStyle = PAL.white;
+    ctx.font = '22px sans-serif';
+    ctx.fillText('跳過尖刺、踩穩平台，一路衝到終點旗！', GAME_W/2, 230);
+    ctx.font = '18px sans-serif';
+    ctx.fillText('電腦：方向鍵/AD 移動、空白鍵跳躍　｜　平板：左半移動、右半跳躍', GAME_W/2, 270);
+    const bob = Math.sin(this.t*3)*6;
+    ctx.font = 'bold 26px sans-serif';
+    ctx.fillStyle = PAL.gold;
+    ctx.fillText('▶ 按空白鍵 / 點擊開始 ◀', GAME_W/2, 330+bob);
+    if(score.best>0){
+      ctx.font='16px sans-serif'; ctx.fillStyle=PAL.white;
+      ctx.fillText('最佳金幣: '+score.best, GAME_W/2, 380);
+    }
+    drawBlockyDemo(this.t);
+  }
+};
+
+function drawBlockyDemo(t){
+  const bx = GAME_W/2 - 15, by = 400 + Math.sin(t*4)*4;
+  drawCharacter(bx, by, 1, 1, 1, Math.sin(t*6)*0.3, '#00f0ff');
+}
+
+const playState = {
+  enter(){
+    LV = buildLevel();
+    player = makePlayer();
+    lastCheckpoint = { x:player.x, y:player.y };
+    score.coins = 0;
+    elapsed = 0;
+    cam.x = 0;
+  },
+  update(dt){
+    elapsed += dt;
+    for(const p of LV.platforms) movePlatform(p, elapsed);
+
+    if(player.dead){
+      player.deadT += dt;
+      if(player.deadT > 0.5){
+        resetPlayerToCheckpoint();
+      }
+      updateParts(dt); updateFloaters(dt);
+      return;
+    }
+
+    // 水平移動
+    const wantLeft = input.left, wantRight = input.right;
+    let targetVx = 0;
+    if(wantLeft && !wantRight) targetVx = -RUN_SPEED;
+    else if(wantRight && !wantLeft) targetVx = RUN_SPEED;
+    if(targetVx !== 0) player.facing = targetVx > 0 ? 1 : -1;
+
+    const accel = player.grounded
+      ? (Math.sign(targetVx) !== Math.sign(player.vx) && player.vx !== 0 ? TURN_ACC : (targetVx===0?GROUND_DEC:GROUND_ACC))
+      : AIR_ACC;
+    if(player.vx < targetVx) player.vx = Math.min(targetVx, player.vx + accel*dt);
+    else if(player.vx > targetVx) player.vx = Math.max(targetVx, player.vx - accel*dt);
+
+    // 跳躍（coyote + buffer + 可變跳高）
+    if(player.grounded) player.coyote = 0.09; else player.coyote -= dt;
+    if(input.actionBuffer > 0 && player.coyote > 0){
+      player.vy = V0; player.grounded = false; player.coyote = 0; input.actionBuffer = 0;
+      player.sx = 0.7; player.sy = 1.4; player.jumpCut = false;
+      burst(player.x+player.w/2, player.y+player.h, PAL.accent, 6, 120);
+      sndJump();
+    }
+    if(!input.action && player.vy < 0 && !player.jumpCut){ player.vy *= 0.45; player.jumpCut = true; }
+
+    // 重力（上慢下快 + 頂點懸浮）
+    const g = player.vy < 0 ? G_UP : G_DOWN;
+    const apex = Math.abs(player.vy) < 40 ? 0.5 : 1;
+    player.vy += g * apex * dt;
+    player.vy = Math.min(player.vy, MAX_FALL);
+
+    // 分軸移動 + 碰撞
+    player.x += player.vx * dt;
+    const box = ()=>({x:player.x+6,y:player.y,w:player.w-12,h:player.h});
+    for(const p of LV.platforms){
+      if(aabb(box(), p)){
+        if(player.vx > 0) player.x = p.x - player.w + 6;
+        else if(player.vx < 0) player.x = p.x + p.w - 6;
+      }
+    }
+    player.x = Math.max(0, Math.min(LEVEL_LEN, player.x));
+
+    const wasGrounded = player.grounded;
+    player.grounded = false;
+    player.y += player.vy * dt;
+    for(const p of LV.platforms){
+      const b = box();
+      if(aabb(b, p)){
+        if(player.vy > 0){ player.y = p.y - player.h; player.vy = 0; player.grounded = true; }
+        else if(player.vy < 0){ player.y = p.y + p.h; player.vy = 0; }
+      }
+    }
+    if(player.grounded && !wasGrounded){
+      player.sx = 1.4; player.sy = 0.6;
+      burst(player.x+player.w/2, player.y+player.h, '#ffffff', 4, 100);
+      sndLand();
+    }
+    // 掉出畫面 = 死亡
+    if(player.y > GAME_H + 100) killPlayer();
+
+    // 尖刺碰撞（碰撞箱縮小 25%，寬容）
+    const hurtBox = { x:player.x+player.w*0.15, y:player.y+player.h*0.15, w:player.w*0.7, h:player.h*0.7 };
+    for(const s of LV.spikes){ if(aabb(hurtBox, s)){ killPlayer(); break; } }
+
+    // 彈回
+    player.sx += (1 - player.sx) * 12 * dt;
+    player.sy += (1 - player.sy) * 12 * dt;
+    if(Math.abs(player.vx) > 10 && player.grounded) player.walkT += dt*9; else player.walkT += dt*2;
+
+    // 金幣
+    for(const c of LV.coins){
+      if(c.taken) continue;
+      const d = Math.hypot((c.x)-(player.x+player.w/2), (c.y)-(player.y+player.h/2));
+      if(d < 34){
+        c.taken = true; score.coins++;
+        burst(c.x, c.y, PAL.gold, 12, 180);
+        addFloater(c.x, c.y-10, '+金幣', PAL.gold);
+        sndCoin();
+      }
+    }
+    // 檢查點
+    for(const cp of LV.checkpoints){
+      if(cp.hit) continue;
+      const d = Math.hypot(cp.x-(player.x+player.w/2), cp.y-(player.y+player.h/2));
+      if(d < 50){
+        cp.hit = true; lastCheckpoint = { x: cp.x - player.w/2, y: cp.y - player.h/2 };
+        player.respawnX = lastCheckpoint.x; player.respawnY = lastCheckpoint.y;
+        addFloater(cp.x, cp.y-30, '檢查點！', PAL.accent);
+        burst(cp.x, cp.y, PAL.accent, 14, 160);
+        sndCheckpoint();
+      }
+    }
+    // 終點
+    const g2 = LV.goal;
+    if(aabb(box(), {x:g2.x,y:g2.y,w:g2.w,h:g2.h})){
+      setState(winState);
+      return;
+    }
+
+    // 相機跟隨（緩動）
+    const targetCamX = Math.max(0, Math.min(LEVEL_LEN - GAME_W, player.x - GAME_W*0.4));
+    cam.x += (targetCamX - cam.x) * (1 - Math.pow(0.01, dt));
+
+    shake *= Math.pow(0.001, dt);
+    updateParts(dt); updateFloaters(dt);
+  },
+  draw(){
+    drawSky();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    ctx.translate(-cam.x, 0);
+    drawParallax();
+    for(const p of LV.platforms) drawPlatform(p);
+    for(const s of LV.spikes) drawSpikes(s);
+    for(const c of LV.coins) if(!c.taken) drawCoin(c);
+    for(const cp of LV.checkpoints) drawCheckpoint(cp);
+    drawGoal(LV.goal);
+    drawParts();
+    drawFloaters();
+    if(!player.dead || player.deadT < 0.3) drawPlayerEnt();
+    ctx.restore();
+    drawHud();
+  }
+};
+function drawPlayerEnt(){
+  const bob = player.grounded && Math.abs(player.vx)>10 ? Math.sin(player.walkT)*4 : 0;
+  drawCharacter(player.x, player.y - (player.sy-1)*10, player.sx, player.sy, player.facing, bob*0.02, player.color);
+}
+
+const winState = {
+  enter(){ this.t = 0; if(score.coins > score.best){ score.best = score.coins; localStorage.setItem('roblox_obby_best', score.best); } sndWin(); burst(GAME_W/2, GAME_H/2, PAL.gold, 40, 260); },
+  update(dt){
+    this.t += dt;
+    if(this.t > 0.6 && input.actionBuffer > 0){ input.actionBuffer = 0; setState(playState); }
+    updateParts(dt); updateFloaters(dt);
+    if(Math.random()<0.15) burst(Math.random()*GAME_W, -10, [PAL.gold,PAL.accent,PAL.pink][Math.floor(Math.random()*3)], 1, 40);
+  },
+  draw(){
+    drawSky();
+    ctx.save(); drawParts(); ctx.restore();
+    ctx.fillStyle = PAL.white; ctx.textAlign='center';
+    ctx.font = 'bold 46px sans-serif'; ctx.fillStyle = PAL.gold;
+    ctx.fillText('通關成功！', GAME_W/2, 220);
+    ctx.font = '24px sans-serif'; ctx.fillStyle = PAL.white;
+    ctx.fillText('收集金幣：'+score.coins+'　最佳：'+score.best, GAME_W/2, 270);
+    ctx.font = 'bold 22px sans-serif'; ctx.fillStyle = PAL.accent;
+    ctx.fillText('按空白鍵 / 點擊 再玩一次', GAME_W/2, 330);
+  }
+};
+
+function drawSky(){
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0, PAL.bg1); g.addColorStop(1, PAL.bg2);
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,GAME_H);
+  // 星星
+  ctx.fillStyle = 'rgba(255,255,255,.5)';
+  for(let i=0;i<40;i++){
+    const x = (i*97 + (state===playState? -cam.x*0.05:0)) % GAME_W;
+    const y = (i*53) % (GAME_H*0.6);
+    ctx.fillRect(((x%GAME_W)+GAME_W)%GAME_W, y, 2, 2);
+  }
+}
+function drawParallax(){
+  // 遠山
+  ctx.fillStyle = 'rgba(90,63,160,0.35)';
+  for(let i=0;i<12;i++){
+    const bx = i*500 - (cam.x*0.2)%500;
+    ctx.beginPath();
+    ctx.moveTo(bx, GROUND_Y+40); ctx.lineTo(bx+250, GROUND_Y-140); ctx.lineTo(bx+500, GROUND_Y+40);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillRect(0, GROUND_Y+80, LEVEL_LEN+GAME_W, 200);
+  ctx.fillStyle = 'rgba(61,43,107,0.5)';
+  for(let i=0;i<12;i++){
+    const bx = i*300 - (cam.x*0.5)%300;
+    ctx.fillRect(bx, GROUND_Y-40, 140, 120);
+  }
+}
+function drawBlockFace(x,y,w,h,top,side){
+  ctx.fillStyle = side; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle = top; ctx.fillRect(x,y,w,8);
+}
+function drawPlatform(p){
+  drawBlockFace(p.x,p.y,p.w,p.h, PAL.blockTop, PAL.block);
+  ctx.strokeStyle = 'rgba(0,240,255,0.25)'; ctx.lineWidth=2;
+  ctx.strokeRect(p.x+1,p.y+1,p.w-2,p.h-2);
+}
+function drawSpikes(s){
+  const n = Math.max(1, Math.round(s.w/24));
+  const sw = s.w/n;
+  ctx.fillStyle = PAL.danger;
+  for(let i=0;i<n;i++){
+    ctx.beginPath();
+    const bx = s.x+i*sw;
+    ctx.moveTo(bx, s.y+s.h); ctx.lineTo(bx+sw/2, s.y); ctx.lineTo(bx+sw, s.y+s.h);
+    ctx.closePath(); ctx.fill();
+  }
+}
+function drawCoin(c){
+  const t = elapsed*4;
+  const sx = Math.abs(Math.cos(t));
+  ctx.save(); ctx.translate(c.x, c.y);
+  ctx.scale(Math.max(0.15,sx), 1);
+  ctx.fillStyle = PAL.gold; ctx.beginPath(); ctx.arc(0,0,14,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffa72e'; ctx.beginPath(); ctx.arc(0,0,8,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  // 地面陰影
+}
+function drawCheckpoint(cp){
+  ctx.strokeStyle = cp.hit ? PAL.accent : 'rgba(255,255,255,.4)';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(cp.x, cp.y+40); ctx.lineTo(cp.x, cp.y-40); ctx.stroke();
+  ctx.fillStyle = cp.hit ? PAL.accent : 'rgba(255,255,255,.3)';
+  ctx.beginPath(); ctx.moveTo(cp.x, cp.y-40); ctx.lineTo(cp.x+26, cp.y-30); ctx.lineTo(cp.x, cp.y-20); ctx.closePath(); ctx.fill();
+}
+function drawGoal(g){
+  ctx.fillStyle = '#8c5a3c'; ctx.fillRect(g.x+g.w/2-4, g.y, 6, g.h);
+  const wave = Math.sin(elapsed*5)*6;
+  ctx.fillStyle = PAL.gold;
+  ctx.beginPath();
+  ctx.moveTo(g.x+g.w/2+2, g.y);
+  ctx.lineTo(g.x+g.w/2+50+wave, g.y+16);
+  ctx.lineTo(g.x+g.w/2+2, g.y+32);
+  ctx.closePath(); ctx.fill();
+}
+function drawCharacter(x,y,sx,sy,facing,tiltT,color){
+  ctx.save();
+  ctx.translate(x+15, y+56);
+  ctx.scale(sx*facing, sy);
+  // 陰影
+  ctx.restore();
+  ctx.save();
+  ctx.translate(x+15, y+56);
+  ctx.scale(sx, sy);
+  const legSwing = Math.sin(tiltT*20)*8;
+  // 腿
+  ctx.fillStyle = '#2b2b3a';
+  ctx.fillRect(-11, -22+legSwing*0.3, 8, 22);
+  ctx.fillRect(3, -22-legSwing*0.3, 8, 22);
+  // 軀幹
+  ctx.fillStyle = color;
+  ctx.fillRect(-14, -44, 28, 26);
+  ctx.fillStyle = 'rgba(255,255,255,.2)';
+  ctx.fillRect(-14, -44, 28, 6);
+  // 手臂
+  ctx.fillStyle = color;
+  ctx.fillRect(facing>=0?-20:12, -42, 7, 20);
+  ctx.fillRect(facing>=0?13:-20, -42, 7, 20);
+  // 頭
+  ctx.fillStyle = '#ffd9a0';
+  ctx.fillRect(-13, -66, 26, 24);
+  ctx.fillStyle='rgba(0,0,0,.15)'; ctx.fillRect(-13,-66,26,4);
+  // 臉
+  ctx.fillStyle = '#1a1c2c';
+  const eyeX = facing>=0?4:-10;
+  ctx.fillRect(eyeX, -58, 4, 4); ctx.fillRect(eyeX-10*facing+ (facing>=0?-4:8), -58, 4, 4);
+  ctx.restore();
+}
+function drawHud(){
+  ctx.textAlign='left'; ctx.font='bold 20px sans-serif'; ctx.fillStyle=PAL.gold;
+  ctx.fillText('💰 '+score.coins, 16, 32);
+  ctx.textAlign='right'; ctx.fillStyle=PAL.white; ctx.font='16px sans-serif';
+  ctx.fillText('進度 '+Math.min(100,Math.round(player.x/LEVEL_LEN*100))+'%', GAME_W-16, 28);
+  // 進度條
+  ctx.fillStyle='rgba(255,255,255,.2)'; ctx.fillRect(GAME_W-216,34,200,8);
+  ctx.fillStyle=PAL.accent; ctx.fillRect(GAME_W-216,34,200*Math.min(1,player.x/LEVEL_LEN),8);
+}
+
+// ===== 主迴圈 =====
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while(acc >= STEP){
+    if(freeze > 0){ freeze -= STEP; acc -= STEP; continue; }
+    input.actionBuffer = Math.max(0, input.actionBuffer - STEP);
+    state.update(STEP);
+    acc -= STEP;
+  }
+  state.draw();
+}
+setState(menuState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
