@@ -81,8 +81,8 @@
       <h1>飯店入住體驗</h1>
       <div class="rule"></div>
       <p>AMY 和 RUBY 一起入住飯店！先在庭園撿起行李箱，走進大廳向服務人員辦理入住拿到房卡，
-        搭電梯上樓，走進自己的房間房間放好行李、躺上床休息。路上順便撿 6 顆星星，
-        還可以去浴缸泡澡放鬆一下！</p>
+        搭電梯上樓，走進房間、躺上任何一張床就算入住完成。路上順便撿 6 顆星星，
+        兩人都可以去浴缸泡澡，也能到衣櫃換上泳裝，搭樓梯到頂樓泳池真的跳下去游泳！</p>
       <div class="keys">
         <b>AMY</b>：<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> 移動<br>
         <span class="r"><b style="color:var(--pink)">RUBY</b></span>：<kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> 移動<br>
@@ -176,7 +176,7 @@ const sfx = {
 
 /* ---------- 世界（三個場景：庭園／大廳／客房） ---------- */
 const WORLD = { w: 900, h: 560 };
-const AREA_LABEL = { outdoor:'飯店庭園', lobby:'大廳', room:'雙人客房' };
+const AREA_LABEL = { outdoor:'飯店庭園', lobby:'大廳', room:'雙人客房', rooftop:'頂樓泳池' };
 
 const AREAS = {
   outdoor: {
@@ -189,7 +189,7 @@ const AREAS = {
   },
   lobby: {
     doors: [
-      {x:16,y:420,w:56,h:80,to:'outdoor',ex:734,ey:300,label:'走出大門'},
+      {x:16,y:420,w:56,h:80,to:'outdoor',ex:400,ey:480,label:'走出大門'},
       {x:760,y:190,w:90,h:160,to:'room',ex:110,ey:470,label:'搭電梯上樓'}
     ],
     counter: { x:340, y:60, w:220, h:100 },
@@ -197,13 +197,21 @@ const AREAS = {
     stars: [ {x:200,y:260},{x:620,y:420} ]
   },
   room: {
-    doors: [ {x:16,y:440,w:56,h:80,to:'lobby',ex:790,ey:300,label:'搭電梯下樓'} ],
+    doors: [
+      {x:16,y:440,w:56,h:80,to:'lobby',ex:400,ey:300,label:'搭電梯下樓'},
+      {x:812,y:472,w:60,h:66,to:'rooftop',ex:150,ey:520,label:'樓梯上頂樓'}
+    ],
     wallX: 450, doorGapY: [200,270],
-    bedA: { x:60, y:330, w:150, h:120 },
+    bedA: { x:60, y:330, w:150, h:110 },
     wardrobe: { x:60, y:90, w:90, h:130 },
-    bedB: { x:700, y:330, w:150, h:120 },
+    bedB: { x:700, y:330, w:150, h:110 },
     tv: { x:820, y:110, w:60, h:50 },
     bathtub: { x:670, y:90, w:150, h:110 }
+  },
+  rooftop: {
+    doors: [ {x:410,y:470,w:80,h:70,to:'room',ex:600,ey:300,label:'樓梯下樓'} ],
+    pool: { x:220, y:150, w:460, h:260 },
+    sunbeds: [ [120,200],[120,280],[740,200],[740,280] ]
   }
 };
 
@@ -230,14 +238,15 @@ function makePlayer(idx, ctrl){
     dir: 1, moving:false, walk:0, speed: 150,
     hasSuitcase:false, hasKey:false,
     stage: 0,        // 0 撿行李 1 拿房卡 2 回房休息 3 完成
-    lying:false, bathing:false,
+    lying:false, bathing:false, swimming:false, nearWardrobe:false,
+    outfit:'normal', // 'normal' | 'swim'
     squash:0
   };
 }
 let p1 = makePlayer(0,'wasd'), p2 = makePlayer(1,'arrows');
 let players = [p1,p2];
 
-const S = { scene:'title', area:'outdoor', time:0, starsGot:0, over:false, doneCount:0, staffLine:0, staffTalkT:0 };
+const S = { scene:'title', area:'outdoor', time:0, starsGot:0, over:false, doneCount:0, staffLine:0, staffTalkT:0, doorCooldown:0 };
 let best = null;
 try{ best = JSON.parse(localStorage.getItem('hotel2_best')||'null'); }catch(e){}
 
@@ -365,8 +374,9 @@ function movePlayer(p, dx, dy, dt){
   if(p.moving && (p.lying||p.bathing)){ p.lying=false; p.bathing=false; }
   if(p.moving){
     dx/=len; dy/=len;
-    let nx = clamp(p.x + dx*p.speed*dt, 24, WORLD.w-24);
-    let ny = clamp(p.y + dy*p.speed*dt, 24, WORLD.h-24);
+    const spd = p.swimming ? p.speed*.6 : p.speed;
+    let nx = clamp(p.x + dx*spd*dt, 24, WORLD.w-24);
+    let ny = clamp(p.y + dy*spd*dt, 24, WORLD.h-24);
     // 客房場景牆壁碰撞（僅允許從門縫穿過）
     if(S.area==='room'){
       const A = AREAS.room, wx = A.wallX, gap = A.doorGapY;
@@ -387,16 +397,18 @@ function changeArea(to, ex, ey){
   S.area = to;
   $('areaTxt').textContent = AREA_LABEL[to];
   loadAreaObjects(to);
-  players.forEach((p,i)=>{ p.x = ex + i*40; p.y = ey; p.lying=false; p.bathing=false; });
+  players.forEach((p,i)=>{ p.x = ex + i*40; p.y = ey; p.lying=false; p.bathing=false; p.swimming=false; });
+  S.doorCooldown = 0.6;
   sfx.door();
   showHint('來到了「'+AREA_LABEL[to]+'」');
 }
 function updateDoors(){
+  if(S.doorCooldown>0) return;
   const A = AREAS[S.area];
   for(const d of A.doors){
     for(const p of players){
       if(inZone(p,d)){
-        if(d.to==='room') sfx.elevator();
+        if(d.to==='room' || d.to==='lobby') sfx.elevator();
         changeArea(d.to, d.ex, d.ey);
         return;
       }
@@ -422,19 +434,42 @@ function updateTasks(p){
       updateTaskLabels(); showHint(p.name+'：搭電梯回房休息吧！');
     }
   }else if(S.area==='room' && p.stage===2){
-    const bed = p.idx===0 ? AREAS.room.bedA : AREAS.room.bedB;
-    if(inZone(p,bed)){
+    if(inZone(p,AREAS.room.bedA) || inZone(p,AREAS.room.bedB)){
       p.lying=true; p.stage=3; p.squash=1; p.moving=false;
       sfx.sleep(); floatText(p.x,p.y,'入住完成！','#ff6cc7');
       updateTaskLabels();
       S.doneCount++;
       if(S.doneCount>=2 && !S.over) endGame();
     }
+  }
+  if(S.area==='room'){
     const bt = AREAS.room.bathtub;
     if(!p.bathing && inZone(p,bt) && dist(p.x,p.y, bt.x+bt.w/2, bt.y+bt.h/2) < 60){
       p.bathing = true; p.moving=false; sfx.splash();
       floatText(p.x,p.y,'泡澡好舒服～','#38e1ff');
     }
+    updateWardrobe(p);
+  }
+  if(S.area==='rooftop') updateSwim(p);
+}
+function updateWardrobe(p){
+  const wd = AREAS.room.wardrobe;
+  const near = p.x>wd.x-24 && p.x<wd.x+wd.w+24 && p.y>wd.y-24 && p.y<wd.y+wd.h+24;
+  if(near && !p.nearWardrobe){
+    p.outfit = p.outfit==='swim' ? 'normal' : 'swim';
+    sfx.blip();
+    floatText(p.x,p.y, p.outfit==='swim' ? '換上泳裝！':'換回便服', '#9a6bff');
+  }
+  p.nearWardrobe = near;
+}
+function updateSwim(p){
+  const pl = AREAS.rooftop.pool;
+  const inPool = p.x>pl.x && p.x<pl.x+pl.w && p.y>pl.y && p.y<pl.y+pl.h;
+  if(inPool && !p.swimming){
+    p.swimming = true; sfx.splash();
+    floatText(p.x,p.y,'跳進泳池游泳！','#38e1ff');
+  }else if(!inPool && p.swimming){
+    p.swimming = false;
   }
 }
 function updateStars(){
@@ -456,6 +491,7 @@ function update(dt){
   S.time += dt;
   $('clockTxt').textContent = fmtTime(S.time);
   S.staffTalkT = Math.max(0, S.staffTalkT - dt);
+  S.doorCooldown = Math.max(0, S.doorCooldown - dt);
 
   let dx1=0,dy1=0;
   if(keys['KeyW']) dy1--; if(keys['KeyS']) dy1++;
@@ -542,6 +578,7 @@ function drawBubbles(){
 /* ---------- 繪製角色 ---------- */
 function drawPlayer(p, t){
   if(p.bathing) return; // 泡澡時改由浴缸場景繪製半身
+  if(p.swimming){ drawSwimmer(p,t); return; }
   const [sx,sy] = toScreen(p.x,p.y);
   const sc = scale;
   ctx.save();
@@ -559,14 +596,15 @@ function drawPlayer(p, t){
   const sq = p.squash>0 ? 1-Math.sin(p.squash*Math.PI)*.14 : 1;
 
   // 腳
-  ctx.fillStyle='#2a3346';
+  ctx.fillStyle = p.outfit==='swim' ? '#f0c8a0' : '#2a3346';
   ctx.fillRect(-9*sc, (10+Math.max(0,walkA*.3))*sc, 7*sc, 16*sc);
   ctx.fillRect(2*sc, (10+Math.max(0,-walkA*.3))*sc, 7*sc, 16*sc);
 
   // 身體
+  const bodyH = (p.outfit==='swim' ? 17 : 24) * sc * sq;
   ctx.fillStyle=p.color;
   ctx.beginPath();
-  ctx.roundRect(-13*sc, -10*sc, 26*sc, 24*sc*sq, 8*sc);
+  ctx.roundRect(-13*sc, -10*sc, 26*sc, bodyH, 8*sc);
   ctx.fill();
 
   // 手臂
@@ -624,6 +662,29 @@ function drawPlayer(p, t){
     ctx.fillStyle='rgba(255,255,255,.85)';
     ctx.fillText(p.name, sx, sy-46*sc);
   }
+}
+
+function drawSwimmer(p, t){
+  const [sx,sy] = toScreen(p.x,p.y);
+  const sc = scale;
+  ctx.save();
+  ctx.globalAlpha=.5; ctx.strokeStyle='#eaffff'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.ellipse(sx,sy,16*sc,6*sc,0,0,Math.PI*2); ctx.stroke();
+  ctx.restore();
+  const stroke = Math.sin(t*6+p.x)*8;
+  ctx.strokeStyle=p.color; ctx.lineWidth=4*sc; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(sx-9*sc,sy); ctx.lineTo(sx-17*sc, sy+stroke*sc*.35); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(sx+9*sc,sy); ctx.lineTo(sx+17*sc, sy-stroke*sc*.35); ctx.stroke();
+  ctx.fillStyle=p.color; ctx.beginPath(); ctx.ellipse(sx,sy,12*sc,7*sc,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#f0c8a0'; ctx.beginPath(); ctx.arc(sx, sy-9*sc, 8*sc,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle=p.hair; ctx.beginPath(); ctx.arc(sx, sy-12*sc, 8.5*sc, Math.PI,0); ctx.fill();
+  ctx.fillStyle='#20242e';
+  ctx.beginPath(); ctx.arc(sx-3*sc, sy-9*sc, 1*sc,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx+3*sc, sy-9*sc, 1*sc,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1*sc;
+  ctx.beginPath(); ctx.arc(sx, sy-5*sc, 2.4*sc, .2, Math.PI-.2); ctx.stroke();
+  ctx.font='bold 11px sans-serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,.85)';
+  ctx.fillText(p.name, sx, sy-28*sc);
 }
 
 /* ---------- 服務人員 ---------- */
@@ -857,6 +918,68 @@ function drawRoom(t){
   ctx.fillRect(dx+d.w/2*scale+2*scale,dy+4*scale,(d.w/2-6)*scale,(d.h-8)*scale);
   ctx.font=(11*scale)+'px sans-serif'; ctx.fillStyle='#eaf1ff';
   ctx.fillText('電梯', dx+d.w*scale/2, dy-8*scale);
+
+  // 樓梯（往頂樓泳池）
+  const st = A.doors[1];
+  const [stx,sty]=toScreen(st.x,st.y);
+  ctx.fillStyle='#5a4432'; ctx.beginPath(); ctx.roundRect(stx,sty,st.w*scale,st.h*scale,6*scale); ctx.fill();
+  ctx.fillStyle='#3a2c22';
+  for(let i=0;i<4;i++) ctx.fillRect(stx+4*scale, sty+(6+i*13)*scale, st.w*scale-8*scale, 4*scale);
+  ctx.font=(11*scale)+'px sans-serif'; ctx.fillStyle='#eaf1ff'; ctx.textAlign='center';
+  ctx.fillText('樓梯上頂樓', stx+st.w*scale/2, sty-8*scale);
+}
+
+/* ---------- 場景：頂樓泳池 ---------- */
+function drawRooftop(t){
+  const [ox,oy] = toScreen(0,0);
+  const skyH = 140*scale;
+  const grad = ctx.createLinearGradient(0,oy,0,oy+skyH);
+  grad.addColorStop(0,'#5aa8ff'); grad.addColorStop(1,'#cdeeff');
+  ctx.fillStyle=grad; ctx.fillRect(ox,oy,WORLD.w*scale,skyH);
+  ctx.fillStyle='#ffe98a'; ctx.beginPath(); ctx.arc(ox+80*scale, oy+46*scale, 24*scale,0,Math.PI*2); ctx.fill();
+  [[300,60],[560,90],[720,50]].forEach(([cx,cy])=>{
+    const [sx,sy]=toScreen(cx,cy);
+    ctx.fillStyle='rgba(255,255,255,.9)';
+    [0,1,2].forEach(i=>{ ctx.beginPath(); ctx.ellipse(sx+i*15*scale, sy, 15*scale, 10*scale,0,0,Math.PI*2); ctx.fill(); });
+  });
+  // 頂樓露臺地板
+  ctx.fillStyle='#dcd3bd'; ctx.fillRect(ox, oy+skyH, WORLD.w*scale, WORLD.h*scale-skyH);
+  ctx.strokeStyle='rgba(0,0,0,.06)';
+  for(let gx=0; gx<=WORLD.w; gx+=40){ const [x1,y1]=toScreen(gx,140),[x2,y2]=toScreen(gx,WORLD.h); ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke(); }
+  for(let gy=140; gy<=WORLD.h; gy+=40){ const [x1,y1]=toScreen(0,gy),[x2,y2]=toScreen(WORLD.w,gy); ctx.beginPath();ctx.moveTo(x1,y1);ctx.lineTo(x2,y2);ctx.stroke(); }
+  // 護欄
+  ctx.fillStyle='#8ea0c2'; ctx.fillRect(ox, oy+skyH-4*scale, WORLD.w*scale, 6*scale);
+
+  // 泳池
+  const pl = AREAS.rooftop.pool;
+  const [px,py] = toScreen(pl.x,pl.y);
+  ctx.fillStyle='#cfefff'; ctx.beginPath(); ctx.roundRect(px-6*scale,py-6*scale,pl.w*scale+12*scale,pl.h*scale+12*scale,20*scale); ctx.fill();
+  ctx.fillStyle='#2fa8d8'; ctx.beginPath(); ctx.roundRect(px,py,pl.w*scale,pl.h*scale,14*scale); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1.6;
+  for(let i=0;i<4;i++){
+    const ph=(t*.5+i/4)%1;
+    ctx.globalAlpha=(1-ph)*.7;
+    ctx.beginPath(); ctx.ellipse(px+pl.w*scale/2, py+pl.h*scale/2, (pl.w*scale/2)*ph+8, (pl.h*scale/2)*ph+6, 0,0,Math.PI*2); ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+  ctx.font=(11*scale)+'px sans-serif'; ctx.fillStyle='#0a4a66'; ctx.textAlign='center';
+  ctx.fillText('走進水裡就能游泳', px+pl.w*scale/2, py-10*scale);
+
+  // 躺椅
+  AREAS.rooftop.sunbeds.forEach(([bx,by])=>{
+    const [sx,sy]=toScreen(bx,by);
+    ctx.fillStyle='#fffdf7'; ctx.beginPath(); ctx.roundRect(sx-17*scale,sy-9*scale,34*scale,18*scale,5*scale); ctx.fill();
+    ctx.strokeStyle='#c9a15a'; ctx.lineWidth=1.4; ctx.strokeRect(sx-17*scale,sy-9*scale,34*scale,18*scale);
+  });
+
+  // 樓梯下樓
+  const d = AREAS.rooftop.doors[0];
+  const [dx,dy]=toScreen(d.x,d.y);
+  ctx.fillStyle='#5a4432'; ctx.beginPath(); ctx.roundRect(dx,dy,d.w*scale,d.h*scale,6*scale); ctx.fill();
+  ctx.fillStyle='#3a2c22';
+  for(let i=0;i<4;i++) ctx.fillRect(dx+4*scale, dy+(6+i*13)*scale, d.w*scale-8*scale, 4*scale);
+  ctx.font=(11*scale)+'px sans-serif'; ctx.fillStyle='#eaf1ff'; ctx.textAlign='center';
+  ctx.fillText('樓梯下樓', dx+d.w*scale/2, dy-8*scale);
 }
 
 function drawSticksVisual(){
@@ -890,6 +1013,7 @@ function drawStars(t){
 function render(t){
   if(S.area==='outdoor') drawOutdoor(t);
   else if(S.area==='lobby') drawLobby(t);
+  else if(S.area==='rooftop') drawRooftop(t);
   else drawRoom(t);
   drawStars(t);
   const order = [p1,p2].sort((a,b)=>a.y-b.y);
@@ -915,7 +1039,8 @@ requestAnimationFrame(frame);
 /* ---------- QA 掛鉤 ---------- */
 window.__QA = {
   snap(){ return { scene:S.scene, area:S.area, over:S.over, time:S.time, starsGot:S.starsGot,
-    p1x:p1.x,p1y:p1.y,p1stage:p1.stage, p2x:p2.x,p2y:p2.y,p2stage:p2.stage,
+    p1x:p1.x,p1y:p1.y,p1stage:p1.stage,p1lying:p1.lying,p1bathing:p1.bathing,p1swimming:p1.swimming,p1outfit:p1.outfit,
+    p2x:p2.x,p2y:p2.y,p2stage:p2.stage,p2lying:p2.lying,p2bathing:p2.bathing,p2swimming:p2.swimming,p2outfit:p2.outfit,
     doneCount:S.doneCount, confetti:confetti.length }; },
   teleport(idx,x,y){ const p = idx===0?p1:p2; p.x=x; p.y=y; },
   setArea(a,ex,ey){ changeArea(a, ex!=null?ex:60, ey!=null?ey:480); },
