@@ -205,6 +205,36 @@ function drawPlayerAt(x,y,scale,facing,kickPhase,skinColor){
   ctx.restore();
 }
 
+function drawKeeper(x,y,scale,diveDir,diveT){
+  ctx.save();
+  ctx.translate(x,y);
+  const tilt = diveDir * easeOutCubic(diveT) * 60;
+  ctx.rotate(tilt * Math.PI/180 * (diveDir!==0?1:0));
+  ctx.scale(scale, scale);
+  ctx.fillStyle = 'rgba(0,0,0,.25)';
+  ctx.beginPath(); ctx.ellipse(0,6,18,5,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.fillRect(-6,-16,5,20); ctx.fillRect(1,-16,5,20);
+  ctx.fillStyle = '#ff7e3d';
+  ctx.fillRect(-13,-40,26,26);
+  const armY = diveDir!==0 ? -40 - easeOutCubic(diveT)*18 : -34;
+  ctx.strokeStyle = '#ff7e3d'; ctx.lineWidth = 6; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-13,-34); ctx.lineTo(-13 + diveDir*-22*easeOutCubic(diveT), armY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(13,-34); ctx.lineTo(13 + diveDir*-22*easeOutCubic(diveT), armY); ctx.stroke();
+  ctx.fillStyle = '#e8b48c';
+  ctx.beginPath(); ctx.arc(0,-48,8,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(0,-51,7.5,Math.PI,0); ctx.fill();
+  // 背號與名字
+  ctx.fillStyle = '#fff'; ctx.font='bold 10px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('1', 0, -22);
+  ctx.restore();
+  ctx.save();
+  ctx.textAlign='center'; ctx.fillStyle='#eafff5'; ctx.font='bold 13px sans-serif';
+  ctx.fillText('西羅', x, y+30);
+  ctx.restore();
+}
+
 function drawTarget(x,y,r,t){
   ctx.save();
   ctx.translate(x,y);
@@ -290,8 +320,8 @@ const menuState = {
     ctx.font = '20px sans-serif';
     ctx.fillText('電腦：拖曳滑鼠瞄準射門　　平板：手指拖曳瞄準射門', GAME_W/2, 240);
     ctx.font='16px sans-serif'; ctx.fillStyle='#ffcf5c';
-    ctx.fillText('射進金色目標區＝完美進球！拖曳距離控制高度', GAME_W/2, 270);
-    ctx.fillText('拖曳左右偏移 = 香蕉球彎曲方向', GAME_W/2, 296);
+    ctx.fillText('守門員「西羅」嚴陣以待，射進金色目標區＝完美進球！', GAME_W/2, 270);
+    ctx.fillText('拖曳左右偏移 = 香蕉球彎曲方向　　拖曳距離越長 = 射得越高', GAME_W/2, 296);
     ctx.fillStyle = '#ff6cc7';
     ctx.font = 'bold 22px sans-serif';
     const bounce = 1 + Math.sin(this.t*3)*0.06;
@@ -317,6 +347,7 @@ const playState = {
     this.flightT = 0; this.flightDur = 1;
     this.aimTx = 480; this.aimTy = GOAL.y+GOAL.h/2; this.curve = 0; this.loft = 0;
     this.target = this.makeTarget();
+    this.keeper = { x:480, dive:0, diveT:0, targetX:480, reacted:false };
     this.msg = ''; this.msgT = 0;
     this.kickPhase = 0;
     this.result = '';
@@ -368,6 +399,8 @@ const playState = {
         burst(BALL_START.x, BALL_START.y, '#dcdcdc', 6, 90, 0.4);
         this.phase = 'flight'; this.flightT = 0;
         this.flightDur = lerp(0.75, 1.15, this.loft);
+        this.keeper.reacted = false;
+        this.keeper.diveT = 0;
       }
     } else if(this.phase === 'flight'){
       this.flightT += dt;
@@ -380,6 +413,18 @@ const playState = {
       this.ball.y = lerp(by0, this.aimTy, easeOutCubic(et));
       this.ball.z = Math.sin(et*Math.PI) * lerp(10, 70, this.loft);
       this.ball.spin += dt*18;
+
+      // 西羅的撲救反應：稍有延遲後判斷方向撲出，關卡越高反應越快
+      if(!this.keeper.reacted && t > 0.18){
+        this.keeper.reacted = true;
+        const reactionNoise = clamp(0.9 - this.round*0.05, 0.3, 0.9);
+        this.keeper.targetX = clamp(this.aimTx + (Math.random()*2-1)*80*reactionNoise, GOAL.x1+20, GOAL.x2-20);
+        this.keeper.dive = this.keeper.targetX > this.keeper.x ? 1 : -1;
+      }
+      if(this.keeper.reacted){
+        this.keeper.diveT = clamp(this.keeper.diveT + dt*2.2, 0, 1);
+        this.keeper.x = lerp(this.keeper.x, this.keeper.targetX, dt*4);
+      }
 
       if(t >= 1){
         this.resolveShot();
@@ -396,10 +441,16 @@ const playState = {
     this.attempts++;
     const crossbarHit = this.aimTy < GOAL.y + 10 && Math.random() < 0.12;
     const hitTarget = Math.hypot(this.aimTx-this.target.x, this.aimTy-this.target.y) < this.target.r;
+    const keeperReach = lerp(46, 26, this.loft); // 球踢得越高越遠，西羅越難撲到
+    const keeperCaught = !hitTarget && Math.abs(this.keeper.x - this.aimTx) < keeperReach;
     if(crossbarHit){
       this.result = '打到門框！';
       sfxCrossbar();
       burst(this.aimTx, GOAL.y, '#f4f4f4', 14, 180);
+    } else if(keeperCaught){
+      this.result = '被西羅撲出！';
+      sfxSave();
+      burst(this.keeper.x, GOAL.y+40, '#ff7e3d', 18, 200);
     } else if(hitTarget){
       this.result = '完美進球！！';
       this.score++;
@@ -423,6 +474,7 @@ const playState = {
     this.round++;
     this.ball = { x:BALL_START.x, y:BALL_START.y, z:0, vx:0,vy:0,vz:0, spin:0 };
     this.target = this.makeTarget();
+    this.keeper = { x: 480 + (Math.random()*60-30), dive:0, diveT:0, targetX:480, reacted:false };
     this.phase = 'aim'; this.phaseT = 0; this.kickPhase = 0;
     sfxWhistle();
   },
@@ -433,6 +485,9 @@ const playState = {
 
     // 金色目標區
     drawTarget(this.target.x, this.target.y, this.target.r, this.phaseT);
+
+    // 守門員西羅
+    drawKeeper(this.keeper.x, GOAL.y+42, 1.05, this.keeper.dive, this.keeper.diveT);
 
     // 瞄準預覽（僅 aim 階段、拖曳中）
     if(this.phase === 'aim' && input.dragging){
