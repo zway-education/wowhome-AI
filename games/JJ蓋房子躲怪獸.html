@@ -67,12 +67,12 @@ document.getElementById('muteBtn').addEventListener('pointerdown', e=>{
   document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
 });
 
-// ===== 等角座標系（Isometric）=====
-const TILE_W = 92, TILE_H = 50;
+// ===== 俯視方格座標系 =====
+const CELL = 58;
 const GRID = 7; // 7x7 建地
-const ORIGIN_X = GAME_W/2, ORIGIN_Y = 130;
-function isoX(gx,gy){ return ORIGIN_X + (gx-gy)*TILE_W/2; }
-function isoY(gx,gy){ return ORIGIN_Y + (gx+gy)*TILE_H/2; }
+const ORIGIN_X = GAME_W/2 - (GRID*CELL)/2, ORIGIN_Y = 110;
+function isoX(gx,gy){ return ORIGIN_X + gx*CELL + CELL/2; }
+function isoY(gx,gy){ return ORIGIN_Y + gy*CELL + CELL/2; }
 
 // ===== 輸入 =====
 const input = { left:false, right:false, up:false, down:false, action:false, actionBuffer:0, cancel:false };
@@ -291,6 +291,32 @@ const player = { gx:3, gy:3, x:0, y:0, sx:1, sy:1, facing:1, blinkT:2, bob:0, hp
 function updatePlayerPos(){ player.x = isoX(player.gx, player.gy); player.y = isoY(player.gx, player.gy); }
 updatePlayerPos();
 
+// ===== 家具：沙發、床、冰箱（冰箱可以拿飲料補血）=====
+const FURNITURE = [
+  { type:'sofa', gx:1.5, gy:1.5 },
+  { type:'bed', gx:5, gy:1.5 },
+  { type:'fridge', gx:5, gy:5 },
+];
+let fridgeCooldown = 0;
+const FRIDGE_COOLDOWN = 9;
+function fridgeInteract(){
+  if(player.hp>=player.maxHp){
+    floatText(player.x, player.y-60, '血量已滿', '#9a6bff');
+    return true;
+  }
+  if(fridgeCooldown>0){
+    floatText(player.x, player.y-60, `冰箱冷卻中 ${Math.ceil(fridgeCooldown)}s`, '#ff6cc7');
+    return true;
+  }
+  player.hp = Math.min(player.maxHp, player.hp+1);
+  fridgeCooldown = FRIDGE_COOLDOWN;
+  player.sx=1.3; player.sy=0.7;
+  floatText(player.x, player.y-60, '+1 HP 喝飲料', '#41d6ff');
+  burst(player.x, player.y-30, '#41d6ff', 14, 160);
+  beep(700,0.1,'sine',0.15); setTimeout(()=>beep(950,0.12,'sine',0.12),80);
+  return true;
+}
+
 // 木材資源點（白天在場地內出現，走過去收集）
 let woodNodes = [];
 function spawnWoodNodes(){
@@ -301,7 +327,8 @@ function spawnWoodNodes(){
     let gx,gy,ok;
     do{
       gx = 1+Math.random()*(N-2); gy = 1+Math.random()*(N-2);
-      ok = Math.hypot(gx-player.gx, gy-player.gy) > 0.8;
+      ok = Math.hypot(gx-player.gx, gy-player.gy) > 0.8
+        && !FURNITURE.some(f=>Math.hypot(f.gx-gx, f.gy-gy) < 1);
     } while(!ok);
     woodNodes.push({gx,gy,taken:false,bob:Math.random()*10});
   }
@@ -320,6 +347,7 @@ function resetGame(){
   monsters.length = 0;
   traps = [];
   selectedBuild = 'wall';
+  fridgeCooldown = 0;
 }
 
 // ===== 怪物 =====
@@ -379,40 +407,46 @@ function hexLerp(a,b,t){
   return `rgb(${r},${g},${bl})`;
 }
 
+// 自製圓角矩形路徑：不依賴 ctx.roundRect（部分舊版 Safari/WebView 沒有此 API，
+// 呼叫不存在的方法會丟例外，導致每一幀畫到一半就中斷，畫面看起來像卡住）
+function traceRoundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
 function drawGroundTile(gx,gy,nightAmt){
   const x = isoX(gx,gy), y = isoY(gx,gy);
-  ctx.beginPath();
-  ctx.moveTo(x, y-TILE_H/2);
-  ctx.lineTo(x+TILE_W/2, y);
-  ctx.lineTo(x, y+TILE_H/2);
-  ctx.lineTo(x-TILE_W/2, y);
-  ctx.closePath();
   const base = ((gx+gy)%2===0) ? PALETTE.ground : PALETTE.groundDark;
   ctx.fillStyle = hexLerp(base, '#141033', nightAmt*0.6);
-  ctx.fill();
+  ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
+  ctx.strokeStyle = hexLerp(base,'#000',0.15);
+  ctx.lineWidth = 1;
+  ctx.strokeRect(x-CELL/2, y-CELL/2, CELL, CELL);
 }
 
 function drawWall(w, nightAmt){
   const x = isoX(w.gx,w.gy), y = isoY(w.gx,w.gy);
   const ratio = w.built/w.need;
-  const h = 10 + ratio*30;
+  const h = 8 + ratio*20;
   const color = w.built===0 ? PALETTE.wallEmpty : ratio<1 ? PALETTE.wallHalf : PALETTE.wallDone;
-  // 側面
-  ctx.fillStyle = hexLerp(color,'#000',0.25+nightAmt*0.3);
-  ctx.fillRect(x-TILE_W/2, y-h, TILE_W/2, h);
-  ctx.fillStyle = hexLerp(color,'#000',0.1+nightAmt*0.3);
-  ctx.fillRect(x, y-h, TILE_W/2, h);
-  // 頂
-  ctx.fillStyle = hexLerp(color,'#fff',0.15);
-  ctx.beginPath();
-  ctx.moveTo(x, y-h-TILE_H/2);
-  ctx.lineTo(x+TILE_W/2, y-h);
-  ctx.lineTo(x, y-h+TILE_H/2);
-  ctx.lineTo(x-TILE_W/2, y-h);
-  ctx.closePath(); ctx.fill();
+  const half = CELL/2;
+  // 陰影（往下墜的方塊立體感）
+  ctx.fillStyle = hexLerp(color,'#000',0.35+nightAmt*0.3);
+  ctx.fillRect(x-half, y-half+h, CELL, half*2-h);
+  // 頂面
+  ctx.fillStyle = hexLerp(color,'#fff',0.1);
+  ctx.fillRect(x-half, y-half, CELL, half*2-h);
+  ctx.strokeStyle = hexLerp(color,'#000',0.3);
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x-half, y-half, CELL, half*2-h);
   if(w.built<w.need && phase==='day'){
     ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
-    ctx.fillText(`${w.built}/${w.need}`, x, y-h-8);
+    ctx.fillText(`${w.built}/${w.need}`, x, y-half-6);
   }
 }
 
@@ -438,6 +472,50 @@ function drawTrap(t){
   }
 }
 
+function drawFurniture(f){
+  const x = isoX(f.gx,f.gy), y = isoY(f.gx,f.gy);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x,y+4,26,10,0,0,Math.PI*2); ctx.fill();
+  if(f.type==='sofa'){
+    ctx.fillStyle = '#e8617c';
+    ctx.fillRect(x-24,y-20,48,20);
+    ctx.fillStyle = '#c94962';
+    ctx.fillRect(x-24,y-20,48,6);
+    ctx.fillStyle = '#f6899e';
+    ctx.fillRect(x-24,y-30,8,14);
+    ctx.fillRect(x+16,y-30,8,14);
+  } else if(f.type==='bed'){
+    ctx.fillStyle = '#8c5a3c';
+    ctx.fillRect(x-26,y-8,52,14);
+    ctx.fillStyle = '#eef3fb';
+    ctx.fillRect(x-24,y-22,48,16);
+    ctx.fillStyle = '#5d9dff';
+    ctx.fillRect(x-24,y-8,48,4);
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(x-20,y-24,16,10);
+  } else if(f.type==='fridge'){
+    const ready = fridgeCooldown<=0 && player.hp<player.maxHp;
+    if(ready){
+      ctx.save(); ctx.shadowColor='#41d6ff'; ctx.shadowBlur=16;
+      ctx.fillStyle = '#d8f6ff';
+      ctx.fillRect(x-16,y-46,32,46);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = '#d8e6ea';
+      ctx.fillRect(x-16,y-46,32,46);
+    }
+    ctx.fillStyle = '#aebfc4';
+    ctx.fillRect(x-16,y-46,32,6);
+    ctx.strokeStyle='#8fa3a8'; ctx.lineWidth=2;
+    ctx.strokeRect(x-16,y-46,32,46);
+    ctx.fillStyle='#8fa3a8';
+    ctx.fillRect(x+6,y-38,3,10);
+    ctx.fillStyle = ready ? '#41d6ff' : '#9fb3b8';
+    ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('飲料', x, y-52);
+  }
+}
+
 function drawPlayerJJ(){
   const x = player.x, y = player.y - 5;
   ctx.save();
@@ -447,7 +525,7 @@ function drawPlayerJJ(){
   ctx.beginPath(); ctx.ellipse(0, 8, 19, 7, 0,0,Math.PI*2); ctx.fill();
   const flash = player.invuln>0 && Math.floor(player.invuln*20)%2===0;
   ctx.scale(player.facing<0?-player.sx:player.sx, player.sy);
-  ctx.scale(1.35, 1.35);
+  ctx.scale(1.05, 1.05);
   const bobY = Math.sin(player.bob*6)*2;
   ctx.translate(0, bobY);
   // 腳
@@ -456,7 +534,7 @@ function drawPlayerJJ(){
   ctx.fillRect(2,-4,6,10);
   // 身體
   ctx.fillStyle = flash?'#fff':'#4f7cff';
-  ctx.beginPath(); ctx.roundRect(-11,-30,22,26,6); ctx.fill();
+  traceRoundRect(-11,-30,22,26,6); ctx.fill();
   // 頭
   ctx.fillStyle = flash?'#fff':'#ffcf9c';
   ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.fill();
@@ -483,7 +561,7 @@ function drawMonster(m){
   ctx.translate(x,y-5);
   ctx.fillStyle='rgba(0,0,0,0.3)';
   ctx.beginPath(); ctx.ellipse(0,8,16,5,0,0,Math.PI*2); ctx.fill();
-  ctx.scale(m.squash*1.35, (2-m.squash)*1.35);
+  ctx.scale(m.squash*1.05, (2-m.squash)*1.05);
   const col = m.hitFlash>0 ? '#fff' : PALETTE.monster;
   ctx.fillStyle = col;
   ctx.beginPath(); ctx.moveTo(-12,4); ctx.lineTo(0,-20); ctx.lineTo(12,4); ctx.closePath(); ctx.fill();
@@ -527,7 +605,7 @@ function drawBuildBar(){
     const affordable = wood >= s.b.cost;
     const selected = selectedBuild === s.b.id;
     ctx.fillStyle = selected ? 'rgba(154,107,255,0.35)' : 'rgba(255,255,255,0.08)';
-    ctx.beginPath(); ctx.roundRect(s.x, s.y, s.w, s.h, 10); ctx.fill();
+    traceRoundRect(s.x, s.y, s.w, s.h, 10); ctx.fill();
     ctx.strokeStyle = selected ? '#9a6bff' : 'rgba(255,255,255,0.25)';
     ctx.lineWidth = selected ? 3 : 1.5;
     ctx.stroke();
@@ -583,6 +661,7 @@ const playState = {
     player.blinkT -= dt; if(player.blinkT<0) player.blinkT = 2.5+Math.random();
     player.invuln = Math.max(0, player.invuln-dt);
     player.sx += (1-player.sx)*10*dt; player.sy += (1-player.sy)*10*dt;
+    fridgeCooldown = Math.max(0, fridgeCooldown-dt);
 
     const {mx,my} = moveVector();
     const spd = 3.2*dt;
@@ -591,8 +670,9 @@ const playState = {
       if(mx>0) player.facing=1; else if(mx<0) player.facing=-1;
       let ngx = clamp(player.gx + mx*spd, 0.3, GRID-1.3);
       let ngy = clamp(player.gy + my*spd, 0.3, GRID-1.3);
-      // 不能直接站進已完工牆體
-      const blocked = walls.find(w=>w.built>=w.need && Math.hypot(w.gx-ngx,w.gy-ngy)<0.55);
+      // 不能直接站進已完工牆體或家具
+      const blocked = walls.find(w=>w.built>=w.need && Math.hypot(w.gx-ngx,w.gy-ngy)<0.55)
+        || FURNITURE.find(f=>Math.hypot(f.gx-ngx,f.gy-ngy)<0.5);
       if(!blocked){ player.gx = ngx; player.gy = ngy; }
       updatePlayerPos();
     }
@@ -689,11 +769,12 @@ const playState = {
 
     // 收集排序繪製順序（畫家演算法）：依 gx+gy 排序
     const drawables = [];
-    for(const w of walls) drawables.push({y:w.gy+w.gx, draw:()=>drawWall(w,nightAmt)});
-    if(phase==='day') for(const n of woodNodes) if(!n.taken) drawables.push({y:n.gy+n.gx-0.1, draw:()=>drawWoodNode(n,performance.now()/1000)});
-    for(const trap of traps) drawables.push({y:trap.gy+trap.gx-0.05, draw:()=>drawTrap(trap)});
-    drawables.push({y:player.gx+player.gy, draw:drawPlayerJJ});
-    for(const m of monsters) drawables.push({y:m.gx+m.gy, draw:()=>drawMonster(m)});
+    for(const w of walls) drawables.push({y:w.gy, draw:()=>drawWall(w,nightAmt)});
+    if(phase==='day') for(const n of woodNodes) if(!n.taken) drawables.push({y:n.gy-0.1, draw:()=>drawWoodNode(n,performance.now()/1000)});
+    for(const trap of traps) drawables.push({y:trap.gy-0.05, draw:()=>drawTrap(trap)});
+    for(const f of FURNITURE) drawables.push({y:f.gy, draw:()=>drawFurniture(f)});
+    drawables.push({y:player.gy, draw:drawPlayerJJ});
+    for(const m of monsters) drawables.push({y:m.gy, draw:()=>drawMonster(m)});
     drawables.sort((a,b)=>a.y-b.y);
     for(const d of drawables) d.draw();
 
@@ -714,6 +795,10 @@ const playState = {
 function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
 
 function handleAction(){
+  const fridge = FURNITURE.find(f=>f.type==='fridge');
+  if(fridge && Math.hypot(fridge.gx-player.gx, fridge.gy-player.gy) < 0.75){
+    fridgeInteract(); return;
+  }
   if(phase==='day'){
     if(selectedBuild==='trap'){ buildTrap(); return; }
     // 找最近未完工的牆
@@ -834,13 +919,19 @@ function frame(now){
   requestAnimationFrame(frame);
   acc += Math.min((now-last)/1000, 0.1);
   last = now;
-  while(acc>=STEP){
-    if(freeze>0){ freeze -= STEP; acc -= STEP; continue; }
-    input.actionBuffer = Math.max(0, input.actionBuffer-STEP);
-    state.update(STEP);
-    acc -= STEP;
+  try{
+    while(acc>=STEP){
+      if(freeze>0){ freeze -= STEP; acc -= STEP; continue; }
+      input.actionBuffer = Math.max(0, input.actionBuffer-STEP);
+      state.update(STEP);
+      acc -= STEP;
+    }
+    state.draw();
+  } catch(err){
+    // 任何一幀出錯都不該讓畫面整個卡死：清空累積時間、跳過這幀繼續跑
+    console.error('frame error', err);
+    acc = 0;
   }
-  state.draw();
 }
 setState(menuState);
 requestAnimationFrame(frame);
