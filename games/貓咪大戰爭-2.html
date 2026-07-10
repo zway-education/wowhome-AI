@@ -1,0 +1,738 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>貓咪大戰爭</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1c2c;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+// ===== 音效 =====
+let AC = null;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+let muted = false;
+function beep(freq=440, dur=0.1, type='square', vol=0.15, slide=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function sfxSpawn(){ beep(500,0.08,'square',0.1,150); }
+function sfxHit(){ beep(180,0.05,'square',0.12,-60); }
+function sfxDeath(){ beep(140,0.2,'sawtooth',0.15,-90); }
+function sfxCoin(){ beep(988,0.06,'square',0.12); setTimeout(()=>beep(1319,0.1,'square',0.12),70); }
+function sfxWin(){ beep(660,0.1,'square',0.15); setTimeout(()=>beep(880,0.1,'square',0.15),100); setTimeout(()=>beep(1100,0.18,'square',0.15),200); }
+function sfxLose(){ beep(300,0.25,'sawtooth',0.15,-200); }
+function sfxGachaSpin(){ beep(320,0.12,'sine',0.1,180); }
+function sfxGachaReveal(rarityIdx){
+  if(rarityIdx===0){ beep(600,0.1,'square',0.12); }
+  else if(rarityIdx===1){ beep(700,0.1,'square',0.13); setTimeout(()=>beep(950,0.12,'square',0.13),90); }
+  else if(rarityIdx===2){ beep(800,0.1,'square',0.14); setTimeout(()=>beep(1050,0.1,'square',0.14),80); setTimeout(()=>beep(1300,0.15,'square',0.14),160); }
+  else { beep(900,0.1,'square',0.16); setTimeout(()=>beep(1150,0.1,'square',0.16),80); setTimeout(()=>beep(1400,0.1,'square',0.16),160); setTimeout(()=>beep(1750,0.22,'square',0.16),240); }
+}
+
+// ===== 輸入 =====
+const input = { touchDown:false, touchX:0 };
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
+}
+function handleStart(e){
+  e.preventDefault();
+  const t = e.touches ? e.touches[0] : e;
+  const p = touchPos(t);
+  input.touchDown = true; input.touchX = p.x;
+  onTap(p.x, p.y);
+}
+function handleMove(e){
+  if(!input.touchDown) return;
+  e.preventDefault();
+  const t = e.touches ? e.touches[0] : e;
+  const p = touchPos(t);
+  input.touchX = p.x;
+}
+function handleEnd(e){ e.preventDefault(); input.touchDown = false; }
+function pointInRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
+for(const ev of ['touchstart','mousedown']) canvas.addEventListener(ev, handleStart, {passive:false});
+for(const ev of ['touchmove','mousemove']) canvas.addEventListener(ev, handleMove, {passive:false});
+for(const ev of ['touchend','touchcancel','mouseup']) canvas.addEventListener(ev, handleEnd, {passive:false});
+
+let keySlot = -1;
+addEventListener('keydown', e=>{
+  if(e.code==='Digit1'||e.code==='Numpad1') keySlot=0;
+  else if(e.code==='Digit2'||e.code==='Numpad2') keySlot=1;
+  else if(e.code==='Digit3'||e.code==='Numpad3') keySlot=2;
+  else if(e.code==='Digit4'||e.code==='Numpad4') keySlot=3;
+  else if(e.code==='Space'){
+    e.preventDefault();
+    if(state===menuState){ setState(playState); }
+    else if(state===gameOverState){ if(gameOverState.t>0.5) setState(playState); }
+    else if(state===gachaState){ doGachaPull(); }
+  }
+  else if(e.code==='KeyG'){ if(state===menuState) setState(gachaState); }
+  else if(e.code==='Escape'){ if(state===gachaState) setState(menuState); }
+  if(keySlot>=0 && state===playState) trySpawn(keySlot);
+});
+
+// ===== 粒子 =====
+const parts = [];
+function burst(x,y,color,n=12,speed=200){
+  for(let i=0;i<n;i++){
+    const a=Math.random()*Math.PI*2, s=speed*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:0.5,color});
+  }
+}
+function updateParts(dt){
+  for(const p of parts){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=500*dt; p.life-=dt; }
+  for(let i=parts.length-1;i>=0;i--) if(parts[i].life<=0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0,p.life*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3,p.y-3,6,6);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// floating text
+const floats = [];
+function addFloat(x,y,text,color){ floats.push({x,y,text,color,life:0.7}); }
+function updateFloats(dt){ for(const f of floats){ f.y -= 30*dt; f.life -= dt; } for(let i=floats.length-1;i>=0;i--) if(floats[i].life<=0) floats.splice(i,1); }
+function drawFloats(){
+  ctx.textAlign='center'; ctx.font='bold 18px sans-serif';
+  for(const f of floats){ ctx.globalAlpha = Math.max(0,f.life/0.7); ctx.fillStyle=f.color; ctx.fillText(f.text, f.x, f.y); }
+  ctx.globalAlpha = 1;
+}
+
+// ===== 配色（夜色霓虹） =====
+const COL = { bg:'#0d0221', bg2:'#261447', pink:'#ff2975', cyan:'#00f0ff', yellow:'#fff700', white:'#f6f6f6' };
+
+let shake = 0;
+let freeze = 0;
+
+// ===== 貓咪單位定義 =====
+const LANES = 4;
+const LANE_Y = [130, 230, 330, 430];
+const BASE_X_LEFT = 60, BASE_X_RIGHT = 900;
+
+const CAT_TYPES = [
+  { name:'一般貓', cost:10, hp:30, atk:5, spd:55, range:36, color:'#ffcf5c', cd:0.9 },
+  { name:'坦克貓', cost:25, hp:90, atk:4, spd:35, range:36, color:'#4f7cff', cd:1.1 },
+  { name:'刺客貓', cost:20, hp:18, atk:14, spd:80, range:36, color:'#ff6cc7', cd:0.7 },
+  { name:'砲手貓', cost:35, hp:22, atk:10, spd:40, range:160, color:'#9a6bff', cd:1.4 },
+];
+
+const ENEMY_TYPES = [
+  { name:'殭屍鼠', hp:22, atk:4, spd:40, range:34, color:'#7ddc6f', cd:1.0 },
+  { name:'鎧甲蟲', hp:55, atk:5, spd:26, range:34, color:'#c8783c', cd:1.1 },
+  { name:'飛蝠', hp:15, atk:6, spd:65, range:34, color:'#a86bd6', cd:0.8 },
+];
+
+// ===== 轉蛋與貓咪稀有度 =====
+const RARITIES = [
+  { name:'稀有',     color:'#8fd3ff', mult:1.0,  weight:55 },
+  { name:'極稀有',   color:'#9a6bff', mult:1.25, weight:28 },
+  { name:'超級稀有', color:'#ff6cc7', mult:1.55, weight:13 },
+  { name:'傳奇稀有', color:'#ffcf5c', mult:2.0,  weight:4  },
+];
+const GACHA_COST = 30;
+const CLEAR_REWARD = 100;
+const LOSE_REWARD = 35;
+const DUPLICATE_REFUND = 10;
+
+function rollRarity(){
+  const total = RARITIES.reduce((s,r)=>s+r.weight,0);
+  let roll = Math.random()*total;
+  for(let i=0;i<RARITIES.length;i++){ roll -= RARITIES[i].weight; if(roll<=0) return i; }
+  return 0;
+}
+
+let cans = Number(localStorage.getItem('catwars_cans')||0);
+let collection = JSON.parse(localStorage.getItem('catwars_collection')||'null') || CAT_TYPES.map(()=>-1);
+function saveMeta(){
+  localStorage.setItem('catwars_cans', cans);
+  localStorage.setItem('catwars_collection', JSON.stringify(collection));
+}
+
+let gachaResult = null;   // { typeIdx, rarityIdx, isUpgrade }
+let gachaAnimT = 0;
+
+const GACHA_BTN_MENU     = { x:GAME_W/2-120, y:325, w:240, h:46 };
+const GACHA_PULL_BTN     = { x:GAME_W/2-150, y:115, w:300, h:54 };
+const GACHA_BACK_BTN     = { x:GAME_W/2-100, y:460, w:200, h:42 };
+const GAMEOVER_RESTART_BTN = { x:270, y:300, w:200, h:52 };
+const GAMEOVER_GACHA_BTN   = { x:490, y:300, w:200, h:52 };
+
+function doGachaPull(){
+  if(cans < GACHA_COST){ sfxHit(); return; }
+  cans -= GACHA_COST;
+  const typeIdx = Math.floor(Math.random()*CAT_TYPES.length);
+  const rarityIdx = rollRarity();
+  const isUpgrade = rarityIdx > collection[typeIdx];
+  if(isUpgrade) collection[typeIdx] = rarityIdx;
+  else cans += DUPLICATE_REFUND;
+  saveMeta();
+  gachaResult = { typeIdx, rarityIdx, isUpgrade };
+  gachaAnimT = 0;
+  sfxGachaReveal(rarityIdx);
+  burst(GAME_W/2, 250, RARITIES[rarityIdx].color, 16+rarityIdx*10, 220);
+  if(rarityIdx >= 2) shake = Math.min(shake + (rarityIdx===3?10:6), 12);
+}
+
+let entities = [];
+let coins = 0;
+let coinTimer = 0;
+let baseHpLeft = 100, baseHpRight = 100;
+let spawnTimer = 0;
+let spawnInterval = 2.6;
+let difficulty = 0;
+let elapsed = 0;
+let score = 0;
+let bestScore = Number(localStorage.getItem('catwars_best')||0);
+
+let playerSpawnCounter = 0;
+
+function trySpawn(slot){
+  const t = CAT_TYPES[slot];
+  if(!t) return;
+  if(coins < t.cost) { sfxHit(); return; }
+  coins -= t.cost;
+  const lane = playerSpawnCounter % LANES;
+  playerSpawnCounter++;
+  entities.push(makeUnit(t, 'player', lane));
+  sfxSpawn();
+}
+
+function makeUnit(type, side, lane){
+  let hp = type.hp, atk = type.atk;
+  if(side==='player'){
+    const owned = collection[CAT_TYPES.indexOf(type)];
+    if(owned >= 0){
+      const mult = RARITIES[owned].mult;
+      hp = Math.round(type.hp*mult);
+      atk = Math.round(type.atk*mult*10)/10;
+    }
+  }
+  return {
+    side, lane, type,
+    x: side==='player' ? BASE_X_LEFT+20 : BASE_X_RIGHT-20,
+    y: LANE_Y[lane],
+    hp, maxHp: hp, atk,
+    atkCd: 0, dead:false,
+    hitFlash: 0, sx:1, sy:1
+  };
+}
+
+function onTap(x,y){
+  if(state===menuState){
+    if(pointInRect(x,y,GACHA_BTN_MENU)){ setState(gachaState); return; }
+    setState(playState);
+    return;
+  }
+  if(state===gameOverState){
+    if(gameOverState.t <= 0.5) return;
+    if(pointInRect(x,y,GAMEOVER_GACHA_BTN)){ setState(gachaState); return; }
+    setState(playState);
+    return;
+  }
+  if(state===gachaState){
+    if(pointInRect(x,y,GACHA_PULL_BTN)){ doGachaPull(); return; }
+    if(pointInRect(x,y,GACHA_BACK_BTN)){ setState(menuState); return; }
+    return;
+  }
+  if(state!==playState) return;
+  // bottom UI buttons handle spawning
+  const btnY = GAME_H - 56;
+  if(y >= btnY - 30 && y <= GAME_H){
+    const btnW = GAME_W / CAT_TYPES.length;
+    const idx = Math.floor(x / btnW);
+    if(idx>=0 && idx<CAT_TYPES.length) trySpawn(idx);
+  }
+}
+
+const menuState = {
+  update(dt){},
+  draw(){
+    drawBG();
+    ctx.textAlign='center';
+    ctx.fillStyle = COL.cyan;
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('貓咪大戰爭', GAME_W/2, 140);
+    ctx.fillStyle = COL.white;
+    ctx.font='20px sans-serif';
+    ctx.fillText('派出貓咪部隊，推倒對面基地！', GAME_W/2, 195);
+    ctx.font='17px sans-serif';
+    ctx.fillText('電腦：按數字鍵 1-4 出兵　　平板／手機：點下方按鈕出兵', GAME_W/2, 230);
+    ctx.font='bold 22px sans-serif';
+    ctx.fillStyle = COL.yellow;
+    ctx.fillText('點擊畫面 / 按空白鍵 開始出征', GAME_W/2, 270);
+    ctx.font='16px sans-serif';
+    ctx.fillStyle = COL.white;
+    ctx.fillText('最佳分數：'+bestScore+'　　罐頭：'+cans, GAME_W/2, 303);
+
+    // 轉蛋機按鈕
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(GACHA_BTN_MENU.x, GACHA_BTN_MENU.y, GACHA_BTN_MENU.w, GACHA_BTN_MENU.h);
+    ctx.strokeStyle = COL.pink;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(GACHA_BTN_MENU.x, GACHA_BTN_MENU.y, GACHA_BTN_MENU.w, GACHA_BTN_MENU.h);
+    ctx.fillStyle = COL.white;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('轉蛋機　抽貓咪', GAME_W/2, GACHA_BTN_MENU.y+GACHA_BTN_MENU.h/2+7);
+    ctx.font='13px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('（點擊或按 G 鍵開啟）', GAME_W/2, GACHA_BTN_MENU.y+GACHA_BTN_MENU.h+18);
+
+    // preview cat cards with owned rarity
+    ctx.font='13px sans-serif';
+    ctx.fillStyle = COL.white;
+    ctx.fillText('貓咪收藏', GAME_W/2, 415);
+    const btnW = GAME_W/CAT_TYPES.length;
+    for(let i=0;i<CAT_TYPES.length;i++){
+      const cx = btnW*i+btnW/2;
+      drawCatIcon(cx, 460, CAT_TYPES[i], 0.9);
+      const owned = collection[i];
+      ctx.font='12px sans-serif';
+      ctx.fillStyle = owned>=0 ? RARITIES[owned].color : 'rgba(255,255,255,0.35)';
+      ctx.fillText(owned>=0 ? RARITIES[owned].name : '未擁有', cx, 490);
+    }
+  }
+};
+
+const playState = {
+  enter(){
+    entities = []; coins = 30; coinTimer=0; baseHpLeft=100; baseHpRight=100; playerSpawnCounter = 0;
+    spawnTimer=1.2; spawnInterval=2.6; difficulty=0; elapsed=0; score=0; shake=0; freeze=0;
+    parts.length = 0; floats.length = 0;
+  },
+  update(dt){
+    if(freeze>0){ freeze-=dt; return; }
+    elapsed += dt;
+    difficulty = Math.min(1, elapsed/90);
+    score = Math.floor(elapsed*10);
+
+    coinTimer += dt;
+    if(coinTimer >= 1){ coinTimer -= 1; coins = Math.min(999, coins+4+Math.floor(difficulty*3)); }
+
+    spawnTimer -= dt;
+    const curInterval = spawnInterval - difficulty*1.4;
+    if(spawnTimer <= 0){
+      spawnTimer = Math.max(0.7, curInterval) * (0.8+Math.random()*0.4);
+      const typeIdx = Math.min(ENEMY_TYPES.length-1, Math.floor(Math.random()*(1+difficulty*ENEMY_TYPES.length)));
+      const t = ENEMY_TYPES[typeIdx];
+      const lane = Math.floor(Math.random()*LANES);
+      entities.push(makeUnit(t,'enemy',lane));
+    }
+
+    for(const e of entities){
+      if(e.dead) continue;
+      e.hitFlash = Math.max(0, e.hitFlash-dt*4);
+      e.sx += (1-e.sx)*10*dt; e.sy += (1-e.sy)*10*dt;
+      e.atkCd = Math.max(0, e.atkCd - dt);
+
+      const dir = e.side==='player' ? 1 : -1;
+      // find target: nearest enemy unit in same lane ahead, or base
+      let target = null, bestDist = Infinity;
+      for(const o of entities){
+        if(o===e || o.dead || o.side===e.side || o.lane!==e.lane) continue;
+        const d = Math.abs(o.x-e.x);
+        if((e.side==='player' && o.x>e.x) || (e.side==='enemy' && o.x<e.x)){
+          if(d<bestDist){ bestDist=d; target=o; }
+        }
+      }
+
+      if(target && bestDist <= e.type.range){
+        if(e.atkCd<=0){
+          e.atkCd = e.type.cd;
+          target.hp -= e.atk;
+          target.hitFlash = 1;
+          target.sx = 0.8; target.sy=1.2;
+          shake = Math.min(shake+2, 6);
+          sfxHit();
+          if(target.hp<=0 && !target.dead){
+            target.dead = true;
+            burst(target.x, target.y, e.side==='player'?COL.pink:COL.cyan, 16, 180);
+            addFloat(target.x, target.y-20, '倒下！', COL.white);
+          }
+        }
+      } else {
+        e.x += dir * e.type.spd * dt;
+      }
+
+      // reach base
+      if(e.side==='player' && e.x >= BASE_X_RIGHT-10){
+        baseHpRight -= 8;
+        e.dead = true;
+        burst(e.x,e.y,COL.pink,10,150);
+        shake = Math.min(shake+4,8);
+        sfxHit();
+      } else if(e.side==='enemy' && e.x <= BASE_X_LEFT+10){
+        baseHpLeft -= 8;
+        e.dead = true;
+        burst(e.x,e.y,COL.cyan,10,150);
+        shake = Math.min(shake+4,8);
+        sfxHit();
+        freeze = 0.05;
+      }
+    }
+
+    entities = entities.filter(e=>!e.dead);
+    updateParts(dt);
+    updateFloats(dt);
+    shake *= Math.pow(0.001, dt);
+
+    if(baseHpLeft<=0){
+      sfxLose();
+      freeze = 0.15; shake = 10;
+      gameOverState.win = false;
+      setState(gameOverState);
+    } else if(baseHpRight<=0){
+      sfxWin();
+      gameOverState.win = true;
+      setState(gameOverState);
+    }
+  },
+  draw(){
+    drawBG();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+
+    // lanes
+    for(let i=0;i<LANES;i++){
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(BASE_X_LEFT, LANE_Y[i]+40);
+      ctx.lineTo(BASE_X_RIGHT, LANE_Y[i]+40);
+      ctx.stroke();
+    }
+
+    // bases
+    drawBase(BASE_X_LEFT-30, 270, baseHpLeft, COL.cyan, '我方基地');
+    drawBase(BASE_X_RIGHT+30, 270, baseHpRight, COL.pink, '敵方基地');
+
+    for(const e of entities) drawUnit(e);
+
+    drawParts();
+    drawFloats();
+    ctx.restore();
+
+    drawHUD();
+  }
+};
+
+const gameOverState = {
+  enter(){
+    this.t = 0;
+    if(score>bestScore){ bestScore=score; localStorage.setItem('catwars_best', bestScore); }
+    this.cansEarned = this.win ? CLEAR_REWARD : LOSE_REWARD;
+    cans += this.cansEarned;
+    saveMeta();
+  },
+  update(dt){ this.t += dt; },
+  draw(){
+    playState.draw();
+    ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    ctx.fillStyle = this.win ? COL.yellow : COL.white;
+    ctx.font='bold 40px sans-serif';
+    ctx.fillText(this.win ? '勝利！推倒敵方基地！' : '基地被攻陷了！', GAME_W/2, 190);
+    ctx.font='22px sans-serif';
+    ctx.fillStyle = COL.white;
+    ctx.fillText('分數：'+score+'　　最佳：'+bestScore, GAME_W/2, 228);
+    ctx.font='bold 20px sans-serif';
+    ctx.fillStyle = COL.yellow;
+    ctx.fillText('+'+this.cansEarned+' 罐頭', GAME_W/2, 260);
+
+    ctx.fillStyle = this.t>0.5 ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(GAMEOVER_RESTART_BTN.x, GAMEOVER_RESTART_BTN.y, GAMEOVER_RESTART_BTN.w, GAMEOVER_RESTART_BTN.h);
+    ctx.strokeStyle = COL.cyan; ctx.lineWidth=2;
+    ctx.strokeRect(GAMEOVER_RESTART_BTN.x, GAMEOVER_RESTART_BTN.y, GAMEOVER_RESTART_BTN.w, GAMEOVER_RESTART_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='bold 18px sans-serif';
+    ctx.fillText('再戰一場', GAMEOVER_RESTART_BTN.x+GAMEOVER_RESTART_BTN.w/2, GAMEOVER_RESTART_BTN.y+GAMEOVER_RESTART_BTN.h/2+6);
+
+    ctx.fillStyle = this.t>0.5 ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(GAMEOVER_GACHA_BTN.x, GAMEOVER_GACHA_BTN.y, GAMEOVER_GACHA_BTN.w, GAMEOVER_GACHA_BTN.h);
+    ctx.strokeStyle = COL.pink; ctx.lineWidth=2;
+    ctx.strokeRect(GAMEOVER_GACHA_BTN.x, GAMEOVER_GACHA_BTN.y, GAMEOVER_GACHA_BTN.w, GAMEOVER_GACHA_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='bold 18px sans-serif';
+    ctx.fillText('轉蛋機', GAMEOVER_GACHA_BTN.x+GAMEOVER_GACHA_BTN.w/2, GAMEOVER_GACHA_BTN.y+GAMEOVER_GACHA_BTN.h/2+6);
+
+    if(this.t>0.5){
+      ctx.font='16px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('按空白鍵 再戰一場', GAME_W/2, 380);
+    }
+  }
+};
+
+const gachaState = {
+  enter(){ gachaResult = null; gachaAnimT = 0; },
+  update(dt){
+    if(gachaResult) gachaAnimT += dt;
+    updateParts(dt);
+    updateFloats(dt);
+    shake *= Math.pow(0.001, dt);
+  },
+  draw(){
+    drawBG();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+
+    ctx.textAlign='center';
+    ctx.fillStyle = COL.cyan;
+    ctx.font='bold 36px sans-serif';
+    ctx.fillText('轉蛋機', GAME_W/2, 55);
+    ctx.fillStyle = COL.yellow;
+    ctx.font='bold 20px sans-serif';
+    ctx.fillText('罐頭：'+cans, GAME_W/2, 88);
+
+    const affordable = cans >= GACHA_COST;
+    ctx.fillStyle = affordable ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.3)';
+    ctx.fillRect(GACHA_PULL_BTN.x, GACHA_PULL_BTN.y, GACHA_PULL_BTN.w, GACHA_PULL_BTN.h);
+    ctx.strokeStyle = affordable ? COL.pink : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(GACHA_PULL_BTN.x, GACHA_PULL_BTN.y, GACHA_PULL_BTN.w, GACHA_PULL_BTN.h);
+    ctx.fillStyle = affordable ? COL.white : '#777';
+    ctx.font='bold 22px sans-serif';
+    ctx.fillText('抽一次（'+GACHA_COST+' 罐頭）', GAME_W/2, GACHA_PULL_BTN.y+GACHA_PULL_BTN.h/2+8);
+
+    if(gachaResult){
+      const r = RARITIES[gachaResult.rarityIdx];
+      const t = CAT_TYPES[gachaResult.typeIdx];
+      const pop = 1 + Math.max(0, 0.3 - gachaAnimT*0.6);
+      ctx.save();
+      ctx.shadowColor = r.color; ctx.shadowBlur = 20;
+      drawCatIcon(GAME_W/2, 250, t, 1.5*pop);
+      ctx.restore();
+      ctx.fillStyle = r.color;
+      ctx.font='bold 24px sans-serif';
+      ctx.fillText(r.name+'　'+t.name, GAME_W/2, 310);
+      ctx.fillStyle = COL.white;
+      ctx.font='16px sans-serif';
+      ctx.fillText(gachaResult.isUpgrade ? '已自動裝備最強版本！' : ('已擁有更好的版本，轉換為 +'+DUPLICATE_REFUND+' 罐頭'), GAME_W/2, 335);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font='16px sans-serif';
+      ctx.fillText('抽到的貓咪會自動裝備成隊伍最強版本', GAME_W/2, 260);
+    }
+
+    ctx.fillStyle = COL.white;
+    ctx.font='14px sans-serif';
+    ctx.fillText('貓咪收藏', GAME_W/2, 400);
+    const btnW = GAME_W/CAT_TYPES.length;
+    for(let i=0;i<CAT_TYPES.length;i++){
+      const cx = btnW*i+btnW/2;
+      drawCatIcon(cx, 435, CAT_TYPES[i], 0.8);
+      const owned = collection[i];
+      ctx.font='12px sans-serif';
+      ctx.fillStyle = owned>=0 ? RARITIES[owned].color : 'rgba(255,255,255,0.35)';
+      ctx.fillText(owned>=0 ? RARITIES[owned].name : '未擁有', cx, 460);
+    }
+
+    drawParts();
+    drawFloats();
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(GACHA_BACK_BTN.x, GACHA_BACK_BTN.y, GACHA_BACK_BTN.w, GACHA_BACK_BTN.h);
+    ctx.strokeStyle = COL.cyan; ctx.lineWidth=2;
+    ctx.strokeRect(GACHA_BACK_BTN.x, GACHA_BACK_BTN.y, GACHA_BACK_BTN.w, GACHA_BACK_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='16px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('返回主選單', GACHA_BACK_BTN.x+GACHA_BACK_BTN.w/2, GACHA_BACK_BTN.y+GACHA_BACK_BTN.h/2+6);
+  }
+};
+
+function drawBG(){
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0, COL.bg2);
+  g.addColorStop(1, COL.bg);
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,GAME_W,GAME_H);
+}
+
+function drawBase(x,y,hp,color,label){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.85;
+  ctx.fillRect(-25,-90,50,180);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = COL.white;
+  ctx.lineWidth = 2;
+  ctx.strokeRect(-25,-90,50,180);
+  ctx.fillStyle = COL.white;
+  ctx.textAlign='center';
+  ctx.font='14px sans-serif';
+  ctx.fillText(label, 0, -100);
+  // hp bar
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.fillRect(-30,-115,60,10);
+  ctx.fillStyle = hp>30?color:'#ff4444';
+  ctx.fillRect(-30,-115,60*Math.max(0,hp)/100,10);
+  ctx.restore();
+}
+
+function drawUnit(e){
+  ctx.save();
+  ctx.translate(e.x, e.y+40);
+  ctx.scale(e.side==='player'?1:-1, 1);
+  ctx.scale(e.sx, e.sy);
+  const c = e.type.color;
+  ctx.fillStyle = e.hitFlash>0 ? '#ffffff' : c;
+  // body
+  ctx.beginPath();
+  ctx.roundRect(-16,-24,32,28,8);
+  ctx.fill();
+  // head
+  ctx.beginPath();
+  ctx.arc(10,-30,12,0,Math.PI*2);
+  ctx.fill();
+  // ears
+  ctx.beginPath();
+  ctx.moveTo(2,-40); ctx.lineTo(6,-50); ctx.lineTo(12,-40); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(14,-40); ctx.lineTo(18,-50); ctx.lineTo(22,-40); ctx.fill();
+  // eyes
+  ctx.fillStyle = '#111';
+  ctx.beginPath(); ctx.arc(14,-30,2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(20,-30,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // hp bar
+  if(e.hp<e.maxHp){
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillRect(e.x-16, e.y+4, 32, 5);
+    ctx.fillStyle = e.side==='player'?COL.cyan:COL.pink;
+    ctx.fillRect(e.x-16, e.y+4, 32*Math.max(0,e.hp)/e.maxHp, 5);
+  }
+}
+
+function drawCatIcon(x,y,type,scale){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  ctx.fillStyle = type.color;
+  ctx.beginPath();
+  ctx.roundRect(-16,-24,32,28,8);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(10,-30,12,0,Math.PI*2);
+  ctx.fill();
+  ctx.fillStyle='#111';
+  ctx.beginPath(); ctx.arc(14,-30,2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(20,-30,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawHUD(){
+  // top bar: coins, score
+  ctx.textAlign='left';
+  ctx.font='bold 20px sans-serif';
+  ctx.fillStyle = COL.yellow;
+  ctx.fillText('魚幣：'+coins, 20, 30);
+  ctx.textAlign='right';
+  ctx.fillStyle = COL.white;
+  ctx.fillText('分數：'+score, GAME_W-20, 30);
+
+  // mute button
+  ctx.textAlign='center';
+  ctx.fillStyle = muted ? '#888' : COL.cyan;
+  ctx.font='16px sans-serif';
+  ctx.fillText(muted?'🔇':'🔊', GAME_W-20, 60);
+
+  // bottom cat buttons
+  const btnW = GAME_W/CAT_TYPES.length;
+  const btnY = GAME_H - 56;
+  for(let i=0;i<CAT_TYPES.length;i++){
+    const t = CAT_TYPES[i];
+    const cx = btnW*i + btnW/2;
+    const affordable = coins >= t.cost;
+    const owned = collection[i];
+    ctx.fillStyle = affordable ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.3)';
+    ctx.fillRect(btnW*i+4, btnY-38, btnW-8, 92);
+    ctx.strokeStyle = owned>=0 ? RARITIES[owned].color : (affordable ? t.color : 'rgba(255,255,255,0.15)');
+    ctx.lineWidth = owned>=0 ? 3 : 2;
+    ctx.strokeRect(btnW*i+4, btnY-38, btnW-8, 92);
+    drawCatIcon(cx, btnY-4, t, 0.75);
+    ctx.fillStyle = affordable ? COL.white : '#777';
+    ctx.font='13px sans-serif';
+    ctx.textAlign='center';
+    ctx.fillText(t.name, cx, btnY+30);
+    ctx.fillStyle = affordable ? COL.yellow : '#777';
+    ctx.font='bold 14px sans-serif';
+    ctx.fillText(t.cost+'魚幣', cx, btnY+48);
+    ctx.fillStyle = 'rgba(255,255,255,0.5)';
+    ctx.font='11px sans-serif';
+    ctx.textAlign='left';
+    ctx.fillText('['+(i+1)+']', btnW*i+10, btnY-24);
+    if(owned>=0){
+      ctx.fillStyle = RARITIES[owned].color;
+      ctx.font='bold 10px sans-serif';
+      ctx.textAlign='right';
+      ctx.fillText(RARITIES[owned].name, btnW*i+btnW-8, btnY-24);
+    }
+    ctx.textAlign='center';
+  }
+}
+
+// mute click detection
+canvas.addEventListener('click', e=>{
+  const p = touchPos(e);
+  if(p.x > GAME_W-45 && p.x < GAME_W-5 && p.y > 40 && p.y < 75 && state===playState){
+    muted = !muted;
+  }
+});
+
+let state;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, 0.1);
+  last = now;
+  while(acc >= STEP){
+    state.update(STEP);
+    acc -= STEP;
+  }
+  state.draw();
+}
+setState(menuState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
