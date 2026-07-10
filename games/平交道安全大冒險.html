@@ -54,15 +54,66 @@ addEventListener('keyup', e => {
   if(e.code === 'ArrowLeft' || e.code === 'KeyA') input.left = false;
   if(e.code === 'ArrowRight' || e.code === 'KeyD') input.right = false;
 });
+
+/* ===== 操作模式選擇（電腦 / 平板）＋ 畫面按鈕 ===== */
+let controlMode = null;   // 'pc' | 'tablet'
+function getActiveButtons(){
+  if(state === modeSelectState) return modeSelectState.buttons;
+  if(state === playState && round.phase === 'lookcheck' && controlMode === 'tablet') return lookButtons();
+  return [];
+}
+function lookButtons(){
+  const btns = [];
+  if(round.lookStage === 0) btns.push({x:30, y:GAME_H-104, w:170, h:64, label:'◀ 左看', act:'left'});
+  else if(round.lookStage === 2) btns.push({x:GAME_W-200, y:GAME_H-104, w:170, h:64, label:'右看 ▶', act:'right'});
+  return btns;
+}
+function hitButton(x,y){
+  for(const b of getActiveButtons()){
+    if(x>=b.x && x<=b.x+b.w && y>=b.y && y<=b.y+b.h) return b;
+  }
+  return null;
+}
+function fireButton(b){
+  if(b.mode){ controlMode = b.mode; updateHintText(); setState(menuState); }
+  else if(b.act === 'left'){ input.leftPress = true; }
+  else if(b.act === 'right'){ input.rightPress = true; }
+}
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX - r.left) / canvas._scale, y:(t.clientY - r.top) / canvas._scale };
+}
 function handleTouches(e){
   e.preventDefault();
   const wasMove = input.move;
-  input.move = e.touches.length > 0;
+  let anyMove = false;
+  for(const t of e.touches){
+    const p = touchPos(t);
+    if(hitButton(p.x, p.y)) continue;
+    anyMove = true;
+  }
+  input.move = anyMove;
   if(input.move && !wasMove) input.actionBuffer = 0.12;
 }
+canvas.addEventListener('touchstart', e => {
+  for(const t of e.changedTouches){
+    const p = touchPos(t);
+    const b = hitButton(p.x, p.y);
+    if(b) fireButton(b);
+  }
+}, { passive:false });
 for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
   canvas.addEventListener(ev, handleTouches, { passive:false });
-canvas.addEventListener('mousedown', () => { input.move = true; input.actionBuffer = 0.12; });
+function mousePos(e){
+  const r = canvas.getBoundingClientRect();
+  return { x:(e.clientX - r.left) / canvas._scale, y:(e.clientY - r.top) / canvas._scale };
+}
+canvas.addEventListener('mousedown', e => {
+  const p = mousePos(e);
+  const b = hitButton(p.x, p.y);
+  if(b){ fireButton(b); return; }
+  input.move = true; input.actionBuffer = 0.12;
+});
 addEventListener('mouseup', () => { input.move = false; });
 
 /* ===== 音效 ===== */
@@ -377,6 +428,54 @@ function updateRound(dt){
 let state;
 function setState(s){ state = s; if(s.enter) s.enter(); }
 
+function updateHintText(){
+  const hint = document.getElementById('hint');
+  hint.textContent = controlMode === 'tablet'
+    ? '平板：按住畫面前進、放開停下；左看右看時點螢幕按鈕'
+    : '電腦：按住空白鍵前進、放開停下，方向鍵左看右看';
+}
+
+const modeSelectState = {
+  t: 0,
+  enter(){ this.t = 0;
+    this.buttons = [
+      { x: GAME_W/2 - 230, y: 260, w: 200, h: 160, label:'💻 電腦模式', sub:'鍵盤操作', mode:'pc' },
+      { x: GAME_W/2 + 30,  y: 260, w: 200, h: 160, label:'📱 平板模式', sub:'觸控操作', mode:'tablet' }
+    ];
+  },
+  update(dt){ this.t += dt; worldT += dt; },
+  draw(){
+    ctx.fillStyle = '#0d1826'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawSky(); drawTownFar();
+    ctx.textAlign='center';
+    ctx.save();
+    ctx.translate(GAME_W/2, 140 + Math.sin(this.t*2)*6);
+    ctx.font='900 42px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=8; ctx.strokeStyle='#122a48';
+    ctx.strokeText('平交道安全大冒險', 0, 0);
+    const g = ctx.createLinearGradient(0,-26,0,18);
+    g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#4da3e8');
+    ctx.fillStyle = g; ctx.fillText('平交道安全大冒險', 0, 0);
+    ctx.restore();
+    ctx.font='700 20px "Noto Sans TC",sans-serif'; ctx.fillStyle='#ffe9b0';
+    ctx.fillText('請選擇你的操作方式', GAME_W/2, 200);
+
+    for(const b of this.buttons){
+      const cx = b.x + b.w/2, cy = b.y + b.h/2;
+      const g2 = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
+      g2.addColorStop(0,'rgba(77,163,232,.9)'); g2.addColorStop(1,'rgba(26,54,93,.9)');
+      ctx.fillStyle = g2;
+      rrp(b.x, b.y, b.w, b.h, 18); ctx.fill();
+      ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(216,236,255,.8)'; ctx.stroke();
+      ctx.font='42px sans-serif'; ctx.fillStyle='#fff'; ctx.fillText(b.label.slice(0,2), cx, cy-30);
+      ctx.font='900 20px "Noto Sans TC",sans-serif';
+      ctx.fillText(b.label.slice(2), cx, cy+10);
+      ctx.font='700 14px "Noto Sans TC",sans-serif'; ctx.fillStyle='#d8ecffcc';
+      ctx.fillText(b.sub, cx, cy+36);
+    }
+  }
+};
+
 const menuState = {
   t: 0,
   enter(){ this.t = 0; },
@@ -413,6 +512,7 @@ const menuState = {
       ctx.fillStyle='#ffcd75';
       ctx.fillText('最佳分數：'+best, GAME_W/2, 292);
     }
+    updateHintText();
     document.getElementById('hint').classList.add('show');
   }
 };
@@ -754,7 +854,23 @@ function drawHUD(){
     ctx.fillText('按住前進，聽到叮叮聲要馬上放開！', GAME_W/2, GAME_H-16);
   } else if(round.phase === 'lookcheck'){
     ctx.textAlign='center'; ctx.font='16px "Noto Sans TC",sans-serif'; ctx.fillStyle='#ffe9b0';
-    ctx.fillText(round.lookStage===0 ? '按左方向鍵：左看' : '按右方向鍵：右看', GAME_W/2, GAME_H-16);
+    if(controlMode === 'tablet'){
+      ctx.fillText(round.lookStage===0 ? '點左下角按鈕：左看' : '點右下角按鈕：右看', GAME_W/2, GAME_H-140);
+    } else {
+      ctx.fillText(round.lookStage===0 ? '按左方向鍵：左看' : '按右方向鍵：右看', GAME_W/2, GAME_H-16);
+    }
+    if(controlMode === 'tablet'){
+      for(const b of lookButtons()){
+        const cx = b.x + b.w/2, cy = b.y + b.h/2;
+        ctx.save();
+        ctx.fillStyle = 'rgba(20,36,56,.9)';
+        rrp(b.x, b.y, b.w, b.h, 14); ctx.fill();
+        ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(126,200,248,.85)'; ctx.stroke();
+        ctx.font='900 22px "Noto Sans TC",sans-serif'; ctx.fillStyle='#d8ecff'; ctx.textAlign='center';
+        ctx.fillText(b.label, cx, cy+8);
+        ctx.restore();
+      }
+    }
   } else if(round.phase === 'cross'){
     ctx.textAlign='center'; ctx.font='16px "Noto Sans TC",sans-serif'; ctx.fillStyle='#ffffffcc';
     ctx.fillText('安全了！按住前進通過平交道', GAME_W/2, GAME_H-16);
@@ -802,7 +918,7 @@ function frame(now){
   state.draw();
 }
 resetPed();
-setState(menuState);
+setState(modeSelectState);
 requestAnimationFrame(frame);
 </script>
 </body>
