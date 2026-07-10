@@ -293,6 +293,7 @@
     <div class="drag-hint">拖曳畫面旋轉鏡頭</div>
     <div class="hud-top">
       <div class="night-badge">DAY<b id="dayNum">47</b></div>
+      <div class="night-badge" style="color:var(--fire-hot);">金幣<b id="goldNum" style="color:var(--fire-hot);">0</b></div>
       <div class="bars">
         <div class="bar-row">體力<div class="bar-track"><div class="bar-fill fill-stam" id="stamBar"></div></div></div>
         <div class="bar-row">飢餓<div class="bar-track"><div class="bar-fill fill-hunger" id="hungerBar"></div></div></div>
@@ -715,7 +716,7 @@
     return CULTIST_SPAWNS.map((s,id)=>({
       ...makeCharacter(s.x,s.z,'#3b2f24','#8f2f2f'),
       id, x:s.x, z:s.z, baseX:s.x, baseZ:s.z, patrol:s.patrol,
-      hp:s.hp||2, alive:true, fallen:0, alertT:0, hitFlash:0
+      hp:s.hp||2, maxHp:s.hp||2, alive:true, fallen:0, alertT:0, hitFlash:0
     }));
   }
 
@@ -805,6 +806,46 @@
       prop.style.transform = `translate3d(${x}px,0px,${z}px) rotateX(90deg) scale(${s})`;
       if(life<=0){ clearInterval(iv); prop.remove(); }
     },30);
+  }
+
+  // ---------------- 金幣掉落 ----------------
+  let gold = 0;
+  const goldEl = document.getElementById('goldNum');
+  function addGold(n){ gold += n; goldEl.textContent = gold; }
+  function drawCoin(ctx,w,h){
+    ctx.clearRect(0,0,w,h);
+    const g = ctx.createRadialGradient(w*0.4,h*0.4,1,w*0.5,h*0.5,w*0.5);
+    g.addColorStop(0,'#fff3c4'); g.addColorStop(0.5,'#ffd27a'); g.addColorStop(1,'#b8842f');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(w*0.5,h*0.5,w*0.42,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#7a5620'; ctx.lineWidth=w*0.05; ctx.stroke();
+    ctx.fillStyle='rgba(122,86,32,.8)';
+    ctx.font=`bold ${Math.round(w*0.4)}px sans-serif`; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('$', w*0.5, h*0.53);
+  }
+  const coins = [];
+  function spawnCoin(x,z,amount){
+    const prop = makeCross(x,z,34,34,drawCoin);
+    coins.push({el:prop, x, z, amount, t:Math.random()*6, life:9});
+  }
+  function updateCoins(dt, camAngle, playerX, playerZ){
+    for(let i=coins.length-1;i>=0;i--){
+      const co = coins[i];
+      co.t += dt; co.life -= dt;
+      const bob = Math.sin(co.t*4)*6;
+      const d = Math.hypot(playerX-co.x, playerZ-co.z);
+      if(d < 50 || co.life<=0){
+        if(d<50){
+          addGold(co.amount);
+          spawnDamageNumber(co.x,co.z,'+'+co.amount+'金');
+        }
+        co.el.remove();
+        coins.splice(i,1);
+        continue;
+      }
+      co.el.style.transform = `translate3d(${co.x}px,${-(20+bob)}px,${co.z}px) rotateY(${camAngle*40}rad)`;
+      co.el.style.opacity = co.life<2 ? (co.life/2).toFixed(2) : '1';
+    }
   }
   let cultists = spawnCultists();
   const player = {...makeCharacter(-340,-260,'#2f4d3a','#c9a15a'), x:-340, z:-260, hp:3};
@@ -903,6 +944,7 @@
     levelTimeLeft = def.timeLimit || 0;
     levelTimerEl.style.display = def.timeLimit ? 'block' : 'none';
     cultists.forEach(c=>c.wrap.remove());
+    coins.forEach(co=>co.el.remove()); coins.length = 0;
     CULTIST_SPAWNS = generateSpawns(def.count, def.eliteHp);
     cultists = spawnCultists();
     player.x=-340; player.z=-260;
@@ -980,7 +1022,15 @@
           spawnSpark(c.x,c.z,60);
           spawnDamageNumber(c.x,c.z,'-1');
           screenShake(); whiteFlash();
-          if(c.hp<=0){ c.alive=false; spawnDust(c.x,c.z); }
+          if(c.hp<=0){
+            c.alive=false; spawnDust(c.x,c.z);
+            const strength = c.maxHp + (gameMode==='level' ? Math.floor(currentLevel/10) : Math.floor(Math.max(0,day-47)/5));
+            const dropChance = Math.min(0.9, 0.35 + strength*0.1);
+            if(Math.random() < dropChance){
+              const amount = Math.round(strength * (3 + Math.random()*4));
+              spawnCoin(c.x, c.z, amount);
+            }
+          }
         }
       });
       if(hitSomething && cultists.every(c=>!c.alive)){
@@ -1020,6 +1070,7 @@
     chaseSpeed = 30;
     CULTIST_SPAWNS = DEFAULT_SPAWNS;
     cultists.forEach(c=>c.wrap.remove());
+    coins.forEach(co=>co.el.remove()); coins.length = 0;
     cultists = spawnCultists();
     player.x=-340; player.z=-260;
     phase='raid';
@@ -1065,6 +1116,8 @@
 
     // camera follows player: translate world so player sits at origin, then orbit/tilt
     world.style.transform = `rotateX(${camTilt}deg) rotateY(${camAngle}rad) translate3d(${-player.x}px,0px,${-player.z}px)`;
+
+    updateCoins(dt, camAngle, player.x, player.z);
 
     // fire / totem animated textures
     fireCtxs.forEach(cx=>drawFire(cx,110,120,t));
