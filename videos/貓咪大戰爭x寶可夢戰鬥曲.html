@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>貓咪大戰爭 x 寶可夢戰鬥曲</title>
+<style>
+  :root{
+    --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7;
+  }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14; font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none;
+  }
+  #stage{ position:fixed; inset:0; display:block; }
+  #ui{
+    position:fixed; inset:0; pointer-events:none;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .top{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px;
+  }
+  .title{
+    font-weight:800; font-size:clamp(16px,3.2vw,22px); color:#fff;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 18px rgba(56,225,255,.25);
+  }
+  .brand{
+    font-size:11px; color:#9fb0d0; opacity:.8; margin-top:2px;
+  }
+  button{
+    pointer-events:auto; border:none; border-radius:14px; cursor:pointer;
+    font-weight:700; font-family:inherit;
+  }
+  #muteBtn{
+    width:44px;height:44px;min-width:44px;min-height:44px;
+    background:rgba(10,16,30,.65); border:1.5px solid rgba(255,255,255,.18);
+    color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center;
+    backdrop-filter:none;
+  }
+  .caption-wrap{
+    display:flex; justify-content:center; padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  .caption{
+    pointer-events:none; color:#fff; font-weight:700; font-size:clamp(14px,3.6vw,20px);
+    background:rgba(7,11,20,.55); border:1px solid rgba(255,255,255,.12);
+    padding:8px 18px; border-radius:999px; max-width:88vw; text-align:center;
+    opacity:0; transition:opacity .35s ease;
+  }
+  .caption.show{ opacity:1; }
+  #hint{
+    position:absolute; top:56px; left:0; right:0; text-align:center;
+    color:#cfe6ff; font-size:13px; opacity:.85; pointer-events:none;
+    transition:opacity .6s ease;
+  }
+  #replayWrap{
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(5,8,16,.55); pointer-events:none;
+  }
+  #replayWrap.show{ display:flex; pointer-events:auto; }
+  #replayBtn{
+    padding:14px 30px; font-size:17px; color:#0a0f1c;
+    background:linear-gradient(92deg,var(--cyan),var(--blue));
+    box-shadow:0 8px 24px rgba(79,124,255,.45);
+    min-height:52px;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div class="top">
+    <div>
+      <div class="title">貓咪大戰爭 x 寶可夢戰鬥曲</div>
+      <div class="brand">AI未來創作營隊</div>
+    </div>
+    <button id="muteBtn" aria-label="靜音切換">🔇</button>
+  </div>
+  <div id="hint">點畫面開啟音效與動畫 ▶</div>
+  <div class="caption-wrap"><div class="caption" id="caption"></div></div>
+</div>
+<div id="replayWrap">
+  <button id="replayBtn">🔁 重新播放</button>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------- 畫布縮放 ----------
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- 音效：Web Audio 原創8bit戰鬥曲（風格致敬，非真實錄音） ----------
+let actx=null, masterGain=null, muted=true;
+function ensureAudio(){
+  if(actx) return;
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.0;
+  masterGain.connect(actx.destination);
+}
+function setMuted(m){
+  muted = m;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  if(masterGain){
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.linearRampToValueAtTime(muted?0.0:0.22, actx.currentTime+0.08);
+  }
+}
+
+// 原創8bit旋律：活潑、方波+三角波，非任何既有樂曲的音符抄寫
+const NOTE = {C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392.00,A4:440.00,B4:493.88,
+  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880.00,B5:987.77,
+  C6:1046.5, R:0};
+const TEMPO = 0.16; // 每拍秒數
+const melody = [ // [音, 拍長]
+  ['E5',1],['G5',1],['C5',1],['E5',1],
+  ['D5',1],['F5',1],['B4',1],['D5',1],
+  ['C5',1],['E5',1],['G5',1],['C6',2],
+  ['B5',1],['G5',1],['E5',1],['G5',1],
+  ['A5',1],['F5',1],['D5',1],['F5',1],
+  ['G5',2],['R',1],['E5',1],
+  ['C5',1],['D5',1],['E5',1],['F5',1],
+  ['G5',1],['A5',1],['B5',1],['C6',3]
+];
+const bassline = [
+  ['C4',2],['G4',2], ['D4',2],['A4',2],
+  ['C4',2],['G4',2], ['E4',2],['C4',2],
+  ['F4',2],['C4',2], ['D4',2],['G4',2],
+  ['C4',4]
+];
+function playTone(freq, startAt, dur, type, vol){
+  if(freq<=0) return;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.exponentialRampToValueAtTime(vol, startAt+0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt+dur*0.92);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.02);
+}
+function playSeq(seq, type, vol, offset){
+  let t = actx.currentTime + 0.05;
+  for(const [n,beats] of seq){
+    const dur = beats*TEMPO;
+    if(NOTE[n]) playTone(NOTE[n]*offset, t, dur, type, vol);
+    t += dur;
+  }
+  return t;
+}
+let musicStarted=false;
+function startMusic(){
+  if(musicStarted) return;
+  musicStarted = true;
+  ensureAudio();
+  const totalDur = playSeq(melody, 'square', 0.16, 1);
+  playSeq(bassline, 'triangle', 0.20, 0.5);
+  // 循環到動畫結束（約28秒內重複兩輪）
+  setTimeout(()=>{ if(!ended){ playSeq(melody,'square',0.16,1); playSeq(bassline,'triangle',0.20,0.5);} }, (totalDur-actx.currentTime)*1000-50);
+}
+function sfxHit(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  playTone(180, t, 0.12, 'square', 0.22);
+  playTone(90, t, 0.15, 'triangle', 0.18);
+}
+function sfxWin(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [523.25,659.25,783.99,1046.5].forEach((f,i)=>playTone(f, t+i*0.09, 0.16, 'square', 0.2));
+}
+
+// ---------- 原創Q版貓咪戰士角色（多部件繪製，非既有版權圖） ----------
+function drawGround(t){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0b1330'); g.addColorStop(0.6,'#0a0f22'); g.addColorStop(1,'#070b14');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  // 星星
+  for(let i=0;i<40;i++){
+    const sx = (i*97 + t*10) % W;
+    const sy = (i*53) % (H*0.6);
+    const tw = 0.5+0.5*Math.sin(t*3+i);
+    ctx.fillStyle = `rgba(200,220,255,${0.15+0.35*tw})`;
+    ctx.fillRect(sx, sy, 2, 2);
+  }
+  // 地面
+  const floorY = H*0.82;
+  const fg = ctx.createLinearGradient(0,floorY,0,H);
+  fg.addColorStop(0,'#1a2550'); fg.addColorStop(1,'#0d1330');
+  ctx.fillStyle=fg; ctx.fillRect(0,floorY,W,H-floorY);
+  ctx.strokeStyle='rgba(56,225,255,.35)'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(0,floorY); ctx.lineTo(W,floorY); ctx.stroke();
+  ctx.restore();
+}
+
+function drawCat(x,y,scale,facing,phase,pose,palette){
+  // pose: 'idle'|'charge'|'hit'|'win'
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(facing*scale, scale);
+
+  let squashY=1, squashX=1, bob=0, tilt=0;
+  const bounce = Math.sin(phase*6)*3;
+  if(pose==='idle'){ bob=bounce; }
+  if(pose==='charge'){ squashX=1.12; squashY=0.9; bob=bounce*0.5; tilt=-0.05; }
+  if(pose==='hit'){ squashX=0.85; squashY=1.15; tilt=0.12; }
+  if(pose==='win'){ bob=-Math.abs(Math.sin(phase*8))*14; }
+
+  ctx.translate(0,bob);
+  ctx.rotate(tilt);
+  ctx.scale(squashX,squashY);
+
+  const body = palette.body, dark=palette.dark, light=palette.light, accent=palette.accent;
+
+  // 尾巴
+  const tailWag = Math.sin(phase*5)*0.35;
+  ctx.save();
+  ctx.translate(-34,-6);
+  ctx.rotate(tailWag);
+  ctx.strokeStyle = body; ctx.lineWidth=10; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(-20,-14,-14,-32); ctx.stroke();
+  ctx.restore();
+
+  // 後腳
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(-14,34,11,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(14,34,11,9,0,0,Math.PI*2); ctx.fill();
+
+  // 身體
+  ctx.fillStyle = body;
+  ctx.beginPath();
+  ctx.ellipse(0,4,34,30,0,0,Math.PI*2);
+  ctx.fill();
+  // 陰影漸層
+  const bg = ctx.createRadialGradient(-10,-10,4,0,4,40);
+  bg.addColorStop(0, light); bg.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle=bg;
+  ctx.beginPath(); ctx.ellipse(0,4,34,30,0,0,Math.PI*2); ctx.fill();
+
+  // 肚子
+  ctx.fillStyle = light;
+  ctx.beginPath(); ctx.ellipse(0,10,18,16,0,0,Math.PI*2); ctx.fill();
+
+  // 前腳（揮拳動作）
+  const armSwing = pose==='charge' ? -0.9 : (pose==='hit'? 0.5 : Math.sin(phase*6)*0.15);
+  ctx.save();
+  ctx.translate(24,2); ctx.rotate(armSwing);
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(10,6,10,8,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.translate(-24,2); ctx.rotate(-armSwing*0.6);
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(-10,6,10,8,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // 頭
+  ctx.save();
+  ctx.translate(0,-30);
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.fill();
+
+  // 耳朵
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.moveTo(-20,-14); ctx.lineTo(-30,-34); ctx.lineTo(-6,-22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(30,-34); ctx.lineTo(6,-22); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(-18,-16); ctx.lineTo(-24,-28); ctx.lineTo(-9,-21); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18,-16); ctx.lineTo(24,-28); ctx.lineTo(9,-21); ctx.closePath(); ctx.fill();
+
+  // 頭部條紋
+  ctx.strokeStyle = dark; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(0,0,24,Math.PI*1.15,Math.PI*1.35); ctx.stroke();
+
+  // 臉：眼睛
+  const blink = (Math.sin(phase*2.2)>0.965) ? 0.15 : 1;
+  ctx.fillStyle = '#12121a';
+  ctx.save(); ctx.translate(-9,-1); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.translate(9,-1); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  // 高光
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-10.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+
+  // 鼻＋嘴
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.moveTo(-2,5); ctx.lineTo(2,5); ctx.lineTo(0,8); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#3a2a20'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(-4,12,-8,9); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(4,12,8,9); ctx.stroke();
+
+  // 鬍鬚
+  ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1;
+  [-1,0,1].forEach(i=>{
+    ctx.beginPath(); ctx.moveTo(-6,4+i*3); ctx.lineTo(-22,2+i*4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,4+i*3); ctx.lineTo(22,2+i*4); ctx.stroke();
+  });
+  ctx.restore(); // 頭
+
+  ctx.restore(); // 整體
+}
+
+function drawSparkBurst(x,y,t,color){
+  ctx.save();
+  for(let i=0;i<10;i++){
+    const ang = (i/10)*Math.PI*2 + t*2;
+    const r = 10+ t*140;
+    const a = Math.max(0,1-t*1.4);
+    ctx.fillStyle = color.replace('ALPHA', a.toFixed(2));
+    ctx.beginPath();
+    ctx.arc(x+Math.cos(ang)*r, y+Math.sin(ang)*r, 4*(1-t*0.7), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------- 場景時間軸（三幕：登場→交戰→高潮結尾） ----------
+let startTime=null, ended=false;
+let camShake=0;
+const TOTAL = 28; // 秒
+
+const CAT_A = {body:'#ffcf5c', dark:'#e08b2e', light:'#fff3cc', accent:'#ff8a5c'}; // 陽光橘貓
+const CAT_B = {body:'#9a6bff', dark:'#5b3fbf', light:'#e2d6ff', accent:'#38e1ff'}; // 星辰紫貓
+
+const captions = [
+  {t:0.5, d:3.0, text:'兩隻星際貓咪戰士登場！'},
+  {t:5.0, d:3.0, text:'橘貓氣勢全開，蓄力衝拳！'},
+  {t:10.0, d:3.0, text:'紫貓反擊，星光爆裂拳！'},
+  {t:15.5, d:3.0, text:'雙方全力對撞——'},
+  {t:20.0, d:3.5, text:'橘貓獲勝！★ 戰鬥之歌完結 ★'},
+];
+let captionEl = document.getElementById('caption');
+let shownCaption = -1;
+
+function updateCaption(tt){
+  let idx=-1;
+  for(let i=0;i<captions.length;i++){
+    if(tt>=captions[i].t && tt<captions[i].t+captions[i].d){ idx=i; break; }
+  }
+  if(idx!==shownCaption){
+    shownCaption = idx;
+    if(idx>=0){
+      captionEl.textContent = captions[idx].text;
+      captionEl.classList.add('show');
+    } else {
+      captionEl.classList.remove('show');
+    }
+  }
+}
+
+function frame(now){
+  if(startTime===null) startTime = now;
+  const tt = (now-startTime)/1000;
+  ctx.clearRect(0,0,W,H);
+
+  if(camShake>0){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*camShake, (Math.random()-0.5)*camShake);
+    camShake *= 0.85;
+  } else {
+    ctx.save();
+  }
+
+  drawGround(tt);
+  updateCaption(tt);
+
+  const floorY = H*0.82;
+  const scaleBase = Math.min(W,H)/420;
+  const groundY = floorY - 20*scaleBase;
+
+  // 幕一 0-5s：登場（從畫面外滑入）
+  // 幕二 5-15.5s：交戰（互相衝拳、hit-stop）
+  // 幕三 15.5-24s：高潮對撞
+  // 幕四 24-28s：結尾勝利
+
+  let ax, bx, aPose='idle', bPose='idle';
+  const enterT = Math.min(1, tt/2.2);
+  const ease = 1-Math.pow(1-enterT,3);
+  ax = -W*0.28 + ease*(W*0.5-W*0.28-W*0.12);
+  bx = W*1.28 - ease*(W*1.28-(W*0.5+W*0.12));
+
+  if(tt>=5 && tt<10){
+    const p=(tt-5)/5;
+    aPose = (Math.floor(p*6)%2===0)?'charge':'hit';
+    if(p>0.9) sfxHitOnce('a5');
+  }
+  if(tt>=10 && tt<15.5){
+    bPose = (Math.floor((tt-10)*1.2)%2===0)?'charge':'idle';
+    aPose = (Math.floor((tt-10)*1.2)%2===0)?'hit':'idle';
+  }
+  if(tt>=15.5 && tt<20){
+    const p=(tt-15.5)/4.5;
+    const closeIn = Math.sin(Math.min(1,p*2)*Math.PI/2);
+    ax += closeIn*W*0.06;
+    bx -= closeIn*W*0.06;
+    aPose='charge'; bPose='charge';
+    if(p>0.85 && !collided){ collided=true; camShake=18; sfxHit(); }
+  }
+  if(tt>=20 && tt<24){
+    aPose='win'; bPose='hit';
+    if(!wonPlayed){ wonPlayed=true; sfxWin(); }
+  }
+  if(tt>=24){
+    aPose='win'; bPose='idle';
+  }
+
+  const catScale = 1.6*scaleBase;
+  drawCat(bx, groundY, catScale, -1, tt, bPose, CAT_B);
+  drawCat(ax, groundY, catScale, 1, tt, aPose, CAT_A);
+
+  if(collided && tt>=15.5+3.8 && tt<15.5+4.6){
+    drawSparkBurst(W*0.5, groundY-60*scaleBase, (tt-19.3), 'rgba(255,206,92,ALPHA)');
+  }
+
+  ctx.restore();
+
+  if(!ended && tt>=TOTAL){
+    ended=true;
+    document.getElementById('replayWrap').classList.add('show');
+  }
+  if(!ended){
+    requestAnimationFrame(frame);
+  }
+}
+let collided=false, wonPlayed=false;
+let hitSfxFlags={};
+function sfxHitOnce(key){
+  if(hitSfxFlags[key]) return;
+  hitSfxFlags[key]=true;
+  sfxHit();
+}
+
+function startAll(){
+  document.getElementById('hint').style.opacity='0';
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(false);
+  startMusic();
+}
+
+let running=false;
+function beginPlayback(){
+  if(running) return;
+  running=true;
+  startTime=null; ended=false; collided=false; wonPlayed=false; hitSfxFlags={};
+  document.getElementById('replayWrap').classList.remove('show');
+  requestAnimationFrame(frame);
+}
+
+document.body.addEventListener('pointerdown', function firstTap(){
+  startAll();
+  beginPlayback();
+  document.body.removeEventListener('pointerdown', firstTap);
+}, {once:true});
+
+document.getElementById('muteBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(!muted);
+});
+
+document.getElementById('replayBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  musicStarted=false;
+  if(!muted) startMusic();
+  beginPlayback();
+});
+
+// 若一開始畫面就先畫一幀靜態預覽
+resize();
+drawGround(0);
+drawCat(W*0.28, H*0.82-20, 1.6*Math.min(W,H)/420, 1, 0, 'idle', CAT_A);
+drawCat(W*0.72, H*0.82-20, 1.6*Math.min(W,H)/420, -1, 0, 'idle', CAT_B);
+
+})();
+</script>
+</body>
+</html>
