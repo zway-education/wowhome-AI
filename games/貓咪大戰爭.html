@@ -54,6 +54,13 @@ function sfxDeath(){ beep(140,0.2,'sawtooth',0.15,-90); }
 function sfxCoin(){ beep(988,0.06,'square',0.12); setTimeout(()=>beep(1319,0.1,'square',0.12),70); }
 function sfxWin(){ beep(660,0.1,'square',0.15); setTimeout(()=>beep(880,0.1,'square',0.15),100); setTimeout(()=>beep(1100,0.18,'square',0.15),200); }
 function sfxLose(){ beep(300,0.25,'sawtooth',0.15,-200); }
+function sfxGachaSpin(){ beep(320,0.12,'sine',0.1,180); }
+function sfxGachaReveal(rarityIdx){
+  if(rarityIdx===0){ beep(600,0.1,'square',0.12); }
+  else if(rarityIdx===1){ beep(700,0.1,'square',0.13); setTimeout(()=>beep(950,0.12,'square',0.13),90); }
+  else if(rarityIdx===2){ beep(800,0.1,'square',0.14); setTimeout(()=>beep(1050,0.1,'square',0.14),80); setTimeout(()=>beep(1300,0.15,'square',0.14),160); }
+  else { beep(900,0.1,'square',0.16); setTimeout(()=>beep(1150,0.1,'square',0.16),80); setTimeout(()=>beep(1400,0.1,'square',0.16),160); setTimeout(()=>beep(1750,0.22,'square',0.16),240); }
+}
 
 // ===== 輸入 =====
 const input = { touchDown:false, touchX:0 };
@@ -76,6 +83,7 @@ function handleMove(e){
   input.touchX = p.x;
 }
 function handleEnd(e){ e.preventDefault(); input.touchDown = false; }
+function pointInRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
 for(const ev of ['touchstart','mousedown']) canvas.addEventListener(ev, handleStart, {passive:false});
 for(const ev of ['touchmove','mousemove']) canvas.addEventListener(ev, handleMove, {passive:false});
 for(const ev of ['touchend','touchcancel','mouseup']) canvas.addEventListener(ev, handleEnd, {passive:false});
@@ -86,7 +94,14 @@ addEventListener('keydown', e=>{
   else if(e.code==='Digit2'||e.code==='Numpad2') keySlot=1;
   else if(e.code==='Digit3'||e.code==='Numpad3') keySlot=2;
   else if(e.code==='Digit4'||e.code==='Numpad4') keySlot=3;
-  else if(e.code==='Space'){ e.preventDefault(); if(state===menuState){ setState(playState); } else if(state===gameOverState){ if(gameOverState.t>0.5) setState(playState); } }
+  else if(e.code==='Space'){
+    e.preventDefault();
+    if(state===menuState){ setState(playState); }
+    else if(state===gameOverState){ if(gameOverState.t>0.5) setState(playState); }
+    else if(state===gachaState){ doGachaPull(); }
+  }
+  else if(e.code==='KeyG'){ if(state===menuState) setState(gachaState); }
+  else if(e.code==='Escape'){ if(state===gachaState) setState(menuState); }
   if(keySlot>=0 && state===playState) trySpawn(keySlot);
 });
 
@@ -145,6 +160,57 @@ const ENEMY_TYPES = [
   { name:'飛蝠', hp:15, atk:6, spd:65, range:34, color:'#a86bd6', cd:0.8 },
 ];
 
+// ===== 轉蛋與貓咪稀有度 =====
+const RARITIES = [
+  { name:'稀有',     color:'#8fd3ff', mult:1.0,  weight:55 },
+  { name:'極稀有',   color:'#9a6bff', mult:1.25, weight:28 },
+  { name:'超級稀有', color:'#ff6cc7', mult:1.55, weight:13 },
+  { name:'傳奇稀有', color:'#ffcf5c', mult:2.0,  weight:4  },
+];
+const GACHA_COST = 30;
+const CLEAR_REWARD = 100;
+const LOSE_REWARD = 35;
+const DUPLICATE_REFUND = 10;
+
+function rollRarity(){
+  const total = RARITIES.reduce((s,r)=>s+r.weight,0);
+  let roll = Math.random()*total;
+  for(let i=0;i<RARITIES.length;i++){ roll -= RARITIES[i].weight; if(roll<=0) return i; }
+  return 0;
+}
+
+let cans = Number(localStorage.getItem('catwars_cans')||0);
+let collection = JSON.parse(localStorage.getItem('catwars_collection')||'null') || CAT_TYPES.map(()=>-1);
+function saveMeta(){
+  localStorage.setItem('catwars_cans', cans);
+  localStorage.setItem('catwars_collection', JSON.stringify(collection));
+}
+
+let gachaResult = null;   // { typeIdx, rarityIdx, isUpgrade }
+let gachaAnimT = 0;
+
+const GACHA_BTN_MENU     = { x:GAME_W/2-120, y:325, w:240, h:46 };
+const GACHA_PULL_BTN     = { x:GAME_W/2-150, y:115, w:300, h:54 };
+const GACHA_BACK_BTN     = { x:GAME_W/2-100, y:460, w:200, h:42 };
+const GAMEOVER_RESTART_BTN = { x:270, y:300, w:200, h:52 };
+const GAMEOVER_GACHA_BTN   = { x:490, y:300, w:200, h:52 };
+
+function doGachaPull(){
+  if(cans < GACHA_COST){ sfxHit(); return; }
+  cans -= GACHA_COST;
+  const typeIdx = Math.floor(Math.random()*CAT_TYPES.length);
+  const rarityIdx = rollRarity();
+  const isUpgrade = rarityIdx > collection[typeIdx];
+  if(isUpgrade) collection[typeIdx] = rarityIdx;
+  else cans += DUPLICATE_REFUND;
+  saveMeta();
+  gachaResult = { typeIdx, rarityIdx, isUpgrade };
+  gachaAnimT = 0;
+  sfxGachaReveal(rarityIdx);
+  burst(GAME_W/2, 250, RARITIES[rarityIdx].color, 16+rarityIdx*10, 220);
+  if(rarityIdx >= 2) shake = Math.min(shake + (rarityIdx===3?10:6), 12);
+}
+
 let entities = [];
 let coins = 0;
 let coinTimer = 0;
@@ -170,19 +236,42 @@ function trySpawn(slot){
 }
 
 function makeUnit(type, side, lane){
+  let hp = type.hp, atk = type.atk;
+  if(side==='player'){
+    const owned = collection[CAT_TYPES.indexOf(type)];
+    if(owned >= 0){
+      const mult = RARITIES[owned].mult;
+      hp = Math.round(type.hp*mult);
+      atk = Math.round(type.atk*mult*10)/10;
+    }
+  }
   return {
     side, lane, type,
     x: side==='player' ? BASE_X_LEFT+20 : BASE_X_RIGHT-20,
     y: LANE_Y[lane],
-    hp: type.hp, maxHp: type.hp,
+    hp, maxHp: hp, atk,
     atkCd: 0, dead:false,
     hitFlash: 0, sx:1, sy:1
   };
 }
 
 function onTap(x,y){
-  if(state===menuState){ setState(playState); return; }
-  if(state===gameOverState){ if(gameOverState.t>0.5) setState(playState); return; }
+  if(state===menuState){
+    if(pointInRect(x,y,GACHA_BTN_MENU)){ setState(gachaState); return; }
+    setState(playState);
+    return;
+  }
+  if(state===gameOverState){
+    if(gameOverState.t <= 0.5) return;
+    if(pointInRect(x,y,GAMEOVER_GACHA_BTN)){ setState(gachaState); return; }
+    setState(playState);
+    return;
+  }
+  if(state===gachaState){
+    if(pointInRect(x,y,GACHA_PULL_BTN)){ doGachaPull(); return; }
+    if(pointInRect(x,y,GACHA_BACK_BTN)){ setState(menuState); return; }
+    return;
+  }
   if(state!==playState) return;
   // bottom UI buttons handle spawning
   const btnY = GAME_H - 56;
@@ -199,24 +288,45 @@ const menuState = {
     drawBG();
     ctx.textAlign='center';
     ctx.fillStyle = COL.cyan;
-    ctx.font = 'bold 52px sans-serif';
-    ctx.fillText('貓咪大戰爭', GAME_W/2, 170);
+    ctx.font = 'bold 48px sans-serif';
+    ctx.fillText('貓咪大戰爭', GAME_W/2, 140);
     ctx.fillStyle = COL.white;
-    ctx.font='22px sans-serif';
-    ctx.fillText('派出貓咪部隊，推倒對面基地！', GAME_W/2, 230);
-    ctx.font='18px sans-serif';
-    ctx.fillText('電腦：按數字鍵 1-4 出兵　　平板／手機：點下方按鈕出兵', GAME_W/2, 270);
-    ctx.font='bold 24px sans-serif';
+    ctx.font='20px sans-serif';
+    ctx.fillText('派出貓咪部隊，推倒對面基地！', GAME_W/2, 195);
+    ctx.font='17px sans-serif';
+    ctx.fillText('電腦：按數字鍵 1-4 出兵　　平板／手機：點下方按鈕出兵', GAME_W/2, 230);
+    ctx.font='bold 22px sans-serif';
     ctx.fillStyle = COL.yellow;
-    ctx.fillText('點擊畫面 / 按空白鍵 開始', GAME_W/2, 340);
+    ctx.fillText('點擊畫面 / 按空白鍵 開始出征', GAME_W/2, 270);
     ctx.font='16px sans-serif';
     ctx.fillStyle = COL.white;
-    ctx.fillText('最佳分數：'+bestScore, GAME_W/2, 400);
+    ctx.fillText('最佳分數：'+bestScore+'　　罐頭：'+cans, GAME_W/2, 303);
 
-    // preview cat cards
+    // 轉蛋機按鈕
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    ctx.fillRect(GACHA_BTN_MENU.x, GACHA_BTN_MENU.y, GACHA_BTN_MENU.w, GACHA_BTN_MENU.h);
+    ctx.strokeStyle = COL.pink;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(GACHA_BTN_MENU.x, GACHA_BTN_MENU.y, GACHA_BTN_MENU.w, GACHA_BTN_MENU.h);
+    ctx.fillStyle = COL.white;
+    ctx.font = 'bold 20px sans-serif';
+    ctx.fillText('轉蛋機　抽貓咪', GAME_W/2, GACHA_BTN_MENU.y+GACHA_BTN_MENU.h/2+7);
+    ctx.font='13px sans-serif';
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.fillText('（點擊或按 G 鍵開啟）', GAME_W/2, GACHA_BTN_MENU.y+GACHA_BTN_MENU.h+18);
+
+    // preview cat cards with owned rarity
+    ctx.font='13px sans-serif';
+    ctx.fillStyle = COL.white;
+    ctx.fillText('貓咪收藏', GAME_W/2, 415);
     const btnW = GAME_W/CAT_TYPES.length;
     for(let i=0;i<CAT_TYPES.length;i++){
-      drawCatIcon(btnW*i+btnW/2, 460, CAT_TYPES[i], 0.9);
+      const cx = btnW*i+btnW/2;
+      drawCatIcon(cx, 460, CAT_TYPES[i], 0.9);
+      const owned = collection[i];
+      ctx.font='12px sans-serif';
+      ctx.fillStyle = owned>=0 ? RARITIES[owned].color : 'rgba(255,255,255,0.35)';
+      ctx.fillText(owned>=0 ? RARITIES[owned].name : '未擁有', cx, 490);
     }
   }
 };
@@ -266,7 +376,7 @@ const playState = {
       if(target && bestDist <= e.type.range){
         if(e.atkCd<=0){
           e.atkCd = e.type.cd;
-          target.hp -= e.type.atk;
+          target.hp -= e.atk;
           target.hitFlash = 1;
           target.sx = 0.8; target.sy=1.2;
           shake = Math.min(shake+2, 6);
@@ -306,10 +416,12 @@ const playState = {
     if(baseHpLeft<=0){
       sfxLose();
       freeze = 0.15; shake = 10;
-      setState(gameOverState); gameOverState.win=false;
+      gameOverState.win = false;
+      setState(gameOverState);
     } else if(baseHpRight<=0){
       sfxWin();
-      setState(gameOverState); gameOverState.win=true;
+      gameOverState.win = true;
+      setState(gameOverState);
     }
   },
   draw(){
@@ -342,26 +454,124 @@ const playState = {
 };
 
 const gameOverState = {
-  enter(){ this.t = 0; if(score>bestScore){ bestScore=score; localStorage.setItem('catwars_best', bestScore); } },
+  enter(){
+    this.t = 0;
+    if(score>bestScore){ bestScore=score; localStorage.setItem('catwars_best', bestScore); }
+    this.cansEarned = this.win ? CLEAR_REWARD : LOSE_REWARD;
+    cans += this.cansEarned;
+    saveMeta();
+  },
   update(dt){ this.t += dt; },
   draw(){
     playState.draw();
     ctx.fillStyle = 'rgba(0,0,0,.6)'; ctx.fillRect(0,0,GAME_W,GAME_H);
     ctx.textAlign='center';
     ctx.fillStyle = this.win ? COL.yellow : COL.white;
-    ctx.font='bold 44px sans-serif';
-    ctx.fillText(this.win ? '勝利！推倒敵方基地！' : '基地被攻陷了！', GAME_W/2, 220);
-    ctx.font='24px sans-serif';
+    ctx.font='bold 40px sans-serif';
+    ctx.fillText(this.win ? '勝利！推倒敵方基地！' : '基地被攻陷了！', GAME_W/2, 190);
+    ctx.font='22px sans-serif';
     ctx.fillStyle = COL.white;
-    ctx.fillText('分數：'+score+'　　最佳：'+bestScore, GAME_W/2, 270);
-    ctx.font='20px sans-serif';
-    ctx.fillStyle = COL.cyan;
-    ctx.fillText('再挑戰一次！', GAME_W/2, 320);
+    ctx.fillText('分數：'+score+'　　最佳：'+bestScore, GAME_W/2, 228);
+    ctx.font='bold 20px sans-serif';
+    ctx.fillStyle = COL.yellow;
+    ctx.fillText('+'+this.cansEarned+' 罐頭', GAME_W/2, 260);
+
+    ctx.fillStyle = this.t>0.5 ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(GAMEOVER_RESTART_BTN.x, GAMEOVER_RESTART_BTN.y, GAMEOVER_RESTART_BTN.w, GAMEOVER_RESTART_BTN.h);
+    ctx.strokeStyle = COL.cyan; ctx.lineWidth=2;
+    ctx.strokeRect(GAMEOVER_RESTART_BTN.x, GAMEOVER_RESTART_BTN.y, GAMEOVER_RESTART_BTN.w, GAMEOVER_RESTART_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='bold 18px sans-serif';
+    ctx.fillText('再戰一場', GAMEOVER_RESTART_BTN.x+GAMEOVER_RESTART_BTN.w/2, GAMEOVER_RESTART_BTN.y+GAMEOVER_RESTART_BTN.h/2+6);
+
+    ctx.fillStyle = this.t>0.5 ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(GAMEOVER_GACHA_BTN.x, GAMEOVER_GACHA_BTN.y, GAMEOVER_GACHA_BTN.w, GAMEOVER_GACHA_BTN.h);
+    ctx.strokeStyle = COL.pink; ctx.lineWidth=2;
+    ctx.strokeRect(GAMEOVER_GACHA_BTN.x, GAMEOVER_GACHA_BTN.y, GAMEOVER_GACHA_BTN.w, GAMEOVER_GACHA_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='bold 18px sans-serif';
+    ctx.fillText('轉蛋機', GAMEOVER_GACHA_BTN.x+GAMEOVER_GACHA_BTN.w/2, GAMEOVER_GACHA_BTN.y+GAMEOVER_GACHA_BTN.h/2+6);
+
     if(this.t>0.5){
-      ctx.font='18px sans-serif';
-      ctx.fillStyle = COL.white;
-      ctx.fillText('點擊畫面 / 按空白鍵 重新開始', GAME_W/2, 360);
+      ctx.font='16px sans-serif';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.fillText('按空白鍵 再戰一場', GAME_W/2, 380);
     }
+  }
+};
+
+const gachaState = {
+  enter(){ gachaResult = null; gachaAnimT = 0; },
+  update(dt){
+    if(gachaResult) gachaAnimT += dt;
+    updateParts(dt);
+    updateFloats(dt);
+    shake *= Math.pow(0.001, dt);
+  },
+  draw(){
+    drawBG();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+
+    ctx.textAlign='center';
+    ctx.fillStyle = COL.cyan;
+    ctx.font='bold 36px sans-serif';
+    ctx.fillText('轉蛋機', GAME_W/2, 55);
+    ctx.fillStyle = COL.yellow;
+    ctx.font='bold 20px sans-serif';
+    ctx.fillText('罐頭：'+cans, GAME_W/2, 88);
+
+    const affordable = cans >= GACHA_COST;
+    ctx.fillStyle = affordable ? 'rgba(255,255,255,0.14)' : 'rgba(0,0,0,0.3)';
+    ctx.fillRect(GACHA_PULL_BTN.x, GACHA_PULL_BTN.y, GACHA_PULL_BTN.w, GACHA_PULL_BTN.h);
+    ctx.strokeStyle = affordable ? COL.pink : 'rgba(255,255,255,0.15)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(GACHA_PULL_BTN.x, GACHA_PULL_BTN.y, GACHA_PULL_BTN.w, GACHA_PULL_BTN.h);
+    ctx.fillStyle = affordable ? COL.white : '#777';
+    ctx.font='bold 22px sans-serif';
+    ctx.fillText('抽一次（'+GACHA_COST+' 罐頭）', GAME_W/2, GACHA_PULL_BTN.y+GACHA_PULL_BTN.h/2+8);
+
+    if(gachaResult){
+      const r = RARITIES[gachaResult.rarityIdx];
+      const t = CAT_TYPES[gachaResult.typeIdx];
+      const pop = 1 + Math.max(0, 0.3 - gachaAnimT*0.6);
+      ctx.save();
+      ctx.shadowColor = r.color; ctx.shadowBlur = 20;
+      drawCatIcon(GAME_W/2, 250, t, 1.5*pop);
+      ctx.restore();
+      ctx.fillStyle = r.color;
+      ctx.font='bold 24px sans-serif';
+      ctx.fillText(r.name+'　'+t.name, GAME_W/2, 310);
+      ctx.fillStyle = COL.white;
+      ctx.font='16px sans-serif';
+      ctx.fillText(gachaResult.isUpgrade ? '已自動裝備最強版本！' : ('已擁有更好的版本，轉換為 +'+DUPLICATE_REFUND+' 罐頭'), GAME_W/2, 335);
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.6)';
+      ctx.font='16px sans-serif';
+      ctx.fillText('抽到的貓咪會自動裝備成隊伍最強版本', GAME_W/2, 260);
+    }
+
+    ctx.fillStyle = COL.white;
+    ctx.font='14px sans-serif';
+    ctx.fillText('貓咪收藏', GAME_W/2, 400);
+    const btnW = GAME_W/CAT_TYPES.length;
+    for(let i=0;i<CAT_TYPES.length;i++){
+      const cx = btnW*i+btnW/2;
+      drawCatIcon(cx, 435, CAT_TYPES[i], 0.8);
+      const owned = collection[i];
+      ctx.font='12px sans-serif';
+      ctx.fillStyle = owned>=0 ? RARITIES[owned].color : 'rgba(255,255,255,0.35)';
+      ctx.fillText(owned>=0 ? RARITIES[owned].name : '未擁有', cx, 460);
+    }
+
+    drawParts();
+    drawFloats();
+    ctx.restore();
+
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    ctx.fillRect(GACHA_BACK_BTN.x, GACHA_BACK_BTN.y, GACHA_BACK_BTN.w, GACHA_BACK_BTN.h);
+    ctx.strokeStyle = COL.cyan; ctx.lineWidth=2;
+    ctx.strokeRect(GACHA_BACK_BTN.x, GACHA_BACK_BTN.y, GACHA_BACK_BTN.w, GACHA_BACK_BTN.h);
+    ctx.fillStyle = COL.white; ctx.font='16px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('返回主選單', GACHA_BACK_BTN.x+GACHA_BACK_BTN.w/2, GACHA_BACK_BTN.y+GACHA_BACK_BTN.h/2+6);
   }
 };
 
@@ -470,10 +680,11 @@ function drawHUD(){
     const t = CAT_TYPES[i];
     const cx = btnW*i + btnW/2;
     const affordable = coins >= t.cost;
+    const owned = collection[i];
     ctx.fillStyle = affordable ? 'rgba(255,255,255,0.12)' : 'rgba(0,0,0,0.3)';
     ctx.fillRect(btnW*i+4, btnY-38, btnW-8, 92);
-    ctx.strokeStyle = affordable ? t.color : 'rgba(255,255,255,0.15)';
-    ctx.lineWidth = 2;
+    ctx.strokeStyle = owned>=0 ? RARITIES[owned].color : (affordable ? t.color : 'rgba(255,255,255,0.15)');
+    ctx.lineWidth = owned>=0 ? 3 : 2;
     ctx.strokeRect(btnW*i+4, btnY-38, btnW-8, 92);
     drawCatIcon(cx, btnY-4, t, 0.75);
     ctx.fillStyle = affordable ? COL.white : '#777';
@@ -485,7 +696,15 @@ function drawHUD(){
     ctx.fillText(t.cost+'魚幣', cx, btnY+48);
     ctx.fillStyle = 'rgba(255,255,255,0.5)';
     ctx.font='11px sans-serif';
-    ctx.fillText('['+(i+1)+']', cx, btnY-30);
+    ctx.textAlign='left';
+    ctx.fillText('['+(i+1)+']', btnW*i+10, btnY-24);
+    if(owned>=0){
+      ctx.fillStyle = RARITIES[owned].color;
+      ctx.font='bold 10px sans-serif';
+      ctx.textAlign='right';
+      ctx.fillText(RARITIES[owned].name, btnW*i+btnW-8, btnY-24);
+    }
+    ctx.textAlign='center';
   }
 }
 
