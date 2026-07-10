@@ -373,9 +373,72 @@ function swing() {
   if (dist < SWING_RANGE) chaser.stunnedUntil = elapsed + STUN_DURATION;
 }
 
+// ---------- dread audio (synthesized, no external assets) ----------
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  } else if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
+let lastThumpTime = -Infinity;
+let screamedRecently = false;
+
+function playThump(vol) {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.setValueAtTime(95, t);
+  osc.frequency.exponentialRampToValueAtTime(38, t + 0.16);
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.24);
+}
+
+function playScream() {
+  if (!audioCtx) return;
+  const t = audioCtx.currentTime;
+  const dur = 0.45;
+  const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(2000, t);
+  filter.frequency.exponentialRampToValueAtTime(500, t + dur);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.55, t);
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start(t);
+}
+
+function updateDreadAudio(dread, chaserDist) {
+  if (dread > 0.03) {
+    const interval = 1.1 - dread * 0.75;
+    if (elapsed - lastThumpTime > interval) {
+      playThump(0.08 + dread * 0.3);
+      lastThumpTime = elapsed;
+    }
+  }
+  if (chaserDist < 1.4 && !screamedRecently) {
+    playScream();
+    screamedRecently = true;
+  } else if (chaserDist > 2.6) {
+    screamedRecently = false;
+  }
+}
+
 // ---------- input ----------
 const keys = {};
 window.addEventListener('keydown', e => {
+  ensureAudio();
   keys[e.key.toLowerCase()] = true;
   if (e.key === ' ') { swing(); e.preventDefault(); }
   if (e.key.toLowerCase() === 'shift') jump();
@@ -385,7 +448,7 @@ window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
 
 function bindPad(id, key) {
   const el = document.getElementById(id);
-  const down = e => { keys[key] = true; e.preventDefault(); };
+  const down = e => { ensureAudio(); keys[key] = true; e.preventDefault(); };
   const up = e => { keys[key] = false; e.preventDefault(); };
   el.addEventListener('pointerdown', down);
   el.addEventListener('pointerup', up);
@@ -403,7 +466,7 @@ document.getElementById('hideBtn').addEventListener('pointerdown', e => { toggle
 // mouse-drag to look
 let dragging = false, lastDragX = 0;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { dragging = true; lastDragX = e.clientX; e.preventDefault(); });
+canvas.addEventListener('pointerdown', e => { ensureAudio(); dragging = true; lastDragX = e.clientX; e.preventDefault(); });
 window.addEventListener('pointerup', () => dragging = false);
 window.addEventListener('pointermove', e => {
   if (!dragging) return;
@@ -538,10 +601,20 @@ function castRay(rayAngle) {
   return { dist: Math.max(perpDist, 0.0001), side, gx: hitGX, gy: hitGY };
 }
 
+const DREAD_RANGE = 4;
 function drawScene() {
   const w = canvas.width, h = canvas.height;
   const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
   const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
+
+  const chaserDist = player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y);
+  const dread = clamp(1 - chaserDist / DREAD_RANGE, 0, 1);
+  const shakeMag = dread * dread * 10;
+  const shakeX = (Math.random() - 0.5) * shakeMag;
+  const shakeY = (Math.random() - 0.5) * shakeMag;
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
   const horizon = h / 2 - jumpBob;
 
   // ceiling
@@ -626,13 +699,17 @@ function drawScene() {
   ctx.fillStyle = fogGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // red dread vignette pulse
-  const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
-  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.75);
+  // red dread vignette pulse, intensifies as the chaser closes in
+  const pulseSpeed = 2.2 + dread * 6;
+  const pulse = 0.5 + 0.5 * Math.sin(elapsed * pulseSpeed);
+  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * (0.28 - dread * 0.15), w / 2, h / 2, Math.max(w, h) * 0.75);
   vign.addColorStop(0, 'rgba(120,0,0,0)');
-  vign.addColorStop(1, `rgba(150,0,0,${0.15 + pulse * 0.15})`);
+  vign.addColorStop(1, `rgba(150,0,0,${0.15 + pulse * (0.15 + dread * 0.45)})`);
   ctx.fillStyle = vign;
   ctx.fillRect(0, 0, w, h);
+
+  ctx.restore();
+  updateDreadAudio(dread, chaserDist);
 }
 
 function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
@@ -653,28 +730,45 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
 
   if (kind === 'chaser') {
     const stunned = elapsed < (chaser.stunnedUntil || 0);
+    const twitch = Math.sin(elapsed * 14) * size * 0.01;
     ctx.save();
-    ctx.translate(screenX, horizon + size * 0.15);
-    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(80 * shade)},0,0,${shade})`;
+    ctx.translate(screenX + twitch, horizon + size * 0.18);
+    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(28 * shade)},${Math.floor(6 * shade)},${Math.floor(6 * shade)},${shade})`;
     ctx.fillStyle = bodyColor;
-    // simple robed silhouette
+    // hunched, gnarled robed silhouette
     ctx.beginPath();
-    ctx.moveTo(-size * 0.16, size * 0.02);
-    ctx.quadraticCurveTo(-size * 0.24, -size * 0.35, 0, -size * 0.42);
-    ctx.quadraticCurveTo(size * 0.24, -size * 0.35, size * 0.16, size * 0.02);
-    ctx.lineTo(size * 0.22, size * 0.5);
-    ctx.lineTo(-size * 0.22, size * 0.5);
+    ctx.moveTo(-size * 0.2, size * 0.05);
+    ctx.quadraticCurveTo(-size * 0.3, -size * 0.28, -size * 0.06, -size * 0.4);
+    ctx.quadraticCurveTo(size * 0.02, -size * 0.46, size * 0.1, -size * 0.38);
+    ctx.quadraticCurveTo(size * 0.3, -size * 0.3, size * 0.24, size * 0.05);
+    ctx.lineTo(size * 0.3, size * 0.5);
+    ctx.lineTo(-size * 0.28, size * 0.5);
     ctx.closePath();
     ctx.fill();
-    // head
+    // gnarled reaching arm
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = Math.max(1, size * 0.03);
     ctx.beginPath();
-    ctx.arc(0, -size * 0.46, size * 0.09, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(200,190,170,${shade})`;
+    ctx.moveTo(size * 0.2, -size * 0.1);
+    ctx.lineTo(size * 0.42, size * 0.05 + twitch);
+    ctx.lineTo(size * 0.5, -size * 0.02 + twitch);
+    ctx.stroke();
+    // head, hunched forward
+    ctx.beginPath();
+    ctx.arc(-size * 0.02, -size * 0.5, size * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.fill();
+    // glowing red eyes
+    const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 9);
+    ctx.fillStyle = `rgba(255,${stunned ? 200 : Math.floor(20 + eyeGlow * 30)},${stunned ? 200 : 0},${shade})`;
+    ctx.beginPath();
+    ctx.arc(-size * 0.055, -size * 0.505, size * 0.016, 0, Math.PI * 2);
+    ctx.arc(size * 0.01, -size * 0.505, size * 0.016, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${Math.max(10, size * 0.06)}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('恐怖阿嬤', 0, -size * 0.58);
+    ctx.fillText('恐怖阿嬤', 0, -size * 0.64);
     if (stunned) ctx.fillText('暈', 0, -size * 0.7);
     ctx.restore();
   } else if (kind === 'cabinet') {
