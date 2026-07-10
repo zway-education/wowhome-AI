@@ -1,0 +1,706 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>恐怖校園：踩地雷</title>
+<style>
+  html,body{margin:0;height:100%;background:#05070a;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+
+/* ===== 難度設定 ===== */
+const DIFFS = {
+  easy:   { label:'簡單',  cols:9,  rows:9,  mines:10, key:'mine_best_easy'   },
+  normal: { label:'中等',  cols:13, rows:13, mines:32, key:'mine_best_normal' },
+  hard:   { label:'困難',  cols:18, rows:14, mines:60, key:'mine_best_hard'   }
+};
+const CELL = 32;
+const HUD_H = 72;
+const PAD = 16;
+
+let GAME_W = 720, GAME_H = 640;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function computeCanvasSize(diff){
+  GAME_W = diff.cols * CELL + PAD * 2;
+  GAME_H = diff.rows * CELL + PAD * 2 + HUD_H;
+}
+function computeTitleSize(){
+  GAME_W = 760; GAME_H = 420;
+}
+computeCanvasSize(DIFFS.easy);
+
+function resize(){
+  const scale = Math.min((innerWidth - 16) / GAME_W, (innerHeight - 16) / GAME_H, 1.4);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+/* ===== 顏色（廢棄校舍・幽暗手電筒風） ===== */
+const COL = {
+  bg0: '#040605', bg1: '#0a100c',
+  cellTop: '#1c2620', cellBottom: '#12160f', cellEdge: '#37493c',
+  cellHoverTop: '#243226',
+  revealed: '#0e120e', revealedEdge: '#2a3a2c',
+  grid: '#000000',
+  flag: '#ffcf5c', flagPole: '#cbb27a',
+  mine: '#0a0f0c', mineBody: '#eaffe9',
+  text: '#eaffe9', dim: '#7c8f7c',
+  brand1: '#7fffa0', brand2: '#3ddc84', brand3: '#1f8f52',
+  win: '#7fffa0', lose: '#ff5c5c',
+  numbers: ['', '#6fb1ff', '#5be08a', '#ff5c5c', '#c48cff', '#e0c15b', '#5be2e2', '#eaffe9', '#8fa08f']
+};
+
+/* ===== 輸入 ===== */
+const input = { pointers: new Map() };
+let flagMode = false; // 手機「插旗模式」切換
+
+function boardPos(clientX, clientY){
+  const r = canvas.getBoundingClientRect();
+  const x = (clientX - r.left) / canvas._scale;
+  const y = (clientY - r.top) / canvas._scale;
+  return { x, y };
+}
+function cellAt(x, y, diff){
+  const bx = x - PAD, by = y - PAD - HUD_H;
+  if(bx < 0 || by < 0) return null;
+  const c = Math.floor(bx / CELL), r = Math.floor(by / CELL);
+  if(c < 0 || c >= diff.cols || r < 0 || r >= diff.rows) return null;
+  return { c, r };
+}
+
+/* ===== 音效：Web Audio 合成 ===== */
+let AC = null, muted = false;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, { once:true });
+
+function beep(freq, dur, type, vol, slide){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
+  g.gain.setValueAtTime(vol == null ? 0.15 : vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime + dur);
+}
+function sndReveal(n){ beep(220 + n * 30, 0.07, 'triangle', 0.08, -20); }
+function sndCascade(){ beep(300, 0.04, 'sine', 0.05); }
+function sndFlag(on){ beep(on ? 520 : 300, 0.08, 'sine', 0.08); }
+function sndExplode(){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const n = ac.createBufferSource(), buf = ac.createBuffer(1, ac.sampleRate * 0.4, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
+  n.buffer = buf;
+  const g = ac.createGain(); g.gain.setValueAtTime(0.3, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.4);
+  n.connect(g).connect(ac.destination); n.start();
+  beep(90, 0.3, 'sawtooth', 0.2, -60);
+}
+function sndWin(){
+  [440, 660, 550, 880].forEach((f,i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.1), i * 110));
+}
+
+/* ===== 粒子 ===== */
+const parts = [];
+function burst(x, y, color, n, speed){
+  n = n || 12; speed = speed || 200;
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = speed * (0.3 + Math.random()*0.7);
+    parts.push({ x, y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0.6, maxLife:0.6, color });
+  }
+  if(parts.length > 400) parts.splice(0, parts.length - 400);
+}
+function updateParts(dt){
+  for(const p of parts){ p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 500*dt; p.life -= dt; }
+  for(let i=parts.length-1;i>=0;i--) if(parts[i].life <= 0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life / p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3, p.y-3, 6, 6);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ===== 飄字 ===== */
+const floaters = [];
+function floatText(x, y, text, color){
+  floaters.push({ x, y, text, color, life: 0.8, maxLife: 0.8 });
+}
+function updateFloaters(dt){
+  for(const f of floaters) f.y -= 30*dt, f.life -= dt;
+  for(let i=floaters.length-1;i>=0;i--) if(floaters[i].life<=0) floaters.splice(i,1);
+}
+function drawFloaters(){
+  ctx.textAlign = 'center'; ctx.font = 'bold 18px sans-serif';
+  for(const f of floaters){
+    ctx.globalAlpha = Math.max(0, f.life / f.maxLife);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ===== 震動 / hit-stop ===== */
+let shake = 0, freeze = 0;
+
+/* ===== 棋盤 ===== */
+let board, diff, minesLeft, revealedCount, timer, gameActive, firstClickDone, hoverCell = null, exploded = null;
+
+/* ===== 手電筒視野（拿掉上帝視角，靠近才看得清楚） ===== */
+let light = { x:0, y:0 }, lightTarget = { x:0, y:0 };
+function setLightTarget(x, y){
+  const ox = PAD, oy = PAD + HUD_H;
+  const w = diff.cols*CELL, h = diff.rows*CELL;
+  lightTarget.x = Math.max(ox, Math.min(ox+w, x));
+  lightTarget.y = Math.max(oy, Math.min(oy+h, y));
+}
+
+function makeBoard(d){
+  const b = [];
+  for(let r=0;r<d.rows;r++){
+    const row = [];
+    for(let c=0;c<d.cols;c++) row.push({ mine:false, flagged:false, revealed:false, count:0, revealT:-1 });
+    b.push(row);
+  }
+  return b;
+}
+function forEachCell(fn){
+  for(let r=0;r<diff.rows;r++) for(let c=0;c<diff.cols;c++) fn(board[r][c], r, c);
+}
+function neighbors(r, c){
+  const out = [];
+  for(let dr=-1;dr<=1;dr++) for(let dc=-1;dc<=1;dc++){
+    if(dr===0 && dc===0) continue;
+    const nr=r+dr, nc=c+dc;
+    if(nr>=0 && nr<diff.rows && nc>=0 && nc<diff.cols) out.push([nr,nc]);
+  }
+  return out;
+}
+function placeMines(excludeR, excludeC){
+  const forbidden = new Set(neighbors(excludeR, excludeC).map(([r,c]) => r+','+c));
+  forbidden.add(excludeR + ',' + excludeC);
+  let placed = 0;
+  while(placed < diff.mines){
+    const r = Math.floor(Math.random()*diff.rows), c = Math.floor(Math.random()*diff.cols);
+    if(board[r][c].mine || forbidden.has(r+','+c)) continue;
+    board[r][c].mine = true; placed++;
+  }
+  forEachCell((cell, r, c) => {
+    if(cell.mine) return;
+    let n = 0;
+    for(const [nr,nc] of neighbors(r,c)) if(board[nr][nc].mine) n++;
+    cell.count = n;
+  });
+}
+function revealCell(r, c, t){
+  const cell = board[r][c];
+  if(cell.revealed || cell.flagged) return;
+  cell.revealed = true; cell.revealT = t;
+  revealedCount++;
+  if(cell.count === 0 && !cell.mine){
+    for(const [nr,nc] of neighbors(r,c)){
+      if(!board[nr][nc].revealed && !board[nr][nc].flagged) revealCell(nr, nc, t);
+    }
+  }
+}
+function countFlagsAround(r, c){
+  let n = 0;
+  for(const [nr,nc] of neighbors(r,c)) if(board[nr][nc].flagged) n++;
+  return n;
+}
+
+function doReveal(r, c){
+  const cell = board[r][c];
+  if(cell.flagged || cell.revealed) return;
+  if(!firstClickDone){
+    placeMines(r, c);
+    firstClickDone = true;
+  }
+  if(cell.mine){
+    exploded = { r, c };
+    endGame(false);
+    return;
+  }
+  const before = revealedCount;
+  revealCell(r, c, timer);
+  if(revealedCount - before > 3) sndCascade(); else sndReveal(cell.count);
+  checkWin();
+}
+function doFlag(r, c){
+  const cell = board[r][c];
+  if(cell.revealed) return;
+  cell.flagged = !cell.flagged;
+  minesLeft += cell.flagged ? -1 : 1;
+  sndFlag(cell.flagged);
+}
+function doChord(r, c){
+  const cell = board[r][c];
+  if(!cell.revealed || cell.count === 0) return;
+  if(countFlagsAround(r, c) !== cell.count) return;
+  for(const [nr,nc] of neighbors(r,c)){
+    const nb = board[nr][nc];
+    if(!nb.flagged && !nb.revealed){
+      if(nb.mine){ exploded = { r:nr, c:nc }; endGame(false); return; }
+      revealCell(nr, nc, timer);
+    }
+  }
+  sndCascade();
+  checkWin();
+}
+function checkWin(){
+  const total = diff.rows * diff.cols;
+  if(revealedCount === total - diff.mines) endGame(true);
+}
+
+function endGame(won){
+  gameActive = false;
+  if(won){
+    forEachCell(cell => { if(cell.mine) cell.flagged = true; });
+    minesLeft = 0;
+    sndWin();
+    for(let i=0;i<10;i++){
+      setTimeout(() => burst(
+        PAD + Math.random()*diff.cols*CELL,
+        PAD + HUD_H + Math.random()*diff.rows*CELL,
+        [COL.brand1, COL.brand2, COL.brand3, COL.flag][i%4], 10, 180
+      ), i*60);
+    }
+    const best = Number(localStorage.getItem(diff.key) || Infinity);
+    if(timer < best) localStorage.setItem(diff.key, String(timer));
+  } else {
+    forEachCell((cell,r,c) => { if(cell.mine) cell.revealed = true; });
+    shake = 10; freeze = 0.15;
+    sndExplode();
+    if(exploded) burst(PAD + exploded.c*CELL + CELL/2, PAD + HUD_H + exploded.r*CELL + CELL/2, '#ff6b6b', 26, 260);
+  }
+  setState(gameOverState);
+}
+
+/* ===== HUD 按鈕區域 ===== */
+function hudButtons(){
+  return {
+    restart: { x: PAD, y: 16, w: 40, h: 40 },
+    mute:    { x: GAME_W - PAD - 40, y: 16, w: 40, h: 40 },
+    flagBtn: { x: GAME_W/2 - 60, y: 16, w: 120, h: 40 }
+  };
+}
+function inRect(x, y, r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
+
+/* ===== 狀態機 ===== */
+let state;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+function drawBrandTitle(y){
+  const g = ctx.createLinearGradient(0, 0, GAME_W, 0);
+  g.addColorStop(0, COL.brand1); g.addColorStop(0.5, COL.brand2); g.addColorStop(1, COL.brand3);
+  ctx.fillStyle = g;
+  ctx.textAlign = 'center'; ctx.font = 'bold 40px sans-serif';
+  ctx.fillText('恐怖校園', GAME_W/2, y);
+  ctx.fillStyle = COL.dim; ctx.font = '18px sans-serif';
+  ctx.fillText('踩地雷・放學後的探險', GAME_W/2, y + 28);
+}
+
+function drawBg(){
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0, COL.bg1); g.addColorStop(1, COL.bg0);
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,GAME_H);
+  // 走廊置物櫃剪影
+  ctx.save();
+  ctx.globalAlpha = 0.5;
+  ctx.fillStyle = COL.bg0;
+  const lockerW = 34;
+  for(let x = 6; x < GAME_W - 6; x += lockerW){
+    ctx.fillRect(x, 0, lockerW - 6, GAME_H);
+  }
+  ctx.restore();
+}
+
+const titleState = {
+  enter(){ this.diffButtons = null; },
+  update(dt){},
+  draw(){
+    computeTitleSize(); resize();
+    drawBg();
+    drawBrandTitle(90);
+    ctx.fillStyle = COL.dim; ctx.font = '17px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('電腦：左鍵翻開・右鍵點蠟燭標記・中鍵展開', GAME_W/2, 150);
+    ctx.fillText('平板：點擊翻開・長按點蠟燭（或開啟下方點蠟燭模式）', GAME_W/2, 175);
+    ctx.fillStyle = COL.brand1; ctx.font = '15px sans-serif';
+    ctx.fillText('手電筒只照得到附近，小心黑暗中的惡靈', GAME_W/2, 200);
+
+    const names = Object.keys(DIFFS);
+    const bw = 170, bh = 64, gap = 20;
+    const total = bw*names.length + gap*(names.length-1);
+    let x = GAME_W/2 - total/2;
+    const y = 220;
+    this.diffButtons = [];
+    names.forEach(key => {
+      const d = DIFFS[key];
+      this.diffButtons.push({ x, y, w:bw, h:bh, key });
+      const grad = ctx.createLinearGradient(x,y,x,y+bh);
+      grad.addColorStop(0, COL.cellHoverTop); grad.addColorStop(1, COL.cellBottom);
+      ctx.fillStyle = grad;
+      roundRect(x, y, bw, bh, 14); ctx.fill();
+      ctx.strokeStyle = COL.brand2; ctx.lineWidth = 2;
+      roundRect(x, y, bw, bh, 14); ctx.stroke();
+      ctx.fillStyle = COL.text; ctx.font = 'bold 22px sans-serif';
+      ctx.fillText(d.label, x + bw/2, y + 30);
+      ctx.font = '14px sans-serif'; ctx.fillStyle = COL.dim;
+      ctx.fillText(d.cols + '×' + d.rows + '　惡靈' + d.mines, x + bw/2, y + 50);
+      const best = Number(localStorage.getItem(d.key));
+      if(best) { ctx.fillStyle = COL.brand1; ctx.font = '13px sans-serif'; ctx.fillText('最佳 ' + fmtTime(best), x + bw/2, y + bh + 18); }
+      x += bw + gap;
+    });
+  },
+  pointer(x, y){
+    if(!this.diffButtons) return;
+    for(const b of this.diffButtons){
+      if(inRect(x, y, b)){
+        startGame(DIFFS[b.key]);
+        return;
+      }
+    }
+  }
+};
+
+function startGame(d){
+  diff = d;
+  computeCanvasSize(diff); resize();
+  board = makeBoard(diff);
+  minesLeft = diff.mines;
+  revealedCount = 0;
+  timer = 0;
+  gameActive = true;
+  firstClickDone = false;
+  exploded = null;
+  light.x = lightTarget.x = PAD + diff.cols*CELL/2;
+  light.y = lightTarget.y = PAD + HUD_H + diff.rows*CELL/2;
+  setState(playState);
+}
+
+function fmtTime(t){
+  t = Math.floor(t);
+  const m = Math.floor(t/60), s = t%60;
+  return String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+}
+
+function roundRect(x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+function drawHUD(){
+  ctx.fillStyle = COL.bg1; ctx.fillRect(0, 0, GAME_W, HUD_H);
+  ctx.strokeStyle = COL.grid; ctx.beginPath(); ctx.moveTo(0,HUD_H); ctx.lineTo(GAME_W,HUD_H); ctx.stroke();
+
+  drawMineIcon(PAD + 20, HUD_H/2, 9);
+  ctx.fillStyle = COL.brand1; ctx.font = 'bold 22px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText(String(Math.max(0,minesLeft)).padStart(2,'0'), PAD + 46, HUD_H/2 + 8);
+
+  ctx.fillStyle = COL.text; ctx.textAlign = 'right'; ctx.font = 'bold 22px sans-serif';
+  ctx.fillText(fmtTime(timer), GAME_W - PAD - 6, HUD_H/2 + 8);
+
+  const btns = hudButtons();
+  // restart
+  ctx.strokeStyle = COL.brand2; ctx.lineWidth = 2;
+  roundRect(btns.restart.x, btns.restart.y, btns.restart.w, btns.restart.h, 10); ctx.stroke();
+  ctx.fillStyle = COL.text; ctx.font = '20px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('↺', btns.restart.x + btns.restart.w/2, btns.restart.y + 27);
+
+  // mute
+  roundRect(btns.mute.x, btns.mute.y, btns.mute.w, btns.mute.h, 10); ctx.stroke();
+  ctx.fillText(muted ? '×' : '♪', btns.mute.x + btns.mute.w/2, btns.mute.y + 27);
+
+  // flag mode toggle (mobile helper)
+  const fb = btns.flagBtn;
+  ctx.fillStyle = flagMode ? COL.flag : 'transparent';
+  if(flagMode){ roundRect(fb.x, fb.y, fb.w, fb.h, 10); ctx.fill(); }
+  ctx.strokeStyle = COL.flag; roundRect(fb.x, fb.y, fb.w, fb.h, 10); ctx.stroke();
+  ctx.fillStyle = flagMode ? '#0a100c' : COL.flag; ctx.font = 'bold 15px sans-serif';
+  ctx.fillText(flagMode ? '點蠟燭模式：開' : '點蠟燭模式：關', fb.x + fb.w/2, fb.y + 26);
+}
+
+function drawMineIcon(cx, cy, r){
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.globalAlpha = 0.28;
+  ctx.fillStyle = COL.mineBody;
+  ctx.beginPath(); ctx.arc(0, 0, r*1.7, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = COL.mineBody;
+  ctx.beginPath();
+  ctx.arc(0, -r*0.15, r, Math.PI, 0, false);
+  const waves = 4, base = r*0.55;
+  ctx.lineTo(r, base);
+  for(let i=0;i<waves;i++){
+    const x0 = r - (2*r/waves)*i - r/waves;
+    const x1 = r - (2*r/waves)*(i+1);
+    ctx.quadraticCurveTo(x0, base + r*0.35, x1, base);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#1a2420';
+  ctx.beginPath(); ctx.ellipse(-r*0.35, -r*0.1, r*0.16, r*0.22, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(r*0.35, -r*0.1, r*0.16, r*0.22, 0, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawFlag(x, y, size){
+  const cx = x + size*0.5;
+  const baseY = y + size*0.8, topY = y + size*0.42;
+  ctx.fillStyle = '#e9dfc2';
+  ctx.fillRect(cx - size*0.08, topY, size*0.16, baseY - topY);
+  ctx.save();
+  ctx.globalAlpha = 0.4;
+  ctx.fillStyle = COL.flag;
+  ctx.beginPath(); ctx.arc(cx, y + size*0.28, size*0.32, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = COL.flag;
+  ctx.beginPath();
+  ctx.moveTo(cx, y + size*0.08);
+  ctx.quadraticCurveTo(cx + size*0.13, y + size*0.24, cx, y + size*0.38);
+  ctx.quadraticCurveTo(cx - size*0.13, y + size*0.24, cx, y + size*0.08);
+  ctx.closePath(); ctx.fill();
+}
+
+function drawBoard(t){
+  const ox = PAD, oy = PAD + HUD_H;
+  for(let r=0;r<diff.rows;r++){
+    for(let c=0;c<diff.cols;c++){
+      const cell = board[r][c];
+      const x = ox + c*CELL, y = oy + r*CELL;
+      const isHover = hoverCell && hoverCell.r===r && hoverCell.c===c && !cell.revealed;
+
+      if(cell.revealed){
+        ctx.fillStyle = COL.revealed;
+        ctx.fillRect(x+1, y+1, CELL-2, CELL-2);
+        ctx.strokeStyle = COL.revealedEdge; ctx.lineWidth = 1;
+        ctx.strokeRect(x+1, y+1, CELL-2, CELL-2);
+
+        let scale = 1;
+        if(cell.revealT >= 0){
+          const age = t - cell.revealT;
+          if(age < 0.16) scale = easeOutBack(Math.min(1, age/0.16));
+        }
+        ctx.save();
+        ctx.translate(x + CELL/2, y + CELL/2);
+        ctx.scale(scale, scale);
+        if(cell.mine){
+          drawMineIcon(0, 0, CELL*0.32);
+          if(exploded && exploded.r===r && exploded.c===c){
+            ctx.fillStyle = 'rgba(255,107,107,0.35)';
+            ctx.beginPath(); ctx.arc(0,0,CELL*0.55,0,Math.PI*2); ctx.fill();
+          }
+        } else if(cell.count > 0){
+          ctx.fillStyle = COL.numbers[cell.count];
+          ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+          ctx.fillText(cell.count, 0, 7);
+        }
+        ctx.restore();
+      } else {
+        const grad = ctx.createLinearGradient(x, y, x, y+CELL);
+        grad.addColorStop(0, isHover ? COL.cellHoverTop : COL.cellTop);
+        grad.addColorStop(1, COL.cellBottom);
+        ctx.fillStyle = grad;
+        ctx.fillRect(x+1, y+1, CELL-2, CELL-2);
+        ctx.strokeStyle = COL.cellEdge; ctx.lineWidth = 1;
+        ctx.strokeRect(x+1, y+1, CELL-2, CELL-2);
+        if(cell.flagged) drawFlag(x, y, CELL);
+      }
+    }
+  }
+}
+
+function easeOutBack(t){ return 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2); }
+
+function drawFlashlight(t){
+  const ox = PAD, oy = PAD + HUD_H, w = diff.cols*CELL, h = diff.rows*CELL;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(ox, oy, w, h); ctx.clip();
+  const flicker = 1 + Math.sin(t*17) * 0.03 + (Math.random() < 0.012 ? -0.18 : 0);
+  const r1 = Math.max(40, 92 * flicker), r2 = Math.max(80, 220 * flicker);
+  const g = ctx.createRadialGradient(light.x, light.y, r1, light.x, light.y, r2);
+  g.addColorStop(0, 'rgba(2,4,3,0)');
+  g.addColorStop(0.55, 'rgba(2,4,3,0.55)');
+  g.addColorStop(1, 'rgba(2,4,3,0.94)');
+  ctx.fillStyle = g;
+  ctx.fillRect(ox, oy, w, h);
+  ctx.restore();
+}
+
+const playState = {
+  enter(){},
+  update(dt){
+    if(gameActive) timer += dt;
+    updateParts(dt); updateFloaters(dt);
+    shake *= Math.pow(0.001, dt);
+    const followT = 1 - Math.pow(0.001, dt);
+    light.x += (lightTarget.x - light.x) * followT;
+    light.y += (lightTarget.y - light.y) * followT;
+  },
+  draw(){
+    drawBg();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    drawBoard(timer);
+    drawParts(); drawFloaters();
+    drawFlashlight(timer);
+    ctx.restore();
+    drawHUD();
+  },
+  pointer(x, y, kind){
+    const btns = hudButtons();
+    if(inRect(x, y, btns.restart)){ setState(titleState); return; }
+    if(inRect(x, y, btns.mute)){ muted = !muted; return; }
+    if(inRect(x, y, btns.flagBtn)){ flagMode = !flagMode; return; }
+    if(!gameActive) return;
+    const cell = cellAt(x, y, diff);
+    if(!cell) return;
+    if(kind === 'flag') doFlag(cell.r, cell.c);
+    else if(kind === 'chord') doChord(cell.r, cell.c);
+    else doReveal(cell.r, cell.c);
+  },
+  move(x, y){
+    hoverCell = cellAt(x, y, diff);
+    setLightTarget(x, y);
+  }
+};
+
+const gameOverState = {
+  enter(){ this.t = 0; },
+  update(dt){
+    this.t += dt;
+    updateParts(dt); updateFloaters(dt);
+    shake *= Math.pow(0.001, dt);
+  },
+  draw(){
+    drawBg();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    drawBoard(timer);
+    drawParts(); drawFloaters();
+    ctx.restore();
+    drawHUD();
+
+    ctx.fillStyle = revealedCount === diff.rows*diff.cols - diff.mines ? 'rgba(56,225,255,0.12)' : 'rgba(255,107,107,0.18)';
+    ctx.fillRect(0, HUD_H, GAME_W, GAME_H-HUD_H);
+
+    const won = revealedCount === diff.rows*diff.cols - diff.mines;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = won ? COL.win : '#ff8a8a';
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText(won ? '全身而退！太厲害了' : '被惡靈抓到了，再挑戰一次！', GAME_W/2, GAME_H/2 - 10);
+    ctx.fillStyle = COL.text; ctx.font = '18px sans-serif';
+    ctx.fillText('時間 ' + fmtTime(timer) + (this.t > 0.5 ? '　點擊畫面重新開始' : ''), GAME_W/2, GAME_H/2 + 26);
+  },
+  pointer(x, y){
+    const btns = hudButtons();
+    if(inRect(x, y, btns.mute)){ muted = !muted; return; }
+    if(this.t > 0.5) startGame(diff);
+  },
+  move(){}
+};
+
+/* ===== 事件綁定 ===== */
+let pressTimer = null, pressCell = null, longPressed = false;
+
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('mousedown', e => {
+  const p = boardPos(e.clientX, e.clientY);
+  if(e.button === 2) state.pointer && state.pointer(p.x, p.y, 'flag');
+  else if(e.button === 1) state.pointer && state.pointer(p.x, p.y, 'chord');
+});
+canvas.addEventListener('mouseup', e => {
+  if(e.button !== 0) return;
+  const p = boardPos(e.clientX, e.clientY);
+  state.pointer && state.pointer(p.x, p.y, 'reveal');
+});
+canvas.addEventListener('mousemove', e => {
+  const p = boardPos(e.clientX, e.clientY);
+  state.move && state.move(p.x, p.y);
+});
+
+function onTouchStart(e){
+  e.preventDefault();
+  const t = e.changedTouches[0];
+  const p = boardPos(t.clientX, t.clientY);
+  pressCell = cellAt(p.x, p.y, diff);
+  longPressed = false;
+  hoverCell = pressCell;
+  state.move && state.move(p.x, p.y);
+  pressTimer = setTimeout(() => {
+    longPressed = true;
+    state.pointer && state.pointer(p.x, p.y, 'flag');
+  }, 420);
+}
+function onTouchEnd(e){
+  e.preventDefault();
+  clearTimeout(pressTimer);
+  const t = e.changedTouches[0];
+  const p = boardPos(t.clientX, t.clientY);
+  if(!longPressed){
+    state.pointer && state.pointer(p.x, p.y, flagMode ? 'flag' : 'reveal');
+  }
+  hoverCell = null;
+}
+function onTouchMove(e){
+  e.preventDefault();
+  const t = e.touches[0]; if(!t) return;
+  const p = boardPos(t.clientX, t.clientY);
+  const c = cellAt(p.x, p.y, diff);
+  if(!c || (pressCell && (c.r !== pressCell.r || c.c !== pressCell.c))){
+    clearTimeout(pressTimer);
+  }
+  state.move && state.move(p.x, p.y);
+}
+canvas.addEventListener('touchstart', onTouchStart, { passive:false });
+canvas.addEventListener('touchend', onTouchEnd, { passive:false });
+canvas.addEventListener('touchcancel', e => { e.preventDefault(); clearTimeout(pressTimer); }, { passive:false });
+canvas.addEventListener('touchmove', onTouchMove, { passive:false });
+
+/* ===== 主迴圈：固定時間步進 ===== */
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  if(freeze > 0){ freeze -= (now-last)/1000; last = now; state.draw(); return; }
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while(acc >= STEP){
+    state.update(STEP);
+    acc -= STEP;
+  }
+  state.draw();
+}
+setState(titleState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
