@@ -66,6 +66,30 @@ function beep(freq=440, dur=0.12, type='square', vol=0.12, slide=0){
 }
 function chime(){ beep(880,0.1,'sine',0.1); setTimeout(()=>beep(1318,0.16,'sine',0.09),90); }
 
+// ===== 背景音樂：原創馬林巴風輕快小調（非任何遊戲原曲，Web Audio 即時合成）=====
+const NOTE_DUR = 0.26;
+const MELODY = [659,784,880,784,659,587,523,587, 659,880,1047,880,659,587,0,0];
+const BASS   = [131,0,0,0, 165,0,0,0, 147,0,0,0, 131,0,0,0];
+function playTone(freq, dur, vol, type){
+  if(muted || !freq) return;
+  const ac = audio();
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  g.gain.setValueAtTime(0.0001, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(vol, ac.currentTime + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime + dur + 0.03);
+}
+let lastBeat = -1;
+function updateMusic(elapsed){
+  const beat = Math.floor(elapsed / NOTE_DUR) % MELODY.length;
+  if(beat === lastBeat) return;
+  lastBeat = beat;
+  playTone(MELODY[beat], NOTE_DUR*0.9, 0.055, 'triangle');
+  playTone(BASS[beat], NOTE_DUR*3.6, 0.05, 'sine');
+}
+
 const muteBtn = document.getElementById('muteBtn');
 const hint = document.getElementById('hint');
 function setMuted(v){
@@ -474,7 +498,9 @@ function frame(now){
   if(startTime === null) startTime = now;
   const elapsed = (now - startTime)/1000;
   if(playing){
-    draw(Math.min(elapsed, T_END));
+    const clamped = Math.min(elapsed, T_END);
+    draw(clamped);
+    updateMusic(clamped);
     if(elapsed < T_END) requestAnimationFrame(frame);
     else playing = false;
   }
@@ -483,7 +509,7 @@ requestAnimationFrame(frame);
 
 document.getElementById('replayBtn').addEventListener('click', ()=>{
   document.getElementById('replayBtn').classList.remove('show');
-  startTime = null; lastEraIdx = -1; playing = true;
+  startTime = null; lastEraIdx = -1; lastBeat = -1; playing = true;
   requestAnimationFrame(frame);
 });
 
