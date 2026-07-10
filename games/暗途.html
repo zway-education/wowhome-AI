@@ -43,8 +43,17 @@
     background: radial-gradient(ellipse at center, #1c1c30 0%, #0a0a16 100%);
     display: none; flex-direction: column; align-items: center; justify-content: center;
   }
-  #jumpscare svg { width: min(40vmin, 240px); height: auto; }
+  #jumpscare svg {
+    width: min(40vmin, 240px); height: auto;
+    /* 加強版：快速放大逼近＋較強抖動，營造「衝到面前」的驚嚇感 */
+    animation: scareZoom 0.28s cubic-bezier(.2,.9,.3,1) forwards, scareShake 0.09s linear 4;
+  }
   #jumpscare p { color: #cfcaf0; font-size: 22px; letter-spacing: 4px; margin: 14px 0 0; }
+  @keyframes scareZoom { from { transform: scale(1.6); } to { transform: scale(2.2); } }
+  @keyframes scareShake {
+    0% { translate: 0 0; } 25% { translate: -10px 6px; }
+    50% { translate: 9px -7px; } 75% { translate: -7px -5px; } 100% { translate: 0 0; }
+  }
   #storyBox {
     position: fixed; bottom: 0; left: 0; width: 100%; z-index: 25;
     background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.75));
@@ -115,15 +124,16 @@
 <div id="exitHint">钥匙已集齐——找到出口逃离这里</div>
 <div id="jumpscare">
   <svg viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-    <path d="M60 12 C88 12 102 36 102 64 L102 110 Q94 96 86 110 Q78 124 70 110 Q65 100 60 110 Q55 124 50 110 Q42 96 34 110 Q26 124 18 110 L18 64 C18 36 32 12 60 12 Z"
-      fill="#e9e6f7" stroke="#b9b2dd" stroke-width="4" stroke-linejoin="round"/>
-    <circle cx="46" cy="56" r="7" fill="#4a4668"/>
-    <circle cx="74" cy="56" r="7" fill="#4a4668"/>
-    <circle cx="48.5" cy="53.5" r="2.2" fill="#fff"/>
-    <circle cx="76.5" cy="53.5" r="2.2" fill="#fff"/>
-    <ellipse cx="60" cy="78" rx="8" ry="10" fill="#6c6494"/>
-    <ellipse cx="32" cy="68" rx="6" ry="4" fill="#d8b8c8" opacity=".7"/>
-    <ellipse cx="88" cy="68" rx="6" ry="4" fill="#d8b8c8" opacity=".7"/>
+    <!-- 加強版：深灰紫蒼白幽靈，尖銳裙擺、發光雙眼（無腮紅），有威嚇感但仍是卡通造型 -->
+    <path d="M60 12 C88 12 102 36 102 64 L102 112 L90 96 L80 118 L70 98 L60 120 L50 98 L40 118 L30 96 L18 112 L18 64 C18 36 32 12 60 12 Z"
+      fill="#3a3550" stroke="#8f88b8" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="46" cy="56" r="8" fill="#0d0b18"/>
+    <circle cx="74" cy="56" r="8" fill="#0d0b18"/>
+    <circle cx="46" cy="56" r="3.4" fill="#d8f4ff"/>
+    <circle cx="74" cy="56" r="3.4" fill="#d8f4ff"/>
+    <circle cx="46" cy="56" r="1.4" fill="#fff"/>
+    <circle cx="74" cy="56" r="1.4" fill="#fff"/>
+    <ellipse cx="60" cy="80" rx="8" ry="12" fill="#14101f"/>
   </svg>
   <p>哇！被抓到了</p>
 </div>
@@ -337,29 +347,41 @@
 
     function playJumpscare() {
       ensure();
-      // 溫和化：柔和的「boo」低鳴（低通氣音＋正弦下滑），不再使用高頻嘶吼
+      // 加強版：較響亮的「boo」（中通氣音＋正弦下滑＋短促鋸齒），有驚嚇感但不刺耳
       const now = actx.currentTime;
       const src = actx.createBufferSource();
       src.buffer = noiseBuffer(0.5);
       const filter = actx.createBiquadFilter();
       filter.type = 'lowpass';
-      filter.frequency.value = 450;
+      filter.frequency.value = 1200;
       const g = actx.createGain();
-      g.gain.setValueAtTime(0.18, now);
+      g.gain.setValueAtTime(0.4, now);
       g.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       src.connect(filter).connect(g).connect(master);
       src.start();
 
       const osc = actx.createOscillator();
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.setValueAtTime(500, now);
       osc.frequency.exponentialRampToValueAtTime(70, now + 0.4);
       const og = actx.createGain();
-      og.gain.setValueAtTime(0.15, now);
+      og.gain.setValueAtTime(0.35, now);
       og.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
       osc.connect(og).connect(master);
       osc.start(now);
       osc.stop(now + 0.45);
+
+      // 短促高頻鋸齒下滑，讓開頭「銳」一點
+      const saw = actx.createOscillator();
+      saw.type = 'sawtooth';
+      saw.frequency.setValueAtTime(1200, now);
+      saw.frequency.exponentialRampToValueAtTime(300, now + 0.1);
+      const sg = actx.createGain();
+      sg.gain.setValueAtTime(0.15, now);
+      sg.gain.exponentialRampToValueAtTime(0.001, now + 0.1);
+      saw.connect(sg).connect(master);
+      saw.start(now);
+      saw.stop(now + 0.12);
 
       setHeartbeat(false);
     }
@@ -682,8 +704,8 @@
   function updateGlimpses(dt) {
     glimpseTimer -= dt;
     if (glimpseTimer <= 0 && !storyActive) {
-      glimpseTimer = 9000 + Math.random() * 8000; // 溫和化：幻影出現間隔拉長
-      if (glimpses.length < 1 && Math.random() < 0.5) spawnGlimpse();
+      glimpseTimer = 4000 + Math.random() * 4000; // 加強版：幻影出現間隔縮短，氣氛更緊張
+      if (glimpses.length < 1 && Math.random() < 0.85) spawnGlimpse();
     }
     const now = performance.now();
     glimpses = glimpses.filter(g => {
@@ -805,7 +827,7 @@
     setTimeout(() => {
       jumpscareEl.style.display = 'none';
       showEndScreen('death', cause);
-    }, 400); // 溫和化：驚嚇畫面縮短至 0.4 秒
+    }, 750); // 加強版：驚嚇畫面延長至 0.75 秒，讓放大逼近效果完整播完
   }
 
   function computeEndingText() {
@@ -922,20 +944,27 @@
     const now = performance.now();
     for (const g of glimpses) {
       const age = now - g.born;
-      // 溫和化：圓潤的卡通小幽靈，柔和淡入淡出，不再高頻閃爍
+      // 加強版：深灰紫小幽靈，尖銳裙擺＋發光雙眼，柔和淡入淡出
       ctx.save();
       ctx.globalAlpha = 0.7 * Math.min(1, (g.life - age) / 300, age / 200);
-      ctx.fillStyle = '#d8d4e8';
+      ctx.fillStyle = '#3a3550';
       ctx.beginPath();
       ctx.arc(g.x, g.y - 6, 9, Math.PI, 0);              // 圓頭
-      ctx.lineTo(g.x + 9, g.y + 12);
-      ctx.quadraticCurveTo(g.x + 4.5, g.y + 6, g.x, g.y + 12);  // 波浪裙擺
-      ctx.quadraticCurveTo(g.x - 4.5, g.y + 6, g.x - 9, g.y + 12);
+      ctx.lineTo(g.x + 9, g.y + 13);                     // 尖銳鋸齒裙擺
+      ctx.lineTo(g.x + 5.5, g.y + 6);
+      ctx.lineTo(g.x + 2.5, g.y + 13);
+      ctx.lineTo(g.x, g.y + 6);
+      ctx.lineTo(g.x - 2.5, g.y + 13);
+      ctx.lineTo(g.x - 5.5, g.y + 6);
+      ctx.lineTo(g.x - 9, g.y + 13);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = '#4a4668';
-      ctx.beginPath(); ctx.arc(g.x - 3, g.y - 7, 1.6, 0, Math.PI * 2); ctx.fill();
-      ctx.beginPath(); ctx.arc(g.x + 3, g.y - 7, 1.6, 0, Math.PI * 2); ctx.fill();
+      // 發光雙眼
+      ctx.shadowColor = '#bfeaff';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = '#d8f4ff';
+      ctx.beginPath(); ctx.arc(g.x - 3, g.y - 7, 1.8, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(g.x + 3, g.y - 7, 1.8, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
