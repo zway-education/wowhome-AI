@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>接水果大冒險</title>
+<style>
+  html,body{margin:0;height:100%;background:#1a1c2c;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;-webkit-tap-highlight-color:transparent;
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #hint{position:absolute;left:50%;bottom:14px;transform:translateX(-50%);color:#fff9;
+    font-size:13px;letter-spacing:1px;pointer-events:none;text-shadow:0 1px 3px #000;
+    opacity:0;transition:opacity .4s}
+  #hint.show{opacity:1}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="hint">電腦：← → 移動　平板：拖曳籃子</div>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+/* ===== 輸入 ===== */
+const input = { left:false, right:false, action:false, actionBuffer:0, pointerX:null };
+const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
+                 Space:'action', ArrowUp:'action', KeyW:'action' };
+addEventListener('keydown', e => {
+  const a = KEYMAP[e.code]; if(!a) return; e.preventDefault();
+  if(a === 'action' && !input.action) input.actionBuffer = 0.12;
+  input[a] = true;
+});
+addEventListener('keyup', e => { const a = KEYMAP[e.code]; if(a) input[a] = false; });
+
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX - r.left) / canvas._scale, y:(t.clientY - r.top) / canvas._scale };
+}
+function handleTouches(e){
+  e.preventDefault();
+  const wasAction = input.action;
+  input.action = false; input.pointerX = null;
+  for(const t of e.touches){
+    const p = touchPos(t);
+    input.pointerX = p.x;
+    input.action = true;
+  }
+  if(input.action && !wasAction) input.actionBuffer = 0.12;
+}
+for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
+  canvas.addEventListener(ev, handleTouches, { passive:false });
+canvas.addEventListener('mousedown', e => { input.action = true; input.actionBuffer = 0.12; });
+addEventListener('mouseup', () => { input.action = false; });
+canvas.addEventListener('mousemove', e => {
+  const r = canvas.getBoundingClientRect();
+  input.pointerX = (e.clientX - r.left) / canvas._scale;
+});
+
+/* ===== 音效 ===== */
+let AC = null;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+function beep(freq, dur, type, vol, slide, delay){
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime + (delay||0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t0); o.stop(t0 + dur + 0.05);
+}
+function noiseBurst(dur, vol){
+  const ac = audio(); if(!ac) return;
+  const len = Math.floor(ac.sampleRate*dur), buf = ac.createBuffer(1,len,ac.sampleRate), d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1) * (1 - i/len);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain(); g.gain.value = vol;
+  src.connect(g).connect(ac.destination); src.start();
+}
+const sfx = {
+  catchGood(){ beep(988,0.08,'square',0.14); beep(1319,0.14,'square',0.13,0,0.07); },
+  catchBad(){ beep(220,0.22,'sawtooth',0.16,-140); noiseBurst(0.15,0.08); },
+  miss(){ beep(160,0.12,'triangle',0.09,-60); },
+  levelUp(){ [523,659,784,1047].forEach((f,i)=> beep(f,0.16,'square',0.11,0,i*0.08)); },
+  gameOver(){ beep(392,0.3,'sawtooth',0.14,-200); beep(261,0.4,'sawtooth',0.12,-150,0.2); }
+};
+
+/* ===== 工具 ===== */
+const clamp=(v,a,b)=> v<a?a:v>b?b:v;
+const lerp=(a,b,t)=> a+(b-a)*t;
+const rnd=(a,b)=> a+Math.random()*(b-a);
+const easeOutBack = t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2);
+const TAU = Math.PI*2;
+
+/* ===== 粒子 ===== */
+const MAX_PARTS = 260;
+let parts = [];
+function burst(x,y,color,n,speed){
+  for(let i=0;i<n && parts.length<MAX_PARTS;i++){
+    const a = Math.random()*TAU, s = (speed||220)*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0.55,max:0.55,color,s:rnd(3,6)});
+  }
+}
+function updateParts(dt){
+  let n=0;
+  for(let i=0;i<parts.length;i++){
+    const p = parts[i];
+    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 640*dt; p.life -= dt;
+    if(p.life>0) parts[n++]=p;
+  }
+  parts.length = n;
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-p.s/2, p.y-p.s/2, p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ===== 飄字 ===== */
+let floats = [];
+function floatText(x,y,text,color){ floats.push({x,y,text,color,life:0.7,max:0.7}); }
+function updateFloats(dt){
+  let n=0;
+  for(let i=0;i<floats.length;i++){
+    const f = floats[i]; f.y -= 46*dt; f.life -= dt;
+    if(f.life>0) floats[n++]=f;
+  }
+  floats.length = n;
+}
+function drawFloats(){
+  ctx.textAlign='center'; ctx.font='900 22px "Noto Sans TC",sans-serif';
+  for(const f of floats){
+    ctx.globalAlpha = clamp(f.life/f.max,0,1);
+    ctx.fillStyle = f.color;
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.4)';
+    ctx.strokeText(f.text, f.x, f.y); ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ===== 調色盤：森林童話 ===== */
+const PAL = { bgTop:'#2e5f42', bgBot:'#204631', leaf:'#527f39', bright:'#aee239',
+              cream:'#fff5d6', wood:'#8c5a3c', berry:'#d94f45' };
+
+/* ===== 物品定義 ===== */
+const ITEMS = [
+  { emoji:'🍎', kind:'good', score:10, speed:1 },
+  { emoji:'🍌', kind:'good', score:10, speed:1 },
+  { emoji:'🍇', kind:'good', score:15, speed:1.1 },
+  { emoji:'🍉', kind:'good', score:15, speed:0.85 },
+  { emoji:'🍓', kind:'good', score:20, speed:1.15 },
+  { emoji:'⭐', kind:'star', score:50, speed:1.3 },
+  { emoji:'💣', kind:'bad', score:0, speed:1.05 },
+  { emoji:'🦨', kind:'bad', score:0, speed:0.95 }
+];
+
+/* ===== 玩家（籃子） ===== */
+const basket = { x:GAME_W/2, y:486, w:96, h:54, sx:1, sy:1, vx:0, wobble:0 };
+function resetBasket(){ basket.x = GAME_W/2; basket.vx = 0; basket.sx=1; basket.sy=1; }
+
+/* ===== 遊戲狀態 ===== */
+let entities = [];
+let score = 0, best = Number(localStorage.getItem('接水果大冒險_best')||0);
+let lives = 3;
+let spawnTimer = 0, spawnInterval = 1.05;
+let elapsed = 0, difficultyLevel = 1;
+let shake = 0, freeze = 0, flashT = 0;
+let comboCount = 0, comboTimer = 0;
+
+function spawnItem(){
+  const def = ITEMS[Math.floor(Math.random()*ITEMS.length)];
+  const diffMul = 1 + (difficultyLevel-1)*0.14;
+  entities.push({
+    def, x: rnd(50, GAME_W-50), y: -30,
+    vy: (150 + difficultyLevel*16) * def.speed * diffMul,
+    rot: rnd(-0.3,0.3), spin: rnd(-1.5,1.5), wob: rnd(0,TAU),
+    dead:false
+  });
+}
+
+function difficultyTick(dt){
+  elapsed += dt;
+  const lvl = 1 + Math.floor(elapsed/12);
+  if(lvl !== difficultyLevel){
+    difficultyLevel = lvl;
+    sfx.levelUp();
+    floatText(GAME_W/2, 140, '難度提升！', '#ffcd75');
+    burst(GAME_W/2, 140, '#ffcd75', 14, 180);
+  }
+  spawnInterval = clamp(1.05 - difficultyLevel*0.07, 0.42, 1.05);
+}
+
+/* ===== 狀態機 ===== */
+let state;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+const menuState = {
+  t: 0,
+  enter(){ this.t = 0; },
+  update(dt){
+    this.t += dt;
+    if(input.actionBuffer > 0 || (input.pointerX!==null && input.action)){
+      input.actionBuffer = 0;
+      setState(playState);
+    }
+  },
+  draw(){
+    drawBackdrop();
+    drawGroundBasket(GAME_W/2, 486, 1, 1);
+    // 標題卡
+    ctx.textAlign='center';
+    const bob = Math.sin(this.t*2)*6;
+    ctx.save();
+    ctx.translate(GAME_W/2, 190+bob);
+    ctx.font='900 64px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=10; ctx.strokeStyle='#204631';
+    ctx.strokeText('接水果大冒險', 0, 0);
+    const g = ctx.createLinearGradient(0,-36,0,20);
+    g.addColorStop(0,'#fff5d6'); g.addColorStop(1,'#aee239');
+    ctx.fillStyle = g; ctx.fillText('接水果大冒險', 0, 0);
+    ctx.restore();
+
+    // 掉落預覽 emoji
+    ctx.font='48px sans-serif';
+    ['🍎','🍌','🍇','⭐'].forEach((e,i)=>{
+      const x = GAME_W/2 - 150 + i*100;
+      const y = 280 + Math.sin(this.t*2.4 + i)*10;
+      ctx.fillText(e, x, y);
+    });
+
+    ctx.font='700 24px "Noto Sans TC",sans-serif';
+    ctx.fillStyle='#fff5d6';
+    const flash = 0.6+0.4*Math.sin(this.t*4);
+    ctx.globalAlpha = flash;
+    ctx.fillText('點擊 / 按空白鍵 開始遊戲', GAME_W/2, 350);
+    ctx.globalAlpha = 1;
+
+    ctx.font='16px "Noto Sans TC",sans-serif';
+    ctx.fillStyle='#ffffffcc';
+    ctx.fillText('接水果 +分數　接到 💣🦨 扣一命　接 ⭐ 大加分', GAME_W/2, 390);
+    if(best>0){
+      ctx.fillStyle='#ffcd75';
+      ctx.fillText('最佳分數：'+best, GAME_W/2, 418);
+    }
+    document.getElementById('hint').classList.add('show');
+  }
+};
+
+const playState = {
+  enter(){
+    entities = []; parts = []; floats = [];
+    score = 0; lives = 3; spawnTimer = 0.4; elapsed = 0; difficultyLevel = 1;
+    spawnInterval = 1.05; shake = 0; freeze = 0; flashT = 0;
+    comboCount = 0; comboTimer = 0;
+    resetBasket();
+    document.getElementById('hint').classList.remove('show');
+  },
+  update(dt){
+    if(freeze > 0){ freeze -= dt; return; }
+
+    // 移動：鍵盤
+    const ACC = 2400, MAXV = 420, DEC = 3000;
+    if(input.left && !input.right) basket.vx -= ACC*dt;
+    else if(input.right && !input.left) basket.vx += ACC*dt;
+    else {
+      const s = Math.sign(basket.vx);
+      basket.vx -= s*Math.min(Math.abs(basket.vx), DEC*dt);
+    }
+    // 移動：觸控/滑鼠拖曳（直接跟隨，含緩動）
+    if(input.pointerX !== null && input.action){
+      const target = clamp(input.pointerX, basket.w/2, GAME_W-basket.w/2);
+      basket.vx = (target - basket.x) * 14;
+    }
+    basket.vx = clamp(basket.vx, -MAXV, MAXV);
+    basket.x = clamp(basket.x + basket.vx*dt, basket.w/2, GAME_W-basket.w/2);
+    basket.wobble = basket.vx/MAXV;
+
+    basket.sx += (1-basket.sx)*10*dt; basket.sy += (1-basket.sy)*10*dt;
+
+    // 出怪
+    spawnTimer -= dt;
+    if(spawnTimer <= 0){ spawnItem(); spawnTimer = spawnInterval * rnd(0.85,1.15); }
+    difficultyTick(dt);
+
+    // combo 計時
+    if(comboTimer > 0){ comboTimer -= dt; if(comboTimer<=0) comboCount = 0; }
+
+    // 更新物件
+    const catchY = basket.y - basket.h*0.3;
+    const catchHalfW = basket.w*0.42; // 稍微寬容
+    for(const e of entities){
+      if(e.dead) continue;
+      e.y += e.vy*dt; e.rot += e.spin*dt; e.wob += dt*3;
+      if(!e.dead && e.y > catchY-10 && e.y < catchY+34 &&
+         Math.abs(e.x - (basket.x + Math.sin(e.wob)*0)) < catchHalfW){
+        e.dead = true;
+        onCatch(e);
+        continue;
+      }
+      if(e.y > GAME_H+40){
+        e.dead = true;
+        if(e.def.kind === 'good' || e.def.kind === 'star'){
+          onMiss(e);
+        }
+      }
+    }
+    entities = entities.filter(e => !e.dead);
+
+    updateParts(dt); updateFloats(dt);
+    shake *= Math.pow(0.001, dt);
+    flashT = Math.max(0, flashT - dt*3);
+
+    if(lives <= 0){
+      sfx.gameOver();
+      shake = 10; freeze = 0.15;
+      if(score > best){ best = score; localStorage.setItem('接水果大冒險_best', String(best)); }
+      setState(gameOverState);
+    }
+  },
+  draw(){
+    drawBackdrop();
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    for(const e of entities) drawItem(e);
+    drawGroundBasket(basket.x, basket.y, basket.sx, basket.sy, basket.wobble);
+    drawParts();
+    ctx.restore();
+    drawFloats();
+    drawHUD();
+    if(flashT > 0){
+      ctx.globalAlpha = flashT;
+      ctx.fillStyle = '#ff5a4a';
+      ctx.fillRect(0,0,GAME_W,GAME_H);
+      ctx.globalAlpha = 1;
+    }
+  }
+};
+
+function onCatch(e){
+  const bx = basket.x, by = basket.y - basket.h*0.6;
+  if(e.def.kind === 'good'){
+    comboCount++; comboTimer = 1.2;
+    const bonus = comboCount>=3 ? Math.min(comboCount-2,5)*5 : 0;
+    const gained = e.def.score + bonus;
+    score += gained;
+    sfx.catchGood();
+    burst(bx, by, PAL.bright, 10, 200);
+    floatText(bx, by, '+'+gained + (bonus>0?' 連擊!':''), '#fff5d6');
+    basket.sx = 1.25; basket.sy = 0.75;
+  } else if(e.def.kind === 'star'){
+    comboCount++; comboTimer = 1.2;
+    score += e.def.score;
+    sfx.catchGood(); sfx.levelUp();
+    burst(bx, by, '#ffcd75', 20, 260);
+    floatText(bx, by, '+'+e.def.score+' ⭐', '#ffcd75');
+    basket.sx = 1.35; basket.sy = 0.65;
+    shake = Math.max(shake, 4);
+  } else {
+    comboCount = 0;
+    lives--;
+    sfx.catchBad();
+    burst(bx, by, PAL.berry, 16, 260);
+    floatText(bx, by, '扣一命！', '#ff6b5a');
+    basket.sx = 0.7; basket.sy = 1.3;
+    shake = Math.max(shake, 7);
+    flashT = 0.4;
+  }
+}
+function onMiss(e){
+  comboCount = 0;
+  sfx.miss();
+  floatText(e.x, GAME_H-40, '漏接', '#ffffff88');
+}
+
+const gameOverState = {
+  t: 0,
+  enter(){ this.t = 0; },
+  update(dt){
+    this.t += dt;
+    updateParts(dt); updateFloats(dt);
+    shake *= Math.pow(0.001, dt);
+    if(this.t > 0.5 && (input.actionBuffer > 0 || (input.pointerX!==null && input.action))){
+      input.actionBuffer = 0;
+      setState(playState);
+    }
+  },
+  draw(){
+    playState.draw.call(this);
+    ctx.fillStyle = 'rgba(10,20,10,.6)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    const pop = easeOutBack(clamp(this.t*2.2,0,1));
+    ctx.save();
+    ctx.translate(GAME_W/2, 220); ctx.scale(pop,pop);
+    ctx.font='900 46px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=8; ctx.strokeStyle='#204631';
+    ctx.strokeText('再挑戰一次！', 0, 0);
+    ctx.fillStyle='#fff5d6'; ctx.fillText('再挑戰一次！', 0, 0);
+    ctx.restore();
+    ctx.font='700 26px "Noto Sans TC",sans-serif';
+    ctx.fillStyle='#aee239';
+    ctx.fillText('本次分數：'+score, GAME_W/2, 290);
+    ctx.fillStyle='#ffcd75';
+    ctx.fillText('最佳分數：'+best, GAME_W/2, 328);
+    if(this.t > 0.5){
+      ctx.font='700 20px "Noto Sans TC",sans-serif';
+      const flash = 0.5+0.5*Math.sin(this.t*4);
+      ctx.globalAlpha = flash;
+      ctx.fillStyle='#fff';
+      ctx.fillText('點擊 / 按空白鍵 重新開始', GAME_W/2, 380);
+      ctx.globalAlpha = 1;
+    }
+  }
+};
+
+/* ===== 繪圖：背景 ===== */
+function drawBackdrop(){
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0, PAL.bgTop); g.addColorStop(1, PAL.bgBot);
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,GAME_H);
+  // 遠山
+  ctx.fillStyle = 'rgba(255,255,255,.05)';
+  ctx.beginPath(); ctx.moveTo(0,120);
+  for(let x=0;x<=GAME_W;x+=80) ctx.lineTo(x, 120 - Math.sin(x*0.01)*24 - 10);
+  ctx.lineTo(GAME_W,220); ctx.lineTo(0,220); ctx.closePath(); ctx.fill();
+  // 樹木剪影（視差）
+  ctx.fillStyle = 'rgba(0,0,0,.14)';
+  for(let i=0;i<7;i++){
+    const x = (i*150 + 60) % (GAME_W+120) - 60;
+    const y = 210;
+    ctx.beginPath(); ctx.arc(x, y, 46, 0, TAU); ctx.fill();
+    ctx.fillRect(x-6, y, 12, 40);
+  }
+  // 地面
+  ctx.fillStyle = PAL.leaf;
+  ctx.fillRect(0, 460, GAME_W, GAME_H-460);
+  ctx.fillStyle = 'rgba(0,0,0,.08)';
+  ctx.fillRect(0, 460, GAME_W, 8);
+}
+
+/* ===== 繪圖：籃子 ===== */
+function drawGroundBasket(x, y, sx, sy, wobble){
+  wobble = wobble || 0;
+  ctx.save();
+  ctx.translate(x, y + basket.h*0.5);
+  ctx.scale(sx, sy);
+  ctx.rotate(wobble*0.12);
+  // 陰影
+  ctx.fillStyle = 'rgba(0,0,0,.22)';
+  ctx.beginPath(); ctx.ellipse(0, basket.h*0.55, basket.w*0.5, 8, 0, 0, TAU); ctx.fill();
+  // 籃身
+  const bw = basket.w, bh = basket.h*0.62;
+  const g = ctx.createLinearGradient(0,-bh/2,0,bh/2);
+  g.addColorStop(0, '#c98a4f'); g.addColorStop(1, PAL.wood);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(-bw/2, -bh/2);
+  ctx.lineTo(bw/2, -bh/2);
+  ctx.lineTo(bw*0.42, bh/2);
+  ctx.lineTo(-bw*0.42, bh/2);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(70,40,10,.5)'; ctx.lineWidth=3; ctx.stroke();
+  // 編織紋
+  ctx.strokeStyle = 'rgba(70,40,10,.35)'; ctx.lineWidth=1.6;
+  for(let i=-1;i<=1;i++){
+    ctx.beginPath(); ctx.moveTo(i*bw*0.22, -bh/2+2); ctx.lineTo(i*bw*0.18, bh/2-2); ctx.stroke();
+  }
+  // 籃口
+  ctx.fillStyle = '#e8b878';
+  ctx.beginPath(); ctx.ellipse(0, -bh/2, bw/2, 8, 0, 0, TAU); ctx.fill();
+  ctx.strokeStyle = 'rgba(70,40,10,.5)'; ctx.lineWidth=2.4; ctx.stroke();
+  // 眼睛（有靈魂的角色臉）
+  const eyeY = -bh/2 - 2;
+  for(const side of [-1,1]){
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(side*14, eyeY, 7, 0, TAU); ctx.fill();
+    ctx.fillStyle = '#2a2016';
+    ctx.beginPath(); ctx.arc(side*14 + wobble*3, eyeY+1, 3.6, 0, TAU); ctx.fill();
+  }
+  // 笑臉
+  ctx.strokeStyle = '#2a2016'; ctx.lineWidth = 2; ctx.lineCap='round';
+  ctx.beginPath(); ctx.arc(0, eyeY+6, 8, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+  ctx.restore();
+}
+
+/* ===== 繪圖：掉落物 ===== */
+function drawItem(e){
+  ctx.save();
+  ctx.translate(e.x, e.y + Math.sin(e.wob)*3);
+  ctx.rotate(e.rot);
+  // 陰影投射到地面感（簡易發光圈給 star/bad 提示）
+  if(e.def.kind === 'star'){
+    ctx.save(); ctx.shadowBlur = 16; ctx.shadowColor = '#ffcd75';
+    ctx.font = '38px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(e.def.emoji, 0, 0);
+    ctx.restore();
+  } else if(e.def.kind === 'bad'){
+    ctx.save(); ctx.shadowBlur = 10; ctx.shadowColor = '#ff5a4a';
+    ctx.font = '36px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(e.def.emoji, 0, 0);
+    ctx.restore();
+  } else {
+    ctx.font = '36px sans-serif'; ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(e.def.emoji, 0, 0);
+  }
+  ctx.restore();
+}
+
+/* ===== HUD ===== */
+function drawHUD(){
+  ctx.textAlign='left';
+  ctx.font='900 26px "Noto Sans TC",sans-serif';
+  ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.4)';
+  ctx.strokeText('分數 '+score, 20, 40);
+  ctx.fillStyle='#fff5d6'; ctx.fillText('分數 '+score, 20, 40);
+
+  // 生命
+  ctx.textAlign='right';
+  ctx.font='26px sans-serif';
+  let heartStr = '';
+  for(let i=0;i<3;i++) heartStr += i<lives ? '❤️' : '🤍';
+  ctx.fillText(heartStr, GAME_W-20, 40);
+
+  // 連擊提示
+  if(comboCount >= 3){
+    ctx.textAlign='center';
+    ctx.font='900 20px "Noto Sans TC",sans-serif';
+    ctx.fillStyle='#aee239';
+    ctx.globalAlpha = clamp(comboTimer/1.2,0,1);
+    ctx.fillText(comboCount+' 連擊！', GAME_W/2, 68);
+    ctx.globalAlpha = 1;
+  }
+
+  // 等級
+  ctx.textAlign='left';
+  ctx.font='16px "Noto Sans TC",sans-serif';
+  ctx.fillStyle='#ffffffaa';
+  ctx.fillText('等級 '+difficultyLevel, 20, 66);
+}
+
+/* ===== 主迴圈 ===== */
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while(acc >= STEP){
+    input.actionBuffer = Math.max(0, input.actionBuffer - STEP);
+    state.update(STEP);
+    acc -= STEP;
+  }
+  state.draw();
+}
+setState(menuState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
