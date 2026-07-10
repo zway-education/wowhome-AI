@@ -183,6 +183,7 @@ function drawJoypad(){
 const BUILD_TYPES = [
   { id:'wall', name:'木牆', desc:'補強城牆', cost:1, color:'#e8c07d' },
   { id:'trap', name:'尖刺陷阱', desc:'電怪物', cost:3, color:'#8b3a62' },
+  { id:'demolish', name:'拆除牆', desc:'拆除並回收木材', cost:0, color:'#9aa0a6' },
 ];
 let selectedBuild = 'wall';
 const BAR_H = 78, BAR_Y = GAME_H - BAR_H, SLOT = 68, SLOT_GAP = 10;
@@ -621,18 +622,25 @@ function drawBuildBar(){
       ctx.fillStyle = s.b.color;
       ctx.fillRect(cx-14, cy-10, 28, 20);
       ctx.strokeStyle = '#5a4326'; ctx.lineWidth=2; ctx.strokeRect(cx-14, cy-10, 28, 20);
-    } else {
+    } else if(s.b.id==='trap'){
       ctx.fillStyle = s.b.color;
       for(const dx of [-9,0,9]){
         ctx.beginPath();
         ctx.moveTo(cx+dx-5,cy+9); ctx.lineTo(cx+dx,cy-11); ctx.lineTo(cx+dx+5,cy+9);
         ctx.closePath(); ctx.fill();
       }
+    } else if(s.b.id==='demolish'){
+      ctx.fillStyle = '#c9a876';
+      ctx.fillRect(cx-14, cy-10, 28, 20);
+      ctx.strokeStyle = '#5a4326'; ctx.lineWidth=2; ctx.strokeRect(cx-14, cy-10, 28, 20);
+      ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(cx-15,cy-13); ctx.lineTo(cx+15,cy+13); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx+15,cy-13); ctx.lineTo(cx-15,cy+13); ctx.stroke();
     }
     ctx.globalAlpha = 1;
     ctx.fillStyle = affordable ? '#fff' : '#ff8a8a';
     ctx.font='bold 12px sans-serif';
-    ctx.fillText(`${s.b.name} 木${s.b.cost}`, cx, s.y+s.h+2);
+    ctx.fillText(s.b.cost>0 ? `${s.b.name} 木${s.b.cost}` : `${s.b.name}`, cx, s.y+s.h+2);
   }
 }
 
@@ -810,6 +818,7 @@ function handleAction(){
   }
   if(phase==='day'){
     if(selectedBuild==='trap'){ buildTrap(); return; }
+    if(selectedBuild==='demolish'){ demolishWall(); return; }
     // 找最近未完工的牆
     let best=null, bd=Infinity;
     for(const w of walls){
@@ -868,6 +877,27 @@ function buildTrap(){
     burst(player.x, player.y-20, PALETTE.monster2, 10, 140);
     beep(400,0.1,'sawtooth',0.12,-80);
   }
+}
+
+function demolishWall(){
+  // 找最近「已經有蓋一點」的牆
+  let best=null, bd=Infinity;
+  for(const w of walls){
+    if(w.built<=0) continue;
+    const d = Math.hypot(w.gx-player.gx, w.gy-player.gy);
+    if(d<bd){ bd=d; best=w; }
+  }
+  if(!best || bd>=0.9){
+    floatText(player.x, player.y-60, '這裡沒有牆可以拆', '#ff6cc7');
+    return;
+  }
+  best.built -= 1;
+  wood += 1;
+  houseHp = walls.reduce((s,w)=>s+w.built,0);
+  player.sx=1.3; player.sy=0.7;
+  floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-40, '-1 拆除 +1木材', '#9aa0a6');
+  burst(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-20, '#9aa0a6', 10, 130);
+  beep(300,0.12,'sawtooth',0.12,-200);
 }
 
 function startNight(){
