@@ -40,9 +40,11 @@
   }
   #jumpscare {
     position: fixed; top:0; left:0; width:100%; height:100%; z-index: 30;
-    background: #000; display: none; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #1c1c30 0%, #0a0a16 100%);
+    display: none; flex-direction: column; align-items: center; justify-content: center;
   }
-  #jumpscare span { font-size: 15vw; color: #ff0000; text-shadow: 0 0 40px red; }
+  #jumpscare svg { width: min(40vmin, 240px); height: auto; }
+  #jumpscare p { color: #cfcaf0; font-size: 22px; letter-spacing: 4px; margin: 14px 0 0; }
   #storyBox {
     position: fixed; bottom: 0; left: 0; width: 100%; z-index: 25;
     background: linear-gradient(to top, rgba(0,0,0,0.95), rgba(0,0,0,0.75));
@@ -111,7 +113,20 @@
 </div>
 <div id="interactHint">按 E 互动</div>
 <div id="exitHint">钥匙已集齐——找到出口逃离这里</div>
-<div id="jumpscare"><span>!!</span></div>
+<div id="jumpscare">
+  <svg viewBox="0 0 120 130" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <path d="M60 12 C88 12 102 36 102 64 L102 110 Q94 96 86 110 Q78 124 70 110 Q65 100 60 110 Q55 124 50 110 Q42 96 34 110 Q26 124 18 110 L18 64 C18 36 32 12 60 12 Z"
+      fill="#e9e6f7" stroke="#b9b2dd" stroke-width="4" stroke-linejoin="round"/>
+    <circle cx="46" cy="56" r="7" fill="#4a4668"/>
+    <circle cx="74" cy="56" r="7" fill="#4a4668"/>
+    <circle cx="48.5" cy="53.5" r="2.2" fill="#fff"/>
+    <circle cx="76.5" cy="53.5" r="2.2" fill="#fff"/>
+    <ellipse cx="60" cy="78" rx="8" ry="10" fill="#6c6494"/>
+    <ellipse cx="32" cy="68" rx="6" ry="4" fill="#d8b8c8" opacity=".7"/>
+    <ellipse cx="88" cy="68" rx="6" ry="4" fill="#d8b8c8" opacity=".7"/>
+  </svg>
+  <p>哇！被抓到了</p>
+</div>
 
 <div id="touchControls">
   <div id="joystickZone"></div>
@@ -285,7 +300,7 @@
       filter.Q.value = 0.6;
       const g = actx.createGain();
       g.gain.setValueAtTime(0.0001, actx.currentTime);
-      g.gain.linearRampToValueAtTime(0.08, actx.currentTime + 0.1);
+      g.gain.linearRampToValueAtTime(0.04, actx.currentTime + 0.1);
       g.gain.exponentialRampToValueAtTime(0.001, actx.currentTime + 0.6);
       src.connect(filter).connect(g).connect(master);
       src.start();
@@ -322,28 +337,29 @@
 
     function playJumpscare() {
       ensure();
+      // 溫和化：柔和的「boo」低鳴（低通氣音＋正弦下滑），不再使用高頻嘶吼
       const now = actx.currentTime;
       const src = actx.createBufferSource();
-      src.buffer = noiseBuffer(1.2);
+      src.buffer = noiseBuffer(0.5);
       const filter = actx.createBiquadFilter();
-      filter.type = 'highpass';
-      filter.frequency.value = 400;
+      filter.type = 'lowpass';
+      filter.frequency.value = 450;
       const g = actx.createGain();
-      g.gain.setValueAtTime(0.5, now);
-      g.gain.exponentialRampToValueAtTime(0.001, now + 1.1);
+      g.gain.setValueAtTime(0.18, now);
+      g.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
       src.connect(filter).connect(g).connect(master);
       src.start();
 
       const osc = actx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.setValueAtTime(600, now);
-      osc.frequency.exponentialRampToValueAtTime(80, now + 0.9);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(220, now);
+      osc.frequency.exponentialRampToValueAtTime(70, now + 0.4);
       const og = actx.createGain();
-      og.gain.setValueAtTime(0.4, now);
-      og.gain.exponentialRampToValueAtTime(0.001, now + 0.9);
+      og.gain.setValueAtTime(0.15, now);
+      og.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
       osc.connect(og).connect(master);
       osc.start(now);
-      osc.stop(now + 0.95);
+      osc.stop(now + 0.45);
 
       setHeartbeat(false);
     }
@@ -645,7 +661,7 @@
   // ----- Flashlight creatures (glimpses) -----
   // Short-lived apparitions that appear at the edge of the flashlight cone, then vanish.
   let glimpses = [];
-  let glimpseTimer = 0;
+  let glimpseTimer = 8000;
 
   function spawnGlimpse() {
     // Spawn somewhere ahead of the player, within flashlight range, not too close.
@@ -666,8 +682,8 @@
   function updateGlimpses(dt) {
     glimpseTimer -= dt;
     if (glimpseTimer <= 0 && !storyActive) {
-      glimpseTimer = 4000 + Math.random() * 5000;
-      if (glimpses.length < 1 && Math.random() < 0.8) spawnGlimpse();
+      glimpseTimer = 9000 + Math.random() * 8000; // 溫和化：幻影出現間隔拉長
+      if (glimpses.length < 1 && Math.random() < 0.5) spawnGlimpse();
     }
     const now = performance.now();
     glimpses = glimpses.filter(g => {
@@ -789,7 +805,7 @@
     setTimeout(() => {
       jumpscareEl.style.display = 'none';
       showEndScreen('death', cause);
-    }, 1200);
+    }, 400); // 溫和化：驚嚇畫面縮短至 0.4 秒
   }
 
   function computeEndingText() {
@@ -813,7 +829,7 @@
     overlay.classList.remove('hidden');
     let title, body, color;
     if (kind === 'death') {
-      title = '你 死 了'; body = '它抓住了你。黑暗中，没人能听到你的尖叫。'; color = '#b30000';
+      title = '被 抓 到 了 ！'; body = '一只小幽灵轻轻拍了拍你的肩膀："找到你啦！"别灰心，深呼吸——再试一次，这次一定能逃出去！'; color = '#8ab4ff';
     } else {
       const e = computeEndingText();
       title = e.title; body = e.body; color = e.color;
@@ -833,7 +849,7 @@
     storyFlags = {};
     keysCollected = 0;
     keyCountEl.textContent = 0;
-    glimpses = []; glimpseTimer = 3000;
+    glimpses = []; glimpseTimer = 8000;
     player.x = TILE * 1.5; player.y = TILE * 1.5;
     monster.x = TILE * Math.floor(MAP_W / 2); monster.y = TILE * Math.floor(MAP_H / 2);
     monster.active = false;
@@ -906,15 +922,20 @@
     const now = performance.now();
     for (const g of glimpses) {
       const age = now - g.born;
-      const flicker = Math.random() < 0.15 ? 0.2 : 1;
+      // 溫和化：圓潤的卡通小幽靈，柔和淡入淡出，不再高頻閃爍
       ctx.save();
-      ctx.globalAlpha = flicker * Math.min(1, (g.life - age) / 300);
-      ctx.fillStyle = '#c9b8b8';
+      ctx.globalAlpha = 0.7 * Math.min(1, (g.life - age) / 300, age / 200);
+      ctx.fillStyle = '#d8d4e8';
       ctx.beginPath();
-      // gaunt humanoid silhouette
-      ctx.ellipse(g.x, g.y - 10, 6, 14, 0, 0, Math.PI * 2);
+      ctx.arc(g.x, g.y - 6, 9, Math.PI, 0);              // 圓頭
+      ctx.lineTo(g.x + 9, g.y + 12);
+      ctx.quadraticCurveTo(g.x + 4.5, g.y + 6, g.x, g.y + 12);  // 波浪裙擺
+      ctx.quadraticCurveTo(g.x - 4.5, g.y + 6, g.x - 9, g.y + 12);
+      ctx.closePath();
       ctx.fill();
-      ctx.fillRect(g.x - 2, g.y + 2, 4, 16);
+      ctx.fillStyle = '#4a4668';
+      ctx.beginPath(); ctx.arc(g.x - 3, g.y - 7, 1.6, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(g.x + 3, g.y - 7, 1.6, 0, Math.PI * 2); ctx.fill();
       ctx.restore();
     }
 
