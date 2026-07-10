@@ -1,0 +1,698 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>跑酷火人3D</title>
+<style>
+  :root{
+    --brand-cyan:#38e1ff; --brand-blue:#4f7cff; --brand-purple:#9a6bff; --brand-pink:#ff6cc7;
+    --gold1:#ffcf5c; --gold2:#ffa72e; --gold3:#ff7e3d; --bg-dark:#070b14;
+  }
+  html,body{margin:0;height:100%;background:var(--bg-dark);overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
+  #stage{position:absolute;inset:0;overflow:hidden}
+  #perspective{position:absolute;inset:0;perspective:1400px;perspective-origin:50% 38%;overflow:hidden}
+  #sky{position:absolute;inset:0;
+    background:
+      radial-gradient(ellipse at 50% 100%, #ff7e3d 0%, #ff3d1c 18%, #4a0f08 42%, #180608 65%, #070307 100%),
+      radial-gradient(ellipse at 20% 15%, rgba(255,170,80,.25), transparent 55%),
+      radial-gradient(ellipse at 80% 10%, rgba(255,90,60,.2), transparent 55%);
+  }
+  .ember{position:absolute;bottom:-10px;border-radius:50%;background:radial-gradient(circle,#ffe08a,#ff7e3d 60%,transparent 75%);
+    opacity:.85;filter:blur(.3px);animation:emberRise linear infinite}
+  @keyframes emberRise{
+    0%{transform:translateY(0) translateX(0);opacity:0}
+    10%{opacity:.9}
+    90%{opacity:.5}
+    100%{transform:translateY(-115vh) translateX(var(--drift,20px));opacity:0}
+  }
+  #camrig{position:absolute;left:50%;top:50%;transform-style:preserve-3d;will-change:transform}
+  #world{position:absolute;left:0;top:0;transform-style:preserve-3d}
+  .part{position:absolute;transform-style:preserve-3d;left:0;top:0}
+  .face{position:absolute;left:0;top:0;backface-visibility:hidden}
+  /* HUD / UI layers: use brand colors, not fire theme */
+  #hud{position:absolute;inset:0;pointer-events:none;font-family:inherit}
+  .hud-top{position:absolute;top:max(10px,env(safe-area-inset-top));left:0;right:0;
+    display:flex;justify-content:space-between;align-items:flex-start;padding:0 14px;pointer-events:none}
+  .pill{background:rgba(7,11,20,.62);border:1px solid rgba(56,225,255,.35);border-radius:14px;
+    padding:8px 14px;color:#eaf6ff;font-size:15px;font-weight:700;backdrop-filter:none;
+    box-shadow:0 2px 10px rgba(0,0,0,.35)}
+  .pill b{background:linear-gradient(92deg,var(--brand-cyan),var(--brand-blue),var(--brand-purple));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #muteBtn{pointer-events:auto;cursor:pointer;width:48px;height:48px;border-radius:50%;
+    background:rgba(7,11,20,.62);border:1px solid rgba(56,225,255,.4);color:#eaf6ff;font-size:20px;
+    display:flex;align-items:center;justify-content:center}
+  .screen{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    text-align:center;color:#eaf6ff;background:rgba(7,11,20,.72);pointer-events:auto;gap:14px;padding:20px;box-sizing:border-box}
+  .screen.hidden{display:none}
+  .title-logo{font-size:clamp(30px,7vw,52px);font-weight:900;letter-spacing:2px;
+    background:linear-gradient(92deg,var(--gold1),var(--gold2),var(--gold3));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    text-shadow:0 0 30px rgba(255,140,50,.4)}
+  .subtitle{font-size:14px;color:#9fb3d9;margin-top:-8px}
+  .howto{background:rgba(255,255,255,.05);border:1px solid rgba(79,124,255,.3);border-radius:14px;
+    padding:12px 18px;font-size:14px;line-height:1.7;max-width:420px}
+  .howto b{color:var(--brand-cyan)}
+  .bigbtn{pointer-events:auto;cursor:pointer;min-height:52px;min-width:180px;border:none;border-radius:16px;
+    font-size:19px;font-weight:800;color:#0a0f1a;
+    background:linear-gradient(92deg,var(--brand-cyan),var(--brand-blue));
+    box-shadow:0 6px 18px rgba(79,124,255,.4);padding:10px 26px}
+  .bigbtn:active{transform:scale(.96)}
+  .stat{font-size:15px;color:#cfe0ff}
+  .stat b{color:var(--gold2)}
+  #deathFlash{position:absolute;inset:0;background:#ff2d0e;opacity:0;pointer-events:none;transition:opacity .08s}
+  /* touch controls */
+  #joyZone,#jumpBtn{position:absolute;pointer-events:auto;touch-action:none}
+  #joyZone{left:18px;bottom:max(18px,env(safe-area-inset-bottom));width:130px;height:130px;
+    border-radius:50%;background:rgba(255,255,255,.08);border:2px solid rgba(56,225,255,.35)}
+  #joyStick{position:absolute;left:50%;top:50%;width:56px;height:56px;margin:-28px 0 0 -28px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#7fd8ff,var(--brand-blue) 70%);box-shadow:0 3px 10px rgba(0,0,0,.4)}
+  #jumpBtn{right:22px;bottom:max(26px,env(safe-area-inset-bottom));width:82px;height:82px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,var(--gold1),var(--gold3) 75%);
+    box-shadow:0 4px 14px rgba(255,140,50,.45);color:#3a1500;font-weight:900;font-size:16px;
+    display:flex;align-items:center;justify-content:center;border:2px solid rgba(255,255,255,.3)}
+  #jumpBtn:active,#joyZone.active{filter:brightness(1.15)}
+  #touchHint{display:none}
+  @media (pointer:coarse){ #touchHint{display:inline} }
+  .controls-only-desktop{}
+  #particleCanvas{position:absolute;inset:0;pointer-events:none}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="sky"></div>
+  <div id="embers"></div>
+  <div id="perspective">
+    <div id="camrig">
+      <div id="world"></div>
+    </div>
+  </div>
+  <canvas id="particleCanvas"></canvas>
+</div>
+
+<div id="hud">
+  <div class="hud-top">
+    <div class="pill" id="progressPill"><b id="progressTxt">0%</b></div>
+    <div class="pill" id="timePill">時間 <b id="timeTxt">0.0</b>s</div>
+    <div id="muteBtn">🔊</div>
+  </div>
+</div>
+
+<div id="deathFlash"></div>
+
+<div id="titleScreen" class="screen">
+  <div class="title-logo">跑酷火人3D</div>
+  <div class="subtitle">AI未來創作營隊 出品</div>
+  <div class="howto">
+    <div>💻 電腦：<b>WASD</b> 移動、<b>空白鍵</b> 跳躍</div>
+    <div>📱 觸控：左下 <b>虛擬搖桿</b> 移動、右下 <b>跳躍鈕</b></div>
+    <div style="margin-top:6px;color:#9fb3d9">越過熔岩，踩穩平台，抵達終點旗！掉進熔岩會回到最近的檢查點。</div>
+  </div>
+  <button class="bigbtn" id="startBtn">開始遊戲</button>
+</div>
+
+<div id="winScreen" class="screen hidden">
+  <div class="title-logo" style="background:linear-gradient(92deg,var(--brand-cyan),var(--brand-purple));-webkit-background-clip:text;background-clip:text">通關成功！</div>
+  <div class="stat">本次時間：<b id="winTime">0.0</b> 秒</div>
+  <div class="stat">最佳時間：<b id="bestTime">--</b> 秒</div>
+  <button class="bigbtn" id="againBtn">再玩一次</button>
+</div>
+
+<div id="joyZone"><div id="joyStick"></div></div>
+<div id="jumpBtn">跳</div>
+
+<script>
+'use strict';
+/* ===================== 基本設定 ===================== */
+const perspectiveEl = document.getElementById('perspective');
+const camrigEl = document.getElementById('camrig');
+const worldEl = document.getElementById('world');
+const pcanvas = document.getElementById('particleCanvas');
+const pctx = pcanvas.getContext('2d');
+
+function resize(){
+  const dpr = Math.min(devicePixelRatio||1, 2);
+  pcanvas.width = innerWidth*dpr; pcanvas.height = innerHeight*dpr;
+  pcanvas.style.width = innerWidth+'px'; pcanvas.style.height = innerHeight+'px';
+  pctx.setTransform(dpr,0,0,dpr,0,0);
+}
+addEventListener('resize', resize); resize();
+
+/* embers background decoration (DOM, cheap, generated once) */
+(function makeEmbers(){
+  const box = document.getElementById('embers');
+  for(let i=0;i<26;i++){
+    const e = document.createElement('div');
+    e.className='ember';
+    const size = 3+Math.random()*6;
+    e.style.width=e.style.height=size+'px';
+    e.style.left=(Math.random()*100)+'%';
+    e.style.setProperty('--drift',(Math.random()*80-40)+'px');
+    e.style.animationDuration=(6+Math.random()*8)+'s';
+    e.style.animationDelay=(-Math.random()*14)+'s';
+    box.appendChild(e);
+  }
+})();
+
+/* ===================== 音效 (Web Audio 合成) ===================== */
+let AC=null, muted=false;
+function audio(){ if(!AC) AC=new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, {once:true});
+addEventListener('keydown', audio, {once:true});
+function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
+  if(muted) return;
+  const ac=audio(); if(!ac) return;
+  const o=ac.createOscillator(), g=ac.createGain();
+  o.type=type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function noiseBurst(dur=0.3, vol=0.2){
+  if(muted) return;
+  const ac=audio(); if(!ac) return;
+  const n = Math.floor(ac.sampleRate*dur);
+  const buf = ac.createBuffer(1,n,ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+  const src = ac.createBufferSource(); src.buffer=buf;
+  const g = ac.createGain(); g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  src.connect(g).connect(ac.destination); src.start();
+}
+const sfx = {
+  jump: ()=>beep(220,0.14,'square',0.13,+380),
+  land: ()=>beep(120,0.07,'triangle',0.1),
+  step: ()=>beep(300,0.03,'square',0.03),
+  checkpoint: ()=>{ beep(988,0.08,'square',0.14); setTimeout(()=>beep(1319,0.15,'square',0.14),80); },
+  death: ()=>{ beep(220,0.28,'sawtooth',0.2,-160); noiseBurst(0.35,0.18); },
+  win: ()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'square',0.15),i*110)); }
+};
+document.getElementById('muteBtn').addEventListener('click', ()=>{
+  muted=!muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+});
+
+/* ===================== 輸入：鍵盤 + 觸控搖桿 ===================== */
+const input = { mx:0, mz:0, jumpBuffer:0, jumpHeld:false };
+const KEYS = {};
+addEventListener('keydown', e=>{
+  if(['KeyW','KeyA','KeyS','KeyD','Space','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) e.preventDefault();
+  const was = KEYS[e.code];
+  KEYS[e.code]=true;
+  if(e.code==='Space' && !was) input.jumpBuffer = 0.14;
+});
+addEventListener('keyup', e=>{ KEYS[e.code]=false; });
+function readKeyboardAxes(){
+  let mx=0, mz=0;
+  if(KEYS.KeyA||KEYS.ArrowLeft) mx-=1;
+  if(KEYS.KeyD||KEYS.ArrowRight) mx+=1;
+  if(KEYS.KeyW||KEYS.ArrowUp) mz+=1;
+  if(KEYS.KeyS||KEYS.ArrowDown) mz-=1;
+  return {mx,mz};
+}
+
+/* virtual joystick (bottom-left) */
+const joyZone = document.getElementById('joyZone');
+const joyStick = document.getElementById('joyStick');
+let joyActive=false, joyVec={x:0,y:0}, joyTouchId=null;
+function joyFromEvent(t){
+  const r = joyZone.getBoundingClientRect();
+  const cx = r.left+r.width/2, cy = r.top+r.height/2;
+  let dx = t.clientX-cx, dy = t.clientY-cy;
+  const max = r.width/2;
+  const len = Math.hypot(dx,dy);
+  if(len>max){ dx=dx/len*max; dy=dy/len*max; }
+  joyVec.x = dx/max; joyVec.y = dy/max;
+  joyStick.style.transform = `translate(${dx}px,${dy}px)`;
+}
+function resetJoy(){ joyVec.x=0; joyVec.y=0; joyStick.style.transform='translate(0,0)'; joyActive=false; joyTouchId=null; joyZone.classList.remove('active'); }
+joyZone.addEventListener('touchstart', e=>{
+  e.preventDefault(); joyActive=true; joyZone.classList.add('active');
+  const t=e.changedTouches[0]; joyTouchId=t.identifier; joyFromEvent(t);
+}, {passive:false});
+joyZone.addEventListener('touchmove', e=>{
+  e.preventDefault();
+  for(const t of e.changedTouches) if(t.identifier===joyTouchId) joyFromEvent(t);
+}, {passive:false});
+joyZone.addEventListener('touchend', e=>{ e.preventDefault(); resetJoy(); }, {passive:false});
+joyZone.addEventListener('touchcancel', e=>{ e.preventDefault(); resetJoy(); }, {passive:false});
+
+/* jump button (bottom-right) */
+const jumpBtn = document.getElementById('jumpBtn');
+function pressJump(){ input.jumpBuffer = 0.14; input.jumpHeld=true; audio(); }
+function releaseJump(){ input.jumpHeld=false; }
+jumpBtn.addEventListener('touchstart', e=>{ e.preventDefault(); pressJump(); }, {passive:false});
+jumpBtn.addEventListener('touchend', e=>{ e.preventDefault(); releaseJump(); }, {passive:false});
+jumpBtn.addEventListener('touchcancel', e=>{ e.preventDefault(); releaseJump(); }, {passive:false});
+jumpBtn.addEventListener('mousedown', e=>{ e.preventDefault(); pressJump(); });
+addEventListener('mouseup', releaseJump);
+
+/* ===================== 世界座標 -> CSS 3D ===================== */
+// worldX -> translateX, worldY(height) -> -translateY, worldZ(forward depth) -> translateZ
+// worldZ increases "forward" along the course; CSS translateZ positive = toward viewer,
+// so forward motion must map to more-negative translateZ (deeper into the screen).
+function tf(x,y,z, extra=''){ return `translate3d(${x}px, ${-y}px, ${-z}px) ${extra}`; }
+
+/* ===================== 關卡資料 ===================== */
+// platform: {x,y,z,w,d, type:'normal'|'moving'|'crumble', move:{axis,range,speed}, checkpoint:bool}
+const PW = 90; // 平台寬(半) 基準
+function buildLevel(){
+  const plats = [];
+  let z = 0;
+  function add(x,y,zz,w,d,opts={}){
+    plats.push(Object.assign({x,y,z:zz,w,d,type:'normal',phase:Math.random()*6.28}, opts));
+    return plats[plats.length-1];
+  }
+  // 起 - 安全學習區 (寬、近)
+  add(0,0,0,140,140,{checkpoint:true, start:true});
+  add(0,0,260,130,130);
+  add(0,10,520,120,120);
+  add(60,10,760,110,110);
+  add(-40,20,1000,110,110,{checkpoint:true});
+  // 承 - 略窄、略遠、開始有落差
+  add(40,30,1250,95,95);
+  add(-60,40,1490,90,90);
+  add(20,30,1730,85,85);
+  add(90,45,1960,80,80);
+  add(0,55,2200,80,80,{checkpoint:true});
+  // 轉 - 移動平台 + 更窄
+  add(-80,60,2440,70,70,{type:'moving', move:{axis:'x', range:110, speed:1.1}});
+  add(60,70,2680,65,65,{type:'moving', move:{axis:'x', range:90, speed:1.4}});
+  add(0,75,2920,70,70);
+  add(-70,85,3150,60,60,{type:'crumble'});
+  add(70,90,3380,60,60,{type:'crumble'});
+  add(0,100,3610,80,80,{checkpoint:true});
+  // 合 - 高潮：窄+移動+崩塌混合，最後開闊終點
+  add(-70,110,3860,55,55,{type:'moving', move:{axis:'y', range:26, speed:1.6}});
+  add(70,120,4090,55,55,{type:'crumble'});
+  add(0,130,4320,55,55,{type:'moving', move:{axis:'x', range:100, speed:1.7}});
+  add(-40,140,4560,60,60);
+  add(30,150,4800,65,65,{checkpoint:true});
+  add(0,160,5060,220,220,{type:'goal'});
+  return plats;
+}
+const platforms = buildLevel();
+const GOAL_Z = platforms[platforms.length-1].z;
+
+/* ===================== 平台 DOM 建立（有頂面+側面，明暗分層）===================== */
+function makePlatformEl(p){
+  const el = document.createElement('div');
+  el.className='part';
+  el.style.width=el.style.height='0px';
+  const topColor = p.type==='goal' ? 'linear-gradient(135deg,#38e1ff,#4f7cff)' :
+                    p.type==='crumble' ? 'linear-gradient(135deg,#8a5a3c,#5c3a26)' :
+                    p.type==='moving' ? 'linear-gradient(135deg,#ffb15c,#ff7e3d)' :
+                    'linear-gradient(135deg,#5a3420,#3c2214)';
+  const sideColor = p.type==='goal' ? '#2a5fb8' : p.type==='crumble' ? '#3a2416' : p.type==='moving' ? '#c85a1c' : '#241408';
+  const h = 22;
+  // each face div is anchored top-left by default; append translate(-50%,-50%) so the
+  // face is centered on its own local origin *before* the positioning transform runs.
+  el.innerHTML = `
+    <div class="face" style="width:${p.w*2}px;height:${p.d*2}px;background:${topColor};
+      transform:rotateX(90deg) translateZ(${h/2}px) translate(-50%,-50%);box-shadow:inset 0 0 30px rgba(0,0,0,.25)"></div>
+    <div class="face" style="width:${p.w*2}px;height:${h}px;background:${sideColor};
+      transform:translateZ(${p.d}px) translateY(${h/2}px) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${p.w*2}px;height:${h}px;background:${sideColor};filter:brightness(.7);
+      transform:translateZ(${-p.d}px) translateY(${h/2}px) rotateY(180deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${p.d*2}px;height:${h}px;background:${sideColor};filter:brightness(.85);
+      transform:translateX(${p.w}px) translateY(${h/2}px) rotateY(90deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${p.d*2}px;height:${h}px;background:${sideColor};filter:brightness(.55);
+      transform:translateX(${-p.w}px) translateY(${h/2}px) rotateY(-90deg) translate(-50%,-50%)"></div>
+  `;
+  worldEl.appendChild(el);
+  p.el = el;
+  if(p.type==='goal'){
+    const flag = document.createElement('div');
+    flag.className='part';
+    flag.innerHTML = `<div class="face" style="width:8px;height:130px;background:#eee;transform:translateY(-65px) rotateX(90deg) translateZ(0) translate(-50%,-50%)"></div>
+      <div class="face" style="width:60px;height:40px;background:linear-gradient(90deg,#ff6cc7,#9a6bff);transform:translate3d(30px,-110px,0) translate(-50%,-50%)"></div>`;
+    worldEl.appendChild(flag);
+    p.flagEl = flag;
+  }
+  return el;
+}
+platforms.forEach(makePlatformEl);
+
+/* ===================== 玩家角色（多部件火焰人）===================== */
+const playerRoot = document.createElement('div');
+playerRoot.className='part';
+worldEl.appendChild(playerRoot);
+function mkBox(w,h,d,grad){
+  const b=document.createElement('div');
+  b.className='part';
+  const hw=w/2, hh=h/2, hd=d/2;
+  b.innerHTML = `
+    <div class="face" style="width:${w}px;height:${h}px;background:${grad};transform:translateZ(${hd}px) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${w}px;height:${h}px;background:${grad};filter:brightness(.55);transform:translateZ(${-hd}px) rotateY(180deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${d}px;height:${h}px;background:${grad};filter:brightness(.8);transform:translateX(${hw}px) rotateY(90deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${d}px;height:${h}px;background:${grad};filter:brightness(.4);transform:translateX(${-hw}px) rotateY(-90deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${w}px;height:${d}px;background:${grad};filter:brightness(1.15);transform:translateY(${-hh}px) rotateX(90deg) translate(-50%,-50%)"></div>
+    <div class="face" style="width:${w}px;height:${d}px;background:${grad};filter:brightness(.3);transform:translateY(${hh}px) rotateX(-90deg) translate(-50%,-50%)"></div>
+  `;
+  return b;
+}
+const FLAME_GRAD = 'linear-gradient(180deg,#fff2b0,#ffcf5c 35%,#ff7e3d 70%,#ff3d1c)';
+const parts = {};
+parts.torso = mkBox(22,28,14, FLAME_GRAD); parts.torso.style.transform = tf(0,26,0);
+parts.head  = mkBox(18,18,18, 'linear-gradient(180deg,#fff7d6,#ffcf5c 60%,#ff8c3d)'); parts.head.style.transform = tf(0,49,0);
+parts.armL  = mkBox(8,20,8, FLAME_GRAD); parts.armL.style.transform = tf(-16,28,0);
+parts.armR  = mkBox(8,20,8, FLAME_GRAD); parts.armR.style.transform = tf(16,28,0);
+parts.legL  = mkBox(9,18,9, 'linear-gradient(180deg,#ff7e3d,#c8340e)'); parts.legL.style.transform = tf(-7,9,0);
+parts.legR  = mkBox(9,18,9, 'linear-gradient(180deg,#ff7e3d,#c8340e)'); parts.legR.style.transform = tf(7,9,0);
+Object.values(parts).forEach(p=>playerRoot.appendChild(p));
+
+/* ===================== 玩家物理狀態 ===================== */
+const GRAVITY = 1700, GRAVITY_FALL = GRAVITY*1.6, MAX_FALL = 950;
+const JUMP_V = 640; // y is "up positive" world height; jumping gives +vy, gravity subtracts
+const MOVE_ACCEL = 2600, MOVE_DECEL = 3200, MAX_SPEED = 300, AIR_ACCEL_MULT = 0.65;
+const COYOTE_MAX = 0.09;
+const player = {
+  x:0, y:0, z:0, vx:0, vy:0, vz:0,
+  w:26, h:56, // collision box (slightly smaller than art for forgiveness)
+  grounded:false, coyote:0, groundPlat:null,
+  facing:1, sx:1, sy:1, sz:1,
+  animT:0, running:false,
+  respawnPoint:{x:platforms[0].x, y:platforms[0].y+40, z:platforms[0].z},
+  dead:false,
+};
+
+/* ===================== 相機 ===================== */
+const cam = { x:0, y:130, z:-320, tiltX:22, followZ:0 };
+
+/* ===================== 粒子（canvas，用於火焰拖尾/落地塵土/死亡爆炸） ===================== */
+const particles = [];
+function spawnParticles(sx,sy,sz,color,n,speed,life=0.5,size=6,grav=500){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = speed*(0.3+Math.random()*0.7);
+    particles.push({x:sx,y:sy,z:sz,vx:Math.cos(a)*s,vy:Math.sin(a)*s*0.6+80,vz:Math.sin(a+1.7)*s,life,maxLife:life,color,size,grav});
+    if(particles.length>300) particles.shift();
+  }
+}
+function updateParticles(dt){
+  for(const p of particles){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.z+=(p.vz||0)*dt; p.vy-=p.grav*dt; p.life-=dt; }
+  for(let i=particles.length-1;i>=0;i--) if(particles[i].life<=0) particles.splice(i,1);
+}
+// project a world point (player-local screen offset approx) to screen using current camera transform
+function worldToScreen(wx,wy,wz){
+  // apply camera: subtract cam position, no rotation needed for HUD particle approx (small tilt already baked visually)
+  const relX = wx - cam.x, relY = wy - cam.y, relZ = wz - cam.z;
+  const persp = 900;
+  const scale = persp/(persp+relZ*Math.cos(cam.tiltX*Math.PI/180));
+  const sx = innerWidth/2 + relX*scale;
+  const sy = innerHeight*0.42 - relY*scale*0.9;
+  return {x:sx,y:sy,scale};
+}
+function drawParticles(){
+  pctx.clearRect(0,0,innerWidth,innerHeight);
+  for(const p of particles){
+    const s = worldToScreen(p.x,p.y,p.z);
+    const alpha = Math.max(0, p.life/p.maxLife);
+    pctx.globalAlpha = alpha;
+    pctx.fillStyle = p.color;
+    const size = Math.max(1,p.size*s.scale);
+    pctx.fillRect(s.x-size/2, s.y-size/2, size, size);
+  }
+  pctx.globalAlpha=1;
+}
+
+/* ===================== 遊戲狀態機 ===================== */
+let gameState = 'title'; // title | playing | dead | win
+let elapsed = 0;
+let shake = 0;
+let checkpointIdx = 0;
+
+const titleScreen = document.getElementById('titleScreen');
+const winScreen = document.getElementById('winScreen');
+const startBtn = document.getElementById('startBtn');
+const againBtn = document.getElementById('againBtn');
+const deathFlash = document.getElementById('deathFlash');
+const timeTxt = document.getElementById('timeTxt');
+const progressTxt = document.getElementById('progressTxt');
+
+function resetPlayerToRespawn(){
+  player.x = player.respawnPoint.x;
+  player.y = player.respawnPoint.y;
+  player.z = player.respawnPoint.z;
+  player.vx=player.vy=player.vz=0;
+  player.grounded=false; player.coyote=0; player.dead=false;
+}
+
+function startGame(){
+  titleScreen.classList.add('hidden');
+  winScreen.classList.add('hidden');
+  checkpointIdx = 0;
+  player.respawnPoint = {x:platforms[0].x, y:platforms[0].y+40, z:platforms[0].z};
+  resetPlayerToRespawn();
+  elapsed = 0;
+  gameState = 'playing';
+}
+function die(){
+  if(gameState!=='playing') return;
+  gameState='dead';
+  sfx.death();
+  shake = 14;
+  spawnParticles(player.x, player.y+20, player.z, '#ff3d1c', 26, 260, 0.6, 7, 300);
+  deathFlash.style.opacity = '0.55';
+  setTimeout(()=>{ deathFlash.style.opacity='0'; }, 120);
+  setTimeout(()=>{
+    resetPlayerToRespawn();
+    gameState='playing';
+  }, 350);
+}
+function winGame(){
+  gameState='win';
+  sfx.win();
+  spawnParticles(player.x, player.y+40, player.z, '#38e1ff', 40, 300, 0.9, 7, 200);
+  const t = elapsed;
+  document.getElementById('winTime').textContent = t.toFixed(1);
+  const best = parseFloat(localStorage.getItem('fireparkour3d_best')||'999999');
+  const newBest = Math.min(best, t);
+  localStorage.setItem('fireparkour3d_best', String(newBest));
+  document.getElementById('bestTime').textContent = (newBest<999999? newBest.toFixed(1):'--');
+  setTimeout(()=>{ winScreen.classList.remove('hidden'); }, 500);
+}
+startBtn.addEventListener('click', startGame);
+againBtn.addEventListener('click', startGame);
+
+/* ===================== 碰撞：AABB 分軸 ===================== */
+function platAABB(p, t){
+  let px=p.x, py=p.y, pz=p.z;
+  if(p.type==='moving' && p.move){
+    const off = Math.sin(t*p.move.speed + p.phase)*p.move.range;
+    if(p.move.axis==='x') px+=off; else if(p.move.axis==='y') py+=off; else pz+=off;
+  }
+  return {x:px,y:py,z:pz,w:p.w,d:p.d, top:py+11};
+}
+
+function updatePhysics(dt, t){
+  // horizontal input
+  let mx=0, mz=0;
+  const kb = readKeyboardAxes();
+  mx = kb.mx; mz = kb.mz;
+  if(joyVec.x||joyVec.y){ mx = joyVec.x; mz = -joyVec.y; }
+  const len = Math.hypot(mx,mz);
+  if(len>1){ mx/=len; mz/=len; }
+
+  const targetVX = mx*MAX_SPEED, targetVZ = mz*MAX_SPEED;
+  const accel = (player.grounded? MOVE_ACCEL : MOVE_ACCEL*AIR_ACCEL_MULT);
+  const decel = (player.grounded? MOVE_DECEL : MOVE_DECEL*AIR_ACCEL_MULT);
+  function approach(cur,target,a,d){
+    const rate = (Math.abs(target)>0.01)? a : d;
+    const diff = target-cur;
+    const step = rate*dt;
+    if(Math.abs(diff)<=step) return target;
+    return cur+Math.sign(diff)*step;
+  }
+  player.vx = approach(player.vx, targetVX, accel, decel);
+  player.vz = approach(player.vz, targetVZ, accel, decel);
+  player.running = (Math.abs(player.vx)+Math.abs(player.vz))>10;
+  if(mx!==0 || mz!==0) player.facing = Math.atan2(mx,mz);
+
+  // coyote
+  if(player.grounded) player.coyote = COYOTE_MAX;
+  else player.coyote = Math.max(0, player.coyote-dt);
+
+  // jump buffer
+  if(input.jumpBuffer>0){
+    if(player.coyote>0){
+      player.vy = JUMP_V;
+      player.grounded=false; player.coyote=0; input.jumpBuffer=0;
+      sfx.jump();
+      player.sy=1.35; player.sx=0.72; player.sz=0.72;
+      spawnParticles(player.x, player.y+4, player.z, '#ffcf5c', 8, 140, 0.35, 5, 250);
+    }
+  }
+  input.jumpBuffer = Math.max(0, input.jumpBuffer-dt);
+
+  // variable jump height (release early cuts upward velocity)
+  if(!input.jumpHeld && !KEYS.Space && player.vy>0){ player.vy *= (1 - 6*dt); }
+
+  // gravity (y is height, up = positive; falling reduces y so gravity subtracts from vy)
+  const g = player.vy>0 ? GRAVITY : GRAVITY_FALL;
+  player.vy = Math.max(-MAX_FALL, player.vy - g*dt);
+
+  // move X then Z then Y, resolve collisions with platforms (simple: only vertical landing matters, horizontal is open air over lava)
+  player.x += player.vx*dt;
+  player.z += player.vz*dt;
+  const prevY = player.y;
+  player.y += player.vy*dt;
+
+  // check landing on any platform under the player
+  let landed=false, landedPlat=null;
+  for(const p of platforms){
+    const box = platAABB(p, t);
+    // forgiving landing: collision footprint matches (slightly exceeds) the visual platform,
+    // so the player never falls through an edge that still looks solid underfoot
+    const halfW = box.w*1.08, halfD = box.d*1.08;
+    if(Math.abs(player.x-box.x) < halfW && Math.abs(player.z-box.z) < halfD){
+      const top = box.top;
+      if(player.vy<=0 && prevY >= top-2 && player.y <= top){
+        player.y = top;
+        player.vy = 0;
+        landed = true; landedPlat = p;
+        break;
+      }
+    }
+  }
+  const wasGrounded = player.grounded;
+  player.grounded = landed;
+  if(landed){
+    player.groundPlat = landedPlat;
+    if(!wasGrounded){
+      sfx.land();
+      player.sy=0.65; player.sx=1.3; player.sz=1.3;
+      spawnParticles(player.x, player.y+2, player.z, '#ffb15c', 6, 100, 0.3, 5, 200);
+    }
+    if(landedPlat.checkpoint){
+      const idx = platforms.indexOf(landedPlat);
+      if(idx>checkpointIdx || (idx===0 && checkpointIdx===0 && player.respawnPoint.z!==landedPlat.z)){
+        checkpointIdx = idx;
+        player.respawnPoint = {x:landedPlat.x, y:landedPlat.y+40, z:landedPlat.z};
+        sfx.checkpoint();
+      }
+    }
+    if(landedPlat.type==='crumble'){
+      if(landedPlat.crumbleT===undefined) landedPlat.crumbleT=0;
+      landedPlat.crumbling=true;
+    }
+    if(landedPlat.type==='goal' && gameState==='playing'){
+      winGame();
+    }
+  } else {
+    if(player.groundPlat && player.groundPlat.type==='crumble') { /* left it */ }
+  }
+
+  // crumble timers
+  for(const p of platforms){
+    if(p.type==='crumble' && p.crumbling && !p.gone){
+      p.crumbleT += dt;
+      const shrink = Math.min(1, p.crumbleT/0.5);
+      if(p.el) p.el.style.opacity = String(1-shrink*0.9);
+      if(p.crumbleT>0.5){ p.gone=true; if(p.el) p.el.style.display='none'; }
+    }
+  }
+
+  // fall death (below lava plane)
+  if(player.y < -60){
+    die();
+    return;
+  }
+
+  // squash/stretch spring back
+  player.sx += (1-player.sx)*10*dt;
+  player.sy += (1-player.sy)*10*dt;
+  player.sz += (1-player.sz)*10*dt;
+
+  // running dust/fire trail
+  if(player.running && player.grounded){
+    player.animT += dt;
+    if(player.animT>0.14){
+      player.animT=0;
+      sfx.step();
+      spawnParticles(player.x - player.vx*0.02, player.y+2, player.z - player.vz*0.02, '#ff7e3d', 3, 60, 0.28, 4, 150);
+    }
+  }
+  // fire trail while airborne
+  if(!player.grounded && Math.random()<0.6){
+    spawnParticles(player.x, player.y+10, player.z, Math.random()<0.5?'#ffcf5c':'#ff5c1c', 1, 30, 0.4, 5, 60);
+  }
+}
+
+/* ===================== 渲染 ===================== */
+function render(dt){
+  // camera smooth follow (easing, not linear)
+  const targetCamZ = player.z - 320;
+  const targetCamY = player.y + 130;
+  cam.x += (player.x - cam.x) * (1 - Math.pow(0.001, dt));
+  cam.z += (targetCamZ - cam.z) * (1 - Math.pow(0.001, dt));
+  cam.y += (targetCamY - cam.y) * (1 - Math.pow(0.001, dt));
+
+  let shakeX=0, shakeY=0;
+  if(shake>0){
+    shake *= Math.pow(0.001, dt);
+    if(shake<0.1) shake=0;
+    shakeX = (Math.random()*2-1)*shake;
+    shakeY = (Math.random()*2-1)*shake;
+  }
+
+  // camrig compensates the tf() z-negation so an object at worldZ === cam.z sits at CSS depth 0
+  camrigEl.style.transform =
+    `translate3d(${shakeX}px, ${shakeY}px, 0) rotateX(${cam.tiltX}deg) translate3d(${-cam.x}px, ${cam.y}px, ${cam.z}px)`;
+
+  // player art transform
+  playerRoot.style.transform = tf(player.x, player.y, player.z, `rotateY(${player.facing}rad)`);
+  const bob = player.grounded ? Math.sin(player.animT*40)*2 : 0;
+  parts.torso.style.transform = tf(0,26+bob,0, `scale(${player.sx},${player.sy})`);
+  parts.head.style.transform  = tf(0,49+bob,0, `scale(${player.sx*0.98},${player.sy*0.98})`);
+  const legSwing = player.running && player.grounded ? Math.sin(performance.now()/90)*22 : 0;
+  parts.armL.style.transform = tf(-16,28+bob,0, `rotateX(${-legSwing}deg)`);
+  parts.armR.style.transform = tf(16,28+bob,0, `rotateX(${legSwing}deg)`);
+  parts.legL.style.transform = tf(-7,9,0, `rotateX(${legSwing}deg)`);
+  parts.legR.style.transform = tf(7,9,0, `rotateX(${-legSwing}deg)`);
+  // idle flicker
+  const flick = 0.9+Math.sin(performance.now()/120)*0.06;
+  parts.torso.style.filter = `brightness(${flick})`;
+  parts.head.style.filter = `brightness(${flick})`;
+
+  // platform positions (all platforms, static + moving)
+  const t = performance.now()/1000;
+  for(const p of platforms){
+    const box = platAABB(p,t);
+    p.el.style.transform = tf(box.x, box.y, box.z);
+    if(p.flagEl) p.flagEl.style.transform = tf(box.x, box.y+22, box.z);
+  }
+
+  drawParticles();
+
+  // HUD
+  const progress = Math.max(0, Math.min(100, (player.z/GOAL_Z)*100));
+  progressTxt.textContent = progress.toFixed(0)+'%';
+  if(gameState==='playing') elapsed += dt;
+  timeTxt.textContent = elapsed.toFixed(1);
+}
+
+/* ===================== 主迴圈 ===================== */
+const STEP = 1/60;
+let last = performance.now(), acc=0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, 0.1);
+  last = now;
+  while(acc>=STEP){
+    if(gameState==='playing'){
+      updatePhysics(STEP, now/1000);
+    }
+    updateParticles(STEP);
+    acc -= STEP;
+  }
+  render(STEP);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
