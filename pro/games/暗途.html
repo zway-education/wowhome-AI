@@ -369,9 +369,9 @@ function showChoices(node){
 }
 /* ============ 玩家 / 怪物 / 幻影 ============ */
 const player={x:TILE*2.5,y:TILE*2.5,r:12,speed:168,angle:0,walkT:0,moving:false,px:0,py:0};
-const monster={x:0,y:0,r:15,active:false,facing:0,path:[],pathT:0,waypoint:null,anim:0,wasActive:false};
+const monster={x:0,y:0,r:15,active:false,facing:0,path:[],pathT:0,waypoint:null,anim:0,wasActive:false,returnT:0};
 /* v5：低語者——手電筒照太久會甦醒撲來的幽魂 */
-const wraith={x:0,y:0,r:14,enabled:false,active:false,wasActive:false,rage:0,pursueT:0,facing:0,anim:0,pathT:0,waypoint:null};
+const wraith={x:0,y:0,r:14,enabled:false,active:false,wasActive:false,rage:0,pursueT:0,returnT:0,facing:0,anim:0,pathT:0,waypoint:null};
 let wraithStun=0,wraithMet=false;
 /* v5：縫合傀儡——只在你「沒看著」它時才會靠近，被視線盯住就僵住不動 */
 const doll={x:0,y:0,r:14,enabled:false,active:false,wasActive:false,facing:0,anim:0,pathT:0,waypoint:null,seen:false};
@@ -579,6 +579,20 @@ function updateMonster(dt){
       });
       monster.waypoint=(los&&d<200)?{x:player.x,y:player.y}:bestN;
     }
+  }else if(monster.returnT>0){
+    /* v5修正：護身符震退後不再無方向地隨機遊蕩，而是慢慢摸回玩家附近，
+       避免震退一次後它就再也遇不到你、感覺像「死掉了」 */
+    monster.returnT-=dt;
+    if(!monster.waypoint||dist(monster.x,monster.y,monster.waypoint.x,monster.waypoint.y)<16||Math.random()<dt*.3){
+      const dmap=bfsFrom(player.x/TILE|0,player.y/TILE|0);
+      const mtx=monster.x/TILE|0,mty=monster.y/TILE|0;
+      let bestN=null,bestD=dmap[mty*MW+mtx];
+      [[1,0],[-1,0],[0,1],[0,-1]].forEach(([ox,oy])=>{
+        const nx=mtx+ox,ny=mty+oy,dd=dmap[ny*MW+nx];
+        if(!isWall(nx,ny)&&dd>=0&&(bestD<0||dd<bestD)){bestD=dd;bestN={x:nx*TILE+TILE/2,y:ny*TILE+TILE/2};}
+      });
+      monster.waypoint=bestN;
+    }
   }else{
     if(!monster.waypoint||dist(monster.x,monster.y,monster.waypoint.x,monster.waypoint.y)<12){
       for(let t=0;t<20;t++){
@@ -603,7 +617,7 @@ function updateMonster(dt){
       /* v2：護身符救命——怪物被震退暈眩 */
       amuletCount--;amuletEl().textContent=amuletCount;
       monsterStun=3.5;graceT=2;
-      monster.active=false;monster.wasActive=false;monster.waypoint=null;
+      monster.active=false;monster.wasActive=false;monster.waypoint=null;monster.returnT=24;
       const a=Math.atan2(monster.y-player.y,monster.x-player.x);
       const kx=monster.x+Math.cos(a)*TILE*1.4,ky=monster.y+Math.sin(a)*TILE*1.4;
       if(!blocked(kx,monster.y,monster.r))monster.x=kx;
@@ -653,11 +667,13 @@ function updateWraith(dt){
   }else{
     wraith.rage=Math.max(0,wraith.rage-dt*.6);
   }
+  /* v5修正：護身符震退後慢慢摸回玩家附近，不會就此消失不再出現（每幀倒數，不受路徑重算間隔影響） */
+  if(!wraith.active&&wraith.returnT>0)wraith.returnT-=dt;
   const prevX=wraith.x,prevY=wraith.y;
   wraith.pathT-=dt;
   if(wraith.pathT<=0){
     wraith.pathT=.45;
-    if(wraith.active){
+    if(wraith.active||wraith.returnT>0){
       const dmap=bfsFrom(player.x/TILE|0,player.y/TILE|0);
       const wtx=wraith.x/TILE|0,wty=wraith.y/TILE|0;
       let bestN=null,bestD=dmap[wty*MW+wtx];
@@ -687,7 +703,7 @@ function updateWraith(dt){
   if(d<24&&state==='play'&&graceT<=0){
     if(amuletCount>0){
       amuletCount--;amuletEl().textContent=amuletCount;
-      wraithStun=3.5;graceT=2;wraith.active=false;wraith.wasActive=false;wraith.waypoint=null;wraith.rage=0;wraith.pursueT=0;
+      wraithStun=3.5;graceT=2;wraith.active=false;wraith.wasActive=false;wraith.waypoint=null;wraith.rage=0;wraith.pursueT=0;wraith.returnT=24;
       const a=Math.atan2(wraith.y-player.y,wraith.x-player.x);
       const kx=wraith.x+Math.cos(a)*TILE*1.4,ky=wraith.y+Math.sin(a)*TILE*1.4;
       if(!blocked(kx,wraith.y,wraith.r))wraith.x=kx;
@@ -840,7 +856,7 @@ function resetGame(){
   const mb=document.getElementById('modeBadge');mb.style.display=mode==='nightmare'?'block':'none';
   amuletCount=0;amuletEl().textContent=0;
   monsterStun=0;graceT=0;idleT=0;flashW=0;
-  wraith.enabled=false;wraith.active=false;wraith.wasActive=false;wraith.rage=0;wraith.pursueT=0;wraith.waypoint=null;wraithStun=0;wraithMet=false;
+  wraith.enabled=false;wraith.active=false;wraith.wasActive=false;wraith.rage=0;wraith.pursueT=0;wraith.returnT=0;wraith.waypoint=null;wraithStun=0;wraithMet=false;
   doll.enabled=false;doll.active=false;doll.wasActive=false;doll.seen=false;doll.waypoint=null;dollStun=0;dollMet=false;
   glimpses=[];glimpseT=4;parts=[];floats=[];
   /* v2：開局操作提示（依裝置，8 秒後淡出） */
@@ -856,7 +872,7 @@ function resetGame(){
   const far=reachableTiles(18);
   const m=far.length?far[Math.random()*far.length|0]:{tx:MW>>1,ty:MH>>1};
   monster.x=m.tx*TILE+TILE/2;monster.y=m.ty*TILE+TILE/2;
-  monster.active=false;monster.waypoint=null;monster.facing=0;monster.wasActive=false;
+  monster.active=false;monster.waypoint=null;monster.facing=0;monster.wasActive=false;monster.returnT=0;
   camX=player.x-vw/2;camY=player.y-vh/2;
   exitHintEl.style.display='none';storyBox.style.display='none';storyBox.classList.remove('show');
   storyActive=false;gameT=0;state='play';endInfo=null;
