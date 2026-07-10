@@ -98,12 +98,10 @@
     width:38px; height:38px; font-size:18px; display:flex; align-items:center; justify-content:center;
     margin-left:auto;
   }
-  #joyzone, #atkzone{
-    position:fixed; bottom:0; width:50%; height:42%;
+  #joyzone{
+    position:fixed; top:0; bottom:0;
     z-index:3; pointer-events:auto;
   }
-  #joyzone{ left:0; }
-  #atkzone{ right:0; }
   #joyBase{
     position:fixed; width:100px; height:100px; border-radius:50%;
     background:rgba(255,255,255,0.08); border:2px solid rgba(255,255,255,0.25);
@@ -152,8 +150,8 @@
       </div>
     </div>
     <div class="hint">
-      <span class="kb-hint">電腦：WASD／方向鍵移動，滑鼠點擊施放魔法</span>
-      <span class="touch-hint">平板：左下搖桿移動，右下點擊施放魔法</span>
+      <span class="kb-hint">電腦：WASD／方向鍵移動，魔法自動鎖定最近敵人施放</span>
+      <span class="touch-hint">平板：拖曳畫面移動，魔法自動鎖定最近敵人施放</span>
     </div>
   </div>
 </div>
@@ -333,24 +331,18 @@ const keys = {};
 window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()]=true; });
 window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
 
-let mouseAim = {x:0,y:0,active:false};
-canvas.addEventListener('mousedown', e=>{
-  mouseAim.x=e.clientX; mouseAim.y=e.clientY; mouseAim.active=true; ensureAudio();
-});
-window.addEventListener('mousemove', e=>{ if(mouseAim.active){ mouseAim.x=e.clientX; mouseAim.y=e.clientY; } });
-window.addEventListener('mouseup', ()=>{ mouseAim.active=false; });
+canvas.addEventListener('mousedown', ()=>{ ensureAudio(); });
 
-// touch joystick (movement) + attack zone
+// touch joystick (movement, full-screen zone)
 let joyActive=false, joyId=null, joyOrigin={x:0,y:0}, joyVec={x:0,y:0};
-let atkActive=false, atkId=null, atkVec={x:0,y:1};
 const joyBase = document.getElementById('joyBase');
 const joyStick = document.getElementById('joyStick');
 
 function makeTouchZones(){
-  document.querySelectorAll('#joyzone,#atkzone').forEach(z=>z.remove());
+  document.querySelectorAll('#joyzone').forEach(z=>z.remove());
   const jz = document.createElement('div'); jz.id='joyzone';
-  const az = document.createElement('div'); az.id='atkzone';
-  document.body.appendChild(jz); document.body.appendChild(az);
+  jz.style.left='0'; jz.style.width='100%'; jz.style.height='100%';
+  document.body.appendChild(jz);
 
   jz.addEventListener('touchstart', e=>{
     e.preventDefault(); ensureAudio();
@@ -381,31 +373,6 @@ function makeTouchZones(){
   }
   jz.addEventListener('touchend', endJoy, {passive:false});
   jz.addEventListener('touchcancel', endJoy, {passive:false});
-
-  az.addEventListener('touchstart', e=>{
-    e.preventDefault(); ensureAudio();
-    const t = e.changedTouches[0];
-    atkActive=true; atkId=t.identifier;
-    updateAtkVec(t.clientX,t.clientY);
-  }, {passive:false});
-  az.addEventListener('touchmove', e=>{
-    e.preventDefault();
-    for(const t of e.changedTouches){
-      if(t.identifier!==atkId) continue;
-      updateAtkVec(t.clientX,t.clientY);
-    }
-  }, {passive:false});
-  function endAtk(e){
-    for(const t of e.changedTouches){ if(t.identifier===atkId) atkActive=false; }
-  }
-  az.addEventListener('touchend', endAtk, {passive:false});
-  az.addEventListener('touchcancel', endAtk, {passive:false});
-}
-function updateAtkVec(cx,cy){
-  if(!player) return;
-  const dx=cx-player.x, dy=cy-player.y;
-  const d=Math.hypot(dx,dy)||1;
-  atkVec = {x:dx/d, y:dy/d};
 }
 makeTouchZones();
 
@@ -507,15 +474,21 @@ function update(dt){
   player.x = Math.max(player.r, Math.min(W-player.r, player.x));
   player.y = Math.max(player.r, Math.min(H-player.r, player.y));
 
-  // casting
+  // casting: auto-target nearest enemy
   castTimer -= dt;
-  let aim = null;
-  if(mouseAim.active){ aim = {x:mouseAim.x-player.x, y:mouseAim.y-player.y}; }
-  else if(atkActive){ aim = {x:atkVec.x, y:atkVec.y}; }
-  if(aim && castTimer<=0){
-    const d = Math.hypot(aim.x,aim.y)||1;
-    fireMagic({x:aim.x/d, y:aim.y/d});
-    castTimer = chosenMagic.cooldown;
+  if(castTimer<=0 && enemies.length>0){
+    let nearest=null, nd=Infinity;
+    for(const en of enemies){
+      const d = Math.hypot(en.x-player.x, en.y-player.y);
+      if(d<nd){ nd=d; nearest=en; }
+    }
+    if(nearest){
+      const dx=nearest.x-player.x, dy=nearest.y-player.y, d=Math.hypot(dx,dy)||1;
+      const aim = {x:dx/d, y:dy/d};
+      fireMagic(aim);
+      player.facing = aim;
+      castTimer = chosenMagic.cooldown;
+    }
   }
 
   // spawn
