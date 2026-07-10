@@ -2,6 +2,8 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="author" content="Claude">
 <title>恐怖校園追逐</title>
 <style>
   html, body {
@@ -11,27 +13,47 @@
     background: #050403;
     font-family: 'Courier New', monospace;
     color: #b7ffb0;
+    touch-action: none;
   }
   #hud {
     position: fixed;
     top: 10px;
     left: 10px;
-    font-size: 20px;
+    font-size: 18px;
     z-index: 10;
     text-shadow: 0 0 6px #000, 0 0 2px #7cff6b;
     letter-spacing: 1px;
+    color: #6bcf5a;
   }
+  #crosshair {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    transform: translate(-50%, -50%);
+    z-index: 9;
+    pointer-events: none;
+  }
+  #crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(150,255,140,0.7);
+  }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { top: 6px; left: 0; width: 14px; height: 2px; }
   #gameOver {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 36px;
+    font-size: 34px;
     display: none;
     text-align: center;
     z-index: 20;
     color: #ff3b3b;
     text-shadow: 0 0 14px #ff0000, 0 0 4px #000;
+    max-width: 90vw;
   }
   #restartBtn {
     display: block;
@@ -46,15 +68,109 @@
   canvas {
     display: block;
   }
+  #touchControls {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 15;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 14px;
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+  .padBtn {
+    pointer-events: auto;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(60,20,20,0.55);
+    border: 1px solid rgba(180,60,60,0.6);
+    color: #d7ffb0;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #moveGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 56px);
+    grid-template-rows: repeat(2, 56px);
+    gap: 6px;
+  }
+  #turnLeft { grid-column: 1; grid-row: 1; }
+  #fwd { grid-column: 2; grid-row: 1; }
+  #turnRight { grid-column: 3; grid-row: 1; }
+  #back { grid-column: 2; grid-row: 2; }
+  #swingBtn {
+    width: 84px;
+    height: 84px;
+    font-size: 16px;
+    background: rgba(90,10,10,0.6);
+  }
+  #actionBtns {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-right: 8px;
+  }
+  #jumpBtn, #hideBtn {
+    width: 64px;
+    height: 64px;
+    font-size: 14px;
+    background: rgba(40,60,30,0.55);
+  }
+  #interactPrompt {
+    position: fixed;
+    bottom: 110px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #e0ffcf;
+    text-shadow: 0 0 6px #000;
+    font-size: 16px;
+    z-index: 12;
+    display: none;
+  }
+  #hideOverlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    z-index: 8;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #a0d090;
+    font-size: 20px;
+    text-align: center;
+  }
 </style>
 </head>
 <body>
 <div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
+<div id="crosshair"></div>
+<div id="interactPrompt"></div>
+<div id="hideOverlay">🗄️ 躲藏中……恐怖阿嬤找不到你<br>按 E / 「出來」鍵離開</div>
 <div id="gameOver">
   <div id="gameOverText"></div>
   <button id="restartBtn">重新開始</button>
 </div>
 <canvas id="game"></canvas>
+<div id="touchControls">
+  <div id="moveGrid">
+    <div class="padBtn" id="turnLeft">◀</div>
+    <div class="padBtn" id="fwd">▲</div>
+    <div class="padBtn" id="turnRight">▶</div>
+    <div class="padBtn" id="back">▼</div>
+  </div>
+  <div id="actionBtns">
+    <div class="padBtn" id="jumpBtn">跳</div>
+    <div class="padBtn" id="hideBtn">躲</div>
+    <div class="padBtn" id="swingBtn">揮擊</div>
+  </div>
+</div>
 
 <script>
 const canvas = document.getElementById('game');
@@ -64,83 +180,37 @@ const gameOverEl = document.getElementById('gameOver');
 const gameOverText = document.getElementById('gameOverText');
 const restartBtn = document.getElementById('restartBtn');
 const weaponStatusEl = document.getElementById('weaponStatus');
-
-const CELL = 50;
-let cols, rows, maze;
+const interactPromptEl = document.getElementById('interactPrompt');
+const hideOverlayEl = document.getElementById('hideOverlay');
 
 function resize() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
-  cols = Math.max(4, Math.floor(canvas.width / CELL));
-  rows = Math.max(4, Math.floor(canvas.height / CELL));
-  buildMaze();
 }
 window.addEventListener('resize', resize);
+resize();
 
-const player = { x: 0, y: 0, r: 15, speed: 4, color: '#7cff6b' };
-const chaser = { x: 0, y: 0, r: 18, speed: 2.2, color: '#b30000' };
-
-const keys = {};
-window.addEventListener('keydown', e => {
-  keys[e.key.toLowerCase()] = true;
-  if (e.key === ' ') swing();
-});
-window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-
-const weapon = { x: 0, y: 0, r: 10, collected: false, spawned: false };
-let hasWeapon = false;
-let lastSwingTime = -Infinity;
-const SWING_COOLDOWN = 0.8;
-const SWING_RANGE = CELL * 1.3;
-const STUN_DURATION = 2.5;
-let swingFlashUntil = -Infinity;
-
-function swing() {
-  if (!running || !hasWeapon) return;
-  if (elapsed - lastSwingTime < SWING_COOLDOWN) return;
-  lastSwingTime = elapsed;
-  swingFlashUntil = elapsed + 0.15;
-  const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
-  if (dist < SWING_RANGE) {
-    chaser.stunnedUntil = elapsed + STUN_DURATION;
-  }
-}
-
-let mouse = null;
-canvas.addEventListener('mousemove', e => {
-  const rect = canvas.getBoundingClientRect();
-  mouse = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-});
-canvas.addEventListener('mouseleave', () => mouse = null);
-
-let running = true;
-let startTime = null;
-let elapsed = 0;
+// ---------- maze (perfect maze via DFS backtracker) ----------
+const MAZE_COLS = 14, MAZE_ROWS = 10;
+let maze;
 
 function buildMaze() {
   maze = [];
-  for (let r = 0; r < rows; r++) {
+  for (let r = 0; r < MAZE_ROWS; r++) {
     const row = [];
-    for (let c = 0; c < cols; c++) {
-      row.push({ N: true, E: true, S: true, W: true, visited: false });
-    }
+    for (let c = 0; c < MAZE_COLS; c++) row.push({ N: true, E: true, S: true, W: true, visited: false });
     maze.push(row);
   }
-
   const stack = [[0, 0]];
   maze[0][0].visited = true;
   while (stack.length) {
     const [r, c] = stack[stack.length - 1];
     const neighbors = [];
     if (r > 0 && !maze[r - 1][c].visited) neighbors.push(['N', r - 1, c]);
-    if (r < rows - 1 && !maze[r + 1][c].visited) neighbors.push(['S', r + 1, c]);
+    if (r < MAZE_ROWS - 1 && !maze[r + 1][c].visited) neighbors.push(['S', r + 1, c]);
     if (c > 0 && !maze[r][c - 1].visited) neighbors.push(['W', r, c - 1]);
-    if (c < cols - 1 && !maze[r][c + 1].visited) neighbors.push(['E', r, c + 1]);
-
-    if (!neighbors.length) {
-      stack.pop();
-      continue;
-    }
+    if (c < MAZE_COLS - 1 && !maze[r][c + 1].visited) neighbors.push(['E', r, c + 1]);
+    if (!neighbors.length) { stack.pop(); continue; }
     const [dir, nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
     const opposite = { N: 'S', S: 'N', E: 'W', W: 'E' };
     maze[r][c][dir] = false;
@@ -148,50 +218,40 @@ function buildMaze() {
     maze[nr][nc].visited = true;
     stack.push([nr, nc]);
   }
+}
 
-  wallSegments = [];
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const x0 = c * CELL, y0 = r * CELL, x1 = x0 + CELL, y1 = y0 + CELL;
+// grid-doubled boolean solid map for raycasting: (2*MAZE_ROWS+1) x (2*MAZE_COLS+1)
+let solid, gridW, gridH;
+// per solid-cell "grime" seed for wall texture variety
+let wallSeed;
+
+function buildSolidGrid() {
+  gridW = MAZE_COLS * 2 + 1;
+  gridH = MAZE_ROWS * 2 + 1;
+  solid = Array.from({ length: gridH }, () => new Array(gridW).fill(true));
+  wallSeed = Array.from({ length: gridH }, () => new Array(gridW).fill(0).map(() => Math.random()));
+  for (let r = 0; r < MAZE_ROWS; r++) {
+    for (let c = 0; c < MAZE_COLS; c++) {
+      const gy = 2 * r + 1, gx = 2 * c + 1;
+      solid[gy][gx] = false;
       const cell = maze[r][c];
-      if (cell.N) wallSegments.push([x0, y0, x1, y0]);
-      if (cell.S) wallSegments.push([x0, y1, x1, y1]);
-      if (cell.W) wallSegments.push([x0, y0, x0, y1]);
-      if (cell.E) wallSegments.push([x1, y0, x1, y1]);
+      if (!cell.N) solid[gy - 1][gx] = false;
+      if (!cell.S) solid[gy + 1][gx] = false;
+      if (!cell.W) solid[gy][gx - 1] = false;
+      if (!cell.E) solid[gy][gx + 1] = false;
     }
   }
 }
 
-let wallSegments = [];
-
-function pointSegDist(px, py, x1, y1, x2, y2) {
-  const dx = x2 - x1, dy = y2 - y1;
-  const len2 = dx * dx + dy * dy;
-  let t = len2 === 0 ? 0 : ((px - x1) * dx + (py - y1) * dy) / len2;
-  t = clamp(t, 0, 1);
-  const cx = x1 + t * dx, cy = y1 + t * dy;
-  return Math.hypot(px - cx, py - cy);
+function isSolid(x, y) {
+  const gx = Math.floor(x), gy = Math.floor(y);
+  if (gx < 0 || gy < 0 || gx >= gridW || gy >= gridH) return true;
+  return solid[gy][gx];
 }
 
-function hitsWall(x, y, r) {
-  for (const seg of wallSegments) {
-    if (pointSegDist(x, y, seg[0], seg[1], seg[2], seg[3]) < r) return true;
-  }
-  return false;
-}
+function cellCenter(r, c) { return { x: 2 * c + 1.5, y: 2 * r + 1.5 }; }
 
-function moveWithCollision(entity, nx, ny) {
-  if (!hitsWall(nx, entity.y, entity.r)) entity.x = nx;
-  if (!hitsWall(entity.x, ny, entity.r)) entity.y = ny;
-}
-
-function cellOf(x, y) {
-  return {
-    c: clamp(Math.floor(x / CELL), 0, cols - 1),
-    r: clamp(Math.floor(y / CELL), 0, rows - 1),
-  };
-}
-
+// maze connectivity graph (for BFS pathfinding of chaser), operates on MAZE_ROWS x MAZE_COLS cells
 function connected(r1, c1, r2, c2) {
   if (r2 === r1 - 1 && c2 === c1) return !maze[r1][c1].N;
   if (r2 === r1 + 1 && c2 === c1) return !maze[r1][c1].S;
@@ -199,10 +259,9 @@ function connected(r1, c1, r2, c2) {
   if (c2 === c1 + 1 && r2 === r1) return !maze[r1][c1].E;
   return false;
 }
-
 function bfsPath(startR, startC, goalR, goalC) {
-  const visited = Array.from({ length: rows }, () => new Array(cols).fill(false));
-  const prev = Array.from({ length: rows }, () => new Array(cols).fill(null));
+  const visited = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(false));
+  const prev = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(null));
   const queue = [[startR, startC]];
   visited[startR][startC] = true;
   while (queue.length) {
@@ -210,7 +269,7 @@ function bfsPath(startR, startC, goalR, goalC) {
     if (r === goalR && c === goalC) break;
     const dirs = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
     for (const [nr, nc] of dirs) {
-      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue;
+      if (nr < 0 || nr >= MAZE_ROWS || nc < 0 || nc >= MAZE_COLS) continue;
       if (visited[nr][nc]) continue;
       if (!connected(r, c, nr, nc)) continue;
       visited[nr][nc] = true;
@@ -221,28 +280,145 @@ function bfsPath(startR, startC, goalR, goalC) {
   if (!visited[goalR][goalC]) return null;
   const path = [[goalR, goalC]];
   let cur = [goalR, goalC];
-  while (!(cur[0] === startR && cur[1] === startC)) {
-    cur = prev[cur[0]][cur[1]];
-    path.push(cur);
-  }
+  while (!(cur[0] === startR && cur[1] === startC)) { cur = prev[cur[0]][cur[1]]; path.push(cur); }
   path.reverse();
   return path;
 }
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function worldToCell(x, y) {
+  return { r: clamp(Math.floor((y - 1) / 2), 0, MAZE_ROWS - 1), c: clamp(Math.floor((x - 1) / 2), 0, MAZE_COLS - 1) };
+}
+
+// ---------- entities ----------
+const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, lastKnownCell: null, jumpT: Infinity };
+const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0 };
+const weapon = { x: 0, y: 0, collected: false };
+let hasWeapon = false;
+let lastSwingTime = -Infinity;
+const SWING_COOLDOWN = 0.8;
+const SWING_RANGE = 1.9;
+const STUN_DURATION = 2.5;
+let swingFlashUntil = -Infinity;
+
+const PLAYER_SPEED = 2.6;
+const TURN_SPEED = 2.6;
+const VIEW_DIST = 9;
+const JUMP_DURATION = 0.5;
+const HIDE_RANGE = 1.0;
+let cabinets = [];
+let nearCabinet = null;
+
+function placeCabinets() {
+  cabinets = [];
+  const deadEnds = [];
+  for (let r = 0; r < MAZE_ROWS; r++) {
+    for (let c = 0; c < MAZE_COLS; c++) {
+      const cell = maze[r][c];
+      const wallCount = (cell.N ? 1 : 0) + (cell.S ? 1 : 0) + (cell.E ? 1 : 0) + (cell.W ? 1 : 0);
+      if (wallCount >= 3 && !(r === 0 && c === 0) && !(r === MAZE_ROWS - 1 && c === MAZE_COLS - 1)) deadEnds.push([r, c]);
+    }
+  }
+  for (let i = deadEnds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deadEnds[i], deadEnds[j]] = [deadEnds[j], deadEnds[i]];
+  }
+  const count = Math.min(4, deadEnds.length);
+  for (let i = 0; i < count; i++) {
+    const center = cellCenter(deadEnds[i][0], deadEnds[i][1]);
+    cabinets.push({ x: center.x, y: center.y });
+  }
+}
+
+function moveWithCollision(entity, nx, ny) {
+  if (!isSolid(nx, entity.y)) entity.x = nx;
+  if (!isSolid(entity.x, ny)) entity.y = ny;
+}
+
+function jump() {
+  if (!running || player.hiding) return;
+  if (elapsed < player.jumpT + JUMP_DURATION) return;
+  player.jumpT = elapsed;
+}
+
+function toggleHide() {
+  if (!running) return;
+  if (player.hiding) {
+    player.hiding = false;
+    hideOverlayEl.style.display = 'none';
+  } else if (nearCabinet) {
+    player.hiding = true;
+    player.lastKnownCell = worldToCell(player.x, player.y);
+    hideOverlayEl.style.display = 'flex';
+  }
+}
+
+function swing() {
+  if (!running || !hasWeapon || player.hiding) return;
+  if (elapsed - lastSwingTime < SWING_COOLDOWN) return;
+  lastSwingTime = elapsed;
+  swingFlashUntil = elapsed + 0.15;
+  const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
+  if (dist < SWING_RANGE) chaser.stunnedUntil = elapsed + STUN_DURATION;
+}
+
+// ---------- input ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ') { swing(); e.preventDefault(); }
+  if (e.key.toLowerCase() === 'shift') jump();
+  if (e.key.toLowerCase() === 'e') toggleHide();
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+function bindPad(id, key) {
+  const el = document.getElementById(id);
+  const down = e => { keys[key] = true; e.preventDefault(); };
+  const up = e => { keys[key] = false; e.preventDefault(); };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointerleave', up);
+  el.addEventListener('pointercancel', up);
+}
+bindPad('fwd', 'arrowup');
+bindPad('back', 'arrowdown');
+bindPad('turnLeft', 'arrowleft');
+bindPad('turnRight', 'arrowright');
+document.getElementById('swingBtn').addEventListener('pointerdown', e => { swing(); e.preventDefault(); });
+document.getElementById('jumpBtn').addEventListener('pointerdown', e => { jump(); e.preventDefault(); });
+document.getElementById('hideBtn').addEventListener('pointerdown', e => { toggleHide(); e.preventDefault(); });
+
+// mouse-drag to look
+let dragging = false, lastDragX = 0;
+canvas.addEventListener('pointerdown', e => { dragging = true; lastDragX = e.clientX; });
+window.addEventListener('pointerup', () => dragging = false);
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastDragX;
+  lastDragX = e.clientX;
+  player.angle += dx * 0.0035;
+});
+
+// ---------- game state ----------
+let running = true, startTime = null, elapsed = 0, lastFrameTime = null;
 
 function reset() {
-  resize();
-  const startCell = cellOf(0, 0);
-  player.x = startCell.c * CELL + CELL / 2;
-  player.y = startCell.r * CELL + CELL / 2;
-  chaser.x = (cols - 1) * CELL + CELL / 2;
-  chaser.y = (rows - 1) * CELL + CELL / 2;
-  chaser.stunnedUntil = 0;
+  buildMaze();
+  buildSolidGrid();
+  placeCabinets();
+  const start = cellCenter(0, 0);
+  player.x = start.x; player.y = start.y; player.angle = 0;
+  player.hiding = false;
+  player.jumpT = -Infinity;
+  hideOverlayEl.style.display = 'none';
 
-  const wc = Math.floor(cols / 2);
-  const wr = Math.floor(rows / 2);
-  weapon.x = wc * CELL + CELL / 2;
-  weapon.y = wr * CELL + CELL / 2;
-  weapon.collected = false;
+  const chaserStart = cellCenter(MAZE_ROWS - 1, MAZE_COLS - 1);
+  chaser.x = chaserStart.x; chaser.y = chaserStart.y;
+  chaser.stunnedUntil = 0;
+  chaser.speed = 1.5;
+
+  const wc = cellCenter(Math.floor(MAZE_ROWS / 2), Math.floor(MAZE_COLS / 2));
+  weapon.x = wc.x; weapon.y = wc.y; weapon.collected = false;
   hasWeapon = false;
   lastSwingTime = -Infinity;
   swingFlashUntil = -Infinity;
@@ -250,250 +426,265 @@ function reset() {
 
   running = true;
   startTime = performance.now();
+  lastFrameTime = startTime;
   elapsed = 0;
   gameOverEl.style.display = 'none';
-  mouse = null;
   requestAnimationFrame(loop);
 }
 
-function clamp(v, min, max) {
-  return Math.max(min, Math.min(max, v));
-}
-
-function update() {
+function update(dt) {
   if (!running) return;
 
-  let dx = 0, dy = 0;
-  if (keys['arrowup'] || keys['w']) dy -= 1;
-  if (keys['arrowdown'] || keys['s']) dy += 1;
-  if (keys['arrowleft'] || keys['a']) dx -= 1;
-  if (keys['arrowright'] || keys['d']) dx += 1;
-
-  if (dx !== 0 || dy !== 0) {
-    const len = Math.hypot(dx, dy);
-    moveWithCollision(player, player.x + (dx / len) * player.speed, player.y + (dy / len) * player.speed);
-  } else if (mouse) {
-    const mdx = mouse.x - player.x;
-    const mdy = mouse.y - player.y;
-    const dist = Math.hypot(mdx, mdy);
-    if (dist > 2) {
-      const step = Math.min(player.speed, dist);
-      moveWithCollision(player, player.x + (mdx / dist) * step, player.y + (mdy / dist) * step);
-    }
+  nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
+  if (player.hiding) {
+    interactPromptEl.style.display = 'none';
+  } else if (nearCabinet) {
+    interactPromptEl.textContent = '按 E / 「躲」鍵躲進櫃子';
+    interactPromptEl.style.display = 'block';
+  } else {
+    interactPromptEl.style.display = 'none';
   }
 
-  player.x = clamp(player.x, player.r, canvas.width - player.r);
-  player.y = clamp(player.y, player.r, canvas.height - player.r);
+  if (!player.hiding) {
+    if (keys['arrowleft'] || keys['a']) player.angle -= TURN_SPEED * dt;
+    if (keys['arrowright'] || keys['d']) player.angle += TURN_SPEED * dt;
 
-  if (!weapon.collected && Math.hypot(player.x - weapon.x, player.y - weapon.y) < player.r + weapon.r) {
-    weapon.collected = true;
-    hasWeapon = true;
-    weaponStatusEl.textContent = '已拿到球棒 (按空白鍵揮擊)';
+    let move = 0;
+    if (keys['arrowup'] || keys['w']) move += 1;
+    if (keys['arrowdown'] || keys['s']) move -= 1;
+    if (move !== 0) {
+      const dirX = Math.cos(player.angle) * move, dirY = Math.sin(player.angle) * move;
+      const step = PLAYER_SPEED * dt;
+      moveWithCollision(player, player.x + dirX * step, player.y + dirY * step);
+    }
+
+    if (!weapon.collected && Math.hypot(player.x - weapon.x, player.y - weapon.y) < player.r + 0.4) {
+      weapon.collected = true;
+      hasWeapon = true;
+      weaponStatusEl.textContent = '已拿到球棒 (按空白鍵/揮擊鍵)';
+    }
   }
 
   const stunned = elapsed < (chaser.stunnedUntil || 0);
   if (!stunned) {
-    const pc = cellOf(player.x, player.y);
-    const cc = cellOf(chaser.x, chaser.y);
-    const path = bfsPath(cc.r, cc.c, pc.r, pc.c);
+    const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
+    const cc = worldToCell(chaser.x, chaser.y);
+    const path = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
     if (path && path.length > 1) {
-      const [nr, nc] = path[1];
-      const targetX = nc * CELL + CELL / 2;
-      const targetY = nr * CELL + CELL / 2;
-      const tdx = targetX - chaser.x;
-      const tdy = targetY - chaser.y;
+      const target = cellCenter(path[1][0], path[1][1]);
+      const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
       const tdist = Math.hypot(tdx, tdy);
-      if (tdist > 0.5) {
-        const step = Math.min(chaser.speed, tdist);
+      if (tdist > 0.05) {
+        const step = Math.min(chaser.speed * dt, tdist);
         chaser.x += (tdx / tdist) * step;
         chaser.y += (tdy / tdist) * step;
       }
     }
   }
 
-  const cdx = player.x - chaser.x;
-  const cdy = player.y - chaser.y;
-  const cdist = Math.hypot(cdx, cdy);
-
-  const now = performance.now();
-  elapsed = (now - startTime) / 1000;
+  elapsed = (performance.now() - startTime) / 1000;
   timerEl.textContent = elapsed.toFixed(1);
+  chaser.speed = 1.5 + elapsed * 0.03;
 
-  chaser.speed = 2.2 + elapsed * 0.04;
-
-  if (!stunned && cdist < player.r + chaser.r) {
+  const cdist = Math.hypot(player.x - chaser.x, player.y - chaser.y);
+  if (!player.hiding && !stunned && cdist < player.r + chaser.r) {
     running = false;
     gameOverText.textContent = `被拖進儲藏室……你在恐怖校園撐了 ${elapsed.toFixed(1)} 秒`;
     gameOverEl.style.display = 'block';
   }
 }
 
-function drawPerson(p, label) {
-  const headR = p.r * 0.55;
-  const bodyTop = p.y - p.r * 0.15;
-  const bodyBottom = p.y + p.r;
-  const legSpread = p.r * 0.6;
-  const armSpread = p.r * 0.9;
-
-  ctx.strokeStyle = p.color;
-  ctx.fillStyle = p.color;
-  ctx.lineWidth = Math.max(3, p.r * 0.25);
-  ctx.lineCap = 'round';
-
-  // head
-  ctx.beginPath();
-  ctx.arc(p.x, p.y - p.r - headR, headR, 0, Math.PI * 2);
-  ctx.fill();
-
-  // body
-  ctx.beginPath();
-  ctx.moveTo(p.x, bodyTop);
-  ctx.lineTo(p.x, bodyBottom * 0.7 + p.y * 0.3);
-  ctx.stroke();
-
-  // arms
-  ctx.beginPath();
-  ctx.moveTo(p.x - armSpread, p.y + p.r * 0.1);
-  ctx.lineTo(p.x + armSpread, p.y + p.r * 0.1);
-  ctx.stroke();
-
-  // legs
-  ctx.beginPath();
-  ctx.moveTo(p.x, p.y + p.r * 0.5);
-  ctx.lineTo(p.x - legSpread, p.y + p.r * 1.3);
-  ctx.moveTo(p.x, p.y + p.r * 0.5);
-  ctx.lineTo(p.x + legSpread, p.y + p.r * 1.3);
-  ctx.stroke();
-
-  if (label) {
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 14px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(label, p.x, p.y - p.r - headR * 2 - 10);
-  }
-}
-
-const VISION_RADIUS = CELL * 4.5;
+// ---------- raycasting render ----------
+const FOV = 1.05;
 let flicker = 1;
 
-function drawBackground() {
-  ctx.fillStyle = '#0c0a08';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = 'rgba(80,60,40,0.15)';
-  ctx.lineWidth = 1;
-  for (let x = 0; x < canvas.width; x += CELL) {
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, canvas.height);
-    ctx.stroke();
-  }
-  for (let y = 0; y < canvas.height; y += CELL) {
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(canvas.width, y);
-    ctx.stroke();
-  }
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
 }
 
-function drawMaze() {
-  ctx.strokeStyle = '#5a2a2a';
-  ctx.lineWidth = 6;
-  ctx.lineCap = 'square';
-  ctx.beginPath();
-  for (const [x1, y1, x2, y2] of wallSegments) {
-    if (Math.hypot(x1 - player.x, y1 - player.y) > VISION_RADIUS + CELL &&
-        Math.hypot(x2 - player.x, y2 - player.y) > VISION_RADIUS + CELL) continue;
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-  }
-  ctx.stroke();
+function castRay(rayAngle) {
+  const dirX = Math.cos(rayAngle), dirY = Math.sin(rayAngle);
+  let mapX = Math.floor(player.x), mapY = Math.floor(player.y);
+  const deltaDistX = dirX === 0 ? 1e30 : Math.abs(1 / dirX);
+  const deltaDistY = dirY === 0 ? 1e30 : Math.abs(1 / dirY);
+  let stepX, stepY, sideDistX, sideDistY;
+  if (dirX < 0) { stepX = -1; sideDistX = (player.x - mapX) * deltaDistX; }
+  else { stepX = 1; sideDistX = (mapX + 1 - player.x) * deltaDistX; }
+  if (dirY < 0) { stepY = -1; sideDistY = (player.y - mapY) * deltaDistY; }
+  else { stepY = 1; sideDistY = (mapY + 1 - player.y) * deltaDistY; }
 
-  ctx.strokeStyle = '#8a4a2a';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  for (const [x1, y1, x2, y2] of wallSegments) {
-    if (Math.hypot(x1 - player.x, y1 - player.y) > VISION_RADIUS + CELL &&
-        Math.hypot(x2 - player.x, y2 - player.y) > VISION_RADIUS + CELL) continue;
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
+  let side = 0, hitGX = mapX, hitGY = mapY;
+  for (let i = 0; i < 64; i++) {
+    if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+    else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+    if (mapX < 0 || mapY < 0 || mapX >= gridW || mapY >= gridH || solid[mapY][mapX]) { hitGX = mapX; hitGY = mapY; break; }
   }
-  ctx.stroke();
+  const perpDist = side === 0 ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY);
+  return { dist: Math.max(perpDist, 0.0001), side, gx: hitGX, gy: hitGY };
 }
 
-function drawWeapon() {
-  if (weapon.collected) return;
-  ctx.save();
-  ctx.translate(weapon.x, weapon.y);
-  ctx.rotate(Math.PI / 4);
-  ctx.fillStyle = '#c9a26a';
-  ctx.fillRect(-3, -weapon.r, 6, weapon.r * 2);
-  ctx.fillStyle = '#5a3a1a';
-  ctx.fillRect(-3, weapon.r - 4, 6, 6);
-  ctx.restore();
-}
+function drawScene() {
+  const w = canvas.width, h = canvas.height;
+  const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
+  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
+  const horizon = h / 2 - jumpBob;
 
-function draw() {
-  flicker = 0.85 + Math.random() * 0.15;
+  // ceiling
+  const ceilGrad = ctx.createLinearGradient(0, 0, 0, horizon);
+  ceilGrad.addColorStop(0, '#0a0906');
+  ceilGrad.addColorStop(1, '#14110a');
+  ctx.fillStyle = ceilGrad;
+  ctx.fillRect(0, 0, w, horizon);
+  // flickering fluorescent tube strip
+  ctx.fillStyle = `rgba(230,220,140,${0.05 + flicker * 0.12})`;
+  ctx.fillRect(0, horizon * 0.15, w, 4);
 
-  drawBackground();
-  drawMaze();
-  drawWeapon();
-  drawPerson(chaser, '恐怖阿嬤');
-  drawPerson(player, null);
+  // floor
+  const floorGrad = ctx.createLinearGradient(0, horizon, 0, h);
+  floorGrad.addColorStop(0, '#241d0d');
+  floorGrad.addColorStop(1, '#4a3a16');
+  ctx.fillStyle = floorGrad;
+  ctx.fillRect(0, horizon, w, h - horizon);
+
+  const RAY_COUNT = Math.max(120, Math.min(w, 400));
+  const colWidth = w / RAY_COUNT;
+  const zbuffer = new Array(RAY_COUNT);
+
+  for (let i = 0; i < RAY_COUNT; i++) {
+    const rayAngle = player.angle - FOV / 2 + (i / RAY_COUNT) * FOV;
+    const hit = castRay(rayAngle);
+    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle);
+    zbuffer[i] = correctedDist;
+    const lineHeight = h / correctedDist;
+    const y0 = horizon - lineHeight / 2;
+
+    const seed = (wallSeed[hit.gy] && wallSeed[hit.gy][hit.gx]) || 0.5;
+    const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.08, 1);
+    let baseR = 96 + seed * 40, baseG = 76 + seed * 30, baseB = 40 + seed * 18;
+    if (hit.side === 1) { baseR *= 0.72; baseG *= 0.72; baseB *= 0.72; }
+    const lightMul = distShade * (0.75 + flicker * 0.25);
+    ctx.fillStyle = `rgb(${Math.floor(baseR * lightMul)},${Math.floor(baseG * lightMul)},${Math.floor(baseB * lightMul)})`;
+    ctx.fillRect(i * colWidth, y0, colWidth + 1, lineHeight);
+
+    // damp stain speckle for backrooms grime
+    if (seed > 0.82) {
+      ctx.fillStyle = `rgba(20,15,5,${0.25 * distShade})`;
+      ctx.fillRect(i * colWidth, y0 + lineHeight * 0.55, colWidth + 1, lineHeight * 0.35);
+    }
+  }
+
+  drawSprite(weapon.collected ? null : weapon, zbuffer, RAY_COUNT, colWidth, 'bat');
+  for (const cb of cabinets) drawSprite(cb, zbuffer, RAY_COUNT, colWidth, 'cabinet');
+  if (!player.hiding) drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
 
   if (elapsed < swingFlashUntil) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-    ctx.lineWidth = 3;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 8;
     ctx.beginPath();
-    ctx.arc(player.x, player.y, SWING_RANGE, 0, Math.PI * 2);
+    ctx.arc(w / 2, h * 0.85, 90, Math.PI, Math.PI * 2);
     ctx.stroke();
   }
-  if (elapsed < (chaser.stunnedUntil || 0)) {
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 16px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('暈', chaser.x, chaser.y - chaser.r * 2.5);
-  }
 
-  // fog of war: darken everything outside the player's flickering vision radius
-  const radius = VISION_RADIUS * flicker;
-  const fog = ctx.createRadialGradient(
-    player.x, player.y, radius * 0.45,
-    player.x, player.y, radius
-  );
-  fog.addColorStop(0, 'rgba(0,0,0,0)');
-  fog.addColorStop(1, 'rgba(3,2,1,1)');
-  ctx.fillStyle = fog;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(3,2,1,1)';
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(0, 0, canvas.width, canvas.height);
-  ctx.arc(player.x, player.y, radius, 0, Math.PI * 2, true);
-  ctx.fill('evenodd');
-  ctx.restore();
+  // depth fog (darken far)
+  const fogGrad = ctx.createLinearGradient(0, horizon - h * 0.05, 0, horizon + h * 0.4);
+  fogGrad.addColorStop(0, 'rgba(5,4,3,0)');
+  fogGrad.addColorStop(1, 'rgba(5,4,3,0.35)');
+  ctx.fillStyle = fogGrad;
+  ctx.fillRect(0, 0, w, h);
 
-  // red vignette pulse for dread, pulsing at the screen edges
+  // red dread vignette pulse
   const pulse = 0.5 + 0.5 * Math.sin(elapsed * 2.2);
-  const vign = ctx.createRadialGradient(
-    canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) * 0.25,
-    canvas.width / 2, canvas.height / 2, Math.max(canvas.width, canvas.height) * 0.75
-  );
+  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.75);
   vign.addColorStop(0, 'rgba(120,0,0,0)');
   vign.addColorStop(1, `rgba(150,0,0,${0.15 + pulse * 0.15})`);
   ctx.fillStyle = vign;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, w, h);
 }
 
-function loop() {
-  update();
-  draw();
+function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
+  if (!entity) return;
+  const dx = entity.x - player.x, dy = entity.y - player.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > VIEW_DIST || dist < 0.05) return;
+  const angleTo = normalizeAngle(Math.atan2(dy, dx) - player.angle);
+  if (Math.abs(angleTo) > FOV / 2 + 0.3) return;
+
+  const screenX = (canvas.width / 2) + (angleTo / (FOV / 2)) * (canvas.width / 2);
+  const rayIndex = clamp(Math.floor((screenX / canvas.width) * RAY_COUNT), 0, RAY_COUNT - 1);
+  if (dist > zbuffer[rayIndex] + 0.15) return;
+
+  const size = clamp(canvas.height / dist, 10, canvas.height * 2);
+  const horizon = canvas.height / 2;
+  const shade = clamp(1 - dist / VIEW_DIST, 0.15, 1);
+
+  if (kind === 'chaser') {
+    const stunned = elapsed < (chaser.stunnedUntil || 0);
+    ctx.save();
+    ctx.translate(screenX, horizon + size * 0.15);
+    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(80 * shade)},0,0,${shade})`;
+    ctx.fillStyle = bodyColor;
+    // simple robed silhouette
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.16, size * 0.02);
+    ctx.quadraticCurveTo(-size * 0.24, -size * 0.35, 0, -size * 0.42);
+    ctx.quadraticCurveTo(size * 0.24, -size * 0.35, size * 0.16, size * 0.02);
+    ctx.lineTo(size * 0.22, size * 0.5);
+    ctx.lineTo(-size * 0.22, size * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    // head
+    ctx.beginPath();
+    ctx.arc(0, -size * 0.46, size * 0.09, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(200,190,170,${shade})`;
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.max(10, size * 0.06)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('恐怖阿嬤', 0, -size * 0.58);
+    if (stunned) ctx.fillText('暈', 0, -size * 0.7);
+    ctx.restore();
+  } else if (kind === 'cabinet') {
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    ctx.fillStyle = `rgba(${Math.floor(60 * shade)},${Math.floor(40 * shade)},${Math.floor(20 * shade)},1)`;
+    ctx.fillRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    ctx.strokeStyle = `rgba(20,14,6,${shade})`;
+    ctx.lineWidth = Math.max(1, size * 0.01);
+    ctx.strokeRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.02);
+    ctx.lineTo(0, size * 0.48);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(150,120,60,${shade})`;
+    ctx.beginPath();
+    ctx.arc(-size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
+    ctx.arc(size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.translate(screenX, horizon + size * 0.42);
+    ctx.rotate(Math.PI / 5);
+    ctx.fillStyle = `rgba(201,162,106,${shade})`;
+    ctx.fillRect(-size * 0.02, -size * 0.16, size * 0.04, size * 0.16);
+    ctx.fillStyle = `rgba(90,58,26,${shade})`;
+    ctx.fillRect(-size * 0.02, -size * 0.02, size * 0.04, size * 0.045);
+    ctx.restore();
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+  lastFrameTime = now;
+  flicker = 0.85 + Math.random() * 0.15;
+  update(dt);
+  drawScene();
   if (running) requestAnimationFrame(loop);
 }
 
 restartBtn.addEventListener('click', reset);
-
 reset();
 </script>
 </body>
