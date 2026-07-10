@@ -1,0 +1,679 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="人JJ">
+<title>JJ蓋房子躲怪獸</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0a1f;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #muteBtn{position:fixed;right:10px;top:10px;width:44px;height:44px;border-radius:50%;
+    background:rgba(20,20,40,.7);border:2px solid #9a6bff;color:#fff;font-size:20px;
+    z-index:10;display:flex;align-items:center;justify-content:center}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="muteBtn">🔊</button>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+// ===== 音效 =====
+let AC = null, muted = false;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function noiseBurst(dur=0.2, vol=0.2){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const buf = ac.createBuffer(1, ac.sampleRate*dur, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain(); g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  src.connect(g).connect(ac.destination); src.start();
+}
+document.getElementById('muteBtn').addEventListener('pointerdown', e=>{
+  e.stopPropagation(); muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+});
+
+// ===== 等角座標系（Isometric）=====
+const TILE_W = 64, TILE_H = 34;
+const GRID = 7; // 7x7 建地
+const ORIGIN_X = GAME_W/2, ORIGIN_Y = 150;
+function isoX(gx,gy){ return ORIGIN_X + (gx-gy)*TILE_W/2; }
+function isoY(gx,gy){ return ORIGIN_Y + (gx+gy)*TILE_H/2; }
+
+// ===== 輸入 =====
+const input = { left:false, right:false, up:false, down:false, action:false, actionBuffer:0, cancel:false };
+const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
+                 ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+                 Space:'action', KeyE:'action' };
+addEventListener('keydown', e=>{
+  const a = KEYMAP[e.code]; if(!a) { if(e.code==='Escape') input.cancel = true; return; }
+  e.preventDefault();
+  if(a==='action' && !input.action) input.actionBuffer = 0.15;
+  input[a] = true;
+});
+addEventListener('keyup', e=>{ const a = KEYMAP[e.code]; if(a) input[a] = false; });
+
+// 觸控：左半虛擬搖桿移動，右半點擊=互動/攻擊
+let joy = { active:false, id:null, cx:0, cy:0, dx:0, dy:0 };
+let tapAction = false;
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
+}
+function onTouchStart(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p = touchPos(t);
+    if(p.x < GAME_W*0.5 && !joy.active){
+      joy.active = true; joy.id = t.identifier; joy.cx = p.x; joy.cy = p.y; joy.dx=0; joy.dy=0;
+    } else if(p.x >= GAME_W*0.5){
+      tapAction = true; input.actionBuffer = 0.15;
+    }
+  }
+}
+function onTouchMove(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joy.active && t.identifier===joy.id){
+      const p = touchPos(t);
+      let dx = p.x-joy.cx, dy = p.y-joy.cy;
+      const d = Math.hypot(dx,dy), max=50;
+      if(d>max){ dx=dx/d*max; dy=dy/d*max; }
+      joy.dx=dx; joy.dy=dy;
+    }
+  }
+}
+function onTouchEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joy.active && t.identifier===joy.id){ joy.active=false; joy.dx=0; joy.dy=0; }
+  }
+}
+for(const ev of ['touchstart']) canvas.addEventListener(ev, onTouchStart, {passive:false});
+for(const ev of ['touchmove']) canvas.addEventListener(ev, onTouchMove, {passive:false});
+for(const ev of ['touchend','touchcancel']) canvas.addEventListener(ev, onTouchEnd, {passive:false});
+
+function moveVector(){
+  let mx=0,my=0;
+  if(input.left) mx-=1; if(input.right) mx+=1;
+  if(input.up) my-=1; if(input.down) my+=1;
+  if(joy.active){ mx += joy.dx/50; my += joy.dy/50; }
+  const len = Math.hypot(mx,my);
+  if(len>1){ mx/=len; my/=len; }
+  return {mx,my};
+}
+
+// ===== 遊戲資料 =====
+const PALETTE = {
+  skyDay1:'#8fd7ff', skyDay2:'#c9f2ff', skyNight1:'#0d0a2b', skyNight2:'#1c1547',
+  ground:'#3fae5c', groundDark:'#2f8a47', wallDone:'#e8c07d', wallHalf:'#caa165',
+  wallEmpty:'#6b5a45', roof:'#d9584a', player:'#ffcf5c', monster:'#8b3a62', monster2:'#c0392b'
+};
+
+// 建地格子：每格是一段牆，需要 hp 木材才能蓋好
+function makeWalls(){
+  const walls = [];
+  const N = GRID;
+  for(let i=0;i<N;i++){
+    walls.push({gx:i, gy:0, built:0, need:3, side:'N'});
+    walls.push({gx:i, gy:N-1, built:0, need:3, side:'S'});
+    walls.push({gx:0, gy:i, built:0, need:3, side:'W'});
+    walls.push({gx:N-1, gy:i, built:0, need:3, side:'E'});
+  }
+  // 去重角落
+  const seen = new Set(); const out=[];
+  for(const w of walls){ const k=w.gx+','+w.gy; if(!seen.has(k)){seen.add(k); out.push(w);} }
+  return out;
+}
+
+let wood = 0;
+let day = 1;
+let dayTimer = 0;
+const DAY_LEN = 28;   // 白天秒數（建造+收集）
+const NIGHT_LEN = 22; // 夜晚秒數（防守）
+let phase = 'day'; // day | night
+let phaseTimer = DAY_LEN;
+let houseHp = 0, houseHpMax = 0;
+let score = 0;
+let shake = 0, freeze = 0;
+
+const parts = [];
+function burst(x,y,color,n=12,speed=180){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = speed*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s*0.6-40,life:0.5,color});
+  }
+}
+function updateParts(dt){
+  for(const p of parts){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=300*dt; p.life-=dt; }
+  for(let i=parts.length-1;i>=0;i--) if(parts[i].life<=0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0,p.life*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3,p.y-3,6,6);
+  }
+  ctx.globalAlpha = 1;
+}
+
+const floatTexts = [];
+function floatText(x,y,text,color='#fff'){
+  floatTexts.push({x,y,text,color,life:0.8});
+}
+function updateFloat(dt){
+  for(const f of floatTexts){ f.y -= 40*dt; f.life -= dt; }
+  for(let i=floatTexts.length-1;i>=0;i--) if(floatTexts[i].life<=0) floatTexts.splice(i,1);
+}
+function drawFloat(){
+  ctx.textAlign='center'; ctx.font='bold 16px sans-serif';
+  for(const f of floatTexts){
+    ctx.globalAlpha = Math.max(0,f.life);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha=1;
+}
+
+// ===== 角色：人JJ =====
+const player = { gx:3, gy:3, x:0, y:0, sx:1, sy:1, facing:1, blinkT:2, bob:0, hp:3, maxHp:3, invuln:0 };
+function updatePlayerPos(){ player.x = isoX(player.gx, player.gy); player.y = isoY(player.gx, player.gy); }
+updatePlayerPos();
+
+// 木材資源點（白天在場地內出現，走過去收集）
+let woodNodes = [];
+function spawnWoodNodes(){
+  woodNodes = [];
+  const N = GRID;
+  const count = 4 + Math.floor(day*0.5);
+  for(let i=0;i<count;i++){
+    let gx,gy,ok;
+    do{
+      gx = 1+Math.random()*(N-2); gy = 1+Math.random()*(N-2);
+      ok = Math.hypot(gx-player.gx, gy-player.gy) > 0.8;
+    } while(!ok);
+    woodNodes.push({gx,gy,taken:false,bob:Math.random()*10});
+  }
+}
+
+let walls = makeWalls();
+function resetGame(){
+  wood = 6; day = 1; phase='day'; phaseTimer = DAY_LEN;
+  walls = makeWalls();
+  houseHpMax = walls.reduce((s,w)=>s+w.need,0);
+  houseHp = 0;
+  score = 0;
+  player.gx=3; player.gy=3; player.hp=3; player.maxHp=3; player.invuln=0;
+  updatePlayerPos();
+  spawnWoodNodes();
+  monsters.length = 0;
+}
+
+// ===== 怪物 =====
+let monsters = [];
+function spawnMonster(){
+  const N = GRID;
+  const edge = Math.floor(Math.random()*4);
+  let gx,gy;
+  if(edge===0){ gx=-1.5; gy=Math.random()*N; }
+  else if(edge===1){ gx=N+0.5; gy=Math.random()*N; }
+  else if(edge===2){ gx=Math.random()*N; gy=-1.5; }
+  else { gx=Math.random()*N; gy=N+0.5; }
+  const speed = 0.55 + day*0.06 + Math.random()*0.15;
+  monsters.push({gx,gy,speed,hp:2,dead:false,hitFlash:0,target:null,squash:1});
+}
+let spawnTimer = 0;
+
+function nearestWallTarget(m){
+  let best=null, bd=Infinity;
+  for(const w of walls){
+    if(w.built>=w.need) continue;
+    const d = Math.hypot(w.gx-m.gx, w.gy-m.gy);
+    if(d<bd){ bd=d; best=w; }
+  }
+  return best;
+}
+
+// ===== 遊戲迴圈狀態機 =====
+let state;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+function drawBackground(nightAmt){
+  const sky = ctx.createLinearGradient(0,0,0,GAME_H);
+  const c1a = hexLerp(PALETTE.skyDay1, PALETTE.skyNight1, nightAmt);
+  const c2a = hexLerp(PALETTE.skyDay2, PALETTE.skyNight2, nightAmt);
+  sky.addColorStop(0,c1a); sky.addColorStop(1,c2a);
+  ctx.fillStyle = sky; ctx.fillRect(0,0,GAME_W,GAME_H);
+  // 星星
+  if(nightAmt>0.3){
+    ctx.fillStyle = `rgba(255,255,255,${(nightAmt-0.3)*0.9})`;
+    for(let i=0;i<40;i++){
+      const sx=(i*97)%GAME_W, sy=(i*53)%180+10;
+      ctx.fillRect(sx,sy,2,2);
+    }
+  }
+  // 月亮/太陽
+  const t = phaseTimer / (phase==='day'?DAY_LEN:NIGHT_LEN);
+  const arcX = GAME_W*0.15 + (1-t)*GAME_W*0.7;
+  ctx.fillStyle = phase==='day' ? '#fff5c9' : '#dfe8ff';
+  ctx.beginPath(); ctx.arc(arcX, 60, 20, 0, Math.PI*2); ctx.fill();
+}
+function hexLerp(a,b,t){
+  const pa = parseInt(a.slice(1),16), pb = parseInt(b.slice(1),16);
+  const ar=(pa>>16)&255, ag=(pa>>8)&255, ab=pa&255;
+  const br=(pb>>16)&255, bg=(pb>>8)&255, bb=pb&255;
+  const r=Math.round(ar+(br-ar)*t), g=Math.round(ag+(bg-ag)*t), bl=Math.round(ab+(bb-ab)*t);
+  return `rgb(${r},${g},${bl})`;
+}
+
+function drawGroundTile(gx,gy,nightAmt){
+  const x = isoX(gx,gy), y = isoY(gx,gy);
+  ctx.beginPath();
+  ctx.moveTo(x, y-TILE_H/2);
+  ctx.lineTo(x+TILE_W/2, y);
+  ctx.lineTo(x, y+TILE_H/2);
+  ctx.lineTo(x-TILE_W/2, y);
+  ctx.closePath();
+  const base = ((gx+gy)%2===0) ? PALETTE.ground : PALETTE.groundDark;
+  ctx.fillStyle = hexLerp(base, '#141033', nightAmt*0.6);
+  ctx.fill();
+}
+
+function drawWall(w, nightAmt){
+  const x = isoX(w.gx,w.gy), y = isoY(w.gx,w.gy);
+  const ratio = w.built/w.need;
+  const h = 10 + ratio*30;
+  const color = w.built===0 ? PALETTE.wallEmpty : ratio<1 ? PALETTE.wallHalf : PALETTE.wallDone;
+  // 側面
+  ctx.fillStyle = hexLerp(color,'#000',0.25+nightAmt*0.3);
+  ctx.fillRect(x-TILE_W/2, y-h, TILE_W/2, h);
+  ctx.fillStyle = hexLerp(color,'#000',0.1+nightAmt*0.3);
+  ctx.fillRect(x, y-h, TILE_W/2, h);
+  // 頂
+  ctx.fillStyle = hexLerp(color,'#fff',0.15);
+  ctx.beginPath();
+  ctx.moveTo(x, y-h-TILE_H/2);
+  ctx.lineTo(x+TILE_W/2, y-h);
+  ctx.lineTo(x, y-h+TILE_H/2);
+  ctx.lineTo(x-TILE_W/2, y-h);
+  ctx.closePath(); ctx.fill();
+  if(w.built<w.need && phase==='day'){
+    ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(`${w.built}/${w.need}`, x, y-h-8);
+  }
+}
+
+function drawWoodNode(n,t){
+  const x = isoX(n.gx,n.gy), y = isoY(n.gx,n.gy) + Math.sin(t*3+n.bob)*4;
+  ctx.fillStyle = '#8c5a3c';
+  ctx.fillRect(x-8,y-6,16,12);
+  ctx.strokeStyle = '#5a3a24'; ctx.lineWidth=2;
+  ctx.strokeRect(x-8,y-6,16,12);
+  ctx.fillStyle='#c9975f';
+  ctx.beginPath(); ctx.ellipse(x,y,4,3,0,0,Math.PI*2); ctx.fill();
+}
+
+function drawPlayerJJ(){
+  const x = player.x, y = player.y - 4;
+  ctx.save();
+  ctx.translate(x, y);
+  // 陰影
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 6, 14, 5, 0,0,Math.PI*2); ctx.fill();
+  const flash = player.invuln>0 && Math.floor(player.invuln*20)%2===0;
+  ctx.scale(player.facing<0?-player.sx:player.sx, player.sy);
+  const bobY = Math.sin(player.bob*6)*2;
+  ctx.translate(0, bobY);
+  // 腳
+  ctx.fillStyle = flash?'#fff':'#4a3728';
+  ctx.fillRect(-8,-4,6,10);
+  ctx.fillRect(2,-4,6,10);
+  // 身體
+  ctx.fillStyle = flash?'#fff':'#4f7cff';
+  ctx.beginPath(); ctx.roundRect(-11,-30,22,26,6); ctx.fill();
+  // 頭
+  ctx.fillStyle = flash?'#fff':'#ffcf9c';
+  ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.fill();
+  // 頭髮
+  ctx.fillStyle = flash?'#eee':'#2b2118';
+  ctx.beginPath(); ctx.arc(0,-42,12,Math.PI,Math.PI*2); ctx.fill();
+  // 眼睛
+  const blink = player.blinkT<0.1;
+  ctx.fillStyle='#222';
+  if(!blink){
+    ctx.beginPath(); ctx.arc(4,-38,2,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillRect(2,-38,4,1);
+  }
+  // 名牌
+  ctx.restore();
+  ctx.fillStyle='#fff'; ctx.font='bold 12px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('人JJ', x, y-58);
+}
+
+function drawMonster(m){
+  const x = isoX(m.gx,m.gy), y = isoY(m.gx,m.gy);
+  ctx.save();
+  ctx.translate(x,y-4);
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0,6,12,4,0,0,Math.PI*2); ctx.fill();
+  ctx.scale(m.squash, 2-m.squash);
+  const col = m.hitFlash>0 ? '#fff' : PALETTE.monster;
+  ctx.fillStyle = col;
+  ctx.beginPath(); ctx.moveTo(-12,4); ctx.lineTo(0,-20); ctx.lineTo(12,4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = m.hitFlash>0?'#fff':'#ffea00';
+  ctx.beginPath(); ctx.arc(-4,-8,2,0,Math.PI*2); ctx.arc(4,-8,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+
+function drawHud(){
+  ctx.textAlign='left'; ctx.font='bold 16px sans-serif'; ctx.fillStyle='#fff';
+  ctx.fillText(`第 ${day} 天`, 16, 26);
+  ctx.fillText(`木材 x${wood}`, 16, 48);
+  const label = phase==='day' ? '☀ 白天：蓋房子、收集木材' : '🌙 夜晚：怪物來襲！躲進屋內或反擊';
+  ctx.fillText(label, 16, 70);
+  ctx.textAlign='right';
+  ctx.fillText(`房屋耐久 ${houseHp}/${houseHpMax}`, GAME_W-16, 26);
+  ctx.fillText(`分數 ${score}`, GAME_W-16, 48);
+  // 倒數條
+  const total = phase==='day'?DAY_LEN:NIGHT_LEN;
+  const ratio = Math.max(0, phaseTimer/total);
+  ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(GAME_W/2-100,10,200,10);
+  ctx.fillStyle = phase==='day' ? '#ffcf5c' : '#9a6bff';
+  ctx.fillRect(GAME_W/2-100,10,200*ratio,10);
+  // 玩家 HP
+  ctx.textAlign='left';
+  for(let i=0;i<player.maxHp;i++){
+    ctx.fillStyle = i<player.hp ? '#ff6cc7' : 'rgba(255,255,255,0.25)';
+    ctx.beginPath();
+    const hx = 16+i*22, hy = 90;
+    ctx.arc(hx,hy,7,0,Math.PI*2); ctx.fill();
+  }
+}
+
+// ===== 狀態：選單 =====
+const menuState = {
+  update(dt){
+    if(input.actionBuffer>0 || tapAction){ input.actionBuffer=0; tapAction=false; resetGame(); setState(playState); }
+  },
+  draw(){
+    drawBackground(0.5);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff'; ctx.font='bold 44px sans-serif';
+    ctx.fillText('JJ蓋房子躲怪獸', GAME_W/2, 200);
+    ctx.font='20px sans-serif';
+    ctx.fillText('白天撿木材、蓋牆補房子；晚上怪物出沒，躲進屋內防守！', GAME_W/2, 250);
+    ctx.font='16px sans-serif';
+    ctx.fillStyle='#c9f2ff';
+    ctx.fillText('電腦：方向鍵/WASD 移動，空白鍵 蓋牆／攻擊', GAME_W/2, 300);
+    ctx.fillText('平板：左半螢幕虛擬搖桿移動，點右半螢幕 蓋牆／攻擊', GAME_W/2, 324);
+    ctx.font='bold 22px sans-serif'; ctx.fillStyle='#ffcf5c';
+    const pulse = 0.7+Math.sin(performance.now()/300)*0.3;
+    ctx.globalAlpha = pulse;
+    ctx.fillText('按空白鍵 / 點擊螢幕 開始', GAME_W/2, 400);
+    ctx.globalAlpha=1;
+  }
+};
+
+// ===== 狀態：遊玩 =====
+const playState = {
+  update(dt){
+    player.blinkT -= dt; if(player.blinkT<0) player.blinkT = 2.5+Math.random();
+    player.invuln = Math.max(0, player.invuln-dt);
+    player.sx += (1-player.sx)*10*dt; player.sy += (1-player.sy)*10*dt;
+
+    const {mx,my} = moveVector();
+    const spd = 3.2*dt;
+    if(mx!==0||my!==0){
+      player.bob += dt;
+      if(mx>0) player.facing=1; else if(mx<0) player.facing=-1;
+      let ngx = clamp(player.gx + mx*spd, 0.3, GRID-1.3);
+      let ngy = clamp(player.gy + my*spd, 0.3, GRID-1.3);
+      // 不能直接站進已完工牆體
+      const blocked = walls.find(w=>w.built>=w.need && Math.hypot(w.gx-ngx,w.gy-ngy)<0.55);
+      if(!blocked){ player.gx = ngx; player.gy = ngy; }
+      updatePlayerPos();
+    }
+
+    const doAction = input.actionBuffer>0 || tapAction;
+    if(doAction){
+      input.actionBuffer=0; tapAction=false;
+      handleAction();
+    }
+
+    if(phase==='day'){
+      // 收集木材
+      for(const n of woodNodes){
+        if(n.taken) continue;
+        if(Math.hypot(n.gx-player.gx, n.gy-player.gy) < 0.6){
+          n.taken = true; wood += 2; score += 5;
+          floatText(player.x, player.y-70, '+2 木材', '#ffcf5c');
+          burst(player.x, player.y-40, '#8c5a3c', 8, 120);
+          beep(700,0.08,'square',0.12); setTimeout(()=>beep(1000,0.1,'square',0.1),70);
+        }
+      }
+      phaseTimer -= dt;
+      if(phaseTimer<=0){ startNight(); }
+    } else {
+      // 夜晚：怪物生成與行動
+      spawnTimer -= dt;
+      const spawnRate = Math.max(0.8, 2.4 - day*0.15);
+      if(spawnTimer<=0){ spawnMonster(); spawnTimer = spawnRate; }
+
+      for(const m of monsters){
+        m.hitFlash = Math.max(0, m.hitFlash-dt);
+        m.squash += (1-m.squash)*8*dt;
+        if(!m.target || m.target.built>=m.target.need) m.target = nearestWallTarget(m);
+        let tx, ty;
+        if(m.target){ tx=m.target.gx; ty=m.target.gy; }
+        else { tx=player.gx; ty=player.gy; }
+        const dx=tx-m.gx, dy=ty-m.gy, d=Math.hypot(dx,dy);
+        if(d>0.55){
+          m.gx += dx/d*m.speed*dt; m.gy += dy/d*m.speed*dt;
+        } else if(m.target){
+          m.target.built = Math.max(0, m.target.built-0.6*dt);
+          houseHp = walls.reduce((s,w)=>s+w.built,0);
+        }
+        // 撞到玩家
+        if(player.invuln<=0 && Math.hypot(m.gx-player.gx, m.gy-player.gy)<0.55){
+          player.hp -= 1; player.invuln = 1.2;
+          shake = 8; freeze = 0.08;
+          burst(player.x, player.y-30, '#ff6cc7', 16, 200);
+          beep(220,0.25,'sawtooth',0.2,-150);
+          if(player.hp<=0){ setState(gameOverState); return; }
+        }
+      }
+      monsters = monsters.filter(m=>!m.dead);
+
+      houseHp = walls.reduce((s,w)=>s+w.built,0);
+      if(houseHp<=0 && walls.some(w=>w.need>0)){
+        // 房子全毀
+        setState(gameOverState); return;
+      }
+
+      phaseTimer -= dt;
+      if(phaseTimer<=0){ startDay(); }
+    }
+
+    updateParts(dt); updateFloat(dt);
+    shake *= Math.pow(0.001, dt);
+    if(input.cancel) input.cancel=false;
+  },
+  draw(){
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    const nightAmt = phase==='night' ? 1 : (phaseTimer<3 ? 1-(phaseTimer/3) : 0);
+    drawBackground(nightAmt);
+
+    // 地板
+    for(let gy=0; gy<GRID; gy++)
+      for(let gx=0; gx<GRID; gx++)
+        drawGroundTile(gx,gy,nightAmt);
+
+    // 收集排序繪製順序（畫家演算法）：依 gx+gy 排序
+    const drawables = [];
+    for(const w of walls) drawables.push({y:w.gy+w.gx, draw:()=>drawWall(w,nightAmt)});
+    if(phase==='day') for(const n of woodNodes) if(!n.taken) drawables.push({y:n.gy+n.gx-0.1, draw:()=>drawWoodNode(n,performance.now()/1000)});
+    drawables.push({y:player.gx+player.gy, draw:drawPlayerJJ});
+    for(const m of monsters) drawables.push({y:m.gx+m.gy, draw:()=>drawMonster(m)});
+    drawables.sort((a,b)=>a.y-b.y);
+    for(const d of drawables) d.draw();
+
+    drawParts();
+    ctx.restore();
+    drawFloat();
+    drawHud();
+
+    if(phase==='night'){
+      ctx.fillStyle='rgba(20,10,50,0.12)';
+      ctx.fillRect(0,0,GAME_W,GAME_H);
+    }
+  }
+};
+
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+function handleAction(){
+  if(phase==='day'){
+    // 找最近未完工的牆
+    let best=null, bd=Infinity;
+    for(const w of walls){
+      if(w.built>=w.need) continue;
+      const d = Math.hypot(w.gx-player.gx, w.gy-player.gy);
+      if(d<bd){ bd=d; best=w; }
+    }
+    if(best && bd<0.9 && wood>0){
+      best.built += 1; wood -= 1; score += 3;
+      houseHp = walls.reduce((s,w)=>s+w.built,0);
+      player.sx=1.3; player.sy=0.7;
+      floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-40, '+1', '#e8c07d');
+      burst(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-20, '#e8c07d', 10, 140);
+      beep(500,0.08,'square',0.12,120);
+      if(best.built>=best.need){ beep(700,0.15,'triangle',0.15,200); }
+    } else if(wood<=0){
+      floatText(player.x, player.y-60, '沒有木材了', '#ff6cc7');
+      beep(150,0.1,'sawtooth',0.1);
+    }
+  } else {
+    // 夜晚：攻擊附近怪物
+    let hitAny=false;
+    for(const m of monsters){
+      if(Math.hypot(m.gx-player.gx,m.gy-player.gy)<0.85){
+        m.hp -= 1; m.hitFlash=0.12; m.squash=1.4; hitAny=true;
+        if(m.hp<=0){
+          m.dead=true; score += 10;
+          burst(isoX(m.gx,m.gy), isoY(m.gx,m.gy)-20, PALETTE.monster, 18, 220);
+          floatText(isoX(m.gx,m.gy), isoY(m.gx,m.gy)-40, '+10', '#ff8c61');
+          beep(880,0.1,'square',0.15); setTimeout(()=>beep(1200,0.12,'square',0.12),60);
+        }
+      }
+    }
+    if(hitAny){ shake=4; freeze=0.05; beep(300,0.06,'square',0.1,-100); }
+  }
+}
+
+function startNight(){
+  phase='night'; phaseTimer = NIGHT_LEN; spawnTimer = 1;
+  floatText(GAME_W/2, 150, '夜晚降臨...怪物出沒！', '#ff6cc7');
+  beep(220,0.3,'sawtooth',0.15,-80);
+}
+function startDay(){
+  day += 1; phase='day'; phaseTimer = DAY_LEN;
+  monsters = [];
+  spawnWoodNodes();
+  floatText(GAME_W/2, 150, `第 ${day} 天開始`, '#ffcf5c');
+  beep(600,0.2,'triangle',0.15,150);
+}
+
+// ===== 狀態：結束 =====
+const gameOverState = {
+  enter(){
+    this.t = 0;
+    shake = 10; freeze = 0.15;
+    burst(player.x, player.y-30, '#ff6cc7', 24, 260);
+    beep(180,0.4,'sawtooth',0.2,-120);
+    const best = Math.max(score, +(localStorage.getItem('jj_house_best')||0));
+    localStorage.setItem('jj_house_best', best);
+    this.best = best;
+  },
+  update(dt){
+    this.t += dt;
+    if(this.t>0.6 && (input.actionBuffer>0 || tapAction)){
+      input.actionBuffer=0; tapAction=false;
+      resetGame(); setState(playState);
+    }
+  },
+  draw(){
+    playState.draw();
+    ctx.fillStyle='rgba(0,0,0,0.6)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff'; ctx.font='bold 40px sans-serif';
+    ctx.fillText('房子被攻破了！', GAME_W/2, 220);
+    ctx.font='22px sans-serif';
+    ctx.fillText(`撐過 ${day} 天　分數 ${score}`, GAME_W/2, 270);
+    ctx.fillStyle='#ffcf5c';
+    ctx.fillText(`最佳紀錄 ${this.best}`, GAME_W/2, 300);
+    if(this.t>0.6){
+      ctx.fillStyle='#9a6bff'; ctx.font='bold 20px sans-serif';
+      const pulse = 0.7+Math.sin(performance.now()/300)*0.3;
+      ctx.globalAlpha=pulse;
+      ctx.fillText('按空白鍵 / 點擊螢幕 再挑戰', GAME_W/2, 360);
+      ctx.globalAlpha=1;
+    }
+  }
+};
+
+// ===== 主迴圈 =====
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, 0.1);
+  last = now;
+  while(acc>=STEP){
+    if(freeze>0){ freeze -= STEP; acc -= STEP; continue; }
+    input.actionBuffer = Math.max(0, input.actionBuffer-STEP);
+    state.update(STEP);
+    acc -= STEP;
+  }
+  state.draw();
+}
+setState(menuState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
