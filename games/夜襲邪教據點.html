@@ -219,6 +219,56 @@
     position:absolute; inset:0; pointer-events:none; background:rgba(255,220,180,0);
     transition:background .08s;
   }
+  .level-timer{
+    position:absolute; top:14px; left:50%; transform:translateX(-50%);
+    font-family:"Consolas","Courier New",monospace; font-size:13px; letter-spacing:.1em;
+    color:var(--fire-hot); background:rgba(8,14,10,.6); border:1px solid var(--hud-line);
+    padding:4px 12px; display:none;
+  }
+  .level-toggle{
+    position:absolute; bottom:14px; left:14px;
+    font-family:"Consolas","Courier New",monospace; font-size:11px; letter-spacing:.08em;
+    color:var(--amber); background:rgba(8,14,10,.72); border:1px solid var(--hud-line);
+    padding:5px 10px; cursor:pointer; pointer-events:auto; display:none;
+  }
+  .level-toggle:hover{ background:rgba(201,161,90,.2); }
+  .level-overlay{
+    position:absolute; inset:0; z-index:20; display:none;
+    background:rgba(4,8,5,.88); backdrop-filter:blur(2px);
+    align-items:center; justify-content:center;
+  }
+  .level-overlay.show{ display:flex; }
+  .level-panel{
+    width:min(92%,720px); max-height:88%; overflow:auto;
+    background:linear-gradient(180deg, rgba(20,30,20,.95), rgba(6,11,8,.97));
+    border:1px solid var(--hud-line); border-top-color:rgba(255,255,255,.1);
+    box-shadow:0 20px 60px rgba(0,0,0,.7); padding:20px 22px; pointer-events:auto;
+  }
+  .level-panel h2{
+    margin:0 0 4px; text-align:center; color:var(--bone); font-family:"Impact","Arial Narrow Bold",Arial,sans-serif;
+    font-weight:400; font-size:24px; letter-spacing:.04em; text-shadow:0 2px 0 #000;
+  }
+  .level-panel p{ text-align:center; color:var(--ink-dim); font-size:12.5px; margin:0 0 16px; }
+  .level-grid{
+    display:grid; grid-template-columns:repeat(10,1fr); gap:6px;
+  }
+  .level-btn{
+    aspect-ratio:1; border:1px solid var(--hud-line); border-radius:3px;
+    background:rgba(8,14,10,.6); color:var(--ink-dim);
+    font-family:"Consolas","Courier New",monospace; font-size:12px; cursor:default;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .level-btn.unlocked{
+    color:var(--bone); border-color:var(--amber); cursor:pointer; background:rgba(201,161,90,.12);
+  }
+  .level-btn.unlocked:hover{ background:rgba(201,161,90,.32); }
+  .level-btn.cleared{
+    color:#060b08; background:linear-gradient(180deg,var(--fire-hot),var(--fire)); border-color:var(--fire);
+    cursor:pointer;
+  }
+  .level-desc{
+    margin-top:14px; text-align:center; font-size:12.5px; color:var(--amber); min-height:18px;
+  }
 </style>
 
 <div class="kicker">Roblox · 99 Nights in the Forest</div>
@@ -248,9 +298,20 @@
         <div class="bar-row">飢餓<div class="bar-track"><div class="bar-fill fill-hunger" id="hungerBar"></div></div></div>
       </div>
     </div>
+    <div class="level-timer" id="levelTimer"></div>
+    <div class="level-toggle" id="levelToggle">🗡️ 闖關模式</div>
     <div class="kbd-hint">WASD / 方向鍵：移動<br>E / 攻擊鍵：揮砍</div>
     <div class="objective" id="objective">潛入據點，靠近信徒後按 E 攻擊</div>
     <div class="toast" id="toast"></div>
+    <div class="level-overlay" id="levelOverlay">
+      <div class="level-panel">
+        <h2>闖關模式</h2>
+        <p>共 50 關，每關目標略有不同，過關才能解鎖下一關</p>
+        <div class="level-grid" id="levelGrid"></div>
+        <div class="level-desc" id="levelDesc"></div>
+        <div class="level-desc" id="levelClose" style="cursor:pointer;text-decoration:underline;margin-top:10px;">返回自由夜襲模式</div>
+      </div>
+    </div>
     <div class="controls">
       <div class="dpad">
         <span></span><button id="btnU">▲</button><span></span>
@@ -636,16 +697,25 @@
     return {wrap, ctx:scaledCtx(c)};
   }
 
-  const CULTIST_SPAWNS = [
+  let CULTIST_SPAWNS = [
     {x:60, z:-40, patrol:false},
     {x:-60, z:30, patrol:false},
     {x:150, z:90, patrol:true},
   ];
+  function generateSpawns(count, hp){
+    const arr=[];
+    for(let i=0;i<count;i++){
+      const a=(i/count)*Math.PI*2;
+      const r=90+ (i%2)*45;
+      arr.push({x:Math.cos(a)*r, z:Math.sin(a)*r, patrol:i%2===0, hp:hp||2});
+    }
+    return arr;
+  }
   function spawnCultists(){
     return CULTIST_SPAWNS.map((s,id)=>({
       ...makeCharacter(s.x,s.z,'#3b2f24','#8f2f2f'),
       id, x:s.x, z:s.z, baseX:s.x, baseZ:s.z, patrol:s.patrol,
-      hp:2, alive:true, fallen:0, alertT:0, hitFlash:0
+      hp:s.hp||2, alive:true, fallen:0, alertT:0, hitFlash:0
     }));
   }
 
@@ -749,6 +819,7 @@
   let phase = 'raid'; // raid -> loot -> retreat -> success
   let atkCooldown = 0, atkAnim = 0;
   let toastTimer = 0;
+  let chaseSpeed = 30;
 
   const firelightEl = document.getElementById('firelight');
   const objectiveEl = document.getElementById('objective');
@@ -760,6 +831,111 @@
     toastEl.classList.add('show');
     toastTimer = ms/1000;
   }
+
+  // ---------------- 闖關模式（50 關）----------------
+  function buildLevels(){
+    const defs=[];
+    for(let n=1;n<=50;n++){
+      const count = Math.min(3 + Math.floor((n-1)/4), 10);
+      const speedMul = 1 + Math.floor((n-1)/8)*0.25;
+      const hasTimer = n%5===0;
+      const timeLimit = hasTimer ? Math.max(35, 70 - Math.floor(n/5)*3) : 0;
+      const eliteHp = n%10===0 ? 3 : 2;
+      let objective = `擊倒全部 ${count} 名信徒，搶奪祭壇戰利品後撤離森林`;
+      if(hasTimer) objective = `限時 ${timeLimit} 秒內擊倒全部信徒、搶戰利品並撤離！`;
+      if(n%10===0) objective = `信徒更頑強（多 1 點血量）！${hasTimer?('限時 '+timeLimit+' 秒，'):''}清空據點、搶戰利品後撤離`;
+      defs.push({n, count, speedMul, timeLimit, eliteHp, objective});
+    }
+    return defs;
+  }
+  const LEVELS = buildLevels();
+  const LS_UNLOCK_KEY = '夜襲邪教據點.level_unlocked';
+  const LS_SEEN_KEY = '夜襲邪教據點.level_mode_seen';
+  function loadUnlocked(){ try{ return Math.max(1, parseInt(localStorage.getItem(LS_UNLOCK_KEY)||'1',10)||1); }catch(err){ return 1; } }
+  function saveUnlocked(v){ try{ localStorage.setItem(LS_UNLOCK_KEY, String(v)); }catch(err){} }
+  let unlockedLevel = loadUnlocked();
+  let levelModeSeen = false;
+  try{ levelModeSeen = localStorage.getItem(LS_SEEN_KEY)==='1'; }catch(err){ levelModeSeen = false; }
+  let gameMode = 'raid'; // 'raid' = 自由夜襲, 'level' = 闖關模式
+  let currentLevel = 0;
+  let levelTimeLeft = 0;
+  let paused = false;
+
+  const levelOverlayEl = document.getElementById('levelOverlay');
+  const levelGridEl = document.getElementById('levelGrid');
+  const levelDescEl = document.getElementById('levelDesc');
+  const levelTimerEl = document.getElementById('levelTimer');
+  const levelToggleEl = document.getElementById('levelToggle');
+
+  function renderLevelGrid(){
+    levelGridEl.innerHTML='';
+    LEVELS.forEach(def=>{
+      const btn=document.createElement('div');
+      const cleared = def.n < unlockedLevel;
+      const unlocked = def.n <= unlockedLevel;
+      btn.className = 'level-btn' + (cleared?' cleared':(unlocked?' unlocked':''));
+      btn.textContent = def.n;
+      if(unlocked){
+        btn.addEventListener('pointerenter', ()=>{ levelDescEl.textContent = `第 ${def.n} 關：${def.objective}`; });
+        btn.addEventListener('pointerdown', e=>{ e.preventDefault(); startLevel(def.n); });
+      }
+      levelGridEl.appendChild(btn);
+    });
+  }
+  function showLevelSelect(){
+    gameMode='levelSelect';
+    paused = true;
+    levelDescEl.textContent='';
+    renderLevelGrid();
+    levelOverlayEl.classList.add('show');
+  }
+  function hideLevelSelect(){
+    levelOverlayEl.classList.remove('show');
+  }
+  function startLevel(n){
+    const def = LEVELS[n-1];
+    if(!def) return;
+    hideLevelSelect();
+    paused = false;
+    gameMode = 'level';
+    currentLevel = n;
+    chaseSpeed = 30 * def.speedMul;
+    levelTimeLeft = def.timeLimit || 0;
+    levelTimerEl.style.display = def.timeLimit ? 'block' : 'none';
+    cultists.forEach(c=>c.wrap.remove());
+    CULTIST_SPAWNS = generateSpawns(def.count, def.eliteHp);
+    cultists = spawnCultists();
+    player.x=-340; player.z=-260;
+    stamina = 100; hunger = 80;
+    phase='raid';
+    setObjective(`第 ${def.n} 關：${def.objective}`);
+    showToast(`第 ${def.n} 關開始！`, 1400);
+  }
+  function failLevel(reason){
+    if(phase==='success') return;
+    showToast(reason || '關卡失敗，重新挑戰！', 1600);
+    setTimeout(()=>startLevel(currentLevel), 1300);
+  }
+  function completeLevel(){
+    if(currentLevel >= unlockedLevel && unlockedLevel <= 50){
+      unlockedLevel = Math.min(50, currentLevel+1);
+      saveUnlocked(unlockedLevel);
+    }
+    showToast(currentLevel>=50 ? '恭喜通關全部 50 關！' : `第 ${currentLevel} 關通關！`, 2000);
+    setTimeout(()=>showLevelSelect(), 1700);
+  }
+  levelToggleEl.addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    if(gameMode==='levelSelect') return;
+    showLevelSelect();
+  });
+  document.getElementById('levelClose').addEventListener('pointerdown', e=>{
+    e.preventDefault();
+    hideLevelSelect();
+    paused = false;
+    resetRun();
+  });
+  if(levelModeSeen){ levelToggleEl.style.display='block'; }
 
   // ---------------- input ----------------
   const keys = {};
@@ -838,18 +1014,29 @@
   window.addEventListener('pointerup', ()=>dragging=false);
 
   const SPEED = 150;
+  const DEFAULT_SPAWNS = CULTIST_SPAWNS;
   function resetRun(){
+    gameMode = 'raid';
+    chaseSpeed = 30;
+    CULTIST_SPAWNS = DEFAULT_SPAWNS;
     cultists.forEach(c=>c.wrap.remove());
     cultists = spawnCultists();
     player.x=-340; player.z=-260;
     phase='raid';
     stamina = Math.min(100, stamina+20);
+    levelTimerEl.style.display='none';
   }
 
   let last = performance.now();
   function frame(now){
     const dt = Math.min(0.05,(now-last)/1000); last=now;
     const t = now/1000;
+    if(paused){ requestAnimationFrame(frame); return; }
+    if(gameMode==='level' && levelTimeLeft>0 && phase!=='success'){
+      levelTimeLeft -= dt;
+      levelTimerEl.textContent = '剩餘時間：' + Math.max(0,Math.ceil(levelTimeLeft)) + ' 秒';
+      if(levelTimeLeft<=0){ failLevel('時間到！關卡失敗'); }
+    }
     if(autoSpin) camAngle += dt*0.05;
     if(atkCooldown>0) atkCooldown -= dt;
     if(atkAnim>0) atkAnim = Math.max(0, atkAnim-dt*2.6);
@@ -900,8 +1087,8 @@
         if(c.alertT>0){
           const d = Math.hypot(player.x-c.x, player.z-c.z);
           if(d>10){
-            c.x += (player.x-c.x)/d * 30*dt;
-            c.z += (player.z-c.z)/d * 30*dt;
+            c.x += (player.x-c.x)/d * chaseSpeed*dt;
+            c.z += (player.z-c.z)/d * chaseSpeed*dt;
             legPhase = Math.sin(t*8)*0.4;
           }
         } else if(c.patrol){
@@ -926,17 +1113,28 @@
     } else if(phase==='loot'){
       setObjective('全部擊倒！前往中央祭壇按 E／攻擊鈕搶奪戰利品');
     } else if(phase==='retreat'){
-      setObjective('戰利品到手！往森林邊界外撤離');
+      setObjective(gameMode==='level' ? `第 ${currentLevel} 關：戰利品到手！往森林邊界外撤離` : '戰利品到手！往森林邊界外撤離');
       if(distToOrigin>ESCAPE_R){
         phase='success';
-        day += 1;
-        dayEl.textContent = day;
-        showToast(`夜襲成功！第 ${day} 天`, 2200);
         flashHitEl.style.transition='background .6s';
         flashHitEl.style.background='rgba(255,235,200,.35)';
         setTimeout(()=>{ flashHitEl.style.background='rgba(255,220,180,0)'; },250);
         setTimeout(()=>{ flashHitEl.style.transition='background .08s'; },900);
-        setTimeout(resetRun, 2200);
+        if(gameMode==='level'){
+          completeLevel();
+        } else {
+          day += 1;
+          dayEl.textContent = day;
+          showToast(`夜襲成功！第 ${day} 天`, 2200);
+          if(day>=50 && !levelModeSeen){
+            levelModeSeen = true;
+            try{ localStorage.setItem(LS_SEEN_KEY,'1'); }catch(err){}
+            levelToggleEl.style.display='block';
+            setTimeout(()=>{ showToast('第 50 天！解鎖闖關模式，共 50 關等你挑戰', 2400); showLevelSelect(); }, 2200);
+          } else {
+            setTimeout(resetRun, 2200);
+          }
+        }
       }
     } else if(phase==='success'){
       setObjective('回營地休整中……');
