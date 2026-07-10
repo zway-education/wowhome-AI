@@ -149,22 +149,97 @@
   #hideOverlay {
     position: fixed;
     inset: 0;
-    background: rgba(0,0,0,0.75);
     z-index: 8;
     display: none;
     align-items: center;
     justify-content: center;
-    color: #a0d090;
-    font-size: 20px;
+    color: #cdeab9;
+    font-size: 18px;
     text-align: center;
+    pointer-events: none;
+    text-shadow: 0 0 6px #000, 0 0 3px #000;
+    background:
+      repeating-linear-gradient(to bottom, rgba(8,6,3,0.94) 0px, rgba(8,6,3,0.94) 12px, rgba(8,6,3,0.12) 12px, rgba(8,6,3,0.12) 26px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0.85) 100%);
+  }
+  #titleScreen, #winScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: radial-gradient(ellipse at center, #1a0e08 0%, #050302 100%);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #titleScreen { display: flex; }
+  #winScreen { display: none; }
+  #titleScreen h1, #winScreen h1 {
+    color: #ff3b3b;
+    font-size: clamp(28px, 6vw, 48px);
+    text-shadow: 0 0 16px #ff0000, 0 0 4px #000;
+    margin: 0 0 18px;
+    letter-spacing: 2px;
+  }
+  #titleScreen .howto {
+    color: #7fdb6b;
+    font-size: 15px;
+    line-height: 1.9;
+    max-width: 560px;
+    margin-bottom: 22px;
+    text-shadow: 0 0 4px #000;
+  }
+  #titleScreen .howto b { color: #b7ffb0; }
+  #startBtn, #winRestartBtn {
+    padding: 14px 38px;
+    font-size: 20px;
+    cursor: pointer;
+    background: #4a0000;
+    color: #ffb0b0;
+    border: 1px solid #a00000;
+    border-radius: 4px;
+  }
+  #winScreen h1 { color: #7fffb0; text-shadow: 0 0 16px #00ff66, 0 0 4px #000; }
+  #winScreen #winText { color: #cdeab9; font-size: 18px; margin-bottom: 22px; }
+  #muteBtn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 25;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(40,20,20,0.6);
+    border: 1px solid rgba(180,60,60,0.6);
+    color: #d7ffb0;
+    font-size: 18px;
+    cursor: pointer;
   }
 </style>
 </head>
 <body>
+<div id="titleScreen">
+  <h1>恐怖校園追逐</h1>
+  <div class="howto">
+    找到地圖另一端的<b>逃生門</b>離開恐怖校園,途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,
+    危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br><br>
+    <b>電腦</b>：方向鍵/WASD 移動、滑鼠拖曳看方向、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
+    <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
+  </div>
+  <button id="startBtn">開始遊戲</button>
+</div>
+<div id="winScreen">
+  <h1>成功逃出！</h1>
+  <div id="winText"></div>
+  <button id="winRestartBtn">再玩一次</button>
+</div>
+<button id="muteBtn">🔊</button>
 <div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
 <div id="crosshair"></div>
 <div id="interactPrompt"></div>
-<div id="hideOverlay">🗄️ 躲藏中……恐怖阿嬤找不到你<br>按 E / 「出來」鍵離開</div>
+<div id="hideOverlay"><span id="hideOverlayText">🗄️ 躲藏中……恐怖阿嬤找不到你</span><br>按 E / 「出來」鍵離開</div>
 <div id="gameOver">
   <div id="gameOverText"></div>
   <button id="restartBtn">重新開始</button>
@@ -194,10 +269,31 @@ const restartBtn = document.getElementById('restartBtn');
 const weaponStatusEl = document.getElementById('weaponStatus');
 const interactPromptEl = document.getElementById('interactPrompt');
 const hideOverlayEl = document.getElementById('hideOverlay');
+const hideOverlayTextEl = document.getElementById('hideOverlayText');
+const titleScreenEl = document.getElementById('titleScreen');
+const winScreenEl = document.getElementById('winScreen');
+const winTextEl = document.getElementById('winText');
+const startBtn = document.getElementById('startBtn');
+const winRestartBtn = document.getElementById('winRestartBtn');
+const muteBtn = document.getElementById('muteBtn');
+let muted = false;
+
+const BEST_TIME_KEY = 'horrorCampusChase_bestEscapeTime';
+function getBestTime() {
+  const v = parseFloat(localStorage.getItem(BEST_TIME_KEY));
+  return isNaN(v) ? null : v;
+}
+function saveBestTime(t) {
+  const best = getBestTime();
+  if (best === null || t < best) localStorage.setItem(BEST_TIME_KEY, String(t));
+}
 
 function resize() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
 }
 window.addEventListener('resize', resize);
 resize();
@@ -302,9 +398,11 @@ function worldToCell(x, y) {
 }
 
 // ---------- entities ----------
-const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, lastKnownCell: null, jumpT: Infinity };
-const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0 };
+const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: Infinity };
+const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0 };
+const SEARCH_RANGE = 1.4;
 const weapon = { x: 0, y: 0, collected: false };
+const exit = { x: 0, y: 0 };
 let hasWeapon = false;
 let lastSwingTime = -Infinity;
 const SWING_COOLDOWN = 0.8;
@@ -328,6 +426,7 @@ function placeCabinets() {
     for (let c = 0; c < MAZE_COLS; c++) {
       if (r === 0 && c === 0) continue;
       if (r === MAZE_ROWS - 1 && c === MAZE_COLS - 1) continue;
+      if (r === 0 && c === MAZE_COLS - 1) continue;
       if (r === wc.r && c === wc.c) continue;
       candidates.push([r, c]);
     }
@@ -352,15 +451,18 @@ function jump() {
   if (!running || player.hiding) return;
   if (elapsed < player.jumpT + JUMP_DURATION) return;
   player.jumpT = elapsed;
+  playJumpSound();
 }
 
 function toggleHide() {
   if (!running) return;
   if (player.hiding) {
     player.hiding = false;
+    player.hidingCabinet = null;
     hideOverlayEl.style.display = 'none';
   } else if (nearCabinet) {
     player.hiding = true;
+    player.hidingCabinet = nearCabinet;
     player.lastKnownCell = worldToCell(player.x, player.y);
     hideOverlayEl.style.display = 'flex';
   }
@@ -372,7 +474,10 @@ function swing() {
   lastSwingTime = elapsed;
   swingFlashUntil = elapsed + 0.15;
   const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
-  if (dist < SWING_RANGE) chaser.stunnedUntil = elapsed + STUN_DURATION;
+  if (dist < SWING_RANGE) {
+    chaser.stunnedUntil = elapsed + STUN_DURATION;
+    playHitSound();
+  }
 }
 
 // ---------- dread audio (synthesized, no external assets) ----------
@@ -387,8 +492,75 @@ function ensureAudio() {
 let lastThumpTime = -Infinity;
 let screamedRecently = false;
 
+function playJumpSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(220, t);
+  osc.frequency.exponentialRampToValueAtTime(440, t + 0.12);
+  gain.gain.setValueAtTime(0.18, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.18);
+}
+
+function playHitSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const bufferSize = Math.floor(audioCtx.sampleRate * 0.12);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(1200, t);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.5, t);
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start(t);
+}
+
+function playPickupSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100].forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(f, t + i * 0.06);
+    gain.gain.setValueAtTime(0.001, t + i * 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.22, t + i * 0.06 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.18);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t + i * 0.06);
+    osc.stop(t + i * 0.06 + 0.2);
+  });
+}
+
+function playWinFanfare() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  [523, 659, 784, 1046].forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(f, t + i * 0.12);
+    gain.gain.setValueAtTime(0.001, t + i * 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.2, t + i * 0.12 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t + i * 0.12);
+    osc.stop(t + i * 0.12 + 0.32);
+  });
+}
+
 function playThump(vol) {
-  if (!audioCtx) return;
+  if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
@@ -402,7 +574,7 @@ function playThump(vol) {
 }
 
 function playScream() {
-  if (!audioCtx) return;
+  if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
   const dur = 0.45;
   const bufferSize = Math.floor(audioCtx.sampleRate * dur);
@@ -441,6 +613,7 @@ function updateDreadAudio(dread, chaserDist) {
 const keys = {};
 window.addEventListener('keydown', e => {
   ensureAudio();
+  if (titleScreenEl.style.display !== 'none') { startGame(); return; }
   keys[e.key.toLowerCase()] = true;
   if (e.key === ' ') { swing(); e.preventDefault(); }
   if (e.key.toLowerCase() === 'shift') jump();
@@ -494,6 +667,8 @@ function reset() {
   chaser.x = chaserStart.x; chaser.y = chaserStart.y;
   chaser.stunnedUntil = 0;
   chaser.speed = PLAYER_SPEED / 2;
+  chaser.searching = false;
+  chaser.searchCabinet = null;
 
   const wc = cellCenter(Math.floor(MAZE_ROWS / 2), Math.floor(MAZE_COLS / 2));
   weapon.x = wc.x; weapon.y = wc.y; weapon.collected = false;
@@ -502,19 +677,34 @@ function reset() {
   swingFlashUntil = -Infinity;
   weaponStatusEl.textContent = '尚未拿到球棒';
 
+  const exitCenter = cellCenter(0, MAZE_COLS - 1);
+  exit.x = exitCenter.x; exit.y = exitCenter.y;
+
   running = true;
   dying = false;
   deathTime = -Infinity;
+  deathCause = 'open';
   screamedRecently = false;
   startTime = performance.now();
   lastFrameTime = startTime;
   elapsed = 0;
   gameOverEl.style.display = 'none';
+  winScreenEl.style.display = 'none';
   requestAnimationFrame(loop);
 }
 
+function winGame() {
+  running = false;
+  const t = elapsed;
+  saveBestTime(t);
+  const best = getBestTime();
+  winTextEl.textContent = `用時 ${t.toFixed(1)} 秒逃出恐怖校園！` + (best !== null ? ` 最佳紀錄：${best.toFixed(1)} 秒` : '');
+  winScreenEl.style.display = 'flex';
+  playWinFanfare();
+}
+
 const DEATH_ANIM_DURATION = 1.4;
-let dying = false, deathTime = -Infinity;
+let dying = false, deathTime = -Infinity, deathCause = 'open';
 
 function update(dt) {
   if (!running) return;
@@ -524,7 +714,8 @@ function update(dt) {
     if (elapsed - deathTime > DEATH_ANIM_DURATION) {
       running = false;
       dying = false;
-      gameOverText.textContent = `被拖進儲藏室……你在恐怖校園撐了 ${deathTime.toFixed(1)} 秒`;
+      const line = deathCause === 'cabinet' ? '躲在櫃子裡還是被翻了出來' : '被拖進儲藏室';
+      gameOverText.textContent = `${line}……你在恐怖校園撐了 ${deathTime.toFixed(1)} 秒`;
       gameOverEl.style.display = 'block';
     }
     return;
@@ -533,6 +724,11 @@ function update(dt) {
   nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
   if (player.hiding) {
     interactPromptEl.style.display = 'none';
+    if (chaser.searching && chaser.searchCabinet === player.hidingCabinet) {
+      hideOverlayTextEl.textContent = '🗄️ 恐怖阿嬤正在翻找這個櫃子……別出聲！';
+    } else {
+      hideOverlayTextEl.textContent = '🗄️ 躲藏中……恐怖阿嬤找不到你';
+    }
   } else if (nearCabinet) {
     interactPromptEl.textContent = '按 E / 「躲」鍵躲進櫃子';
     interactPromptEl.style.display = 'block';
@@ -557,22 +753,58 @@ function update(dt) {
       weapon.collected = true;
       hasWeapon = true;
       weaponStatusEl.textContent = '已拿到球棒 (按空白鍵/揮擊鍵)';
+      playPickupSound();
+    }
+
+    if (!player.hiding && Math.hypot(player.x - exit.x, player.y - exit.y) < player.r + 0.5) {
+      winGame();
     }
   }
 
   const stunned = elapsed < (chaser.stunnedUntil || 0);
   if (!stunned) {
-    const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
-    const cc = worldToCell(chaser.x, chaser.y);
-    const path = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
-    if (path && path.length > 1) {
-      const target = cellCenter(path[1][0], path[1][1]);
-      const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
-      const tdist = Math.hypot(tdx, tdy);
-      if (tdist > 0.05) {
-        const step = Math.min(chaser.speed * dt, tdist);
-        chaser.x += (tdx / tdist) * step;
-        chaser.y += (tdy / tdist) * step;
+    if (chaser.searching) {
+      if (elapsed >= chaser.searchUntil) {
+        const caught = player.hiding && chaser.searchCabinet === player.hidingCabinet;
+        chaser.searching = false;
+        chaser.searchCabinet = null;
+        if (caught) {
+          dying = true;
+          deathTime = elapsed;
+          deathCause = 'cabinet';
+          playScream();
+        }
+      }
+    } else {
+      let targetCabinet = null;
+      if (player.hiding && player.hidingCabinet) {
+        const hd = Math.hypot(chaser.x - player.hidingCabinet.x, chaser.y - player.hidingCabinet.y);
+        if (hd < SEARCH_RANGE) targetCabinet = player.hidingCabinet;
+      }
+      if (!targetCabinet) {
+        for (const cb of cabinets) {
+          const d = Math.hypot(chaser.x - cb.x, chaser.y - cb.y);
+          if (d < 0.9 && Math.random() < 0.02) { targetCabinet = cb; break; }
+        }
+      }
+      if (targetCabinet) {
+        chaser.searching = true;
+        chaser.searchCabinet = targetCabinet;
+        chaser.searchUntil = elapsed + (targetCabinet === player.hidingCabinet && player.hiding ? 1.1 : 0.6);
+      } else {
+        const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
+        const cc = worldToCell(chaser.x, chaser.y);
+        const path = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
+        if (path && path.length > 1) {
+          const target = cellCenter(path[1][0], path[1][1]);
+          const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
+          const tdist = Math.hypot(tdx, tdy);
+          if (tdist > 0.05) {
+            const step = Math.min(chaser.speed * dt, tdist);
+            chaser.x += (tdx / tdist) * step;
+            chaser.y += (tdy / tdist) * step;
+          }
+        }
       }
     }
   }
@@ -585,6 +817,7 @@ function update(dt) {
   if (!player.hiding && !stunned && cdist < player.r + chaser.r) {
     dying = true;
     deathTime = elapsed;
+    deathCause = 'open';
     playScream();
   }
 }
@@ -701,10 +934,11 @@ function drawScene() {
   }
 
   drawSprite(weapon.collected ? null : weapon, zbuffer, RAY_COUNT, colWidth, 'bat');
+  drawSprite(exit, zbuffer, RAY_COUNT, colWidth, 'exit');
   for (const cb of cabinets) drawSprite(cb, zbuffer, RAY_COUNT, colWidth, 'cabinet');
   if (dying) {
     drawDeathCloseup(dyingT, w, h, horizon);
-  } else if (!player.hiding) {
+  } else {
     drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
   }
 
@@ -850,6 +1084,22 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     ctx.fillText('恐怖阿嬤', 0, -size * 0.64);
     if (stunned) ctx.fillText('暈', 0, -size * 0.7);
     ctx.restore();
+  } else if (kind === 'exit') {
+    const glow = 0.6 + 0.4 * Math.sin(elapsed * 3);
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    ctx.fillStyle = `rgba(${Math.floor(40 * shade)},${Math.floor(70 * shade)},${Math.floor(40 * shade)},1)`;
+    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.strokeStyle = `rgba(${Math.floor(120 * glow * shade)},255,${Math.floor(120 * glow * shade)},${shade})`;
+    ctx.lineWidth = Math.max(1, size * 0.015);
+    ctx.strokeRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.fillStyle = `rgba(120,255,140,${0.35 * glow * shade})`;
+    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.fillStyle = `rgba(200,255,210,${shade})`;
+    ctx.font = `bold ${Math.max(10, size * 0.05)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('逃生門', 0, -size * 0.55);
+    ctx.restore();
   } else if (kind === 'cabinet') {
     ctx.save();
     ctx.translate(screenX, horizon);
@@ -889,8 +1139,20 @@ function loop(now) {
   if (running) requestAnimationFrame(loop);
 }
 
+function startGame() {
+  ensureAudio();
+  titleScreenEl.style.display = 'none';
+  winScreenEl.style.display = 'none';
+  reset();
+}
+startBtn.addEventListener('pointerdown', e => { e.preventDefault(); startGame(); });
+winRestartBtn.addEventListener('pointerdown', e => { e.preventDefault(); startGame(); });
 restartBtn.addEventListener('click', reset);
-reset();
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  if (!muted) ensureAudio();
+});
 </script>
 </body>
 </html>
