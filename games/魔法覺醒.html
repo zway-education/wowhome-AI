@@ -118,6 +118,27 @@
   @media (pointer:coarse){ .touch-hint{ display:inline; } }
   .kb-hint{ display:inline; }
   @media (pointer:coarse){ .kb-hint{ display:none; } }
+
+  #skillBar{
+    position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
+    z-index:4; pointer-events:none;
+    display:flex; flex-direction:column; align-items:center; gap:4px;
+  }
+  #skillSlot{
+    width:64px; height:64px; border-radius:16px;
+    background:rgba(10,14,26,0.75); border:2px solid rgba(255,255,255,0.25);
+    position:relative; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    font-size:30px; box-shadow:0 6px 18px rgba(0,0,0,0.4);
+    transition:transform .11s ease-out;
+  }
+  #skillSlot.ready{ border-color:#ffcf5c; box-shadow:0 0 18px rgba(255,207,92,0.6); }
+  #skillCooldown{
+    position:absolute; inset:0; background:rgba(0,0,0,0.62);
+    transform-origin:center; will-change:clip-path;
+  }
+  #skillKey{ font-size:11px; color:#9db3d8; font-weight:800; letter-spacing:1px; }
+  #skillName{ font-size:11px; color:#dfe9ff; font-weight:700; text-align:center; max-width:90px; }
 </style>
 </head>
 <body>
@@ -133,6 +154,15 @@
     <div id="scoreLabel">分數 0</div>
     <div id="waveLabel">第 1 波</div>
   </div>
+</div>
+
+<div id="skillBar" class="hidden">
+  <div id="skillSlot">
+    <span id="skillIcon">✦</span>
+    <div id="skillCooldown"></div>
+  </div>
+  <div id="skillName"></div>
+  <div id="skillKey">自動施放</div>
 </div>
 
 <div id="joyBase"></div><div id="joyStick"></div>
@@ -400,9 +430,25 @@ function buildDecos(){
   }
 }
 
+const skillBar = document.getElementById('skillBar');
+const skillIcon = document.getElementById('skillIcon');
+const skillCooldown = document.getElementById('skillCooldown');
+const skillSlot = document.getElementById('skillSlot');
+const skillName = document.getElementById('skillName');
+
+function updateSkillUI(){
+  const pct = Math.max(0, Math.min(1, castTimer / chosenMagic.cooldown));
+  skillCooldown.style.height = (pct*100)+'%';
+  skillSlot.classList.toggle('ready', pct<=0);
+}
+
 function startGame(){
   hud.classList.remove('hidden');
+  skillBar.classList.remove('hidden');
   document.getElementById('magicLabel').textContent = chosenMagic.icon+' '+chosenMagic.name;
+  skillIcon.textContent = chosenMagic.icon;
+  skillName.textContent = chosenMagic.name;
+  skillIcon.style.filter = `drop-shadow(0 0 6px ${chosenMagic.color})`;
   player = {
     x:W/2, y:H/2, r:16, hp:100, maxHp:100, invuln:0,
     color: chosenChar.outfit,
@@ -482,6 +528,8 @@ function fireMagic(dir){
   }
   sfx.cast();
   spawnParticles(player.x,player.y,m.color,6);
+  skillSlot.style.transform = 'scale(1.15)';
+  setTimeout(()=>{ skillSlot.style.transform = 'scale(1)'; }, 110);
 }
 
 function spawnParticles(x,y,color,n){
@@ -532,6 +580,7 @@ function update(dt){
 
   // casting: auto-target nearest enemy
   castTimer -= dt;
+  updateSkillUI();
   if(castTimer<=0 && enemies.length>0){
     let nearest=null, nd=Infinity;
     for(const en of enemies){
@@ -662,6 +711,7 @@ function gameOver(){
   state='over';
   sfx.gameover();
   hud.classList.add('hidden');
+  skillBar.classList.add('hidden');
   if(score>best){ best=score; localStorage.setItem('mojue_best', String(best)); }
   document.getElementById('overStats').innerHTML =
     `${chosenMagic.icon} ${chosenMagic.name}　最終分數 <b style="color:#38e1ff">${score}</b>　撐過 ${wave} 波<br>歷史最高 ${best}`;
