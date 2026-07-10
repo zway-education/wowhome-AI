@@ -3,9 +3,19 @@
 // 用法: node scripts/build-manifest.js
 const fs = require('fs');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const { thumbSlug } = require('./slug');
 
 const ROOT = path.resolve(__dirname, '..');
+
+// 取檔案最後一次 git 提交日期（YYYY-MM-DD）作為更新時間
+function lastUpdated(relPath) {
+  try {
+    const out = execFileSync('git', ['log', '-1', '--format=%cs', '--', relPath],
+      { cwd: ROOT, encoding: 'utf8' }).trim();
+    return out || '';
+  } catch (e) { return ''; }
+}
 
 let overrides = {};
 const overridePath = path.join(ROOT, 'authors.json');
@@ -49,6 +59,8 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
     if (author) entry.author = author;
     const pv = previews[cat + '/' + thumbSlug(f)];
     if (pv) entry.preview = pv;
+    const upd = lastUpdated(cat + '/' + f);
+    if (upd) entry.updated = upd;
     manifest[cat].push(entry);
   }
 }
