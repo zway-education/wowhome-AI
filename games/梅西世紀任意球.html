@@ -164,7 +164,6 @@ function drawFloaters(){
 // ===== 場景常數（透視球場，球門在上方）=====
 const GOAL = { x1:330, x2:630, y:118, h:78 };     // 球門內側範圍
 const BALL_START = { x:480, y:462 };
-const WALL_Y = 300;
 
 // ===== 記錄最佳分數 =====
 const BEST_KEY = 'messi_freekick_best';
@@ -206,47 +205,18 @@ function drawPlayerAt(x,y,scale,facing,kickPhase,skinColor){
   ctx.restore();
 }
 
-function drawKeeper(x,y,scale,diveDir,diveT){
+function drawTarget(x,y,r,t){
   ctx.save();
   ctx.translate(x,y);
-  const tilt = diveDir * easeOutCubic(diveT) * 60;
-  ctx.rotate(tilt * Math.PI/180 * (diveDir!==0?1:0));
-  ctx.scale(scale, scale);
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.beginPath(); ctx.ellipse(0,6,18,5,0,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-6,-16,5,20); ctx.fillRect(1,-16,5,20);
-  ctx.fillStyle = '#ff7e3d';
-  ctx.fillRect(-13,-40,26,26);
-  const armY = diveDir!==0 ? -40 - easeOutCubic(diveT)*18 : -34;
-  ctx.strokeStyle = '#ff7e3d'; ctx.lineWidth = 6; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(-13,-34); ctx.lineTo(-13 + diveDir*-22*easeOutCubic(diveT), armY); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(13,-34); ctx.lineTo(13 + diveDir*-22*easeOutCubic(diveT), armY); ctx.stroke();
-  ctx.fillStyle = '#e8b48c';
-  ctx.beginPath(); ctx.arc(0,-48,8,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = '#111';
-  ctx.beginPath(); ctx.arc(0,-51,7.5,Math.PI,0); ctx.fill();
-  ctx.restore();
-}
-
-function drawDefender(x,y,scale,jumpT){
-  const jump = Math.sin(clamp(jumpT,0,1)*Math.PI) * 26;
-  ctx.save();
-  ctx.translate(x, y - jump);
-  ctx.scale(scale, scale);
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.beginPath(); ctx.ellipse(0, 20+jump*0.15, 14, 4, 0, 0, Math.PI*2); ctx.fill();
-  ctx.strokeStyle = '#111'; ctx.lineWidth = 5; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(-4,-16); ctx.lineTo(-8,10+ (jump>1?-8:0)); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(4,-16); ctx.lineTo(8,10+ (jump>1?-8:0)); ctx.stroke();
-  ctx.fillStyle = '#2b2b2b';
-  ctx.fillRect(-10,-36,20,22);
-  ctx.strokeStyle = '#2b2b2b'; ctx.lineWidth = 5;
-  const armLift = jump>1 ? -30 : -8;
-  ctx.beginPath(); ctx.moveTo(-10,-32); ctx.lineTo(-16,armLift); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(10,-32); ctx.lineTo(16,armLift); ctx.stroke();
-  ctx.fillStyle = '#e0ad82';
-  ctx.beginPath(); ctx.arc(0,-42,7,0,Math.PI*2); ctx.fill();
+  const pulse = 1 + Math.sin(t*4)*0.06;
+  ctx.scale(pulse, pulse*0.55); // 貼在球門平面上，壓扁成橢圓透視
+  ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 4; ctx.setLineDash([9,7]);
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = 'rgba(255,207,92,.5)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(0,0,r*0.55,0,Math.PI*2); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,207,92,.18)';
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill();
   ctx.restore();
 }
 
@@ -320,7 +290,7 @@ const menuState = {
     ctx.font = '20px sans-serif';
     ctx.fillText('電腦：拖曳滑鼠瞄準射門　　平板：手指拖曳瞄準射門', GAME_W/2, 240);
     ctx.font='16px sans-serif'; ctx.fillStyle='#ffcf5c';
-    ctx.fillText('拖曳距離越長 = 射得越高（可挑高越過人牆）', GAME_W/2, 270);
+    ctx.fillText('射進金色目標區＝完美進球！拖曳距離控制高度', GAME_W/2, 270);
     ctx.fillText('拖曳左右偏移 = 香蕉球彎曲方向', GAME_W/2, 296);
     ctx.fillStyle = '#ff6cc7';
     ctx.font = 'bold 22px sans-serif';
@@ -346,19 +316,17 @@ const playState = {
     this.ball = { x:BALL_START.x, y:BALL_START.y, z:0, vx:0, vy:0, vz:0, spin:0 };
     this.flightT = 0; this.flightDur = 1;
     this.aimTx = 480; this.aimTy = GOAL.y+GOAL.h/2; this.curve = 0; this.loft = 0;
-    this.wall = this.makeWall();
-    this.keeper = { x:480, dive:0, diveT:0, targetX:480, reacted:false };
+    this.target = this.makeTarget();
     this.msg = ''; this.msgT = 0;
     this.kickPhase = 0;
     this.result = '';
     sfxWhistle();
   },
-  makeWall(){
-    const n = clamp(2 + Math.floor(this.round ? (this.round||1)/2 : 0), 2, 5);
-    const wall = [];
-    const baseX = 480 + (Math.random()*80-40);
-    for(let i=0;i<n;i++) wall.push({ x: baseX + (i-(n-1)/2)*34, jumpT:-1 });
-    return wall;
+  makeTarget(){
+    const r = clamp(46 - this.round*2.2, 20, 46);
+    const x = clamp(GOAL.x1 + 30 + Math.random()*(GOAL.x2-GOAL.x1-60), GOAL.x1+r, GOAL.x2-r);
+    const y = GOAL.y + 16 + Math.random()*(GOAL.h-32);
+    return { x, y, r };
   },
   startAimIfReleased(){
     if(!input.released) return;
@@ -400,8 +368,6 @@ const playState = {
         burst(BALL_START.x, BALL_START.y, '#dcdcdc', 6, 90, 0.4);
         this.phase = 'flight'; this.flightT = 0;
         this.flightDur = lerp(0.75, 1.15, this.loft);
-        this.keeper.reacted = false;
-        for(const w of this.wall) w.jumpT = -1;
       }
     } else if(this.phase === 'flight'){
       this.flightT += dt;
@@ -414,24 +380,6 @@ const playState = {
       this.ball.y = lerp(by0, this.aimTy, easeOutCubic(et));
       this.ball.z = Math.sin(et*Math.PI) * lerp(10, 70, this.loft);
       this.ball.spin += dt*18;
-
-      // 人牆反應：接近人牆時跳起
-      if(t > 0.32 && t < 0.65){
-        for(const w of this.wall) if(w.jumpT < 0) w.jumpT = 0;
-      }
-      for(const w of this.wall) if(w.jumpT >= 0) w.jumpT += dt*2.6;
-
-      // 守門員反應（依關卡延遲）later reacts, then dives toward predicted final x
-      if(!this.keeper.reacted && t > 0.18){
-        this.keeper.reacted = true;
-        const reactionNoise = clamp(0.9 - this.round*0.05, 0.35, 0.9);
-        this.keeper.targetX = clamp(this.aimTx + (Math.random()*2-1)*80*reactionNoise, GOAL.x1+20, GOAL.x2-20);
-        this.keeper.dive = this.keeper.targetX > this.keeper.x ? 1 : -1;
-      }
-      if(this.keeper.reacted){
-        this.keeper.diveT = clamp(this.keeper.diveT + dt*2.2, 0, 1);
-        this.keeper.x = lerp(this.keeper.x, this.keeper.targetX, dt*4);
-      }
 
       if(t >= 1){
         this.resolveShot();
@@ -446,29 +394,26 @@ const playState = {
   },
   resolveShot(){
     this.attempts++;
-    const wallBlocked = this.loft < 0.55 && this.wall.some(w => Math.abs(w.x - this.ball.x) < 16 && this.ball.z < 34);
-    const keeperReach = 46;
-    const keeperCaught = Math.abs(this.keeper.x - this.ball.x) < keeperReach && this.ball.z < 60;
     const crossbarHit = this.aimTy < GOAL.y + 10 && Math.random() < 0.12;
-    if(wallBlocked){
-      this.result = '被人牆擋下！';
-      burst(this.ball.x, WALL_Y, '#ffcf5c', 16, 200);
-      sfxSave();
-    } else if(crossbarHit){
+    const hitTarget = Math.hypot(this.aimTx-this.target.x, this.aimTy-this.target.y) < this.target.r;
+    if(crossbarHit){
       this.result = '打到門框！';
       sfxCrossbar();
       burst(this.aimTx, GOAL.y, '#f4f4f4', 14, 180);
-    } else if(keeperCaught){
-      this.result = '被守門員撲出！';
-      sfxSave();
-      burst(this.keeper.x, GOAL.y+40, '#ff7e3d', 18, 200);
-    } else {
-      this.result = '進球！！';
+    } else if(hitTarget){
+      this.result = '完美進球！！';
       this.score++;
-      shake = 10;
+      shake = 12;
       sfxGoal();
-      burst(this.aimTx, this.aimTy, '#38e1ff', 28, 260);
-      burst(this.aimTx, this.aimTy, '#ffcf5c', 14, 180);
+      burst(this.aimTx, this.aimTy, '#ffcf5c', 32, 280);
+      burst(this.aimTx, this.aimTy, '#38e1ff', 16, 200);
+      floatText(GAME_W/2, 300, '+1 神仙球', '#ffcf5c');
+    } else {
+      this.result = '進球！';
+      this.score++;
+      shake = 8;
+      sfxGoal();
+      burst(this.aimTx, this.aimTy, '#38e1ff', 22, 240);
       floatText(GAME_W/2, 300, '+1 進球', '#38e1ff');
     }
     this.phase = 'result'; this.phaseT = 0;
@@ -477,8 +422,7 @@ const playState = {
     if(this.attempts >= this.maxAttempts){ setBest(this.score); setState(gameOverState); return; }
     this.round++;
     this.ball = { x:BALL_START.x, y:BALL_START.y, z:0, vx:0,vy:0,vz:0, spin:0 };
-    this.keeper = { x: 480 + (Math.random()*60-30), dive:0, diveT:0, targetX:480, reacted:false };
-    this.wall = this.makeWall();
+    this.target = this.makeTarget();
     this.phase = 'aim'; this.phaseT = 0; this.kickPhase = 0;
     sfxWhistle();
   },
@@ -487,11 +431,8 @@ const playState = {
     drawPitch(this.phaseT);
     ctx.save(); ctx.translate(sh.x, sh.y);
 
-    // 人牆
-    for(const w of this.wall) drawDefender(w.x, WALL_Y, 1, w.jumpT);
-
-    // 守門員
-    drawKeeper(this.keeper.x, GOAL.y+42, 1.05, this.keeper.dive, this.keeper.diveT);
+    // 金色目標區
+    drawTarget(this.target.x, this.target.y, this.target.r, this.phaseT);
 
     // 瞄準預覽（僅 aim 階段、拖曳中）
     if(this.phase === 'aim' && input.dragging){
@@ -533,10 +474,11 @@ const playState = {
     }
 
     if(this.phase === 'result'){
-      ctx.fillStyle = this.result==='進球！！' ? 'rgba(56,225,255,.18)' : 'rgba(0,0,0,.4)';
+      const isGoal = this.result.includes('進球');
+      ctx.fillStyle = this.result.includes('完美') ? 'rgba(255,207,92,.2)' : (isGoal ? 'rgba(56,225,255,.18)' : 'rgba(0,0,0,.4)');
       ctx.fillRect(0,0,GAME_W,GAME_H);
       ctx.textAlign='center';
-      ctx.fillStyle = this.result==='進球！！' ? '#38e1ff' : '#ff6cc7';
+      ctx.fillStyle = this.result.includes('完美') ? '#ffcf5c' : (isGoal ? '#38e1ff' : '#ff6cc7');
       ctx.font='bold 42px sans-serif';
       ctx.fillText(this.result, GAME_W/2, 200);
       if(this.phaseT > 1.1){
