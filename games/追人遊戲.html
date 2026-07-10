@@ -503,6 +503,9 @@ function reset() {
   weaponStatusEl.textContent = '尚未拿到球棒';
 
   running = true;
+  dying = false;
+  deathTime = -Infinity;
+  screamedRecently = false;
   startTime = performance.now();
   lastFrameTime = startTime;
   elapsed = 0;
@@ -510,8 +513,22 @@ function reset() {
   requestAnimationFrame(loop);
 }
 
+const DEATH_ANIM_DURATION = 1.4;
+let dying = false, deathTime = -Infinity;
+
 function update(dt) {
   if (!running) return;
+
+  if (dying) {
+    elapsed = (performance.now() - startTime) / 1000;
+    if (elapsed - deathTime > DEATH_ANIM_DURATION) {
+      running = false;
+      dying = false;
+      gameOverText.textContent = `被拖進儲藏室……你在恐怖校園撐了 ${deathTime.toFixed(1)} 秒`;
+      gameOverEl.style.display = 'block';
+    }
+    return;
+  }
 
   nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
   if (player.hiding) {
@@ -566,9 +583,9 @@ function update(dt) {
 
   const cdist = Math.hypot(player.x - chaser.x, player.y - chaser.y);
   if (!player.hiding && !stunned && cdist < player.r + chaser.r) {
-    running = false;
-    gameOverText.textContent = `被拖進儲藏室……你在恐怖校園撐了 ${elapsed.toFixed(1)} 秒`;
-    gameOverEl.style.display = 'block';
+    dying = true;
+    deathTime = elapsed;
+    playScream();
   }
 }
 
@@ -609,8 +626,9 @@ function drawScene() {
   const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
   const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
 
-  const chaserDist = player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y);
-  const dread = clamp(1 - chaserDist / DREAD_RANGE, 0, 1);
+  const dyingT = dying ? clamp((elapsed - deathTime) / DEATH_ANIM_DURATION, 0, 1) : 0;
+  const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
+  const dread = dying ? 1 : clamp(1 - chaserDist / DREAD_RANGE, 0, 1);
   const shakeMag = dread * dread * 10;
   const shakeX = (Math.random() - 0.5) * shakeMag;
   const shakeY = (Math.random() - 0.5) * shakeMag;
@@ -684,7 +702,11 @@ function drawScene() {
 
   drawSprite(weapon.collected ? null : weapon, zbuffer, RAY_COUNT, colWidth, 'bat');
   for (const cb of cabinets) drawSprite(cb, zbuffer, RAY_COUNT, colWidth, 'cabinet');
-  if (!player.hiding) drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
+  if (dying) {
+    drawDeathCloseup(dyingT, w, h, horizon);
+  } else if (!player.hiding) {
+    drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
+  }
 
   if (elapsed < swingFlashUntil) {
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -712,6 +734,61 @@ function drawScene() {
 
   ctx.restore();
   updateDreadAudio(dread, chaserDist);
+}
+
+function drawDeathCloseup(t, w, h, horizon) {
+  const size = h * (1.3 + t * 0.6);
+  const lunge = Math.min(1, t / 0.35);
+  ctx.save();
+  ctx.translate(w / 2, horizon + size * 0.1 - lunge * size * 0.15);
+  const shade = 1;
+  ctx.fillStyle = `rgba(20,4,4,${shade})`;
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.28, size * 0.05);
+  ctx.quadraticCurveTo(-size * 0.4, -size * 0.3, -size * 0.08, -size * 0.42);
+  ctx.quadraticCurveTo(size * 0.02, -size * 0.48, size * 0.14, -size * 0.4);
+  ctx.quadraticCurveTo(size * 0.42, -size * 0.32, size * 0.34, size * 0.05);
+  ctx.lineTo(size * 0.4, size * 0.55);
+  ctx.lineTo(-size * 0.4, size * 0.55);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-size * 0.03, -size * 0.5, size * 0.11, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(150,135,110,${shade})`;
+  ctx.fill();
+  const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 16);
+  ctx.fillStyle = `rgba(255,${Math.floor(10 + eyeGlow * 20)},0,1)`;
+  ctx.beginPath();
+  ctx.arc(-size * 0.07, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.arc(size * 0.01, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // slash strike marks appear at two hit beats
+  const strikes = [0.25, 0.55];
+  for (const st of strikes) {
+    const local = clamp((t - st) / 0.35, 0, 1);
+    if (local <= 0 || local >= 1) continue;
+    const alpha = Math.sin(local * Math.PI);
+    ctx.strokeStyle = `rgba(160,0,0,${alpha * 0.9})`;
+    ctx.lineWidth = h * 0.02;
+    ctx.beginPath();
+    const dir = st === strikes[0] ? 1 : -1;
+    ctx.moveTo(w * (0.5 - dir * 0.35), h * 0.15);
+    ctx.lineTo(w * (0.5 + dir * 0.35), h * 0.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(w * (0.5 - dir * 0.32), h * 0.2);
+    ctx.lineTo(w * (0.5 + dir * 0.38), h * 0.8);
+    ctx.stroke();
+    if (local < 0.25) {
+      ctx.fillStyle = `rgba(255,255,255,${(1 - local / 0.25) * 0.7})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  ctx.fillStyle = `rgba(120,0,0,${0.15 + t * 0.35})`;
+  ctx.fillRect(0, 0, w, h);
 }
 
 function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
