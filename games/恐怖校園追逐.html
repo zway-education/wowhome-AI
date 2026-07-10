@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="author" content="Claude">
+<title>恐怖校園追逐</title>
+<style>
+  html, body {
+    margin: 0;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: #050403;
+    font-family: 'Courier New', monospace;
+    color: #b7ffb0;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  canvas { touch-action: none; }
+  #hud {
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    font-size: 18px;
+    z-index: 10;
+    text-shadow: 0 0 6px #000, 0 0 2px #7cff6b;
+    letter-spacing: 1px;
+    color: #6bcf5a;
+  }
+  #crosshair {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    width: 14px;
+    height: 14px;
+    transform: translate(-50%, -50%);
+    z-index: 9;
+    pointer-events: none;
+  }
+  #crosshair::before, #crosshair::after {
+    content: '';
+    position: absolute;
+    background: rgba(150,255,140,0.7);
+  }
+  #crosshair::before { left: 6px; top: 0; width: 2px; height: 14px; }
+  #crosshair::after { top: 6px; left: 0; width: 14px; height: 2px; }
+  #gameOver {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 34px;
+    display: none;
+    text-align: center;
+    z-index: 20;
+    color: #ff3b3b;
+    text-shadow: 0 0 14px #ff0000, 0 0 4px #000;
+    max-width: 90vw;
+  }
+  #restartBtn {
+    display: block;
+    margin: 20px auto 0;
+    padding: 10px 20px;
+    font-size: 18px;
+    cursor: pointer;
+    background: #1a0000;
+    color: #ff8080;
+    border: 1px solid #660000;
+  }
+  canvas {
+    display: block;
+  }
+  #touchControls {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 15;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 14px;
+    box-sizing: border-box;
+    pointer-events: none;
+  }
+  .padBtn {
+    pointer-events: auto;
+    touch-action: none;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: rgba(60,20,20,0.55);
+    border: 1px solid rgba(180,60,60,0.6);
+    color: #d7ffb0;
+    font-size: 22px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #moveGrid {
+    display: grid;
+    grid-template-columns: repeat(3, 56px);
+    grid-template-rows: repeat(2, 56px);
+    gap: 6px;
+  }
+  @media (min-width: 700px) {
+    .padBtn { width: 72px; height: 72px; font-size: 26px; }
+    #moveGrid { grid-template-columns: repeat(3, 72px); grid-template-rows: repeat(2, 72px); gap: 10px; }
+    #swingBtn, #jumpBtn, #hideBtn { width: 96px; height: 96px; font-size: 18px; }
+  }
+  #turnLeft { grid-column: 1; grid-row: 1; }
+  #fwd { grid-column: 2; grid-row: 1; }
+  #turnRight { grid-column: 3; grid-row: 1; }
+  #back { grid-column: 2; grid-row: 2; }
+  #swingBtn {
+    width: 84px;
+    height: 84px;
+    font-size: 16px;
+    background: rgba(90,10,10,0.6);
+  }
+  #actionBtns {
+    pointer-events: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-right: 8px;
+  }
+  #jumpBtn, #hideBtn {
+    width: 64px;
+    height: 64px;
+    font-size: 14px;
+    background: rgba(40,60,30,0.55);
+  }
+  #interactPrompt {
+    position: fixed;
+    bottom: 110px;
+    left: 50%;
+    transform: translateX(-50%);
+    color: #e0ffcf;
+    text-shadow: 0 0 6px #000;
+    font-size: 16px;
+    z-index: 12;
+    display: none;
+  }
+  #hideOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 8;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    color: #cdeab9;
+    font-size: 18px;
+    text-align: center;
+    pointer-events: none;
+    text-shadow: 0 0 6px #000, 0 0 3px #000;
+    background:
+      repeating-linear-gradient(to bottom, rgba(8,6,3,0.94) 0px, rgba(8,6,3,0.94) 12px, rgba(8,6,3,0.12) 12px, rgba(8,6,3,0.12) 26px),
+      radial-gradient(ellipse at center, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0.85) 100%);
+  }
+  #titleScreen, #winScreen {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    background: radial-gradient(ellipse at center, #1a0e08 0%, #050302 100%);
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
+  }
+  #titleScreen { display: flex; }
+  #winScreen { display: none; }
+  #titleScreen h1, #winScreen h1 {
+    color: #ff3b3b;
+    font-size: clamp(28px, 6vw, 48px);
+    text-shadow: 0 0 16px #ff0000, 0 0 4px #000;
+    margin: 0 0 18px;
+    letter-spacing: 2px;
+  }
+  #titleScreen .howto {
+    color: #7fdb6b;
+    font-size: 15px;
+    line-height: 1.9;
+    max-width: 560px;
+    margin-bottom: 22px;
+    text-shadow: 0 0 4px #000;
+  }
+  #titleScreen .howto b { color: #b7ffb0; }
+  #startBtn, #winRestartBtn {
+    padding: 14px 38px;
+    font-size: 20px;
+    cursor: pointer;
+    background: #4a0000;
+    color: #ffb0b0;
+    border: 1px solid #a00000;
+    border-radius: 4px;
+  }
+  #winScreen h1 { color: #7fffb0; text-shadow: 0 0 16px #00ff66, 0 0 4px #000; }
+  #winScreen #winText { color: #cdeab9; font-size: 18px; margin-bottom: 22px; }
+  #muteBtn {
+    position: fixed;
+    top: 10px;
+    right: 10px;
+    z-index: 25;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(40,20,20,0.6);
+    border: 1px solid rgba(180,60,60,0.6);
+    color: #d7ffb0;
+    font-size: 18px;
+    cursor: pointer;
+  }
+</style>
+</head>
+<body>
+<div id="titleScreen">
+  <h1>恐怖校園追逐</h1>
+  <div class="howto">
+    找到地圖另一端的<b>逃生門</b>離開恐怖校園,途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,
+    危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br><br>
+    <b>電腦</b>：方向鍵/WASD 移動、滑鼠拖曳看方向、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
+    <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
+  </div>
+  <button id="startBtn">開始遊戲</button>
+</div>
+<div id="winScreen">
+  <h1>成功逃出！</h1>
+  <div id="winText"></div>
+  <button id="winRestartBtn">再玩一次</button>
+</div>
+<button id="muteBtn">🔊</button>
+<div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
+<div id="crosshair"></div>
+<div id="interactPrompt"></div>
+<div id="hideOverlay"><span id="hideOverlayText">🗄️ 躲藏中……恐怖阿嬤找不到你</span><br>按 E / 「出來」鍵離開</div>
+<div id="gameOver">
+  <div id="gameOverText"></div>
+  <button id="restartBtn">重新開始</button>
+</div>
+<canvas id="game"></canvas>
+<div id="touchControls">
+  <div id="moveGrid">
+    <div class="padBtn" id="turnLeft">◀</div>
+    <div class="padBtn" id="fwd">▲</div>
+    <div class="padBtn" id="turnRight">▶</div>
+    <div class="padBtn" id="back">▼</div>
+  </div>
+  <div id="actionBtns">
+    <div class="padBtn" id="jumpBtn">跳</div>
+    <div class="padBtn" id="hideBtn">躲</div>
+    <div class="padBtn" id="swingBtn">揮擊</div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const timerEl = document.getElementById('timer');
+const gameOverEl = document.getElementById('gameOver');
+const gameOverText = document.getElementById('gameOverText');
+const restartBtn = document.getElementById('restartBtn');
+const weaponStatusEl = document.getElementById('weaponStatus');
+const interactPromptEl = document.getElementById('interactPrompt');
+const hideOverlayEl = document.getElementById('hideOverlay');
+const hideOverlayTextEl = document.getElementById('hideOverlayText');
+const titleScreenEl = document.getElementById('titleScreen');
+const winScreenEl = document.getElementById('winScreen');
+const winTextEl = document.getElementById('winText');
+const startBtn = document.getElementById('startBtn');
+const winRestartBtn = document.getElementById('winRestartBtn');
+const muteBtn = document.getElementById('muteBtn');
+let muted = false;
+
+const BEST_TIME_KEY = 'horrorCampusChase_bestEscapeTime';
+function getBestTime() {
+  const v = parseFloat(localStorage.getItem(BEST_TIME_KEY));
+  return isNaN(v) ? null : v;
+}
+function saveBestTime(t) {
+  const best = getBestTime();
+  if (best === null || t < best) localStorage.setItem(BEST_TIME_KEY, String(t));
+}
+
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.style.width = window.innerWidth + 'px';
+  canvas.style.height = window.innerHeight + 'px';
+  canvas.width = Math.floor(window.innerWidth * dpr);
+  canvas.height = Math.floor(window.innerHeight * dpr);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- maze (perfect maze via DFS backtracker) ----------
+const MAZE_COLS = 22, MAZE_ROWS = 18;
+let maze;
+
+function buildMaze() {
+  maze = [];
+  for (let r = 0; r < MAZE_ROWS; r++) {
+    const row = [];
+    for (let c = 0; c < MAZE_COLS; c++) row.push({ N: true, E: true, S: true, W: true, visited: false });
+    maze.push(row);
+  }
+  const stack = [[0, 0]];
+  maze[0][0].visited = true;
+  while (stack.length) {
+    const [r, c] = stack[stack.length - 1];
+    const neighbors = [];
+    if (r > 0 && !maze[r - 1][c].visited) neighbors.push(['N', r - 1, c]);
+    if (r < MAZE_ROWS - 1 && !maze[r + 1][c].visited) neighbors.push(['S', r + 1, c]);
+    if (c > 0 && !maze[r][c - 1].visited) neighbors.push(['W', r, c - 1]);
+    if (c < MAZE_COLS - 1 && !maze[r][c + 1].visited) neighbors.push(['E', r, c + 1]);
+    if (!neighbors.length) { stack.pop(); continue; }
+    const [dir, nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
+    const opposite = { N: 'S', S: 'N', E: 'W', W: 'E' };
+    maze[r][c][dir] = false;
+    maze[nr][nc][opposite[dir]] = false;
+    maze[nr][nc].visited = true;
+    stack.push([nr, nc]);
+  }
+}
+
+// grid-doubled boolean solid map for raycasting: (2*MAZE_ROWS+1) x (2*MAZE_COLS+1)
+let solid, gridW, gridH;
+// per solid-cell "grime" seed for wall texture variety
+let wallSeed;
+
+function buildSolidGrid() {
+  gridW = MAZE_COLS * 2 + 1;
+  gridH = MAZE_ROWS * 2 + 1;
+  solid = Array.from({ length: gridH }, () => new Array(gridW).fill(true));
+  wallSeed = Array.from({ length: gridH }, () => new Array(gridW).fill(0).map(() => Math.random()));
+  for (let r = 0; r < MAZE_ROWS; r++) {
+    for (let c = 0; c < MAZE_COLS; c++) {
+      const gy = 2 * r + 1, gx = 2 * c + 1;
+      solid[gy][gx] = false;
+      const cell = maze[r][c];
+      if (!cell.N) solid[gy - 1][gx] = false;
+      if (!cell.S) solid[gy + 1][gx] = false;
+      if (!cell.W) solid[gy][gx - 1] = false;
+      if (!cell.E) solid[gy][gx + 1] = false;
+    }
+  }
+}
+
+function isSolid(x, y) {
+  const gx = Math.floor(x), gy = Math.floor(y);
+  if (gx < 0 || gy < 0 || gx >= gridW || gy >= gridH) return true;
+  return solid[gy][gx];
+}
+
+function cellCenter(r, c) { return { x: 2 * c + 1.5, y: 2 * r + 1.5 }; }
+
+// maze connectivity graph (for BFS pathfinding of chaser), operates on MAZE_ROWS x MAZE_COLS cells
+function connected(r1, c1, r2, c2) {
+  if (r2 === r1 - 1 && c2 === c1) return !maze[r1][c1].N;
+  if (r2 === r1 + 1 && c2 === c1) return !maze[r1][c1].S;
+  if (c2 === c1 - 1 && r2 === r1) return !maze[r1][c1].W;
+  if (c2 === c1 + 1 && r2 === r1) return !maze[r1][c1].E;
+  return false;
+}
+function bfsPath(startR, startC, goalR, goalC) {
+  const visited = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(false));
+  const prev = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(null));
+  const queue = [[startR, startC]];
+  visited[startR][startC] = true;
+  while (queue.length) {
+    const [r, c] = queue.shift();
+    if (r === goalR && c === goalC) break;
+    const dirs = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
+    for (const [nr, nc] of dirs) {
+      if (nr < 0 || nr >= MAZE_ROWS || nc < 0 || nc >= MAZE_COLS) continue;
+      if (visited[nr][nc]) continue;
+      if (!connected(r, c, nr, nc)) continue;
+      visited[nr][nc] = true;
+      prev[nr][nc] = [r, c];
+      queue.push([nr, nc]);
+    }
+  }
+  if (!visited[goalR][goalC]) return null;
+  const path = [[goalR, goalC]];
+  let cur = [goalR, goalC];
+  while (!(cur[0] === startR && cur[1] === startC)) { cur = prev[cur[0]][cur[1]]; path.push(cur); }
+  path.reverse();
+  return path;
+}
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function worldToCell(x, y) {
+  return { r: clamp(Math.floor((y - 1) / 2), 0, MAZE_ROWS - 1), c: clamp(Math.floor((x - 1) / 2), 0, MAZE_COLS - 1) };
+}
+
+// ---------- entities ----------
+const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: Infinity };
+const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0 };
+const SEARCH_RANGE = 1.4;
+const weapon = { x: 0, y: 0, collected: false };
+const exit = { x: 0, y: 0 };
+let hasWeapon = false;
+let lastSwingTime = -Infinity;
+const SWING_COOLDOWN = 0.8;
+const SWING_RANGE = 1.9;
+const STUN_DURATION = 2.5;
+let swingFlashUntil = -Infinity;
+
+const PLAYER_SPEED = 2.6;
+const TURN_SPEED = 2.6;
+const VIEW_DIST = 9;
+const JUMP_DURATION = 0.5;
+const HIDE_RANGE = 1.0;
+let cabinets = [];
+let nearCabinet = null;
+
+function placeCabinets() {
+  cabinets = [];
+  const wc = { r: Math.floor(MAZE_ROWS / 2), c: Math.floor(MAZE_COLS / 2) };
+  const candidates = [];
+  for (let r = 0; r < MAZE_ROWS; r++) {
+    for (let c = 0; c < MAZE_COLS; c++) {
+      if (r === 0 && c === 0) continue;
+      if (r === MAZE_ROWS - 1 && c === MAZE_COLS - 1) continue;
+      if (r === 0 && c === MAZE_COLS - 1) continue;
+      if (r === wc.r && c === wc.c) continue;
+      candidates.push([r, c]);
+    }
+  }
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+  }
+  const count = Math.min(100, candidates.length);
+  for (let i = 0; i < count; i++) {
+    const center = cellCenter(candidates[i][0], candidates[i][1]);
+    cabinets.push({ x: center.x, y: center.y });
+  }
+}
+
+function moveWithCollision(entity, nx, ny) {
+  if (!isSolid(nx, entity.y)) entity.x = nx;
+  if (!isSolid(entity.x, ny)) entity.y = ny;
+}
+
+function jump() {
+  if (!running || player.hiding) return;
+  if (elapsed < player.jumpT + JUMP_DURATION) return;
+  player.jumpT = elapsed;
+  playJumpSound();
+}
+
+function toggleHide() {
+  if (!running) return;
+  if (player.hiding) {
+    player.hiding = false;
+    player.hidingCabinet = null;
+    hideOverlayEl.style.display = 'none';
+  } else if (nearCabinet) {
+    player.hiding = true;
+    player.hidingCabinet = nearCabinet;
+    player.lastKnownCell = worldToCell(player.x, player.y);
+    hideOverlayEl.style.display = 'flex';
+  }
+}
+
+function swing() {
+  if (!running || !hasWeapon || player.hiding) return;
+  if (elapsed - lastSwingTime < SWING_COOLDOWN) return;
+  lastSwingTime = elapsed;
+  swingFlashUntil = elapsed + 0.15;
+  const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
+  if (dist < SWING_RANGE) {
+    chaser.stunnedUntil = elapsed + STUN_DURATION;
+    playHitSound();
+  }
+}
+
+// ---------- dread audio (synthesized, no external assets) ----------
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  } else if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+}
+let lastThumpTime = -Infinity;
+let screamedRecently = false;
+
+function playJumpSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(220, t);
+  osc.frequency.exponentialRampToValueAtTime(440, t + 0.12);
+  gain.gain.setValueAtTime(0.18, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.18);
+}
+
+function playHitSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const bufferSize = Math.floor(audioCtx.sampleRate * 0.12);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 3);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.setValueAtTime(1200, t);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.5, t);
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start(t);
+}
+
+function playPickupSound() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100].forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(f, t + i * 0.06);
+    gain.gain.setValueAtTime(0.001, t + i * 0.06);
+    gain.gain.exponentialRampToValueAtTime(0.22, t + i * 0.06 + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.18);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t + i * 0.06);
+    osc.stop(t + i * 0.06 + 0.2);
+  });
+}
+
+function playWinFanfare() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  [523, 659, 784, 1046].forEach((f, i) => {
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(f, t + i * 0.12);
+    gain.gain.setValueAtTime(0.001, t + i * 0.12);
+    gain.gain.exponentialRampToValueAtTime(0.2, t + i * 0.12 + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + i * 0.12 + 0.3);
+    osc.connect(gain).connect(audioCtx.destination);
+    osc.start(t + i * 0.12);
+    osc.stop(t + i * 0.12 + 0.32);
+  });
+}
+
+function playThump(vol) {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.frequency.setValueAtTime(95, t);
+  osc.frequency.exponentialRampToValueAtTime(38, t + 0.16);
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start(t);
+  osc.stop(t + 0.24);
+}
+
+function playScream() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const dur = 0.45;
+  const bufferSize = Math.floor(audioCtx.sampleRate * dur);
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / bufferSize, 2);
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const filter = audioCtx.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.setValueAtTime(2000, t);
+  filter.frequency.exponentialRampToValueAtTime(500, t + dur);
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.55, t);
+  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  noise.start(t);
+}
+
+function updateDreadAudio(dread, chaserDist) {
+  if (dread > 0.03) {
+    const interval = 1.1 - dread * 0.75;
+    if (elapsed - lastThumpTime > interval) {
+      playThump(0.08 + dread * 0.3);
+      lastThumpTime = elapsed;
+    }
+  }
+  if (chaserDist < 1.4 && !screamedRecently) {
+    playScream();
+    screamedRecently = true;
+  } else if (chaserDist > 2.6) {
+    screamedRecently = false;
+  }
+}
+
+// ---------- input ----------
+const keys = {};
+window.addEventListener('keydown', e => {
+  ensureAudio();
+  if (titleScreenEl.style.display !== 'none') { startGame(); return; }
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ') { swing(); e.preventDefault(); }
+  if (e.key.toLowerCase() === 'shift') jump();
+  if (e.key.toLowerCase() === 'e') toggleHide();
+});
+window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+function bindPad(id, key) {
+  const el = document.getElementById(id);
+  const down = e => { ensureAudio(); keys[key] = true; e.preventDefault(); };
+  const up = e => { keys[key] = false; e.preventDefault(); };
+  el.addEventListener('pointerdown', down);
+  el.addEventListener('pointerup', up);
+  el.addEventListener('pointerleave', up);
+  el.addEventListener('pointercancel', up);
+}
+bindPad('fwd', 'arrowup');
+bindPad('back', 'arrowdown');
+bindPad('turnLeft', 'arrowleft');
+bindPad('turnRight', 'arrowright');
+document.getElementById('swingBtn').addEventListener('pointerdown', e => { swing(); e.preventDefault(); });
+document.getElementById('jumpBtn').addEventListener('pointerdown', e => { jump(); e.preventDefault(); });
+document.getElementById('hideBtn').addEventListener('pointerdown', e => { toggleHide(); e.preventDefault(); });
+
+// mouse-drag to look
+let dragging = false, lastDragX = 0;
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('pointerdown', e => { ensureAudio(); dragging = true; lastDragX = e.clientX; e.preventDefault(); });
+window.addEventListener('pointerup', () => dragging = false);
+window.addEventListener('pointermove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - lastDragX;
+  lastDragX = e.clientX;
+  player.angle += dx * 0.0035;
+});
+
+// ---------- game state ----------
+let running = true, startTime = null, elapsed = 0, lastFrameTime = null;
+
+function reset() {
+  buildMaze();
+  buildSolidGrid();
+  placeCabinets();
+  const start = cellCenter(0, 0);
+  player.x = start.x; player.y = start.y; player.angle = 0;
+  player.hiding = false;
+  player.jumpT = -Infinity;
+  hideOverlayEl.style.display = 'none';
+
+  const chaserStart = cellCenter(MAZE_ROWS - 1, MAZE_COLS - 1);
+  chaser.x = chaserStart.x; chaser.y = chaserStart.y;
+  chaser.stunnedUntil = 0;
+  chaser.speed = PLAYER_SPEED / 2;
+  chaser.searching = false;
+  chaser.searchCabinet = null;
+
+  const wc = cellCenter(Math.floor(MAZE_ROWS / 2), Math.floor(MAZE_COLS / 2));
+  weapon.x = wc.x; weapon.y = wc.y; weapon.collected = false;
+  hasWeapon = false;
+  lastSwingTime = -Infinity;
+  swingFlashUntil = -Infinity;
+  weaponStatusEl.textContent = '尚未拿到球棒';
+
+  const exitCenter = cellCenter(0, MAZE_COLS - 1);
+  exit.x = exitCenter.x; exit.y = exitCenter.y;
+
+  running = true;
+  dying = false;
+  deathTime = -Infinity;
+  deathCause = 'open';
+  screamedRecently = false;
+  startTime = performance.now();
+  lastFrameTime = startTime;
+  elapsed = 0;
+  gameOverEl.style.display = 'none';
+  winScreenEl.style.display = 'none';
+  requestAnimationFrame(loop);
+}
+
+function winGame() {
+  running = false;
+  const t = elapsed;
+  saveBestTime(t);
+  const best = getBestTime();
+  winTextEl.textContent = `用時 ${t.toFixed(1)} 秒逃出恐怖校園！` + (best !== null ? ` 最佳紀錄：${best.toFixed(1)} 秒` : '');
+  winScreenEl.style.display = 'flex';
+  playWinFanfare();
+}
+
+const DEATH_ANIM_DURATION = 1.4;
+let dying = false, deathTime = -Infinity, deathCause = 'open';
+
+function update(dt) {
+  if (!running) return;
+
+  if (dying) {
+    elapsed = (performance.now() - startTime) / 1000;
+    if (elapsed - deathTime > DEATH_ANIM_DURATION) {
+      running = false;
+      dying = false;
+      const line = deathCause === 'cabinet' ? '躲在櫃子裡還是被翻了出來' : '被拖進儲藏室';
+      gameOverText.textContent = `${line}……你在恐怖校園撐了 ${deathTime.toFixed(1)} 秒`;
+      gameOverEl.style.display = 'block';
+    }
+    return;
+  }
+
+  nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
+  if (player.hiding) {
+    interactPromptEl.style.display = 'none';
+    if (chaser.searching && chaser.searchCabinet === player.hidingCabinet) {
+      hideOverlayTextEl.textContent = '🗄️ 恐怖阿嬤正在翻找這個櫃子……別出聲！';
+    } else {
+      hideOverlayTextEl.textContent = '🗄️ 躲藏中……恐怖阿嬤找不到你';
+    }
+  } else if (nearCabinet) {
+    interactPromptEl.textContent = '按 E / 「躲」鍵躲進櫃子';
+    interactPromptEl.style.display = 'block';
+  } else {
+    interactPromptEl.style.display = 'none';
+  }
+
+  if (!player.hiding) {
+    if (keys['arrowleft'] || keys['a']) player.angle -= TURN_SPEED * dt;
+    if (keys['arrowright'] || keys['d']) player.angle += TURN_SPEED * dt;
+
+    let move = 0;
+    if (keys['arrowup'] || keys['w']) move += 1;
+    if (keys['arrowdown'] || keys['s']) move -= 1;
+    if (move !== 0) {
+      const dirX = Math.cos(player.angle) * move, dirY = Math.sin(player.angle) * move;
+      const step = PLAYER_SPEED * dt;
+      moveWithCollision(player, player.x + dirX * step, player.y + dirY * step);
+    }
+
+    if (!weapon.collected && Math.hypot(player.x - weapon.x, player.y - weapon.y) < player.r + 0.4) {
+      weapon.collected = true;
+      hasWeapon = true;
+      weaponStatusEl.textContent = '已拿到球棒 (按空白鍵/揮擊鍵)';
+      playPickupSound();
+    }
+
+    if (!player.hiding && Math.hypot(player.x - exit.x, player.y - exit.y) < player.r + 0.5) {
+      winGame();
+    }
+  }
+
+  const stunned = elapsed < (chaser.stunnedUntil || 0);
+  if (!stunned) {
+    if (chaser.searching) {
+      if (elapsed >= chaser.searchUntil) {
+        const caught = player.hiding && chaser.searchCabinet === player.hidingCabinet;
+        chaser.searching = false;
+        chaser.searchCabinet = null;
+        if (caught) {
+          dying = true;
+          deathTime = elapsed;
+          deathCause = 'cabinet';
+          playScream();
+        }
+      }
+    } else {
+      let targetCabinet = null;
+      if (player.hiding && player.hidingCabinet) {
+        const hd = Math.hypot(chaser.x - player.hidingCabinet.x, chaser.y - player.hidingCabinet.y);
+        if (hd < SEARCH_RANGE) targetCabinet = player.hidingCabinet;
+      }
+      if (!targetCabinet) {
+        for (const cb of cabinets) {
+          const d = Math.hypot(chaser.x - cb.x, chaser.y - cb.y);
+          if (d < 0.9 && Math.random() < 0.02) { targetCabinet = cb; break; }
+        }
+      }
+      if (targetCabinet) {
+        chaser.searching = true;
+        chaser.searchCabinet = targetCabinet;
+        chaser.searchUntil = elapsed + (targetCabinet === player.hidingCabinet && player.hiding ? 1.1 : 0.6);
+      } else {
+        const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
+        const cc = worldToCell(chaser.x, chaser.y);
+        const path = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
+        if (path && path.length > 1) {
+          const target = cellCenter(path[1][0], path[1][1]);
+          const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
+          const tdist = Math.hypot(tdx, tdy);
+          if (tdist > 0.05) {
+            const step = Math.min(chaser.speed * dt, tdist);
+            chaser.x += (tdx / tdist) * step;
+            chaser.y += (tdy / tdist) * step;
+          }
+        }
+      }
+    }
+  }
+
+  elapsed = (performance.now() - startTime) / 1000;
+  timerEl.textContent = elapsed.toFixed(1);
+  chaser.speed = PLAYER_SPEED / 2 + elapsed * 0.03;
+
+  const cdist = Math.hypot(player.x - chaser.x, player.y - chaser.y);
+  if (!player.hiding && !stunned && cdist < player.r + chaser.r) {
+    dying = true;
+    deathTime = elapsed;
+    deathCause = 'open';
+    playScream();
+  }
+}
+
+// ---------- raycasting render ----------
+const FOV = 1.05;
+let flicker = 1;
+
+function normalizeAngle(a) {
+  while (a > Math.PI) a -= Math.PI * 2;
+  while (a < -Math.PI) a += Math.PI * 2;
+  return a;
+}
+
+function castRay(rayAngle) {
+  const dirX = Math.cos(rayAngle), dirY = Math.sin(rayAngle);
+  let mapX = Math.floor(player.x), mapY = Math.floor(player.y);
+  const deltaDistX = dirX === 0 ? 1e30 : Math.abs(1 / dirX);
+  const deltaDistY = dirY === 0 ? 1e30 : Math.abs(1 / dirY);
+  let stepX, stepY, sideDistX, sideDistY;
+  if (dirX < 0) { stepX = -1; sideDistX = (player.x - mapX) * deltaDistX; }
+  else { stepX = 1; sideDistX = (mapX + 1 - player.x) * deltaDistX; }
+  if (dirY < 0) { stepY = -1; sideDistY = (player.y - mapY) * deltaDistY; }
+  else { stepY = 1; sideDistY = (mapY + 1 - player.y) * deltaDistY; }
+
+  let side = 0, hitGX = mapX, hitGY = mapY;
+  for (let i = 0; i < 64; i++) {
+    if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
+    else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
+    if (mapX < 0 || mapY < 0 || mapX >= gridW || mapY >= gridH || solid[mapY][mapX]) { hitGX = mapX; hitGY = mapY; break; }
+  }
+  const perpDist = side === 0 ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY);
+  return { dist: Math.max(perpDist, 0.0001), side, gx: hitGX, gy: hitGY };
+}
+
+const DREAD_RANGE = 4;
+function drawScene() {
+  const w = canvas.width, h = canvas.height;
+  const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
+  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
+
+  const dyingT = dying ? clamp((elapsed - deathTime) / DEATH_ANIM_DURATION, 0, 1) : 0;
+  const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
+  const dread = dying ? 1 : clamp(1 - chaserDist / DREAD_RANGE, 0, 1);
+  const shakeMag = dread * dread * 10;
+  const shakeX = (Math.random() - 0.5) * shakeMag;
+  const shakeY = (Math.random() - 0.5) * shakeMag;
+  ctx.save();
+  ctx.translate(shakeX, shakeY);
+
+  const horizon = h / 2 - jumpBob;
+
+  // ceiling
+  const ceilGrad = ctx.createLinearGradient(0, 0, 0, horizon);
+  ceilGrad.addColorStop(0, '#131007');
+  ceilGrad.addColorStop(1, '#1e1a0e');
+  ctx.fillStyle = ceilGrad;
+  ctx.fillRect(0, 0, w, horizon);
+  // flickering fluorescent tube strip
+  ctx.fillStyle = `rgba(240,230,160,${0.1 + flicker * 0.16})`;
+  ctx.fillRect(0, horizon * 0.15, w, 4);
+
+  // floor
+  const floorGrad = ctx.createLinearGradient(0, horizon, 0, h);
+  floorGrad.addColorStop(0, '#2c2411');
+  floorGrad.addColorStop(1, '#493c1a');
+  ctx.fillStyle = floorGrad;
+  ctx.fillRect(0, horizon, w, h - horizon);
+
+  // perspective tile bands to sell floor/ceiling depth
+  const BANDS = 14;
+  for (let i = 0; i < BANDS; i++) {
+    const t = Math.pow(i / BANDS, 1.7);
+    const tNext = Math.pow((i + 1) / BANDS, 1.7);
+    const fy0 = horizon + (h - horizon) * t;
+    const fy1 = horizon + (h - horizon) * tNext;
+    if (i % 2 === 0) {
+      ctx.fillStyle = `rgba(15,10,3,${0.14 - i * 0.006})`;
+      ctx.fillRect(0, fy0, w, Math.max(1, fy1 - fy0));
+    }
+    const cy0 = horizon - horizon * t;
+    const cy1 = horizon - horizon * tNext;
+    if (i % 2 === 0) {
+      ctx.fillStyle = `rgba(0,0,0,${0.18 - i * 0.007})`;
+      ctx.fillRect(0, cy1, w, Math.max(1, cy0 - cy1));
+    }
+  }
+
+  const RAY_COUNT = Math.max(120, Math.min(w, 400));
+  const colWidth = w / RAY_COUNT;
+  const zbuffer = new Array(RAY_COUNT);
+
+  for (let i = 0; i < RAY_COUNT; i++) {
+    const rayAngle = player.angle - FOV / 2 + (i / RAY_COUNT) * FOV;
+    const hit = castRay(rayAngle);
+    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle);
+    zbuffer[i] = correctedDist;
+    const lineHeight = h / correctedDist;
+    const y0 = horizon - lineHeight / 2;
+
+    const seed = (wallSeed[hit.gy] && wallSeed[hit.gy][hit.gx]) || 0.5;
+    const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.15, 1);
+    let baseR = 110 + seed * 45, baseG = 92 + seed * 35, baseB = 50 + seed * 20;
+    if (hit.side === 1) { baseR *= 0.75; baseG *= 0.75; baseB *= 0.75; }
+    const lightMul = distShade * (0.78 + flicker * 0.25);
+    ctx.fillStyle = `rgb(${Math.floor(baseR * lightMul)},${Math.floor(baseG * lightMul)},${Math.floor(baseB * lightMul)})`;
+    ctx.fillRect(i * colWidth, y0, colWidth + 1, lineHeight);
+
+    // damp stain speckle for backrooms grime
+    if (seed > 0.82) {
+      ctx.fillStyle = `rgba(20,15,5,${0.25 * distShade})`;
+      ctx.fillRect(i * colWidth, y0 + lineHeight * 0.55, colWidth + 1, lineHeight * 0.35);
+    }
+  }
+
+  drawSprite(weapon.collected ? null : weapon, zbuffer, RAY_COUNT, colWidth, 'bat');
+  drawSprite(exit, zbuffer, RAY_COUNT, colWidth, 'exit');
+  for (const cb of cabinets) drawSprite(cb, zbuffer, RAY_COUNT, colWidth, 'cabinet');
+  if (dying) {
+    drawDeathCloseup(dyingT, w, h, horizon);
+  } else {
+    drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
+  }
+
+  if (elapsed < swingFlashUntil) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.arc(w / 2, h * 0.85, 90, Math.PI, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // depth fog (darken far)
+  const fogGrad = ctx.createLinearGradient(0, horizon - h * 0.05, 0, horizon + h * 0.4);
+  fogGrad.addColorStop(0, 'rgba(5,4,3,0)');
+  fogGrad.addColorStop(1, 'rgba(5,4,3,0.3)');
+  ctx.fillStyle = fogGrad;
+  ctx.fillRect(0, 0, w, h);
+
+  // red dread vignette pulse, intensifies as the chaser closes in
+  const pulseSpeed = 2.2 + dread * 6;
+  const pulse = 0.5 + 0.5 * Math.sin(elapsed * pulseSpeed);
+  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * (0.28 - dread * 0.15), w / 2, h / 2, Math.max(w, h) * 0.75);
+  vign.addColorStop(0, 'rgba(120,0,0,0)');
+  vign.addColorStop(1, `rgba(150,0,0,${0.15 + pulse * (0.15 + dread * 0.45)})`);
+  ctx.fillStyle = vign;
+  ctx.fillRect(0, 0, w, h);
+
+  ctx.restore();
+  updateDreadAudio(dread, chaserDist);
+}
+
+function drawDeathCloseup(t, w, h, horizon) {
+  const size = h * (1.3 + t * 0.6);
+  const lunge = Math.min(1, t / 0.35);
+  ctx.save();
+  ctx.translate(w / 2, horizon + size * 0.1 - lunge * size * 0.15);
+  const shade = 1;
+  ctx.fillStyle = `rgba(20,4,4,${shade})`;
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.28, size * 0.05);
+  ctx.quadraticCurveTo(-size * 0.4, -size * 0.3, -size * 0.08, -size * 0.42);
+  ctx.quadraticCurveTo(size * 0.02, -size * 0.48, size * 0.14, -size * 0.4);
+  ctx.quadraticCurveTo(size * 0.42, -size * 0.32, size * 0.34, size * 0.05);
+  ctx.lineTo(size * 0.4, size * 0.55);
+  ctx.lineTo(-size * 0.4, size * 0.55);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(-size * 0.03, -size * 0.5, size * 0.11, 0, Math.PI * 2);
+  ctx.fillStyle = `rgba(150,135,110,${shade})`;
+  ctx.fill();
+  const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 16);
+  ctx.fillStyle = `rgba(255,${Math.floor(10 + eyeGlow * 20)},0,1)`;
+  ctx.beginPath();
+  ctx.arc(-size * 0.07, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.arc(size * 0.01, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+
+  // slash strike marks appear at two hit beats
+  const strikes = [0.25, 0.55];
+  for (const st of strikes) {
+    const local = clamp((t - st) / 0.35, 0, 1);
+    if (local <= 0 || local >= 1) continue;
+    const alpha = Math.sin(local * Math.PI);
+    ctx.strokeStyle = `rgba(160,0,0,${alpha * 0.9})`;
+    ctx.lineWidth = h * 0.02;
+    ctx.beginPath();
+    const dir = st === strikes[0] ? 1 : -1;
+    ctx.moveTo(w * (0.5 - dir * 0.35), h * 0.15);
+    ctx.lineTo(w * (0.5 + dir * 0.35), h * 0.85);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(w * (0.5 - dir * 0.32), h * 0.2);
+    ctx.lineTo(w * (0.5 + dir * 0.38), h * 0.8);
+    ctx.stroke();
+    if (local < 0.25) {
+      ctx.fillStyle = `rgba(255,255,255,${(1 - local / 0.25) * 0.7})`;
+      ctx.fillRect(0, 0, w, h);
+    }
+  }
+
+  ctx.fillStyle = `rgba(120,0,0,${0.15 + t * 0.35})`;
+  ctx.fillRect(0, 0, w, h);
+}
+
+function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
+  if (!entity) return;
+  const dx = entity.x - player.x, dy = entity.y - player.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist > VIEW_DIST || dist < 0.05) return;
+  const angleTo = normalizeAngle(Math.atan2(dy, dx) - player.angle);
+  if (Math.abs(angleTo) > FOV / 2 + 0.3) return;
+
+  const screenX = (canvas.width / 2) + (angleTo / (FOV / 2)) * (canvas.width / 2);
+  const rayIndex = clamp(Math.floor((screenX / canvas.width) * RAY_COUNT), 0, RAY_COUNT - 1);
+  if (dist > zbuffer[rayIndex] + 0.15) return;
+
+  const size = clamp(canvas.height / dist, 10, canvas.height * 2);
+  const horizon = canvas.height / 2;
+  const shade = clamp(1 - dist / VIEW_DIST, 0.15, 1);
+
+  if (kind === 'chaser') {
+    const stunned = elapsed < (chaser.stunnedUntil || 0);
+    const twitch = Math.sin(elapsed * 14) * size * 0.01;
+    ctx.save();
+    ctx.translate(screenX + twitch, horizon + size * 0.18);
+    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(28 * shade)},${Math.floor(6 * shade)},${Math.floor(6 * shade)},${shade})`;
+    ctx.fillStyle = bodyColor;
+    // hunched, gnarled robed silhouette
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.2, size * 0.05);
+    ctx.quadraticCurveTo(-size * 0.3, -size * 0.28, -size * 0.06, -size * 0.4);
+    ctx.quadraticCurveTo(size * 0.02, -size * 0.46, size * 0.1, -size * 0.38);
+    ctx.quadraticCurveTo(size * 0.3, -size * 0.3, size * 0.24, size * 0.05);
+    ctx.lineTo(size * 0.3, size * 0.5);
+    ctx.lineTo(-size * 0.28, size * 0.5);
+    ctx.closePath();
+    ctx.fill();
+    // gnarled reaching arm
+    ctx.strokeStyle = bodyColor;
+    ctx.lineWidth = Math.max(1, size * 0.03);
+    ctx.beginPath();
+    ctx.moveTo(size * 0.2, -size * 0.1);
+    ctx.lineTo(size * 0.42, size * 0.05 + twitch);
+    ctx.lineTo(size * 0.5, -size * 0.02 + twitch);
+    ctx.stroke();
+    // head, hunched forward
+    ctx.beginPath();
+    ctx.arc(-size * 0.02, -size * 0.5, size * 0.1, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.fill();
+    // glowing red eyes
+    const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 9);
+    ctx.fillStyle = `rgba(255,${stunned ? 200 : Math.floor(20 + eyeGlow * 30)},${stunned ? 200 : 0},${shade})`;
+    ctx.beginPath();
+    ctx.arc(-size * 0.055, -size * 0.505, size * 0.016, 0, Math.PI * 2);
+    ctx.arc(size * 0.01, -size * 0.505, size * 0.016, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = `bold ${Math.max(10, size * 0.06)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('恐怖阿嬤', 0, -size * 0.64);
+    if (stunned) ctx.fillText('暈', 0, -size * 0.7);
+    ctx.restore();
+  } else if (kind === 'exit') {
+    const glow = 0.6 + 0.4 * Math.sin(elapsed * 3);
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    ctx.fillStyle = `rgba(${Math.floor(40 * shade)},${Math.floor(70 * shade)},${Math.floor(40 * shade)},1)`;
+    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.strokeStyle = `rgba(${Math.floor(120 * glow * shade)},255,${Math.floor(120 * glow * shade)},${shade})`;
+    ctx.lineWidth = Math.max(1, size * 0.015);
+    ctx.strokeRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.fillStyle = `rgba(120,255,140,${0.35 * glow * shade})`;
+    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
+    ctx.fillStyle = `rgba(200,255,210,${shade})`;
+    ctx.font = `bold ${Math.max(10, size * 0.05)}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('逃生門', 0, -size * 0.55);
+    ctx.restore();
+  } else if (kind === 'cabinet') {
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    ctx.fillStyle = `rgba(${Math.floor(60 * shade)},${Math.floor(40 * shade)},${Math.floor(20 * shade)},1)`;
+    ctx.fillRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    ctx.strokeStyle = `rgba(20,14,6,${shade})`;
+    ctx.lineWidth = Math.max(1, size * 0.01);
+    ctx.strokeRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(0, -size * 0.02);
+    ctx.lineTo(0, size * 0.48);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(150,120,60,${shade})`;
+    ctx.beginPath();
+    ctx.arc(-size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
+    ctx.arc(size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.translate(screenX, horizon + size * 0.42);
+    ctx.rotate(Math.PI / 5);
+    ctx.fillStyle = `rgba(201,162,106,${shade})`;
+    ctx.fillRect(-size * 0.02, -size * 0.16, size * 0.04, size * 0.16);
+    ctx.fillStyle = `rgba(90,58,26,${shade})`;
+    ctx.fillRect(-size * 0.02, -size * 0.02, size * 0.04, size * 0.045);
+    ctx.restore();
+  }
+}
+
+function loop(now) {
+  const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
+  lastFrameTime = now;
+  flicker = 0.85 + Math.random() * 0.15;
+  update(dt);
+  drawScene();
+  if (running) requestAnimationFrame(loop);
+}
+
+function startGame() {
+  ensureAudio();
+  titleScreenEl.style.display = 'none';
+  winScreenEl.style.display = 'none';
+  reset();
+}
+startBtn.addEventListener('pointerdown', e => { e.preventDefault(); startGame(); });
+winRestartBtn.addEventListener('pointerdown', e => { e.preventDefault(); startGame(); });
+restartBtn.addEventListener('click', reset);
+muteBtn.addEventListener('click', () => {
+  muted = !muted;
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  if (!muted) ensureAudio();
+});
+</script>
+</body>
+</html>
