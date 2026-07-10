@@ -94,13 +94,22 @@ function touchPos(t){
   const r = canvas.getBoundingClientRect();
   return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
 }
+// ===== 固定式方向盤（左下角）=====
+const JOY_CX = 110, JOY_CY = GAME_H - 130, JOY_R = 52;
+function joyApply(p){
+  let dx = p.x-JOY_CX, dy = p.y-JOY_CY;
+  const d = Math.hypot(dx,dy);
+  if(d>JOY_R){ dx=dx/d*JOY_R; dy=dy/d*JOY_R; }
+  joy.dx=dx; joy.dy=dy;
+}
 function onTouchStart(e){
   e.preventDefault();
   for(const t of e.changedTouches){
     const p = touchPos(t);
     if(checkBuildBar(p.x, p.y)) continue;
     if(p.x < GAME_W*0.5 && !joy.active){
-      joy.active = true; joy.id = t.identifier; joy.cx = p.x; joy.cy = p.y; joy.dx=0; joy.dy=0;
+      joy.active = true; joy.id = t.identifier; joy.cx = JOY_CX; joy.cy = JOY_CY;
+      joyApply(p);
     } else if(p.x >= GAME_W*0.5){
       tapAction = true; input.actionBuffer = 0.15;
     }
@@ -109,13 +118,7 @@ function onTouchStart(e){
 function onTouchMove(e){
   e.preventDefault();
   for(const t of e.changedTouches){
-    if(joy.active && t.identifier===joy.id){
-      const p = touchPos(t);
-      let dx = p.x-joy.cx, dy = p.y-joy.cy;
-      const d = Math.hypot(dx,dy), max=50;
-      if(d>max){ dx=dx/d*max; dy=dy/d*max; }
-      joy.dx=dx; joy.dy=dy;
-    }
+    if(joy.active && t.identifier===joy.id) joyApply(touchPos(t));
   }
 }
 function onTouchEnd(e){
@@ -127,11 +130,54 @@ function onTouchEnd(e){
 for(const ev of ['touchstart']) canvas.addEventListener(ev, onTouchStart, {passive:false});
 for(const ev of ['touchmove']) canvas.addEventListener(ev, onTouchMove, {passive:false});
 for(const ev of ['touchend','touchcancel']) canvas.addEventListener(ev, onTouchEnd, {passive:false});
+
+// 滑鼠也能拖曳方向盤（桌機用滑鼠測試/操作時可用）
+let mouseJoyDown = false;
 canvas.addEventListener('mousedown', e=>{
   const r = canvas.getBoundingClientRect();
   const x = (e.clientX-r.left)/canvas._scale, y = (e.clientY-r.top)/canvas._scale;
-  checkBuildBar(x,y);
+  if(checkBuildBar(x,y)) return;
+  if(Math.hypot(x-JOY_CX, y-JOY_CY) < JOY_R+20){
+    mouseJoyDown = true; joy.active = true; joy.cx=JOY_CX; joy.cy=JOY_CY;
+    joyApply({x,y});
+  }
 });
+addEventListener('mousemove', e=>{
+  if(!mouseJoyDown) return;
+  const r = canvas.getBoundingClientRect();
+  const x = (e.clientX-r.left)/canvas._scale, y = (e.clientY-r.top)/canvas._scale;
+  joyApply({x,y});
+});
+addEventListener('mouseup', ()=>{
+  if(mouseJoyDown){ mouseJoyDown=false; joy.active=false; joy.dx=0; joy.dy=0; }
+});
+
+function drawJoypad(){
+  const cx=JOY_CX, cy=JOY_CY;
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  ctx.fillStyle = 'rgba(20,15,45,0.5)';
+  ctx.beginPath(); ctx.arc(cx,cy,JOY_R+14,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth=2;
+  ctx.stroke();
+  // 十字方向箭頭提示
+  ctx.fillStyle = 'rgba(255,255,255,0.3)';
+  const arrows = [[0,-1],[0,1],[-1,0],[1,0]];
+  for(const [ax,ay] of arrows){
+    ctx.save();
+    ctx.translate(cx+ax*(JOY_R+2), cy+ay*(JOY_R+2));
+    ctx.rotate(Math.atan2(ay,ax)+Math.PI/2);
+    ctx.beginPath(); ctx.moveTo(-6,5); ctx.lineTo(6,5); ctx.lineTo(0,-6); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  // 搖桿把手
+  const kx = cx+joy.dx, ky = cy+joy.dy;
+  ctx.fillStyle = joy.active ? 'rgba(154,107,255,0.85)' : 'rgba(255,255,255,0.55)';
+  ctx.beginPath(); ctx.arc(kx,ky,24,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth=2; ctx.stroke();
+  ctx.restore();
+}
 
 // ===== 底部建造選單 =====
 const BUILD_TYPES = [
@@ -161,7 +207,7 @@ function moveVector(){
   let mx=0,my=0;
   if(input.left) mx-=1; if(input.right) mx+=1;
   if(input.up) my-=1; if(input.down) my+=1;
-  if(joy.active){ mx += joy.dx/50; my += joy.dy/50; }
+  if(joy.active){ mx += joy.dx/JOY_R; my += joy.dy/JOY_R; }
   const len = Math.hypot(mx,my);
   if(len>1){ mx/=len; my/=len; }
   return {mx,my};
@@ -656,6 +702,7 @@ const playState = {
     drawFloat();
     drawHud();
     if(phase==='day') drawBuildBar();
+    drawJoypad();
 
     if(phase==='night'){
       ctx.fillStyle='rgba(20,10,50,0.12)';
