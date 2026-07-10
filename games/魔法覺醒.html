@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="author" content="AI未來創作營隊">
+<title>魔法覺醒</title>
+<style>
+  :root{
+    --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14;
+    font-family:"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none; user-select:none;
+  }
+  #wrap{position:fixed; inset:0; display:flex; align-items:center; justify-content:center;}
+  canvas{display:block; background:#070b14;}
+  .ui-layer{
+    position:fixed; inset:0; pointer-events:none;
+    display:flex; align-items:center; justify-content:center;
+    z-index:5;
+  }
+  .panel{
+    pointer-events:auto;
+    background:rgba(10,14,26,0.86);
+    border:1px solid rgba(56,225,255,0.35);
+    border-radius:20px;
+    padding:28px 30px;
+    max-width:min(92vw,480px);
+    text-align:center;
+    box-shadow:0 20px 60px rgba(0,0,0,0.5);
+  }
+  .title-grad{
+    font-size:clamp(28px,7vw,42px);
+    font-weight:900;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+    margin:0 0 6px;
+    letter-spacing:2px;
+  }
+  .subtitle{ color:#9db3d8; font-size:14px; margin:0 0 18px; line-height:1.6;}
+  .row{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin:14px 0;}
+  .choice-btn{
+    pointer-events:auto;
+    min-width:120px; min-height:120px;
+    border-radius:18px;
+    border:2px solid rgba(255,255,255,0.15);
+    background:rgba(255,255,255,0.04);
+    color:#fff; font-size:16px; font-weight:700;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+    cursor:pointer; transition:transform .15s, border-color .15s, background .15s;
+  }
+  .choice-btn:hover, .choice-btn:active{ transform:translateY(-4px) scale(1.03); border-color:var(--cyan); background:rgba(56,225,255,0.1);}
+  .choice-btn svg{width:52px; height:52px;}
+  .btn{
+    pointer-events:auto;
+    display:inline-block; margin-top:10px;
+    padding:14px 30px; border-radius:14px; border:none;
+    background:linear-gradient(92deg,var(--cyan),var(--blue));
+    color:#04121c; font-weight:900; font-size:17px;
+    cursor:pointer; box-shadow:0 8px 24px rgba(56,225,255,0.35);
+    min-height:48px;
+  }
+  .btn:active{ transform:scale(0.96); }
+  .btn.secondary{ background:rgba(255,255,255,0.08); color:#dfe9ff; box-shadow:none; border:1px solid rgba(255,255,255,0.2);}
+  .hint{ font-size:12px; color:#7488a8; margin-top:14px; line-height:1.7;}
+  .gacha-orb{
+    width:150px; height:150px; margin:0 auto 18px;
+    border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:60px;
+    position:relative;
+  }
+  .gacha-orb.spin{ animation:spin 0.6s linear infinite; }
+  @keyframes spin{ from{transform:rotate(0deg) scale(1);} 50%{transform:rotate(180deg) scale(1.15);} to{transform:rotate(360deg) scale(1);} }
+  .magic-name{ font-size:26px; font-weight:900; margin:6px 0 2px; }
+  .magic-rarity{ font-size:13px; font-weight:700; letter-spacing:3px; margin-bottom:10px; }
+  .hidden{ display:none !important; }
+  #hud{
+    position:fixed; top:0; left:0; right:0; padding:10px 14px;
+    display:flex; justify-content:space-between; align-items:flex-start;
+    pointer-events:none; z-index:4; font-weight:800; color:#fff;
+    font-size:14px;
+  }
+  #hpbar{
+    width:130px; height:14px; border-radius:8px; background:rgba(255,255,255,0.15);
+    overflow:hidden; border:1px solid rgba(255,255,255,0.25);
+  }
+  #hpfill{ height:100%; width:100%; background:linear-gradient(90deg,#ff6cc7,#ff3b6b); transition:width .15s;}
+  #hudLeft{ display:flex; flex-direction:column; gap:6px;}
+  #hudRight{ text-align:right; display:flex; flex-direction:column; gap:4px;}
+  #muteBtn{
+    pointer-events:auto; cursor:pointer; background:rgba(255,255,255,0.1);
+    border:1px solid rgba(255,255,255,0.25); color:#fff; border-radius:10px;
+    width:38px; height:38px; font-size:18px; display:flex; align-items:center; justify-content:center;
+    margin-left:auto;
+  }
+  #joyzone, #atkzone{
+    position:fixed; bottom:0; width:50%; height:42%;
+    z-index:3; pointer-events:auto;
+  }
+  #joyzone{ left:0; }
+  #atkzone{ right:0; }
+  #joyBase{
+    position:fixed; width:100px; height:100px; border-radius:50%;
+    background:rgba(255,255,255,0.08); border:2px solid rgba(255,255,255,0.25);
+    display:none; z-index:6; pointer-events:none;
+  }
+  #joyStick{
+    position:fixed; width:46px; height:46px; border-radius:50%;
+    background:rgba(56,225,255,0.55); border:2px solid #38e1ff;
+    display:none; z-index:7; pointer-events:none;
+  }
+  .touch-hint{ display:none; }
+  @media (pointer:coarse){ .touch-hint{ display:inline; } }
+  .kb-hint{ display:inline; }
+  @media (pointer:coarse){ .kb-hint{ display:none; } }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="game"></canvas></div>
+
+<div id="hud" class="hidden">
+  <div id="hudLeft">
+    <div id="hpbar"><div id="hpfill"></div></div>
+    <div id="magicLabel" style="font-size:12px;"></div>
+  </div>
+  <div id="hudRight">
+    <div id="muteBtn">🔊</div>
+    <div id="scoreLabel">分數 0</div>
+    <div id="waveLabel">第 1 波</div>
+  </div>
+</div>
+
+<div id="joyBase"></div><div id="joyStick"></div>
+
+<div class="ui-layer" id="screenTitle">
+  <div class="panel">
+    <div class="title-grad">魔法覺醒</div>
+    <p class="subtitle">選擇你的角色，抽取專屬魔法，在異界競技場中存活！</p>
+    <div class="row">
+      <div class="choice-btn" data-gender="girl">
+        <svg viewBox="0 0 64 64"><circle cx="32" cy="22" r="14" fill="#ffd9b3"/><path d="M18 20 Q32 2 46 20 Q46 32 32 34 Q18 32 18 20Z" fill="#7a4bd6"/><path d="M14 24 Q10 44 20 54" stroke="#7a4bd6" stroke-width="6" fill="none" stroke-linecap="round"/><path d="M50 24 Q54 44 44 54" stroke="#7a4bd6" stroke-width="6" fill="none" stroke-linecap="round"/><rect x="24" y="34" width="16" height="22" rx="6" fill="#ff6cc7"/></svg>
+        女孩
+      </div>
+      <div class="choice-btn" data-gender="boy">
+        <svg viewBox="0 0 64 64"><circle cx="32" cy="22" r="14" fill="#ffd9b3"/><path d="M18 16 Q32 4 46 16 L46 22 Q32 14 18 22Z" fill="#2b3550"/><rect x="22" y="34" width="20" height="22" rx="5" fill="#4f7cff"/><rect x="14" y="34" width="8" height="18" rx="4" fill="#ffd9b3"/><rect x="42" y="34" width="8" height="18" rx="4" fill="#ffd9b3"/></svg>
+        男孩
+      </div>
+    </div>
+    <div class="hint">
+      <span class="kb-hint">電腦：WASD／方向鍵移動，滑鼠點擊施放魔法</span>
+      <span class="touch-hint">平板：左下搖桿移動，右下點擊施放魔法</span>
+    </div>
+  </div>
+</div>
+
+<div class="ui-layer hidden" id="screenGacha">
+  <div class="panel">
+    <div class="title-grad" style="font-size:26px;">抽取魔法</div>
+    <div class="gacha-orb" id="gachaOrb">🔮</div>
+    <div class="magic-name" id="gachaName">準備抽取…</div>
+    <div class="magic-rarity" id="gachaRarity"></div>
+    <p class="subtitle" id="gachaDesc">點擊下方按鈕，抽出屬於你的魔法元素</p>
+    <button class="btn" id="gachaBtn">抽取魔法 ✦</button>
+    <button class="btn secondary hidden" id="startBtn">開始冒險</button>
+  </div>
+</div>
+
+<div class="ui-layer hidden" id="screenOver">
+  <div class="panel">
+    <div class="title-grad" style="font-size:30px;">冒險結束</div>
+    <p class="subtitle" id="overStats"></p>
+    <button class="btn" id="retryBtn">重新挑戰</button>
+    <button class="btn secondary" id="regachaBtn">重新選角＋抽魔法</button>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+/* ---------- Canvas / DPR ---------- */
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2.5);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = Math.floor(W*DPR); canvas.height = Math.floor(H*DPR);
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+/* ---------- Audio ---------- */
+let actx=null, muted=false;
+function ensureAudio(){ if(!actx){ try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+function beep(freq, dur, type, vol, sweep){
+  if(muted || !actx) return;
+  const t0 = actx.currentTime;
+  const osc = actx.createOscillator();
+  const gain = actx.createGain();
+  osc.type = type||'sine';
+  osc.frequency.setValueAtTime(freq, t0);
+  if(sweep) osc.frequency.exponentialRampToValueAtTime(Math.max(20,sweep), t0+dur);
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(vol||0.2, t0+0.01);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  osc.connect(gain); gain.connect(actx.destination);
+  osc.start(t0); osc.stop(t0+dur+0.02);
+}
+const sfx = {
+  cast:()=>beep(520,0.16,'triangle',0.22,880),
+  hit:()=>beep(160,0.12,'square',0.2,60),
+  hurt:()=>beep(140,0.22,'sawtooth',0.25,60),
+  score:()=>beep(700,0.1,'sine',0.18,1100),
+  gacha:()=>beep(300,0.5,'sine',0.15,1200),
+  legendary:()=>{ beep(440,0.3,'sine',0.2,880); setTimeout(()=>beep(660,0.3,'sine',0.2,1200),120); },
+  gameover:()=>{ beep(300,0.4,'sawtooth',0.2,80); setTimeout(()=>beep(200,0.5,'sawtooth',0.2,60),180); },
+  wave:()=>beep(500,0.25,'triangle',0.2,900),
+};
+document.getElementById('muteBtn').addEventListener('click', ()=>{
+  muted = !muted;
+  document.getElementById('muteBtn').textContent = muted?'🔇':'🔊';
+});
+
+/* ---------- Magic definitions ---------- */
+const MAGICS = [
+  {key:'fire', name:'烈焰魔法', icon:'🔥', color:'#ff7e3d', rarity:'普通', rarityColor:'#9db3d8', desc:'火球灼燒範圍傷害',
+    dmg:18, speed:9, radius:9, cooldown:420, projectiles:1, spread:0},
+  {key:'ice', name:'寒冰魔法', icon:'❄️', color:'#38e1ff', rarity:'普通', rarityColor:'#9db3d8', desc:'冰錐減速敵人',
+    dmg:14, speed:10, radius:8, cooldown:360, projectiles:1, spread:0, slow:true},
+  {key:'thunder', name:'雷霆魔法', icon:'⚡', color:'#ffe066', rarity:'稀有', rarityColor:'#38e1ff', desc:'連鎖閃電擊穿敵群',
+    dmg:12, speed:14, radius:6, cooldown:260, projectiles:1, spread:0, pierce:true},
+  {key:'wind', name:'疾風魔法', icon:'🌪️', color:'#7fffb0', rarity:'稀有', rarityColor:'#38e1ff', desc:'三重風刃扇形齊發',
+    dmg:9, speed:11, radius:7, cooldown:380, projectiles:3, spread:0.32},
+  {key:'light', name:'聖光魔法', icon:'✨', color:'#ffd9f6', rarity:'傳說', rarityColor:'#ffcf5c', desc:'追蹤光彈自動鎖敵',
+    dmg:16, speed:8, radius:9, cooldown:340, projectiles:1, spread:0, homing:true},
+  {key:'dark', name:'暗影魔法', icon:'🌑', color:'#9a6bff', rarity:'傳說', rarityColor:'#ffcf5c', desc:'爆裂暗球大範圍傷害',
+    dmg:26, speed:7, radius:13, cooldown:520, projectiles:1, spread:0, aoe:true},
+];
+const RARITY_WEIGHT = {'普通':50,'稀有':32,'傳說':18};
+
+/* ---------- Global state ---------- */
+let gender = 'girl';
+let chosenMagic = null;
+let state = 'title'; // title, gacha, playing, over
+let best = parseInt(localStorage.getItem('mojue_best')||'0',10);
+
+/* ---------- Screens ---------- */
+const screenTitle = document.getElementById('screenTitle');
+const screenGacha = document.getElementById('screenGacha');
+const screenOver = document.getElementById('screenOver');
+const hud = document.getElementById('hud');
+
+document.querySelectorAll('.choice-btn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    ensureAudio();
+    gender = btn.dataset.gender;
+    screenTitle.classList.add('hidden');
+    screenGacha.classList.remove('hidden');
+    document.getElementById('gachaBtn').classList.remove('hidden');
+    document.getElementById('startBtn').classList.add('hidden');
+    document.getElementById('gachaName').textContent = '準備抽取…';
+    document.getElementById('gachaRarity').textContent = '';
+    document.getElementById('gachaOrb').textContent = '🔮';
+    document.getElementById('gachaOrb').style.background = 'radial-gradient(circle,#1a2138,#0a0e1a)';
+    document.getElementById('gachaOrb').style.boxShadow = 'none';
+  });
+});
+
+document.getElementById('gachaBtn').addEventListener('click', ()=>{
+  ensureAudio();
+  const btn = document.getElementById('gachaBtn');
+  btn.disabled = true;
+  const orb = document.getElementById('gachaOrb');
+  orb.classList.add('spin');
+  sfx.gacha();
+  let ticks = 0;
+  const spinTimer = setInterval(()=>{
+    orb.textContent = MAGICS[Math.floor(Math.random()*MAGICS.length)].icon;
+    ticks++;
+  }, 90);
+  setTimeout(()=>{
+    clearInterval(spinTimer);
+    orb.classList.remove('spin');
+    chosenMagic = rollMagic();
+    orb.textContent = chosenMagic.icon;
+    orb.style.background = `radial-gradient(circle, ${chosenMagic.color}55, #0a0e1a)`;
+    orb.style.boxShadow = `0 0 40px ${chosenMagic.color}88`;
+    document.getElementById('gachaName').textContent = chosenMagic.name;
+    const rEl = document.getElementById('gachaRarity');
+    rEl.textContent = '★ ' + chosenMagic.rarity + ' ★';
+    rEl.style.color = chosenMagic.rarityColor;
+    document.getElementById('gachaDesc').textContent = chosenMagic.desc;
+    if(chosenMagic.rarity==='傳說') sfx.legendary(); else sfx.score();
+    btn.classList.add('hidden');
+    document.getElementById('startBtn').classList.remove('hidden');
+    btn.disabled = false;
+  }, 1000);
+});
+
+function rollMagic(){
+  const total = MAGICS.reduce((s,m)=>s+RARITY_WEIGHT[m.rarity],0);
+  let r = Math.random()*total;
+  for(const m of MAGICS){
+    r -= RARITY_WEIGHT[m.rarity];
+    if(r<=0) return m;
+  }
+  return MAGICS[0];
+}
+
+document.getElementById('startBtn').addEventListener('click', ()=>{
+  screenGacha.classList.add('hidden');
+  startGame();
+});
+document.getElementById('retryBtn').addEventListener('click', ()=>{
+  screenOver.classList.add('hidden');
+  startGame();
+});
+document.getElementById('regachaBtn').addEventListener('click', ()=>{
+  screenOver.classList.add('hidden');
+  screenTitle.classList.remove('hidden');
+});
+
+/* ---------- Input ---------- */
+const keys = {};
+window.addEventListener('keydown', e=>{ keys[e.key.toLowerCase()]=true; });
+window.addEventListener('keyup', e=>{ keys[e.key.toLowerCase()]=false; });
+
+let mouseAim = {x:0,y:0,active:false};
+canvas.addEventListener('mousedown', e=>{
+  mouseAim.x=e.clientX; mouseAim.y=e.clientY; mouseAim.active=true; ensureAudio();
+});
+window.addEventListener('mousemove', e=>{ if(mouseAim.active){ mouseAim.x=e.clientX; mouseAim.y=e.clientY; } });
+window.addEventListener('mouseup', ()=>{ mouseAim.active=false; });
+
+// touch joystick (movement) + attack zone
+let joyActive=false, joyId=null, joyOrigin={x:0,y:0}, joyVec={x:0,y:0};
+let atkActive=false, atkId=null, atkVec={x:0,y:1};
+const joyBase = document.getElementById('joyBase');
+const joyStick = document.getElementById('joyStick');
+
+function makeTouchZones(){
+  document.querySelectorAll('#joyzone,#atkzone').forEach(z=>z.remove());
+  const jz = document.createElement('div'); jz.id='joyzone';
+  const az = document.createElement('div'); az.id='atkzone';
+  document.body.appendChild(jz); document.body.appendChild(az);
+
+  jz.addEventListener('touchstart', e=>{
+    e.preventDefault(); ensureAudio();
+    const t = e.changedTouches[0];
+    joyActive=true; joyId=t.identifier;
+    joyOrigin={x:t.clientX,y:t.clientY};
+    joyBase.style.display='block'; joyStick.style.display='block';
+    joyBase.style.left=(t.clientX-50)+'px'; joyBase.style.top=(t.clientY-50)+'px';
+    joyStick.style.left=(t.clientX-23)+'px'; joyStick.style.top=(t.clientY-23)+'px';
+  }, {passive:false});
+  jz.addEventListener('touchmove', e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      if(t.identifier!==joyId) continue;
+      let dx=t.clientX-joyOrigin.x, dy=t.clientY-joyOrigin.y;
+      const d = Math.hypot(dx,dy), max=50;
+      if(d>max){ dx=dx/d*max; dy=dy/d*max; }
+      joyVec.x = dx/max; joyVec.y = dy/max;
+      joyStick.style.left=(joyOrigin.x+dx-23)+'px'; joyStick.style.top=(joyOrigin.y+dy-23)+'px';
+    }
+  }, {passive:false});
+  function endJoy(e){
+    for(const t of e.changedTouches){
+      if(t.identifier!==joyId) continue;
+      joyActive=false; joyVec={x:0,y:0};
+      joyBase.style.display='none'; joyStick.style.display='none';
+    }
+  }
+  jz.addEventListener('touchend', endJoy, {passive:false});
+  jz.addEventListener('touchcancel', endJoy, {passive:false});
+
+  az.addEventListener('touchstart', e=>{
+    e.preventDefault(); ensureAudio();
+    const t = e.changedTouches[0];
+    atkActive=true; atkId=t.identifier;
+    updateAtkVec(t.clientX,t.clientY);
+  }, {passive:false});
+  az.addEventListener('touchmove', e=>{
+    e.preventDefault();
+    for(const t of e.changedTouches){
+      if(t.identifier!==atkId) continue;
+      updateAtkVec(t.clientX,t.clientY);
+    }
+  }, {passive:false});
+  function endAtk(e){
+    for(const t of e.changedTouches){ if(t.identifier===atkId) atkActive=false; }
+  }
+  az.addEventListener('touchend', endAtk, {passive:false});
+  az.addEventListener('touchcancel', endAtk, {passive:false});
+}
+function updateAtkVec(cx,cy){
+  if(!player) return;
+  const dx=cx-player.x, dy=cy-player.y;
+  const d=Math.hypot(dx,dy)||1;
+  atkVec = {x:dx/d, y:dy/d};
+}
+makeTouchZones();
+
+/* ---------- Game entities ---------- */
+let player, enemies, bullets, particles, wave, score, spawnTimer, castTimer, waveTimer, shakeT, shakeMag, hitstop;
+
+function startGame(){
+  hud.classList.remove('hidden');
+  document.getElementById('magicLabel').textContent = chosenMagic.icon+' '+chosenMagic.name;
+  player = {
+    x:W/2, y:H/2, r:16, hp:100, maxHp:100, invuln:0,
+    color: gender==='girl' ? '#ff6cc7' : '#4f7cff',
+    facing:{x:0,y:1}
+  };
+  enemies=[]; bullets=[]; particles=[];
+  wave=1; score=0; spawnTimer=0; castTimer=0; waveTimer=0; shakeT=0; shakeMag=0; hitstop=0;
+  updateHud();
+  state='playing';
+  lastTime = performance.now();
+  requestAnimationFrame(loop);
+}
+
+function updateHud(){
+  document.getElementById('hpfill').style.width = Math.max(0,player.hp/player.maxHp*100)+'%';
+  document.getElementById('scoreLabel').textContent = '分數 '+score;
+  document.getElementById('waveLabel').textContent = '第 '+wave+' 波';
+}
+
+function spawnEnemy(){
+  const edge = Math.floor(Math.random()*4);
+  let x,y;
+  if(edge===0){ x=-30; y=Math.random()*H; }
+  else if(edge===1){ x=W+30; y=Math.random()*H; }
+  else if(edge===2){ x=Math.random()*W; y=-30; }
+  else { x=Math.random()*W; y=H+30; }
+  const hp = 20 + wave*6;
+  const speed = 1.1 + Math.min(wave*0.08, 2.2);
+  enemies.push({x,y,r:14+Math.random()*4,hp,maxHp:hp,speed,slowT:0,hitT:0,type: Math.random()<0.15+wave*0.01 ? 'tank':'normal'});
+}
+
+function fireMagic(dir){
+  const m = chosenMagic;
+  const n = m.projectiles;
+  for(let i=0;i<n;i++){
+    let ang = Math.atan2(dir.y,dir.x);
+    if(n>1){ ang += (i-(n-1)/2) * m.spread; }
+    bullets.push({
+      x:player.x, y:player.y,
+      vx:Math.cos(ang)*m.speed, vy:Math.sin(ang)*m.speed,
+      r:m.radius, dmg:m.dmg, color:m.color,
+      slow:m.slow, pierce:m.pierce, homing:m.homing, aoe:m.aoe,
+      life:90
+    });
+  }
+  sfx.cast();
+  spawnParticles(player.x,player.y,m.color,6);
+}
+
+function spawnParticles(x,y,color,n){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, sp = 1+Math.random()*3;
+    particles.push({x,y,vx:Math.cos(a)*sp,vy:Math.sin(a)*sp,life:24+Math.random()*10,color,r:2+Math.random()*2});
+  }
+}
+
+function triggerShake(mag){ shakeMag=Math.max(shakeMag,mag); shakeT=10; }
+
+/* ---------- Loop ---------- */
+let lastTime=0, acc=0;
+const STEP = 1000/60;
+
+function loop(t){
+  if(state!=='playing') return;
+  let dt = t-lastTime; lastTime=t;
+  if(dt>250) dt=250;
+  if(hitstop>0){ hitstop-=dt; requestAnimationFrame(loop); render(); return; }
+  acc += dt;
+  while(acc>=STEP){ update(STEP); acc-=STEP; }
+  render();
+  requestAnimationFrame(loop);
+}
+
+function update(dt){
+  const dts = dt/16.67;
+
+  // movement
+  let mx=0,my=0;
+  if(keys['a']||keys['arrowleft']) mx-=1;
+  if(keys['d']||keys['arrowright']) mx+=1;
+  if(keys['w']||keys['arrowup']) my-=1;
+  if(keys['s']||keys['arrowdown']) my+=1;
+  if(joyActive){ mx += joyVec.x; my += joyVec.y; }
+  const mlen = Math.hypot(mx,my);
+  if(mlen>0.1){
+    mx/=mlen; my/=mlen;
+    player.x += mx*4.2*dts; player.y += my*4.2*dts;
+    player.facing = {x:mx,y:my};
+  }
+  player.x = Math.max(player.r, Math.min(W-player.r, player.x));
+  player.y = Math.max(player.r, Math.min(H-player.r, player.y));
+
+  // casting
+  castTimer -= dt;
+  let aim = null;
+  if(mouseAim.active){ aim = {x:mouseAim.x-player.x, y:mouseAim.y-player.y}; }
+  else if(atkActive){ aim = {x:atkVec.x, y:atkVec.y}; }
+  if(aim && castTimer<=0){
+    const d = Math.hypot(aim.x,aim.y)||1;
+    fireMagic({x:aim.x/d, y:aim.y/d});
+    castTimer = chosenMagic.cooldown;
+  }
+
+  // spawn
+  spawnTimer -= dt;
+  const spawnRate = Math.max(1500 - wave*80, 450);
+  if(spawnTimer<=0){
+    spawnEnemy();
+    spawnTimer = spawnRate;
+  }
+  waveTimer += dt;
+  if(waveTimer > 15000){
+    waveTimer=0; wave++;
+    sfx.wave();
+    updateHud();
+  }
+
+  // bullets
+  for(let i=bullets.length-1;i>=0;i--){
+    const b = bullets[i];
+    if(b.homing){
+      let target=null, bd=Infinity;
+      for(const en of enemies){
+        const d = Math.hypot(en.x-b.x,en.y-b.y);
+        if(d<bd){ bd=d; target=en; }
+      }
+      if(target){
+        const dx=target.x-b.x, dy=target.y-b.y, d=Math.hypot(dx,dy)||1;
+        b.vx += (dx/d)*0.6; b.vy += (dy/d)*0.6;
+        const sp = Math.hypot(b.vx,b.vy);
+        if(sp>0){ b.vx = b.vx/sp*chosenMagic.speed; b.vy=b.vy/sp*chosenMagic.speed; }
+      }
+    }
+    b.x += b.vx*dts; b.y += b.vy*dts;
+    b.life -= dts;
+    if(b.life<=0 || b.x<-40||b.x>W+40||b.y<-40||b.y>H+40){
+      bullets.splice(i,1); continue;
+    }
+    for(let j=enemies.length-1;j>=0;j--){
+      const en = enemies[j];
+      if(Math.hypot(en.x-b.x,en.y-b.y) < en.r+b.r){
+        en.hp -= b.dmg; en.hitT=6;
+        if(b.slow) en.slowT = 90;
+        spawnParticles(b.x,b.y,b.color,4);
+        sfx.hit();
+        if(b.aoe){
+          for(const en2 of enemies){
+            if(en2!==en && Math.hypot(en2.x-b.x,en2.y-b.y) < 60){
+              en2.hp -= b.dmg*0.6; en2.hitT=6;
+            }
+          }
+          triggerShake(4);
+        }
+        if(en.hp<=0){
+          score += en.type==='tank' ? 30:15;
+          sfx.score();
+          spawnParticles(en.x,en.y,en.type==='tank'?'#ffcf5c':'#38e1ff',10);
+          enemies.splice(j,1);
+          updateHud();
+        }
+        if(!b.pierce){ bullets.splice(i,1); }
+        break;
+      }
+    }
+  }
+
+  // enemies
+  for(let i=enemies.length-1;i>=0;i--){
+    const en = enemies[i];
+    if(en.slowT>0) en.slowT-=dts;
+    if(en.hitT>0) en.hitT-=dts;
+    const spd = en.slowT>0 ? en.speed*0.4 : en.speed;
+    const dx=player.x-en.x, dy=player.y-en.y, d=Math.hypot(dx,dy)||1;
+    en.x += dx/d*spd*dts; en.y += dy/d*spd*dts;
+    if(d < en.r+player.r && player.invuln<=0){
+      player.hp -= en.type==='tank'?18:10;
+      player.invuln = 700;
+      sfx.hurt();
+      triggerShake(8);
+      spawnParticles(player.x,player.y,'#ff3b6b',8);
+      updateHud();
+      if(player.hp<=0){ gameOver(); return; }
+    }
+  }
+  if(player.invuln>0) player.invuln -= dt;
+
+  // particles
+  for(let i=particles.length-1;i>=0;i--){
+    const p = particles[i];
+    p.x += p.vx*dts; p.y += p.vy*dts;
+    p.vx*=0.92; p.vy*=0.92;
+    p.life -= dts;
+    if(p.life<=0) particles.splice(i,1);
+  }
+
+  if(shakeT>0){ shakeT-=dts; if(shakeT<=0) shakeMag=0; }
+}
+
+function gameOver(){
+  state='over';
+  sfx.gameover();
+  hud.classList.add('hidden');
+  if(score>best){ best=score; localStorage.setItem('mojue_best', String(best)); }
+  document.getElementById('overStats').innerHTML =
+    `${chosenMagic.icon} ${chosenMagic.name}　最終分數 <b style="color:#38e1ff">${score}</b>　撐過 ${wave} 波<br>歷史最高 ${best}`;
+  document.getElementById('screenOver').classList.remove('hidden');
+}
+
+/* ---------- Render ---------- */
+function render(){
+  ctx.clearRect(0,0,W,H);
+  // background
+  const grad = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.7);
+  grad.addColorStop(0,'#131a2e'); grad.addColorStop(1,'#070b14');
+  ctx.fillStyle=grad; ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  if(shakeT>0){
+    ctx.translate((Math.random()-0.5)*shakeMag, (Math.random()-0.5)*shakeMag);
+  }
+
+  // grid dots
+  ctx.fillStyle='rgba(255,255,255,0.035)';
+  const gap=40;
+  for(let x=0;x<W;x+=gap) for(let y=0;y<H;y+=gap) ctx.fillRect(x,y,2,2);
+
+  // particles
+  for(const p of particles){
+    ctx.globalAlpha = Math.max(0,p.life/30);
+    ctx.fillStyle=p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,7); ctx.fill();
+  }
+  ctx.globalAlpha=1;
+
+  // bullets
+  for(const b of bullets){
+    ctx.fillStyle=b.color;
+    ctx.shadowColor=b.color; ctx.shadowBlur=12;
+    ctx.beginPath(); ctx.arc(b.x,b.y,b.r,0,7); ctx.fill();
+    ctx.shadowBlur=0;
+  }
+
+  // enemies
+  for(const en of enemies){
+    ctx.save();
+    ctx.translate(en.x,en.y);
+    const bodyColor = en.hitT>0 ? '#ffffff' : (en.type==='tank' ? '#9a6bff':'#ff3b6b');
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath(); ctx.arc(0,0,en.r,0,7); ctx.fill();
+    ctx.fillStyle='rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.arc(en.r*0.3,en.r*0.3,en.r*0.6,0,7); ctx.fill();
+    // eyes
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.arc(-en.r*0.3,-en.r*0.1,2.4,0,7); ctx.arc(en.r*0.3,-en.r*0.1,2.4,0,7); ctx.fill();
+    ctx.restore();
+    // hp bar
+    const w = en.r*2;
+    ctx.fillStyle='rgba(0,0,0,0.5)';
+    ctx.fillRect(en.x-w/2, en.y-en.r-10, w, 4);
+    ctx.fillStyle='#38e1ff';
+    ctx.fillRect(en.x-w/2, en.y-en.r-10, w*Math.max(0,en.hp/en.maxHp), 4);
+  }
+
+  // player
+  ctx.save();
+  ctx.translate(player.x,player.y);
+  if(player.invuln>0 && Math.floor(player.invuln/80)%2===0) ctx.globalAlpha=0.4;
+  ctx.fillStyle=player.color;
+  ctx.beginPath(); ctx.arc(0,0,player.r,0,7); ctx.fill();
+  ctx.fillStyle='#ffd9b3';
+  ctx.beginPath(); ctx.arc(0,-player.r*0.55,player.r*0.5,0,7); ctx.fill();
+  // aim indicator
+  const fa = Math.atan2(player.facing.y||1, player.facing.x||0);
+  ctx.strokeStyle=chosenMagic.color; ctx.lineWidth=3;
+  ctx.beginPath();
+  ctx.moveTo(Math.cos(fa)*player.r, Math.sin(fa)*player.r);
+  ctx.lineTo(Math.cos(fa)*(player.r+14), Math.sin(fa)*(player.r+14));
+  ctx.stroke();
+  ctx.restore();
+  ctx.globalAlpha=1;
+
+  ctx.restore();
+}
+
+/* ---------- Boot ---------- */
+window.addEventListener('touchmove', e=>{ if(state==='playing') e.preventDefault(); }, {passive:false});
+})();
+</script>
+</body>
+</html>
