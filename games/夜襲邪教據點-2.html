@@ -1,0 +1,1662 @@
+<!DOCTYPE html>
+<!-- 專業AI升級 v4 -->
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>夜襲：邪教據點 — 99 Nights 3D 同人動畫</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; background: #060b08; overflow: hidden;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+    font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+/* ============================================================
+   夜襲邪教據點 — 專業AI升級版（99 Nights 同人可玩版）
+   月夜潛行：避開信徒的視線錐、繞到背後偷襲、清空據點、
+   搶奪祭壇戰利品、撤回森林邊界。每晚信徒更多、更警覺！
+   固定時間步進＋狀態機＋視線潛行 AI＋全套手感回饋
+   ============================================================ */
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+let ctx = canvas.getContext('2d');
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr; canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px'; canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 調色盤（森林夜色）----------
+const PAL = {
+  bg: '#060b08', ground: '#16281a', clearing: '#243d29',
+  fire: '#ef8a3d', fireHot: '#ffd27a', amber: '#c9a15a',
+  blood: '#8f2f2f', bone: '#d9d3c1', ink: '#e7e2d2', dim: '#9fae9c',
+  hudLine: '#2c4432', player: '#2f4d3a', playerTrim: '#c9a15a',
+  cult: '#3b2f24', cultTrim: '#8f2f2f', bad: '#e2493f', good: '#8fd07a'
+};
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rnd = (a, b) => a + Math.random() * (b - a);
+const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+const angDiff = (a, b) => { let d = a - b; while (d > Math.PI) d -= 6.2832; while (d < -Math.PI) d += 6.2832; return d; };
+function roundRect(x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// ---------- 音效 ----------
+let AC = null, master = null, muted = false;
+function audio() {
+  if (!AC) {
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      master = AC.createGain(); master.gain.value = muted ? 0 : 0.85;
+      // 限制器：多音效齊發不削峰爆音
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.2;
+      master.connect(comp); comp.connect(AC.destination);
+    } catch (err) { AC = null; }
+  }
+  if (AC && AC.state === 'suspended') AC.resume();
+  return AC;
+}
+function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 0.85; }
+function beep(freq, dur, type, vol, slide) {
+  const ac = audio(); if (!ac || muted) return;
+  freq *= 1 + (Math.random() * 2 - 1) * 0.04; // ±4% 音高隨機
+  type = type || 'square'; vol = vol || 0.13; slide = slide || 0;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type;
+  o.frequency.setValueAtTime(freq, ac.currentTime);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  o.connect(g).connect(master);
+  o.start(); o.stop(ac.currentTime + dur);
+}
+function noise(dur, vol) {
+  const ac = audio(); if (!ac || muted) return;
+  const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+  const buf = ac.createBuffer(1, len, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = ac.createBufferSource(), g = ac.createGain();
+  src.buffer = buf;
+  g.gain.setValueAtTime(vol || 0.09, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  src.connect(g).connect(master);
+  src.start();
+}
+const sfx = {
+  click() { beep(520, 0.06, 'square', 0.08); },
+  swing() { noise(0.08, 0.07); beep(300, 0.07, 'triangle', 0.05, -120); },
+  hit() { beep(210, 0.09, 'square', 0.13, -70); noise(0.05, 0.09); },
+  takedown() { beep(140, 0.16, 'sawtooth', 0.14, -60); noise(0.12, 0.11); },
+  alert() { beep(660, 0.09, 'square', 0.12, 200); setTimeout(() => beep(880, 0.12, 'square', 0.11), 90); },
+  hurt() { beep(230, 0.24, 'sawtooth', 0.14, -140); },
+  eat() { beep(330, 0.07, 'triangle', 0.1); setTimeout(() => beep(440, 0.09, 'triangle', 0.1), 80); },
+  loot() { [784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.1), i * 80)); },
+  coin() { [660, 880].forEach((f, i) => setTimeout(() => beep(f, 0.08, 'square', 0.09), i * 60)); },
+  night() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.1), i * 90)); },
+  lose() { [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 140)); },
+  step() { noise(0.03, 0.03); }
+};
+
+// ---------- FX ----------
+let shake = 0, freeze = 0;
+const parts = [];
+function burst(x, y, color, n, speed, up) {
+  n = n || 10; speed = speed || 180;
+  for (let i = 0; i < n; i++) {
+    if (parts.length > 280) break;
+    const a = Math.random() * Math.PI * 2, s = speed * (0.3 + Math.random() * 0.7);
+    parts.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - (up || 0), life: rnd(0.3, 0.6), color, size: rnd(2.5, 5), grav: 240 });
+  }
+}
+function updateParts(dt) {
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const p = parts[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += p.grav * dt; p.life -= dt;
+    if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); } // swap-pop
+  }
+}
+function drawParts() {
+  for (const p of parts) {
+    ctx.globalAlpha = clamp(p.life * 2.2, 0, 1);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+  }
+  ctx.globalAlpha = 1;
+}
+const floaters = [];
+function addFloat(x, y, text, color, big) { floaters.push({ x, y, text, color, life: 1, big: !!big }); }
+function updateFloaters(dt) {
+  for (let i = floaters.length - 1; i >= 0; i--) {
+    const f = floaters[i];
+    f.y -= 42 * dt; f.life -= dt;
+    if (f.life <= 0) floaters.splice(i, 1);
+  }
+}
+function drawFloaters() {
+  for (const f of floaters) {
+    ctx.globalAlpha = clamp(f.life * 1.5, 0, 1);
+    ctx.fillStyle = f.color;
+    ctx.font = (f.big ? 'bold 24px' : 'bold 17px') + ' sans-serif';
+    ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3;
+    ctx.strokeText(f.text, f.x, f.y);
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ---------- 場景 ----------
+const CAMP = { x: 480, y: 280 };
+const FIRE = { x: 480, y: 290 };
+const TOTEM = { x: 575, y: 215 };
+const TENTS = [{ x: 355, y: 210, r: 0.4 }, { x: 610, y: 350, r: -0.5 }];
+const FENCE_R = 185, ESCAPE_R = 265;
+let bgTime = 0;
+// 地面預先繪製（草地雜斑、土徑）
+const groundCv = document.createElement('canvas');
+groundCv.width = GAME_W; groundCv.height = GAME_H;
+(function paintGround() {
+  const g = groundCv.getContext('2d');
+  const rad = g.createRadialGradient(CAMP.x, CAMP.y, 40, CAMP.x, CAMP.y, 560);
+  rad.addColorStop(0, '#375c3c'); rad.addColorStop(0.4, PAL.clearing);
+  rad.addColorStop(0.75, PAL.ground); rad.addColorStop(1, '#0c1912');
+  g.fillStyle = rad;
+  g.fillRect(0, 0, GAME_W, GAME_H);
+  g.fillStyle = 'rgba(120,92,58,0.28)';
+  g.beginPath(); g.ellipse(CAMP.x, CAMP.y + 10, 190, 120, 0, 0, 6.29); g.fill();
+  let seed = 42;
+  function prng() { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return (seed % 1000) / 1000; }
+  for (let i = 0; i < 2600; i++) {
+    const x = prng() * GAME_W, y = prng() * GAME_H, s = prng();
+    g.fillStyle = s > 0.5 ? 'rgba(120,158,100,0.32)' : 'rgba(10,20,10,0.35)';
+    g.fillRect(x, y, 2, 2);
+  }
+  // 小徑
+  g.strokeStyle = 'rgba(120,92,58,0.35)'; g.lineWidth = 26; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(90, 500); g.quadraticCurveTo(260, 420, CAMP.x - 60, CAMP.y + 60); g.stroke();
+})();
+// 樹林（環繞 + 外圍散布）
+const trees = [];
+for (let i = 0; i < 15; i++) {
+  const a = (i / 15) * 6.2832 + 0.2;
+  trees.push({ x: CAMP.x + Math.cos(a) * rnd(245, 290), y: CAMP.y + Math.sin(a) * rnd(200, 240), s: rnd(0.8, 1.25), ph: rnd(0, 6) });
+}
+for (let i = 0; i < 10; i++) trees.push({ x: rnd(0, GAME_W), y: Math.random() < 0.5 ? rnd(-10, 40) : rnd(GAME_H - 40, GAME_H + 10), s: rnd(0.9, 1.4), ph: rnd(0, 6) });
+// 霧氣（雙層視差）與螢火蟲
+const fogs = [];
+for (let i = 0; i < 7; i++) fogs.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H), r: rnd(90, 180), v: rnd(6, 14) * (i % 2 ? 1 : 0.5), a: rnd(0.05, 0.11) });
+const flies = [];
+for (let i = 0; i < 9; i++) flies.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H), ph: rnd(0, 9), sp: rnd(0.5, 1.2) });
+
+function drawTree(t) {
+  const sway = Math.sin(bgTime * 0.7 + t.ph) * 3;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(t.x + 8, t.y + 10, 34 * t.s, 14 * t.s, 0, 0, 6.29); ctx.fill();
+  for (const [ox, oy, r, col] of [[0, 0, 30, '#122015'], [-14, -8, 20, '#16281a'], [12 + sway, -10, 18, '#1b301f']]) {
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(t.x + ox * t.s, t.y + oy * t.s, r * t.s, 0, 6.29); ctx.fill();
+  }
+  // 月光邊緣
+  ctx.fillStyle = 'rgba(170,195,150,0.16)';
+  ctx.beginPath(); ctx.arc(t.x + (14 + sway) * t.s, t.y - 14 * t.s, 12 * t.s, 0, 6.29); ctx.fill();
+}
+function drawTent(tn) {
+  ctx.save();
+  ctx.translate(tn.x, tn.y); ctx.rotate(tn.r);
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.ellipse(6, 10, 56, 30, 0, 0, 6.29); ctx.fill();
+  // 帳篷雙面（火光面亮、背光面暗）
+  ctx.fillStyle = '#1c140d';
+  ctx.beginPath(); ctx.moveTo(-52, 26); ctx.lineTo(0, -34); ctx.lineTo(52, 26); ctx.closePath(); ctx.fill();
+  const fg = ctx.createLinearGradient(-40, 0, 30, 26);
+  fg.addColorStop(0, '#5a4530'); fg.addColorStop(1, '#372716');
+  ctx.fillStyle = fg;
+  ctx.beginPath(); ctx.moveTo(-52, 26); ctx.lineTo(0, -34); ctx.lineTo(14, 26); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.4)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(-52, 26); ctx.lineTo(0, -34); ctx.lineTo(52, 26); ctx.closePath(); ctx.stroke();
+  ctx.strokeStyle = PAL.blood; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0, -34); ctx.lineTo(0, 26); ctx.stroke();
+  // 摺痕
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 1.5;
+  for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(-52 + i * 13, 26); ctx.lineTo(-2, -30 + i * 2); ctx.stroke(); }
+  ctx.restore();
+}
+function drawFence() {
+  for (let i = 0; i < 26; i++) {
+    const a = (i / 26) * 6.2832;
+    if (a > 3.5 && a < 4.4) continue; // 缺口（大門）
+    const fx = CAMP.x + Math.cos(a) * FENCE_R, fy = CAMP.y + Math.sin(a) * FENCE_R * 0.82;
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath(); ctx.ellipse(fx + 2, fy + 12, 7, 3, 0, 0, 6.29); ctx.fill();
+    const wg = ctx.createLinearGradient(fx - 4, 0, fx + 4, 0);
+    wg.addColorStop(0, '#1c130c'); wg.addColorStop(0.5, '#3a2a18'); wg.addColorStop(1, '#160f0a');
+    ctx.fillStyle = wg;
+    ctx.fillRect(fx - 4, fy - 20, 8, 32);
+    ctx.fillStyle = '#3a2a18';
+    ctx.beginPath(); ctx.moveTo(fx - 5, fy - 20); ctx.lineTo(fx, fy - 27); ctx.lineTo(fx + 5, fy - 20); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(70,55,30,0.8)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(fx - 5, fy - 6); ctx.lineTo(fx + 5, fy - 4); ctx.stroke();
+  }
+}
+// 預繪光暈/霧/視線錐貼圖：遊玩中不再每幀建 radial gradient（平板 60fps 關鍵）
+function makeRadialSprite(size, rgb, a0) {
+  const cv = document.createElement('canvas');
+  cv.width = size; cv.height = size;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(size / 2, size / 2, size * 0.04, size / 2, size / 2, size / 2);
+  g.addColorStop(0, 'rgba(' + rgb + ',' + a0 + ')'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.fillRect(0, 0, size, size);
+  return cv;
+}
+const fireGlowCv = makeRadialSprite(256, '255,180,90', 1);
+const fogCv = makeRadialSprite(128, '160,180,160', 1);
+function makeConeSprite(rgb) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 6, 128, 128, 126);
+  g.addColorStop(0, 'rgba(' + rgb + ',0.22)'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(128, 128);
+  c.arc(128, 128, 126, -0.62, 0.62);
+  c.closePath(); c.fill();
+  return cv;
+}
+const coneCalm = makeConeSprite('201,161,90');
+const coneAlert = makeConeSprite('226,73,63');
+function drawFire() {
+  const t = bgTime;
+  const flick = Math.sin(t * 14) * 3 + Math.sin(t * 7) * 2;
+  // 地面光暈（閃爍，貼圖縮放）
+  const ga = 0.34 + Math.sin(t * 9) * 0.05;
+  const gr = 170 + flick * 4;
+  ctx.globalAlpha = ga;
+  ctx.drawImage(fireGlowCv, FIRE.x - gr, FIRE.y - gr, gr * 2, gr * 2);
+  ctx.globalAlpha = 1;
+  // 焦黑柴薪
+  ctx.fillStyle = '#1a0f08';
+  ctx.beginPath();
+  ctx.ellipse(FIRE.x - 12, FIRE.y + 8, 20, 5, 0.3, 0, 6.29);
+  ctx.ellipse(FIRE.x + 12, FIRE.y + 9, 20, 5, -0.3, 0, 6.29);
+  ctx.fill();
+  ctx.fillStyle = '#c9502f';
+  ctx.beginPath(); ctx.ellipse(FIRE.x, FIRE.y + 9, 20, 4, 0, 0, 6.29); ctx.fill();
+  // 三層火焰
+  const fl = (c, wF, hF, dy) => {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.moveTo(FIRE.x - wF, FIRE.y + 8);
+    ctx.quadraticCurveTo(FIRE.x - wF * 0.6 + flick * 0.3, FIRE.y - hF * 0.5, FIRE.x, FIRE.y - hF + flick + dy);
+    ctx.quadraticCurveTo(FIRE.x + wF * 0.6 - flick * 0.3, FIRE.y - hF * 0.5, FIRE.x + wF, FIRE.y + 8);
+    ctx.closePath(); ctx.fill();
+  };
+  fl(PAL.fire, 17, 46, 0);
+  fl(PAL.fireHot, 11, 30, 2);
+  fl('#fff3c4', 5.5, 17, 2);
+  // 火星
+  for (let i = 0; i < 6; i++) {
+    const life = (t * 0.7 + i * 0.37) % 1;
+    const sx = FIRE.x + Math.sin(i * 2.1 + t * 1.3) * 16 * (0.4 + life);
+    ctx.globalAlpha = 1 - life;
+    ctx.fillStyle = '#ffcf8a';
+    ctx.fillRect(sx, FIRE.y - 6 - life * 60, 2.5, 2.5);
+  }
+  ctx.globalAlpha = 1;
+}
+// 圖騰漸層（座標恆定 → 建一次重用）
+const totemPoleGrad = ctx.createLinearGradient(TOTEM.x - 7, 0, TOTEM.x + 7, 0);
+totemPoleGrad.addColorStop(0, '#0e0a06'); totemPoleGrad.addColorStop(0.5, '#2e2214'); totemPoleGrad.addColorStop(1, '#0e0a06');
+const skullGrad = ctx.createRadialGradient(TOTEM.x - 3, TOTEM.y - 45, 1, TOTEM.x, TOTEM.y - 42, 11);
+skullGrad.addColorStop(0, '#f2ede0'); skullGrad.addColorStop(1, '#a8a08a');
+function drawTotem(lootGlow) {
+  const t = bgTime;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.beginPath(); ctx.ellipse(TOTEM.x + 3, TOTEM.y + 26, 22, 8, 0, 0, 6.29); ctx.fill();
+  // 石壇
+  ctx.fillStyle = '#2a2a26';
+  for (const [ox, oy, r] of [[-16, 20, 8], [16, 21, 7], [0, 24, 9]]) {
+    ctx.beginPath(); ctx.arc(TOTEM.x + ox, TOTEM.y + oy, r, 0, 6.29); ctx.fill();
+  }
+  // 圖騰柱
+  ctx.fillStyle = totemPoleGrad;
+  ctx.fillRect(TOTEM.x - 7, TOTEM.y - 38, 14, 62);
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 2;
+  for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(TOTEM.x - 7, TOTEM.y - 26 + i * 13); ctx.lineTo(TOTEM.x + 7, TOTEM.y - 26 + i * 13); ctx.stroke(); }
+  // 詭異紅光
+  const gl = 0.5 + 0.5 * Math.sin(t * 3);
+  ctx.fillStyle = 'rgba(201,80,47,' + (0.25 + 0.25 * gl) + ')';
+  ctx.beginPath(); ctx.arc(TOTEM.x, TOTEM.y - 42, 16 + gl * 3, 0, 6.29); ctx.fill();
+  // 骷髏
+  ctx.fillStyle = skullGrad;
+  ctx.beginPath(); ctx.arc(TOTEM.x, TOTEM.y - 42, 10, 0, 6.29); ctx.fill();
+  ctx.fillStyle = '#241c14';
+  ctx.beginPath();
+  ctx.arc(TOTEM.x - 4, TOTEM.y - 44, 2.4, 0, 6.29);
+  ctx.arc(TOTEM.x + 4, TOTEM.y - 44, 2.4, 0, 6.29);
+  ctx.fill();
+  ctx.fillRect(TOTEM.x - 3, TOTEM.y - 37, 6, 2);
+  // 戰利品階段：金光召喚
+  if (lootGlow) {
+    const a = 0.35 + Math.sin(t * 5) * 0.2;
+    ctx.strokeStyle = 'rgba(255,205,120,' + a + ')'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(TOTEM.x, TOTEM.y + 22, 30 + Math.sin(t * 5) * 4, 12, 0, 0, 6.29); ctx.stroke();
+    const lg = ctx.createLinearGradient(0, TOTEM.y - 90, 0, TOTEM.y);
+    lg.addColorStop(0, 'rgba(255,220,140,0)'); lg.addColorStop(1, 'rgba(255,220,140,' + (a * 0.5) + ')');
+    ctx.fillStyle = lg;
+    ctx.fillRect(TOTEM.x - 20, TOTEM.y - 90, 40, 90);
+  }
+}
+const meatGrad = ctx.createLinearGradient(-8, -6, 8, 6);
+meatGrad.addColorStop(0, '#b06a3a'); meatGrad.addColorStop(1, '#7a4222');
+function drawMeat(m) {
+  if (!m.alive) return;
+  const bob = Math.sin(bgTime * 3) * 2;
+  ctx.fillStyle = 'rgba(0,0,0,0.4)';
+  ctx.beginPath(); ctx.ellipse(m.x, m.y + 8, 12, 4, 0, 0, 6.29); ctx.fill();
+  ctx.save();
+  ctx.translate(m.x, m.y + bob);
+  ctx.rotate(0.6);
+  ctx.fillStyle = meatGrad;
+  ctx.beginPath(); ctx.ellipse(0, 0, 10, 7, 0, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = '#4a2a12'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = '#e8e2d0';
+  ctx.fillRect(8, -2, 7, 4);
+  ctx.beginPath(); ctx.arc(16, -2, 2.5, 0, 6.29); ctx.arc(16, 2, 2.5, 0, 6.29); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle = PAL.good;
+  ctx.font = 'bold 12px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText('烤肉', m.x, m.y - 14);
+}
+
+// ---------- 掉落金幣（擊殺信徒時機率掉落，敵人越強掉越多）----------
+const drops = [];
+function spawnDrop(x, y, amount) {
+  drops.push({ x, y, amount, ph: rnd(0, 6), life: 14 });
+}
+function drawDrop(d) {
+  const bob = Math.sin(bgTime * 3 + d.ph) * 3;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(d.x, d.y + 6, 9, 3, 0, 0, 6.29); ctx.fill();
+  ctx.save();
+  ctx.translate(d.x, d.y + bob);
+  const warn = d.life < 3 && Math.floor(bgTime * 6) % 2;
+  ctx.globalAlpha = warn ? 0.35 : 1;
+  const g = ctx.createRadialGradient(-2, -2, 1, 0, 0, 9);
+  g.addColorStop(0, '#fff3c4'); g.addColorStop(0.55, PAL.fireHot); g.addColorStop(1, '#a8791f');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(0, 0, 8, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = '#7a5c28'; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = 'rgba(122,92,40,0.85)';
+  ctx.font = 'bold 9px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('$', 0, 0.5);
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+function drawDrops() { for (const d of drops) drawDrop(d); }
+function updateDrops(dt) {
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    d.life -= dt;
+    const dist = Math.hypot(d.x - player.x, d.y - player.y);
+    if (dist < 24) {
+      gold += d.amount;
+      addFloat(d.x, d.y - 18, '+' + d.amount + ' 金幣', PAL.fireHot, false);
+      sfx.coin();
+      burst(d.x, d.y, PAL.fireHot, 6, 120, 40);
+      drops.splice(i, 1);
+      continue;
+    }
+    if (d.life <= 0) { drops.splice(i, 1); continue; }
+  }
+}
+
+// ---------- 角色繪製（斗篷人：影子/披風/兜帽/武器/走路擺動）----------
+// 角色漸層快取：披風/兜帽依配色只建一次；刀刃恆定
+const capeGrads = new Map(), hoodGrads = new Map();
+function capeGrad(color) {
+  let g = capeGrads.get(color);
+  if (!g) {
+    g = ctx.createLinearGradient(-10, 0, 12, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0.55)'); g.addColorStop(0.45, color); g.addColorStop(1, 'rgba(255,255,255,0.14)');
+    capeGrads.set(color, g);
+  }
+  return g;
+}
+function hoodGrad(trim) {
+  let g = hoodGrads.get(trim);
+  if (!g) {
+    g = ctx.createRadialGradient(-2, -9, 1, 0, -7, 9);
+    g.addColorStop(0, '#efe9d6'); g.addColorStop(0.45, trim); g.addColorStop(1, 'rgba(0,0,0,0.7)');
+    hoodGrads.set(trim, g);
+  }
+  return g;
+}
+const bladeGrad = ctx.createLinearGradient(7, 6, 18, 12);
+bladeGrad.addColorStop(0, '#9a9488'); bladeGrad.addColorStop(0.5, '#eae4d2'); bladeGrad.addColorStop(1, '#c7c0ab');
+function drawFigure(x, y, face, opts) {
+  const o = opts || {};
+  const bob = o.walk ? Math.sin(o.walkT * 10) * 1.6 : Math.sin(bgTime * 2 + (o.ph || 0)) * 0.7;
+  ctx.save();
+  ctx.translate(x, y);
+  if (o.scale) ctx.scale(o.scale, o.scale);
+  if (o.fade !== undefined) ctx.globalAlpha = o.fade;
+  // 影子
+  ctx.fillStyle = 'rgba(0,0,0,0.5)';
+  ctx.beginPath(); ctx.ellipse(0, 10, 14, 5.5, 0, 0, 6.29); ctx.fill();
+  if (o.dead) {
+    // 倒地姿態
+    ctx.rotate(face);
+    ctx.fillStyle = o.color;
+    ctx.beginPath(); ctx.ellipse(2, 4, 16, 8, 0, 0, 6.29); ctx.fill();
+    ctx.fillStyle = o.trim;
+    ctx.beginPath(); ctx.arc(14, 4, 6, 0, 6.29); ctx.fill();
+    ctx.restore();
+    ctx.globalAlpha = 1;
+    return;
+  }
+  ctx.translate(0, -6 + bob * 0.4);
+  if (o.flash > 0 && Math.floor(bgTime * 18) % 2) ctx.globalAlpha = 0.5;
+  ctx.save();
+  ctx.rotate(face + Math.PI / 2); // 身體朝向
+  // 披風（淚滴形，漸層 + 邊光）
+  const cg = capeGrad(o.color);
+  ctx.fillStyle = o.color;
+  ctx.beginPath();
+  ctx.moveTo(0, -13);
+  ctx.quadraticCurveTo(12 + bob * 0.5, -2, 8, 14);
+  ctx.quadraticCurveTo(0, 18 + bob, -8, 14);
+  ctx.quadraticCurveTo(-12 - bob * 0.5, -2, 0, -13);
+  ctx.fill();
+  ctx.fillStyle = cg;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 1.6; ctx.stroke();
+  // 腰帶
+  ctx.strokeStyle = o.trim; ctx.lineWidth = 2.4;
+  ctx.beginPath(); ctx.moveTo(-8, 4); ctx.quadraticCurveTo(0, 7, 8, 4); ctx.stroke();
+  // 武器手（面向前方右側）：柴刀/短刀
+  ctx.save();
+  ctx.translate(9, -4);
+  ctx.rotate(o.swing ? -1.7 * Math.sin(o.swing * Math.PI) : 0.25);
+  ctx.strokeStyle = o.skin || '#c8a080'; ctx.lineWidth = 3.4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(7, 6); ctx.stroke();
+  ctx.strokeStyle = bladeGrad; ctx.lineWidth = 2.6;
+  ctx.beginPath(); ctx.moveTo(7, 6); ctx.lineTo(17, 12); ctx.stroke();
+  ctx.restore();
+  // 兜帽頭（受月光的漸層 + 帽尖）
+  ctx.fillStyle = hoodGrad(o.trim);
+  ctx.beginPath(); ctx.arc(0, -7, 7.5, 0, 6.29); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.5)'; ctx.lineWidth = 1.4; ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.beginPath(); ctx.ellipse(0, -5.5, 4.5, 3, 0, 0, 6.29); ctx.fill(); // 帽簷陰影臉
+  if (o.eyes) { // 信徒紅眼
+    ctx.fillStyle = '#ff6a50';
+    ctx.fillRect(-3, -7, 2, 2); ctx.fillRect(1.4, -7, 2, 2);
+  }
+  ctx.restore();
+  // 揮擊弧光
+  if (o.swing && o.swing > 0.25) {
+    const p = o.swing;
+    ctx.save();
+    ctx.rotate(face);
+    ctx.globalAlpha = 0.7 * (1 - p);
+    ctx.strokeStyle = '#fff3d8'; ctx.lineCap = 'round';
+    ctx.lineWidth = 6 * (1 - p * 0.5);
+    ctx.beginPath(); ctx.arc(0, 0, 26 + p * 16, -0.9, 0.9); ctx.stroke();
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+  // 警覺驚嘆號
+  if (o.alert > 0) {
+    ctx.fillStyle = PAL.bad;
+    ctx.font = 'bold 22px Georgia, serif'; ctx.textAlign = 'center';
+    ctx.strokeStyle = 'rgba(0,0,0,0.7)'; ctx.lineWidth = 3;
+    const ay = -34 - clamp(o.alert * 4, 0, 1) * 4;
+    ctx.strokeText('!', 0, ay);
+    ctx.fillText('!', 0, ay);
+  }
+  // 戰利品袋
+  if (o.loot) {
+    ctx.fillStyle = PAL.amber;
+    ctx.beginPath(); ctx.arc(0, -30 + Math.sin(bgTime * 4) * 2, 6, 0, 6.29); ctx.fill();
+    ctx.strokeStyle = '#5a4020'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = '#5a4020';
+    ctx.fillRect(-2, -39 + Math.sin(bgTime * 4) * 2, 4, 4);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ---------- 遊戲資料 ----------
+const player = { x: 120, y: 470, face: -1.2, hp: 3, stam: 100, hunger: 80, walkT: 0, walk: false, atkT: 0, atkCd: 0, hurtT: 0, loot: false, stepT: 0 };
+let cultists = [], meat = { x: 520, y: 330, alive: true };
+let day = 47, kills = 0, takedowns = 0, nights = 0, phase = 'raid';
+const NIGHTS_GOAL = 3; // 三晚挑戰：撐過三晚即勝利結算（一場 1~4 分鐘自然收尾）
+let won = false, grade = 'C';
+let best = 0, newBest = false, finalScore = 0;
+let bonus = 0, spotted = false, chain = 0, treasures = [];
+let gold = 0;
+try { best = parseInt(localStorage.getItem('夜襲邪教據點.best') || '0', 10) || 0; } catch (err) { best = 0; }
+try { gold = parseInt(localStorage.getItem('夜襲邪教據點.gold') || '0', 10) || 0; } catch (err) { gold = 0; }
+
+// ---------- 金幣升級系統 ----------
+const UPGRADE_DEFS = {
+  hp: { label: '❤️ 最大生命', desc: '每級 +1 上限生命（初始 3 顆心）', max: 2, baseCost: 90, step: 70 },
+  power: { label: '🗡️ 攻擊力', desc: '每級 +1 揮砍傷害（偷襲傷害同步提升）', max: 2, baseCost: 70, step: 55 },
+  speed: { label: '👟 移動速度', desc: '每級 +12% 移動速度，更容易繞背偷襲', max: 3, baseCost: 60, step: 45 },
+  stam: { label: '⚡ 體力上限', desc: '每級 +20 最大體力，能多揮砍幾次', max: 3, baseCost: 60, step: 45 },
+};
+let upgrades = { hp: 0, power: 0, speed: 0, stam: 0 };
+try {
+  const saved = JSON.parse(localStorage.getItem('夜襲邪教據點.upgrades') || '{}');
+  for (const k in UPGRADE_DEFS) upgrades[k] = clamp(saved[k] || 0, 0, UPGRADE_DEFS[k].max);
+} catch (err) { /* keep defaults */ }
+function saveUpgrades() { try { localStorage.setItem('夜襲邪教據點.upgrades', JSON.stringify(upgrades)); } catch (err) {} }
+function upgradeCost(key) {
+  const def = UPGRADE_DEFS[key];
+  return def.baseCost + upgrades[key] * def.step;
+}
+function buyUpgrade(key) {
+  const def = UPGRADE_DEFS[key];
+  if (upgrades[key] >= def.max) return;
+  const cost = upgradeCost(key);
+  if (gold < cost) { sfx.hurt(); return; }
+  gold -= cost; upgrades[key]++;
+  saveUpgrades();
+  try { localStorage.setItem('夜襲邪教據點.gold', String(gold)); } catch (err) {}
+  sfx.loot();
+}
+function playerMaxHp() { return 3 + upgrades.hp; }
+function playerMaxStam() { return 100 + upgrades.stam * 20; }
+function atkDamage(backstab) { return (backstab ? 2 : 1) + upgrades.power; }
+function speedMulFromUpgrade() { return 1 + upgrades.speed * 0.12; }
+// ---------- v4：無盡夜襲（通關三晚後解鎖的無盡挑戰）----------
+let mode = 'story';                    // story = 三晚劇情；endless = 無盡夜襲；levels = 50 關模式
+let cleared = false;                   // 是否已通關三晚（解鎖無盡模式與 50 關模式）
+let endlessBest = 0;
+try { cleared = localStorage.getItem('夜襲邪教據點.cleared') === '1'; } catch (err) { cleared = false; }
+try { endlessBest = parseInt(localStorage.getItem('夜襲邪教據點.endless_best') || '0', 10) || 0; } catch (err) { endlessBest = 0; }
+function endlessGrade(n) { return n >= 8 ? 'S' : n >= 6 ? 'A' : n >= 4 ? 'B' : 'C'; }
+
+// ---------- v4：50 關闖關模式 ----------
+function buildLevels() {
+  const defs = [];
+  for (let n = 1; n <= 50; n++) {
+    const count = Math.min(3 + Math.floor((n - 1) / 4), 10);
+    const speedMul = 1 + Math.floor((n - 1) / 8) * 0.2;
+    const hasTimer = n % 5 === 0;
+    const timeLimit = hasTimer ? Math.max(35, 75 - Math.floor(n / 5) * 3) : 0;
+    const eliteHp = n % 10 === 0 ? 3 : 2;
+    let objective = '擊倒全部 ' + count + ' 名信徒，搶奪祭壇戰利品後撤離森林';
+    if (hasTimer) objective = '限時 ' + timeLimit + ' 秒內擊倒全部信徒、搶戰利品並撤離！';
+    if (n % 10 === 0) objective = '信徒更頑強（多 1 點血量）！' + (hasTimer ? ('限時 ' + timeLimit + ' 秒，') : '') + '清空據點、搶戰利品後撤離';
+    defs.push({ n, count, speedMul, timeLimit, eliteHp, objective });
+  }
+  return defs;
+}
+const LEVELS = buildLevels();
+let levelUnlocked = 1;
+try { levelUnlocked = Math.max(1, parseInt(localStorage.getItem('夜襲邪教據點.level_unlocked') || '1', 10) || 1); } catch (err) { levelUnlocked = 1; }
+let currentLevel = 0, levelTimeLeft = 0;
+
+const ATK_RANGE = 52, ATK_COST = 20, ATK_CD = 0.5;
+function spawnNight() {
+  let n, speedMul = 1, eliteHp = 2;
+  if (mode === 'levels') {
+    const def = LEVELS[currentLevel - 1];
+    n = def.count; speedMul = def.speedMul; eliteHp = def.eliteHp;
+    levelTimeLeft = def.timeLimit || 0;
+  } else {
+    // v4：無盡模式信徒更多、上限更高
+    n = Math.min((mode === 'endless' ? 4 : 3) + nights, mode === 'endless' ? 9 : 7);
+  }
+  cultists = [];
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * 6.2832 + rnd(-0.3, 0.3);
+    const r = rnd(70, 135);
+    cultists.push({
+      x: CAMP.x + Math.cos(a) * r, y: CAMP.y + Math.sin(a) * r * 0.8,
+      face: rnd(0, 6.28), st: i % 2 ? 'patrol' : 'idle',
+      baseX: 0, baseY: 0, wpA: a, wpT: rnd(0, 4),
+      hp: mode === 'levels' ? eliteHp : 2, maxHp: mode === 'levels' ? eliteHp : 2, alert: 0, chaseT: 0, flash: 0, fade: 1, dead: false,
+      range: 130 + nights * 8, speed: (62 + nights * 5) * speedMul, hitCd: 0, ph: rnd(0, 6)
+    });
+    cultists[i].baseX = cultists[i].x; cultists[i].baseY = cultists[i].y;
+  }
+  // 第 2 晚起出現邪教頭目：更壯、視野更廣、擊殺回復 1 HP（劇情/無盡模式）
+  if (mode !== 'levels' && nights >= 1) {
+    const c = cultists[0];
+    c.leader = true; c.hp = 3; c.maxHp = 3; c.range += 45; c.speed += 14; c.st = 'patrol';
+  }
+  // v4：無盡模式第 4 晚起出現第二名頭目
+  if (mode === 'endless' && nights >= 3 && cultists[1]) {
+    const c = cultists[1];
+    c.leader = true; c.hp = 3; c.maxHp = 3; c.range += 45; c.speed += 14; c.st = 'patrol';
+  }
+  // 每 10 關的關卡頭目：血量已由 eliteHp 決定，額外掛頭目標記加成掉落
+  if (mode === 'levels' && currentLevel % 10 === 0 && cultists[0]) {
+    cultists[0].leader = true;
+  }
+  // 祭品金幣（風險回報：散在營地深處）
+  treasures = [];
+  for (let i = 0; i < 2; i++) {
+    const a = rnd(0, 6.2832);
+    treasures.push({ x: CAMP.x + Math.cos(a) * rnd(90, 150), y: CAMP.y + Math.sin(a) * rnd(70, 115), ph: rnd(0, 6) });
+  }
+  meat.alive = true;
+  player.x = 120; player.y = 470; player.face = -1.2;
+  player.loot = false;
+  spotted = false; chain = 0;
+  phase = 'raid';
+  drops.length = 0;
+}
+function calcScore() { return nights * 100 + kills * 25 + takedowns * 15 + bonus; }
+function drawTreasures() {
+  for (const tr of treasures) {
+    const tw = Math.sin(bgTime * 3 + tr.ph);
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.beginPath(); ctx.ellipse(tr.x, tr.y + 5, 11, 4, 0, 0, 6.29); ctx.fill();
+    ctx.save();
+    ctx.translate(tr.x, tr.y);
+    // 光暈色塊取代 shadowBlur（每幀省一次高斯模糊）
+    ctx.globalAlpha = 0.28 + tw * 0.1;
+    ctx.fillStyle = PAL.fireHot;
+    ctx.beginPath(); ctx.arc(0, -1, 13, 0, 6.29); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = PAL.amber;
+    ctx.beginPath(); ctx.arc(-5, 0, 5, 0, 6.29); ctx.arc(5, 1, 5, 0, 6.29); ctx.arc(0, -5, 5, 0, 6.29); ctx.fill();
+    ctx.fillStyle = '#7a5c28';
+    ctx.beginPath(); ctx.arc(-5, 0, 2, 0, 6.29); ctx.arc(5, 1, 2, 0, 6.29); ctx.fill();
+    ctx.fillStyle = 'rgba(255,240,190,0.9)';
+    ctx.fillRect(-2, -8, 2.5, 2.5);
+    ctx.restore();
+  }
+}
+
+// ---------- 輸入 ----------
+const keys = {};
+const pointers = new Map();
+const TOUCH = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+let joy = null; // {id, ox, oy, dx, dy}
+const uiButtons = [];
+const ATK_BTN = { x: 852, y: 418, r: 48 };
+function toLogical(e) {
+  const r = canvas.getBoundingClientRect();
+  const s = r.width / GAME_W;
+  return { x: (e.clientX - r.left) / s, y: (e.clientY - r.top) / s };
+}
+canvas.addEventListener('pointerdown', e => {
+  e.preventDefault(); audio();
+  const p = toLogical(e);
+  for (const b of uiButtons) {
+    if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) { b.cb(); return; }
+  }
+  if (state === playState) {
+    if (Math.hypot(p.x - ATK_BTN.x, p.y - ATK_BTN.y) < ATK_BTN.r + 14) { tryAttack(); return; }
+    if (!joy) { joy = { id: e.pointerId, ox: p.x, oy: p.y, dx: 0, dy: 0 }; return; }
+  }
+  pointers.set(e.pointerId, p);
+  if (state.onDown) state.onDown(p);
+}, { passive: false });
+addEventListener('pointermove', e => {
+  const p = toLogical(e);
+  if (joy && e.pointerId === joy.id) {
+    joy.dx = clamp(p.x - joy.ox, -60, 60);
+    joy.dy = clamp(p.y - joy.oy, -60, 60);
+  }
+  if (pointers.has(e.pointerId)) pointers.set(e.pointerId, p);
+});
+function endPointer(e) {
+  if (joy && e.pointerId === joy.id) joy = null;
+  pointers.delete(e.pointerId);
+}
+addEventListener('pointerup', endPointer);
+addEventListener('pointercancel', endPointer);
+addEventListener('keydown', e => {
+  if (['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyE'].includes(e.code)) e.preventDefault();
+  audio();
+  if (e.code === 'KeyM' && !e.repeat) { setMuted(!muted); return; }
+  keys[e.code] = true;
+  if (!e.repeat && state.onKey) state.onKey(e.code);
+});
+addEventListener('keyup', e => { keys[e.code] = false; });
+
+// ---------- 戰鬥 ----------
+function rollGoldDrop(c) {
+  // 敵人越強（血量上限、頭目、關卡/夜數難度）掉落機率與金額都越高
+  const diffBonus = mode === 'levels' ? Math.floor(currentLevel / 10) : nights;
+  const strength = (c.maxHp || 2) + diffBonus + (c.leader ? 2 : 0);
+  const dropChance = clamp(0.35 + strength * 0.08, 0.35, 0.9);
+  if (Math.random() < dropChance) {
+    const amount = Math.round(strength * (3 + Math.random() * 4));
+    spawnDrop(c.x, c.y, amount);
+  }
+}
+function tryAttack() {
+  if (state !== playState || player.hp <= 0) return;
+  if (player.atkCd > 0) return;
+  if (player.stam < ATK_COST) {
+    addFloat(player.x, player.y - 34, '體力不足！', PAL.bad, false);
+    return;
+  }
+  player.atkCd = ATK_CD;
+  player.atkT = 0.28;
+  player.stam -= ATK_COST;
+  sfx.swing();
+  // 瞄準輔助：錐內沒目標時，自動轉向最近的敵人（觸控友善）
+  const REACH = ATK_RANGE + 12;
+  let inConeAny = false, nearest = null, nd = 1e9;
+  for (const c of cultists) {
+    if (c.dead) continue;
+    const d = Math.hypot(c.x - player.x, c.y - player.y);
+    if (d < REACH && Math.abs(angDiff(Math.atan2(c.y - player.y, c.x - player.x), player.face)) < 1.3) inConeAny = true;
+    if (d < nd) { nd = d; nearest = c; }
+  }
+  if (!inConeAny && nearest && nd < REACH) player.face = Math.atan2(nearest.y - player.y, nearest.x - player.x);
+  let hitAny = false;
+  for (const c of cultists) {
+    if (c.dead) continue;
+    const d = Math.hypot(c.x - player.x, c.y - player.y);
+    const dirTo = Math.atan2(c.y - player.y, c.x - player.x);
+    if (d < REACH && Math.abs(angDiff(dirTo, player.face)) < 1.3) {
+      hitAny = true;
+      // 背後偷襲：信徒沒發現你 → 一擊放倒
+      const backstab = c.alert <= 0 && Math.abs(angDiff(c.face, dirTo)) < 1.5;
+      c.hp -= atkDamage(backstab);
+      c.flash = 0.5;
+      burst(c.x, c.y - 8, '#d8cfb8', 8, 160, 60);
+      if (backstab && c.hp <= 0) {
+        takedowns++;
+        addFloat(c.x, c.y - 36, '偷襲成功！', PAL.amber, true);
+        // 無聲連殺：整晚沒被發現的連續偷襲，加分越滾越多
+        if (!spotted) {
+          chain++;
+          bonus += chain * 10;
+          addFloat(c.x, c.y - 58, '無聲連殺 x' + chain + '（+' + chain * 10 + '）', PAL.fireHot, false);
+        }
+        sfx.takedown();
+        freeze = 0.08; shake = Math.max(shake, 6);
+      } else {
+        addFloat(c.x, c.y - 32, '-1', '#ffdf9a', false);
+        sfx.hit();
+        freeze = 0.04; shake = Math.max(shake, 3.5);
+        if (c.alert <= 0) { c.alert = 2.2; sfx.alert(); }
+        c.chaseT = 3;
+        spotted = true; chain = 0;
+      }
+      if (c.hp <= 0) {
+        c.dead = true; kills++;
+        burst(c.x, c.y, '#7a6a52', 14, 190, 60);
+        rollGoldDrop(c);
+        if (c.leader) {
+          bonus += 75;
+          if (player.hp < playerMaxHp()) {
+            player.hp++;
+            addFloat(player.x, player.y - 54, '擊殺頭目！回復 1 HP（+75）', PAL.good, true);
+          } else {
+            addFloat(c.x, c.y - 54, '擊殺頭目！+75', PAL.amber, true);
+          }
+          sfx.night();
+        }
+        // 全部清空 → 搶祭壇
+        if (cultists.every(cc => cc.dead)) {
+          phase = 'loot';
+          addFloat(TOTEM.x, TOTEM.y - 60, '據點清空！去祭壇搶戰利品！', PAL.amber, true);
+          sfx.night();
+        }
+      }
+    }
+  }
+  // 搶奪祭壇
+  if (phase === 'loot' && Math.hypot(TOTEM.x - player.x, TOTEM.y - player.y) < ATK_RANGE + 14) {
+    phase = 'retreat';
+    player.loot = true;
+    burst(TOTEM.x, TOTEM.y - 20, PAL.fireHot, 22, 220, 120);
+    addFloat(TOTEM.x, TOTEM.y - 60, '搶到戰利品！快撤離！', PAL.fireHot, true);
+    sfx.loot();
+    shake = Math.max(shake, 5);
+  }
+  if (!hitAny) burst(player.x + Math.cos(player.face) * 30, player.y + Math.sin(player.face) * 30, 'rgba(200,200,180,0.5)', 3, 90);
+}
+function hurtPlayer(fromX, fromY) {
+  if (player.hurtT > 0 || player.hp <= 0) return;
+  player.hp--;
+  player.hurtT = 1.4;
+  sfx.hurt();
+  freeze = 0.07; shake = Math.max(shake, 8);
+  burst(player.x, player.y - 8, PAL.bad, 14, 220, 60);
+  addFloat(player.x, player.y - 36, '被抓到了！-1', PAL.bad, true);
+  const kb = Math.atan2(player.y - fromY, player.x - fromX);
+  player.x += Math.cos(kb) * 42;
+  player.y += Math.sin(kb) * 42;
+  if (player.hp <= 0) {
+    finalScore = calcScore();
+    if (mode === 'endless') {   // v4：無盡模式分數獨立記錄
+      newBest = finalScore > endlessBest;
+      if (newBest) { endlessBest = finalScore; try { localStorage.setItem('夜襲邪教據點.endless_best', String(endlessBest)); } catch (err) {} }
+    } else if (mode === 'story') {
+      newBest = finalScore > best;
+      if (newBest) { best = finalScore; try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {} }
+    }
+    sfx.lose();
+    setTimeout(() => setState(overState), 900);
+  }
+}
+
+// ---------- 狀態機 ----------
+let state = null;
+function setState(s) { state = s; if (s.enter) s.enter(); }
+
+// 柵欄與帳篷為全靜態 → 烘焙進地面貼圖（每幀省 26 根木樁的漸層與描邊）
+(function bakeStatic() {
+  const real = ctx;
+  ctx = groundCv.getContext('2d');
+  drawFence();
+  drawTent(TENTS[0]); drawTent(TENTS[1]);
+  ctx = real;
+})();
+// 月光 + 暗角疊層（全靜態 → 預繪一張）
+const vigCv = document.createElement('canvas');
+vigCv.width = GAME_W; vigCv.height = GAME_H;
+(function () {
+  const c = vigCv.getContext('2d');
+  const ml = c.createRadialGradient(GAME_W * 0.85, 40, 10, GAME_W * 0.85, 40, 320);
+  ml.addColorStop(0, 'rgba(210,220,240,0.1)'); ml.addColorStop(1, 'rgba(210,220,240,0)');
+  c.fillStyle = ml;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+  const vg = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.4, GAME_W / 2, GAME_H / 2, GAME_H * 0.92);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
+  c.fillStyle = vg;
+  c.fillRect(0, 0, GAME_W, GAME_H);
+})();
+function drawScene(lootGlow) {
+  ctx.drawImage(groundCv, 0, 0);
+  drawTotem(lootGlow);
+  drawMeat(meat);
+  drawTreasures();
+  drawDrops();
+}
+function drawAtmosphere() {
+  // 樹（最上層蓋住邊緣）
+  for (const t of trees) drawTree(t);
+  // 霧（貼圖縮放）
+  for (const f of fogs) {
+    ctx.globalAlpha = f.a;
+    ctx.drawImage(fogCv, f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
+  }
+  ctx.globalAlpha = 1;
+  // 螢火蟲
+  for (const fy2 of flies) {
+    const fx = fy2.x + Math.sin(bgTime * fy2.sp + fy2.ph) * 30;
+    const fyy = fy2.y + Math.cos(bgTime * fy2.sp * 0.7 + fy2.ph) * 20;
+    ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(bgTime * 2 + fy2.ph));
+    ctx.fillStyle = '#d8e8a0';
+    ctx.fillRect(fx, fyy, 2.5, 2.5);
+  }
+  ctx.globalAlpha = 1;
+  // 月光角落 + 暗角（預繪疊層）
+  ctx.drawImage(vigCv, 0, 0);
+}
+function fogUpdate(dt) {
+  bgTime += dt;
+  for (const f of fogs) {
+    f.x += f.v * dt;
+    if (f.x - f.r > GAME_W) f.x = -f.r;
+  }
+}
+
+// ===== 標題 =====
+const titleState = {
+  enter() { this.t = 0; },
+  update(dt) { this.t += dt; fogUpdate(dt); },
+  onKey(code) {
+    if (code === 'Space' || code === 'Enter' || code === 'KeyE') startGame('story');
+    else if (code === 'KeyN' && cleared) startGame('endless');
+    else if (code === 'KeyL' && cleared) setState(levelSelectState);
+    else if (code === 'KeyU') setState(shopState);
+  },
+  draw() {
+    uiButtons.length = 0;
+    drawScene(false);
+    drawFigure(CAMP.x - 40, CAMP.y + 50, -0.5, { color: PAL.cult, trim: PAL.cultTrim, eyes: true, ph: 1 });
+    drawFigure(CAMP.x + 70, CAMP.y + 80, 2.6, { color: PAL.cult, trim: PAL.cultTrim, eyes: true, ph: 3 });
+    drawFire();
+    drawFigure(150, 460, -0.9, { color: PAL.player, trim: PAL.playerTrim, ph: 0 });
+    drawAtmosphere();
+    // 月亮
+    const mg2 = ctx.createRadialGradient(830, 70, 5, 830, 70, 70);
+    mg2.addColorStop(0, 'rgba(255,253,243,0.5)'); mg2.addColorStop(1, 'rgba(255,253,243,0)');
+    ctx.fillStyle = mg2;
+    ctx.beginPath(); ctx.arc(830, 70, 70, 0, 6.29); ctx.fill();
+    ctx.fillStyle = '#fffdf3';
+    ctx.beginPath(); ctx.arc(830, 70, 26, 0, 6.29); ctx.fill();
+    ctx.fillStyle = 'rgba(205,199,168,0.6)';
+    ctx.beginPath(); ctx.arc(822, 64, 6, 0, 6.29); ctx.arc(838, 78, 4, 0, 6.29); ctx.fill();
+    // 標題
+    const ts = easeOutBack(clamp(this.t / 0.7, 0, 1));
+    ctx.save();
+    ctx.translate(GAME_W / 2, 120);
+    ctx.scale(ts, ts);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.amber;
+    ctx.font = 'bold 13px monospace';
+    ctx.fillText('ROBLOX · 99 NIGHTS IN THE FOREST 同人可玩版', 0, -52);
+    ctx.font = 'bold 58px serif';
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 8;
+    ctx.strokeText('夜襲邪教據點', 0, 0);
+    const tg = ctx.createLinearGradient(0, -44, 0, 12);
+    tg.addColorStop(0, PAL.bone); tg.addColorStop(1, PAL.fire);
+    ctx.fillStyle = tg;
+    ctx.fillText('夜襲邪教據點', 0, 0);
+    ctx.restore();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText('繞到信徒背後偷襲、清空據點、搶祭壇撤離——連續達成三晚就獲勝！', GAME_W / 2, 166);
+    ctx.fillStyle = 'rgba(6,11,8,0.7)';
+    roundRect(GAME_W / 2 - 300, 178, 600, 52, 8);
+    ctx.fill();
+    ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 15px sans-serif';
+    ctx.fillText('電腦：W A S D 或 ← ↑ ↓ → 移動 · E / 空白鍵 攻擊', GAME_W / 2, 199);
+    ctx.fillText('平板：手指按住畫面拖曳＝搖桿移動 · 點右下紅色「攻擊」鈕', GAME_W / 2, 221);
+    ctx.fillStyle = PAL.fireHot;
+    ctx.font = 'bold 14px monospace';
+    ctx.fillText('💰 金幣：' + gold + '（擊倒信徒有機率掉落，敵人越強掉越多）', GAME_W / 2, 243);
+    (() => {
+      const sx = GAME_W - 156, sy = 14, sw = 142, sh = 30;
+      uiButtons.push({ x: sx, y: sy, w: sw, h: sh, cb: () => setState(shopState) });
+      ctx.fillStyle = 'rgba(201,161,90,0.2)';
+      roundRect(sx, sy, sw, sh, 6); ctx.fill();
+      ctx.strokeStyle = PAL.amber; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = PAL.amber; ctx.font = 'bold 13px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText('🛒 升級（按 U）', sx + sw / 2, sy + 20);
+    })();
+    if (best > 0) {
+      ctx.fillStyle = PAL.amber;
+      ctx.font = 'bold 14px monospace';
+      ctx.fillText('最佳戰績：' + best + ' 分', GAME_W / 2, 261);
+    }
+    const pulse = 1 + Math.sin(bgTime * 3) * 0.03;
+    if (cleared) {
+      // v4：三顆按鈕——劇情三晚 / 無盡夜襲 / 50 關模式
+      ctx.save();
+      ctx.translate(GAME_W / 2 - 160, 293); ctx.scale(pulse, pulse); ctx.translate(-(GAME_W / 2 - 160), -293);
+      titleBtn(GAME_W / 2 - 272, 265, 224, 56, '三晚劇情', 19, () => startGame('story'), '#b5432f', '#6d1f1a');
+      ctx.restore();
+      titleBtn(GAME_W / 2 - 36, 265, 224, 56, '🌙 無盡夜襲', 19, () => startGame('endless'), '#3a5a8f', '#1f2d55');
+      ctx.save();
+      ctx.translate(GAME_W / 2 + 200, 293); ctx.scale(pulse, pulse); ctx.translate(-(GAME_W / 2 + 200), -293);
+      titleBtn(GAME_W / 2 + 200 - 112, 265, 224, 56, '⚔️ 50 關模式', 19, () => setState(levelSelectState), '#5a3a8f', '#2d1f55');
+      ctx.restore();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.good; ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('🌙 已解鎖【無盡夜襲】最佳 ' + endlessBest + ' 分　⚔️ 已解鎖【50 關模式】目前第 ' + Math.min(levelUnlocked, 50) + ' 關（按 N／L）', GAME_W / 2, 340);
+    } else {
+      ctx.save();
+      ctx.translate(GAME_W / 2, 285); ctx.scale(pulse, pulse); ctx.translate(-GAME_W / 2, -285);
+      titleBtn(GAME_W / 2 - 110, 253, 220, 64, '開 始', 30, () => startGame('story'), '#b5432f', '#6d1f1a');
+      ctx.restore();
+      ctx.textAlign = 'center';
+      ctx.fillStyle = PAL.dim; ctx.font = '14px sans-serif';
+      ctx.fillText('通關三晚（撐到第 50 天）後解鎖【無盡夜襲】與【50 關模式】', GAME_W / 2, 340);
+    }
+    muteButton();
+  }
+};
+// v4：標題按鈕繪製＋註冊點擊區
+function titleBtn(x, y, w, h, label, size, cb, c1, c2) {
+  uiButtons.push({ x, y, w, h, cb });
+  const g = ctx.createLinearGradient(0, y, 0, y + h);
+  g.addColorStop(0, c1); g.addColorStop(1, c2);
+  ctx.fillStyle = g;
+  roundRect(x, y, w, h, 14); ctx.fill();
+  ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#f4ece0';
+  ctx.font = 'bold ' + size + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.textBaseline = 'alphabetic';
+}
+function startGame(m) {
+  mode = (m === 'endless' && cleared) ? 'endless' : 'story';   // v4：選擇模式
+  sfx.click();
+  day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0; won = false;
+  player.hp = playerMaxHp(); player.stam = playerMaxStam(); player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
+  parts.length = 0; floaters.length = 0;
+  spawnNight();
+  setState(playState);
+}
+function startLevel(n) {
+  if (n < 1 || n > 50 || n > levelUnlocked) return;
+  mode = 'levels';
+  currentLevel = n;
+  sfx.click();
+  player.hp = playerMaxHp(); player.stam = playerMaxStam(); player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
+  parts.length = 0; floaters.length = 0;
+  spawnNight();
+  setState(playState);
+}
+
+// ===== 50 關：關卡選單 =====
+// ===== 金幣升級商店 =====
+const shopState = {
+  enter() { this.t = 0; },
+  update(dt) { this.t += dt; fogUpdate(dt); },
+  onKey(code) { if (code === 'Escape') setState(titleState); },
+  draw() {
+    uiButtons.length = 0;
+    drawScene(false); drawFire(); drawAtmosphere();
+    ctx.fillStyle = 'rgba(3,6,4,0.75)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.bone;
+    ctx.font = 'bold 30px serif';
+    ctx.fillText('🛒 金幣升級', GAME_W / 2, 56);
+    ctx.fillStyle = PAL.fireHot;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('目前金幣：' + gold, GAME_W / 2, 82);
+    const keys = Object.keys(UPGRADE_DEFS);
+    keys.forEach((key, i) => {
+      const def = UPGRADE_DEFS[key];
+      const lvl = upgrades[key];
+      const maxed = lvl >= def.max;
+      const cost = upgradeCost(key);
+      const bx = GAME_W / 2 - 260, by = 108 + i * 82, bw = 520, bh = 68;
+      ctx.fillStyle = 'rgba(20,30,20,0.85)';
+      roundRect(bx, by, bw, bh, 8); ctx.fill();
+      ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.textAlign = 'left';
+      ctx.fillStyle = PAL.bone;
+      ctx.font = 'bold 17px sans-serif';
+      ctx.fillText(def.label + '　Lv.' + lvl + '/' + def.max, bx + 18, by + 26);
+      ctx.fillStyle = PAL.dim;
+      ctx.font = '12.5px sans-serif';
+      ctx.fillText(def.desc, bx + 18, by + 48);
+      const btnW = 130, btnH = 40, btnX = bx + bw - btnW - 16, btnY = by + (bh - btnH) / 2;
+      if (maxed) {
+        ctx.fillStyle = 'rgba(143,208,122,0.18)';
+        roundRect(btnX, btnY, btnW, btnH, 8); ctx.fill();
+        ctx.strokeStyle = PAL.good; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = PAL.good; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('已滿級', btnX + btnW / 2, btnY + btnH / 2 + 5);
+      } else {
+        const afford = gold >= cost;
+        uiButtons.push({ x: btnX, y: btnY, w: btnW, h: btnH, cb: () => buyUpgrade(key) });
+        ctx.fillStyle = afford ? 'rgba(201,161,90,0.28)' : 'rgba(80,80,80,0.25)';
+        roundRect(btnX, btnY, btnW, btnH, 8); ctx.fill();
+        ctx.strokeStyle = afford ? PAL.amber : PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+        ctx.fillStyle = afford ? PAL.amber : PAL.dim; ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('💰' + cost + ' 升級', btnX + btnW / 2, btnY + btnH / 2 + 5);
+      }
+    });
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.dim;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('按 ESC 或點下方返回標題畫面', GAME_W / 2, 460);
+    uiButtons.push({ x: GAME_W / 2 - 90, y: 468, w: 180, h: 26, cb: () => setState(titleState) });
+    ctx.strokeStyle = PAL.hudLine; ctx.strokeRect(GAME_W / 2 - 90, 468, 180, 26);
+    muteButton();
+  }
+};
+
+const levelSelectState = {
+  enter() { this.t = 0; this.hoverN = 0; },
+  update(dt) { this.t += dt; fogUpdate(dt); },
+  onKey(code) { if (code === 'Escape') setState(titleState); },
+  onDown(p) {
+    for (let n = 1; n <= 50; n++) {
+      const col = (n - 1) % 10, row = Math.floor((n - 1) / 10);
+      const bx = 90 + col * 79, by = 130 + row * 68;
+      if (p.x >= bx && p.x <= bx + 68 && p.y >= by && p.y <= by + 52) {
+        if (n <= levelUnlocked) startLevel(n);
+        return;
+      }
+    }
+  },
+  draw() {
+    uiButtons.length = 0;
+    drawScene(false); drawFire(); drawAtmosphere();
+    ctx.fillStyle = 'rgba(3,6,4,0.72)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.bone;
+    ctx.font = 'bold 30px serif';
+    ctx.fillText('⚔️ 50 關闖關模式', GAME_W / 2, 56);
+    ctx.fillStyle = PAL.dim;
+    ctx.font = '13px sans-serif';
+    ctx.fillText('每關依序解鎖，過關才能挑戰下一關（每 5 關限時、每 10 關信徒更頑強）', GAME_W / 2, 78);
+    for (let n = 1; n <= 50; n++) {
+      const col = (n - 1) % 10, row = Math.floor((n - 1) / 10);
+      const bx = 90 + col * 79, by = 130 + row * 68;
+      const unlocked = n <= levelUnlocked, cleared_ = n < levelUnlocked;
+      uiButtons.push({ x: bx, y: by, w: 68, h: 52, cb: () => { if (unlocked) startLevel(n); } });
+      ctx.fillStyle = cleared_ ? 'rgba(143,208,122,0.22)' : (unlocked ? 'rgba(201,161,90,0.16)' : 'rgba(20,30,20,0.5)');
+      roundRect(bx, by, 68, 52, 6); ctx.fill();
+      ctx.strokeStyle = cleared_ ? PAL.good : (unlocked ? PAL.amber : PAL.hudLine);
+      ctx.lineWidth = unlocked ? 2 : 1; ctx.stroke();
+      ctx.fillStyle = unlocked ? PAL.ink : PAL.dim;
+      ctx.font = 'bold 20px monospace';
+      ctx.fillText(String(n), bx + 34, by + 30);
+      if (!unlocked) {
+        ctx.fillStyle = PAL.dim; ctx.font = '16px sans-serif';
+        ctx.fillText('🔒', bx + 34, by + 46);
+      } else if (cleared_) {
+        ctx.fillStyle = PAL.good; ctx.font = '13px sans-serif';
+        ctx.fillText('✓ 通關', bx + 34, by + 46);
+      } else {
+        ctx.fillStyle = PAL.amber; ctx.font = '11px sans-serif';
+        ctx.fillText(LEVELS[n - 1].timeLimit ? '限時' : (LEVELS[n - 1].eliteHp > 2 ? '強敵' : ''), bx + 34, by + 46);
+      }
+    }
+    ctx.fillStyle = PAL.dim;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText('按 ESC 或點下方返回標題畫面', GAME_W / 2, 500);
+    uiButtons.push({ x: GAME_W / 2 - 90, y: 508, w: 180, h: 26, cb: () => setState(titleState) });
+    ctx.strokeStyle = PAL.hudLine; ctx.strokeRect(GAME_W / 2 - 90, 508, 180, 26);
+    muteButton();
+  }
+};
+
+// ===== 夜襲進行 =====
+const playState = {
+  enter() { this.banner = 4; this.nightFade = 0; this.elapsed = 0; },
+  onKey(code) { if (code === 'KeyE' || code === 'Space' || code === 'KeyJ') tryAttack(); },
+  update(dt) {
+    fogUpdate(dt);
+    this.elapsed += dt;
+    if (mode === 'levels' && levelTimeLeft > 0 && phase !== 'success' && this.nightFade <= 0) {
+      levelTimeLeft -= dt;
+      if (levelTimeLeft <= 0) {
+        levelTimeLeft = 0;
+        showToastFail();
+      }
+    }
+    if (this.banner > 0) this.banner -= dt;
+    if (this.nightFade > 0) {
+      this.nightFade -= dt;
+      if (this.nightFade <= 0) {
+        if (won) { setState(overState); return; }
+        if (mode === 'levels') { setState(levelSelectState); return; }
+        spawnNight(); this.banner = 2;
+      }
+      return;
+    }
+    if (player.hp <= 0) return;
+    // 資源
+    player.hunger = Math.max(0, player.hunger - dt * 1.1);
+    const regen = player.hunger > 15 ? 16 : 6;
+    if (player.atkT <= 0) player.stam = Math.min(playerMaxStam(), player.stam + dt * regen);
+    player.atkT = Math.max(0, player.atkT - dt);
+    player.atkCd = Math.max(0, player.atkCd - dt);
+    player.hurtT = Math.max(0, player.hurtT - dt);
+    // 移動（鍵盤 + 虛擬搖桿）
+    let mx = 0, my = 0;
+    if (keys.KeyW || keys.ArrowUp) my -= 1;
+    if (keys.KeyS || keys.ArrowDown) my += 1;
+    if (keys.KeyA || keys.ArrowLeft) mx -= 1;
+    if (keys.KeyD || keys.ArrowRight) mx += 1;
+    if (joy && Math.hypot(joy.dx, joy.dy) > 10) { mx = joy.dx; my = joy.dy; }
+    const ml = Math.hypot(mx, my);
+    player.walk = ml > 0.01 && player.atkT <= 0;
+    if (player.walk) {
+      const sp = 165 * (player.hunger <= 0 ? 0.7 : 1) * speedMulFromUpgrade();
+      player.x = clamp(player.x + mx / ml * sp * dt, 16, GAME_W - 16);
+      player.y = clamp(player.y + my / ml * sp * dt, 16, GAME_H - 16);
+      player.face = Math.atan2(my, mx);
+      player.walkT += dt;
+      player.stepT -= dt;
+      if (player.stepT <= 0) {
+        player.stepT = 0.28;
+        sfx.step();
+        parts.push({ x: player.x + rnd(-4, 4), y: player.y + 8, vx: rnd(-12, 12), vy: rnd(-8, 0), life: 0.35, color: 'rgba(110,100,80,0.6)', size: 3, grav: 0 });
+      }
+    }
+    // 吃烤肉回飢餓
+    if (meat.alive && Math.hypot(meat.x - player.x, meat.y - player.y) < 24) {
+      meat.alive = false;
+      player.hunger = Math.min(100, player.hunger + 45);
+      addFloat(meat.x, meat.y - 20, '吃了烤肉，飢餓 +45', PAL.good, false);
+      sfx.eat();
+      burst(meat.x, meat.y, PAL.good, 6, 110, 50);
+    }
+    // 撿祭品金幣（風險回報）
+    for (let i = treasures.length - 1; i >= 0; i--) {
+      const tr = treasures[i];
+      if (Math.hypot(tr.x - player.x, tr.y - player.y) < 26) {
+        treasures.splice(i, 1);
+        bonus += 25;
+        player.stam = Math.min(playerMaxStam(), player.stam + 15);
+        addFloat(tr.x, tr.y - 20, '祭品 +25 分', PAL.amber, false);
+        sfx.loot();
+        burst(tr.x, tr.y, PAL.amber, 10, 150, 60);
+      }
+    }
+    // 撿擊殺掉落的金幣
+    updateDrops(dt);
+    // 信徒 AI
+    for (const c of cultists) {
+      if (c.dead) { c.fade = Math.max(0.35, c.fade - dt * 0.6); continue; }
+      c.flash = Math.max(0, c.flash - dt);
+      c.hitCd = Math.max(0, c.hitCd - dt);
+      const dToP = Math.hypot(player.x - c.x, player.y - c.y);
+      const dirToP = Math.atan2(player.y - c.y, player.x - c.x);
+      // 視線偵測：站著不動更難被看見（潛行教學）
+      const seeRange = c.range * (player.walk ? 1 : 0.55);
+      const inCone = dToP < seeRange && Math.abs(angDiff(dirToP, c.face)) < 0.62;
+      if (inCone && c.chaseT <= 0 && player.hp > 0) {
+        c.chaseT = 3.2;
+        if (c.alert <= 0) { sfx.alert(); addFloat(c.x, c.y - 40, '發現你了！', PAL.bad, false); }
+        c.alert = 2.5;
+        spotted = true; chain = 0;
+      }
+      c.alert = Math.max(0, c.alert - dt);
+      if (c.chaseT > 0 && player.hp > 0) {
+        // 追擊
+        c.chaseT -= dt;
+        c.face += angDiff(dirToP, c.face) * 6 * dt;
+        if (dToP > 20) {
+          c.x += Math.cos(c.face) * c.speed * 1.35 * dt;
+          c.y += Math.sin(c.face) * c.speed * 1.35 * dt;
+        }
+        if (dToP < 24 && c.hitCd <= 0) { c.hitCd = 1.2; hurtPlayer(c.x, c.y); }
+      } else if (c.st === 'patrol') {
+        // 繞著營地巡邏
+        c.wpA += dt * 0.35;
+        const tx = CAMP.x + Math.cos(c.wpA) * 120, ty = CAMP.y + Math.sin(c.wpA) * 96;
+        const dd = Math.atan2(ty - c.y, tx - c.x);
+        c.face += angDiff(dd, c.face) * 4 * dt;
+        c.x += Math.cos(c.face) * c.speed * dt;
+        c.y += Math.sin(c.face) * c.speed * dt;
+      } else {
+        // 站哨：緩慢左右張望
+        c.wpT += dt;
+        c.face += Math.sin(c.wpT * 0.8) * 0.55 * dt * 2;
+        const back = Math.hypot(c.baseX - c.x, c.baseY - c.y);
+        if (back > 8) {
+          const dd = Math.atan2(c.baseY - c.y, c.baseX - c.x);
+          c.x += Math.cos(dd) * c.speed * 0.6 * dt;
+          c.y += Math.sin(dd) * c.speed * 0.6 * dt;
+        }
+      }
+    }
+    // 撤離判定
+    if (phase === 'retreat' && Math.hypot(player.x - CAMP.x, (player.y - CAMP.y) * 1.15) > ESCAPE_R) {
+      sfx.night();
+      try { localStorage.setItem('夜襲邪教據點.gold', String(gold)); } catch (err) {}
+      if (mode === 'levels') {
+        addFloat(player.x, player.y - 50, '第 ' + currentLevel + ' 關通關！', PAL.fireHot, true);
+        if (currentLevel >= levelUnlocked && levelUnlocked < 50) {
+          levelUnlocked = currentLevel + 1;
+          try { localStorage.setItem('夜襲邪教據點.level_unlocked', String(levelUnlocked)); } catch (err) {}
+          addFloat(player.x, player.y - 76, '解鎖第 ' + levelUnlocked + ' 關！', PAL.amber, true);
+        } else if (currentLevel >= 50) {
+          addFloat(player.x, player.y - 76, '恭喜！50 關全數通關！', PAL.amber, true);
+        }
+        burst(player.x, player.y - 20, PAL.fireHot, 20, 200, 120);
+        this.nightFade = 1.2;
+        return;
+      }
+      day++;
+      addFloat(player.x, player.y - 50, '夜襲成功！第 ' + day + ' 天', PAL.fireHot, true);
+      if (!spotted) {
+        bonus += 150;
+        addFloat(player.x, player.y - 76, '完美夜襲！全程未被發現 +150', PAL.amber, true);
+      }
+      if (player.hp < playerMaxHp()) {
+        player.hp++;
+        addFloat(player.x, player.y - 100, '夜晚休整 +1 HP', PAL.good, false);
+      }
+      burst(player.x, player.y - 20, PAL.fireHot, 20, 200, 120);
+      player.stam = Math.min(playerMaxStam(), player.stam + 25);
+      nights++;
+      // 三晚達成 → 勝利結算（僅劇情模式；無盡模式永不結束，撐到被抓為止）
+      if (mode === 'story' && nights >= NIGHTS_GOAL) {
+        won = true;
+        finalScore = calcScore() + 300 + player.hp * 100;
+        grade = finalScore >= 1500 ? 'S' : finalScore >= 1200 ? 'A' : finalScore >= 900 ? 'B' : 'C';
+        newBest = finalScore > best;
+        if (newBest) {
+          best = finalScore;
+          try { localStorage.setItem('夜襲邪教據點.best', String(best)); } catch (err) {}
+        }
+        if (!cleared) { cleared = true; try { localStorage.setItem('夜襲邪教據點.cleared', '1'); } catch (err) {} }   // v4：解鎖無盡夜襲與 50 關模式
+      }
+      this.nightFade = 1.2;
+    }
+  },
+  draw() {
+    uiButtons.length = 0;
+    ctx.save();
+    ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+    drawScene(phase === 'loot');
+    // 視線錐（黃=巡邏、紅=追擊；貼圖旋轉縮放，零每幀漸層）
+    for (const c of cultists) {
+      if (c.dead) continue;
+      const rr = c.range * (player.walk ? 1 : 0.55);
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.face);
+      const sc = rr / 126;
+      ctx.scale(sc, sc);
+      ctx.drawImage(c.chaseT > 0 ? coneAlert : coneCalm, -128, -128);
+      ctx.restore();
+    }
+    // 撤離提示圈
+    if (phase === 'retreat') {
+      ctx.strokeStyle = 'rgba(255,210,122,' + (0.3 + Math.sin(bgTime * 4) * 0.15) + ')';
+      ctx.lineWidth = 3; ctx.setLineDash([12, 10]);
+      ctx.beginPath(); ctx.ellipse(CAMP.x, CAMP.y, ESCAPE_R, ESCAPE_R / 1.15, 0, 0, 6.29); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // 角色（依 y 排序偽深度）
+    const order = [...cultists.map(c => ({ y: c.y, f: () => drawFigure(c.x, c.y, c.face, { color: c.leader ? '#4a2418' : PAL.cult, trim: c.leader ? '#d8a03a' : PAL.cultTrim, eyes: true, scale: c.leader ? 1.35 : 1, walk: c.chaseT > 0 || c.st === 'patrol', walkT: bgTime + c.ph, alert: c.alert, flash: c.flash, dead: c.dead, fade: c.fade, ph: c.ph }) })),
+      { y: player.y, f: () => drawFigure(player.x, player.y, player.face, { color: PAL.player, trim: PAL.playerTrim, walk: player.walk, walkT: player.walkT, swing: player.atkT > 0 ? 1 - player.atkT / 0.28 : 0, flash: player.hurtT, loot: player.loot, skin: '#c8a080' }) },
+      { y: FIRE.y, f: drawFire }];
+    order.sort((a, b) => a.y - b.y);
+    for (const o of order) o.f();
+    // 新手指引箭頭：第一晚還沒擊倒人之前，指向最近的信徒
+    if (mode === 'story' && nights === 0 && kills === 0 && phase === 'raid' && this.elapsed < 18 && player.hp > 0) {
+      let n = null, nd2 = 1e9;
+      for (const c of cultists) {
+        if (c.dead) continue;
+        const d = Math.hypot(c.x - player.x, c.y - player.y);
+        if (d < nd2) { nd2 = d; n = c; }
+      }
+      if (n && nd2 > 70) {
+        const a = Math.atan2(n.y - player.y, n.x - player.x);
+        const rr = 46 + Math.sin(bgTime * 5) * 6;
+        ctx.save();
+        ctx.translate(player.x + Math.cos(a) * rr, player.y - 12 + Math.sin(a) * rr);
+        ctx.rotate(a);
+        ctx.fillStyle = PAL.amber;
+        ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(12, 0); ctx.lineTo(-7, -8); ctx.lineTo(-7, 8); ctx.closePath();
+        ctx.fill(); ctx.stroke();
+        ctx.restore();
+      }
+    }
+    drawParts();
+    drawFloaters();
+    drawAtmosphere();
+    ctx.restore();
+    drawHUD(this);
+    // 開場/過夜橫幅
+    if (this.banner > 0) {
+      ctx.globalAlpha = clamp(this.banner, 0, 1);
+      ctx.fillStyle = 'rgba(6,11,8,0.75)';
+      roundRect(GAME_W / 2 - 270, 82, 540, 70, 6);
+      ctx.fill();
+      ctx.fillStyle = PAL.bone;
+      ctx.font = 'bold 20px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(mode === 'levels' ? ('第 ' + currentLevel + ' 關：站著不動比較不會被看見，繞到背後偷襲！') : ('DAY ' + day + '：站著不動比較不會被看見，繞到背後偷襲！'), GAME_W / 2, 110);
+      ctx.fillStyle = PAL.amber;
+      ctx.font = 'bold 15px sans-serif';
+      ctx.fillText(TOUCH ? '按住畫面拖曳＝移動 · 右下紅鈕＝攻擊' : 'WASD／方向鍵＝移動 · E 或空白鍵＝攻擊', GAME_W / 2, 138);
+      ctx.globalAlpha = 1;
+    }
+    if (this.nightFade > 0) {
+      ctx.fillStyle = 'rgba(255,235,200,' + clamp(Math.sin((1.2 - this.nightFade) / 1.2 * Math.PI) * 0.7, 0, 1) + ')';
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+    }
+  }
+};
+function showToastFail() {
+  addFloat(player.x, player.y - 50, '時間到！關卡失敗，重新挑戰', PAL.bad, true);
+  sfx.lose();
+  setTimeout(() => startLevel(currentLevel), 1200);
+}
+
+// ---------- HUD ----------
+const barGrads = new Map();
+function drawHUD(st) {
+  // DAY／關卡 徽章
+  ctx.fillStyle = 'rgba(10,18,12,0.85)';
+  roundRect(14, 12, 92, 52, 4);
+  ctx.fill();
+  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = PAL.amber;
+  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
+  ctx.fillText(mode === 'levels' ? 'LEVEL' : 'D A Y', 60, 30);
+  ctx.fillStyle = PAL.bone;
+  ctx.font = 'bold 24px monospace';
+  ctx.fillText(mode === 'levels' ? String(currentLevel) : String(day), 60, 56);
+  // 生命（愛心）
+  for (let i = 0; i < playerMaxHp(); i++) {
+    const hx = 124 + i * 30, hy = 20;
+    const on = player.hp > i;
+    ctx.save();
+    ctx.translate(hx, hy);
+    if (player.hurtT > 1 && on) ctx.translate(rnd(-2, 2), rnd(-2, 2));
+    ctx.fillStyle = on ? PAL.bad : 'rgba(60,60,60,0.7)';
+    ctx.beginPath();
+    ctx.moveTo(10, 22);
+    ctx.bezierCurveTo(-6, 10, 0, -4, 10, 4);
+    ctx.bezierCurveTo(20, -4, 26, 10, 10, 22);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,0.6)'; ctx.lineWidth = 2; ctx.stroke();
+    if (on) { ctx.fillStyle = 'rgba(255,255,255,0.4)'; ctx.beginPath(); ctx.arc(5, 5, 2.6, 0, 6.29); ctx.fill(); }
+    ctx.restore();
+  }
+  // 體力 / 飢餓條
+  const bx = GAME_W - 218, bw = 160;
+  ctx.fillStyle = 'rgba(10,18,12,0.85)';
+  roundRect(bx - 12, 12, bw + 68, 58, 4);
+  ctx.fill();
+  ctx.strokeStyle = PAL.hudLine; ctx.stroke();
+  const bar = (y, label, v, max, c1, c2, warn) => {
+    ctx.fillStyle = PAL.dim;
+    ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+    ctx.fillText(label, bx, y + 8);
+    ctx.fillStyle = '#050a06';
+    ctx.fillRect(bx + 34, y, bw, 9);
+    let g = barGrads.get(c1);
+    if (!g) {
+      g = ctx.createLinearGradient(bx + 34, 0, bx + 34 + bw, 0);
+      g.addColorStop(0, c1); g.addColorStop(1, c2);
+      barGrads.set(c1, g);
+    }
+    ctx.fillStyle = g;
+    if (warn && Math.floor(bgTime * 4) % 2) ctx.fillStyle = PAL.bad;
+    ctx.fillRect(bx + 34, y, bw * clamp(v / max, 0, 1), 9);
+    ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(bx + 34, y, bw, 9);
+  };
+  bar(26, '體力', player.stam, playerMaxStam(), '#b6e07f', '#5aa03e', player.stam < 25);
+  bar(48, '飢餓', player.hunger, 100, PAL.fireHot, PAL.fire, player.hunger < 15);
+  // 進度／金幣
+  ctx.fillStyle = PAL.amber;
+  ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
+  const progressText = mode === 'levels' ? ('關卡 ' + currentLevel + '/50' + (levelTimeLeft > 0 ? ('　剩餘 ' + Math.ceil(levelTimeLeft) + ' 秒') : ''))
+    : (mode === 'endless' ? ('無盡 · 第 ' + (nights + 1) + ' 晚') : ('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚'));
+  ctx.fillText(progressText, 122, 58);
+  ctx.fillStyle = PAL.fireHot;
+  ctx.font = 'bold 13px monospace'; ctx.textAlign = 'right';
+  ctx.fillText('💰 ' + gold, GAME_W - 16, 30);
+  // 目標列
+  const alive = cultists.filter(c => !c.dead).length;
+  const atkWord = TOUCH ? '點「攻擊」鈕' : '按 E';
+  let obj = '潛入據點：繞到信徒背後' + atkWord + '偷襲（剩餘 ' + alive + ' 名）';
+  if (phase === 'loot') obj = '據點清空！到中央祭壇' + atkWord + '搶奪戰利品';
+  if (phase === 'retreat') obj = '戰利品到手！衝出虛線圈撤回森林！';
+  ctx.fillStyle = 'rgba(10,18,12,0.85)';
+  roundRect(GAME_W / 2 - 250, GAME_H - 40, 500, 30, 4);
+  ctx.fill();
+  ctx.strokeStyle = phase === 'raid' ? PAL.hudLine : PAL.amber; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = PAL.ink;
+  ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
+  ctx.fillText(obj, GAME_W / 2, GAME_H - 20);
+  // 戰績
+  ctx.fillStyle = PAL.dim;
+  ctx.font = '12px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('擊倒 ' + kills + ' · 偷襲 ' + takedowns + ' · 得分 ' + calcScore(), 16, GAME_H - 16);
+  // 觸控 UI
+  if (TOUCH) {
+    if (joy) {
+      ctx.globalAlpha = 0.35;
+      ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(joy.ox, joy.oy, 44, 0, 6.29); ctx.stroke();
+      ctx.fillStyle = PAL.amber;
+      ctx.beginPath(); ctx.arc(joy.ox + joy.dx * 0.6, joy.oy + joy.dy * 0.6, 20, 0, 6.29); ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+    ctx.globalAlpha = 0.55;
+    const ag = ctx.createRadialGradient(ATK_BTN.x - 10, ATK_BTN.y - 12, 4, ATK_BTN.x, ATK_BTN.y, ATK_BTN.r);
+    ag.addColorStop(0, '#b5432f'); ag.addColorStop(1, '#6d1f1a');
+    ctx.fillStyle = ag;
+    ctx.beginPath(); ctx.arc(ATK_BTN.x, ATK_BTN.y, ATK_BTN.r, 0, 6.29); ctx.fill();
+    ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#f4ece0';
+    ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('攻擊', ATK_BTN.x, ATK_BTN.y + 7);
+    ctx.globalAlpha = 1;
+  }
+  muteButton();
+}
+function muteButton() {
+  const x = GAME_W - 56, y = GAME_H - 52, s = 44;
+  uiButtons.push({ x, y, w: s, h: s, cb: () => { setMuted(!muted); if (!muted) sfx.click(); } });
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,18,12,0.75)';
+  roundRect(x, y, s, s, 8); ctx.fill();
+  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 2; ctx.stroke();
+  ctx.fillStyle = muted ? PAL.dim : PAL.amber;
+  ctx.beginPath();
+  ctx.moveTo(x + 11, y + 16); ctx.lineTo(x + 17, y + 16); ctx.lineTo(x + 24, y + 9);
+  ctx.lineTo(x + 24, y + 31); ctx.lineTo(x + 17, y + 24); ctx.lineTo(x + 11, y + 24);
+  ctx.closePath(); ctx.fill();
+  if (muted) {
+    ctx.strokeStyle = PAL.bad; ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(x + 28, y + 14); ctx.lineTo(x + 36, y + 26);
+    ctx.moveTo(x + 36, y + 14); ctx.lineTo(x + 28, y + 26);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = PAL.amber; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(x + 26, y + 20, 6, -0.9, 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(x + 26, y + 20, 10, -0.9, 0.9); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ===== 結算 =====
+const overState = {
+  enter() { this.t = 0; },
+  onKey(code) { if (this.t > 0.5 && (code === 'Space' || code === 'Enter' || code === 'KeyE')) startGame(mode === 'endless' ? 'endless' : 'story'); },
+  update(dt) { this.t += dt; fogUpdate(dt); },
+  draw() {
+    uiButtons.length = 0;
+    drawScene(false);
+    drawFire();
+    drawAtmosphere();
+    ctx.fillStyle = 'rgba(3,6,4,' + (0.65 * clamp(this.t / 0.3, 0, 1)) + ')';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    const ps = easeOutBack(clamp(this.t / 0.45, 0, 1));
+    ctx.save();
+    ctx.translate(GAME_W / 2, GAME_H / 2);
+    ctx.scale(ps, ps);
+    ctx.translate(-GAME_W / 2, -GAME_H / 2);
+    ctx.fillStyle = 'rgba(12,23,16,0.95)';
+    roundRect(GAME_W / 2 - 220, 92, 440, 330, 8);
+    ctx.fill();
+    const endless = mode === 'endless';
+    const showGrade = won || endless;
+    const gr = endless ? endlessGrade(nights) : grade;
+    const shownBest = endless ? endlessBest : best;
+    ctx.strokeStyle = (won || newBest || endless) ? PAL.amber : PAL.hudLine; ctx.lineWidth = 2.5; ctx.stroke();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = (won || endless) ? PAL.fireHot : PAL.bone;
+    ctx.font = 'bold 34px serif';
+    ctx.fillText(endless ? '無盡夜襲落幕' : (won ? '夜襲大成功！' : '夜襲落幕…'), GAME_W / 2, 146);
+    ctx.fillStyle = PAL.ink;
+    ctx.font = 'bold 17px sans-serif';
+    ctx.fillText(endless ? ('無盡黑夜中，你撐過了 ' + nights + ' 晚，擊退一波波信徒！')
+      : (won ? '三晚連襲！第 ' + day + ' 天拂曉，邪教據點徹底瓦解！' : '你被信徒們抓住了，但撐到了第 ' + day + ' 天！'), GAME_W / 2, 182);
+    if (newBest) {
+      ctx.fillStyle = PAL.amber;
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('★ 新紀錄 ★', GAME_W / 2, 212);
+    }
+    ctx.fillStyle = PAL.dim;
+    ctx.font = 'bold 13px sans-serif';
+    ctx.fillText(endless ? '無盡總分' : '突襲總分', GAME_W / 2, 244);
+    ctx.fillStyle = PAL.amber;
+    ctx.font = 'bold 48px monospace';
+    ctx.fillText(String(finalScore), GAME_W / 2 + (showGrade ? -36 : 0), 292);
+    if (showGrade) {
+      // 評級徽章（劇情勝利 or 無盡撐夜數）
+      ctx.fillStyle = gr === 'S' ? PAL.fireHot : gr === 'A' ? PAL.amber : PAL.dim;
+      ctx.font = 'bold 44px serif';
+      ctx.fillText(gr, GAME_W / 2 + 96, 292);
+      ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(GAME_W / 2 + 82, 276, 34, 0, 6.29); ctx.stroke();
+      ctx.font = 'bold 11px monospace';
+      ctx.fillText('RANK', GAME_W / 2 + 82, 320);
+    }
+    ctx.fillStyle = PAL.ink;
+    ctx.font = '14px sans-serif';
+    ctx.fillText(endless ? ('撐過 ' + nights + ' 晚 · 擊倒 ' + kills + ' · 偷襲 ' + takedowns + ' 次 · 最佳 ' + shownBest + ' 分')
+      : ('成功夜襲 ' + nights + ' 晚 · 擊倒 ' + kills + ' 名 · 偷襲 ' + takedowns + ' 次 · 最佳 ' + shownBest + ' 分'), GAME_W / 2, 324);
+    if (this.t > 0.5) {
+      uiButtons.push({ x: GAME_W / 2 - 110, y: 348, w: 220, h: 52, cb: () => startGame(mode === 'endless' ? 'endless' : 'story') });
+      const bg2 = ctx.createLinearGradient(0, 348, 0, 400);
+      bg2.addColorStop(0, endless ? '#3a5a8f' : '#b5432f'); bg2.addColorStop(1, endless ? '#1f2d55' : '#6d1f1a');
+      ctx.fillStyle = bg2;
+      roundRect(GAME_W / 2 - 110, 348, 220, 52, 12);
+      ctx.fill();
+      ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = '#f4ece0';
+      ctx.font = 'bold 24px sans-serif';
+      ctx.fillText(endless ? '再襲一次' : '再玩一次', GAME_W / 2, 382);
+    }
+    ctx.restore();
+    muteButton();
+  }
+};
+
+// ---------- 主迴圈 ----------
+const STEP = 1 / 60;
+let last = performance.now(), acc = 0;
+function frame(now) {
+  requestAnimationFrame(frame);
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while (acc >= STEP) {
+    acc -= STEP;
+    if (freeze > 0) { freeze -= STEP; continue; }
+    shake *= Math.pow(0.001, STEP);
+    if (shake < 0.1) shake = 0;
+    state.update(STEP);
+    updateParts(STEP);
+    updateFloaters(STEP);
+  }
+  state.draw();
+}
+// 測試掛鉤（自動化冒煙測試用，不影響遊戲）
+window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : (state === levelSelectState ? 'levelSelect' : 'title'), x: player.x, y: player.y, stam: player.stam, atkT: player.atkT, gold, mode, levelUnlocked });
+setState(titleState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
