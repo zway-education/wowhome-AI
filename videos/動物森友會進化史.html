@@ -410,6 +410,101 @@ function drawEndCard(alpha){
   ctx.restore();
 }
 
+// ===== 主機外殼：把場景畫在對應世代的「真實主機畫面」裡（原創繪製造型，非官方素材）=====
+const DEVICES = [
+  { type:'tv',       shell:'#33394a', shell2:'#20232e', led:'#5c94fc', label:'TV' },
+  { type:'handheld', shell:'#eef0f4', shell2:'#c9ced8', led:'#4f7cff', label:'DS' },
+  { type:'tv',       shell:'#f4f6fa', shell2:'#d7dbe4', led:'#8fd3ff', label:'Wii' },
+  { type:'handheld', shell:'#c23b3b', shell2:'#8f2626', led:'#1a1a1a', label:'3DS' },
+  { type:'hybrid',   shell:'#2b2d31', shell2:'#1a1b1e', accentL:'#3fa9ff', accentR:'#ff4655', label:'Switch' },
+  { type:'holo',     shell:'#0a2233', shell2:'#123047', accent:'#38e1ff', label:'4K' },
+];
+
+function drawScopedScene(rect, era, elapsed, camX){
+  const scale = Math.min(rect.w / GAME_W, rect.h / GAME_H);
+  const sw = GAME_W * scale, sh = GAME_H * scale;
+  const ox = rect.x + (rect.w - sw) / 2, oy = rect.y + (rect.h - sh) / 2;
+  ctx.save();
+  roundRect(rect.x, rect.y, rect.w, rect.h, rect.r || 6); ctx.clip();
+  ctx.fillStyle = '#04070c'; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.translate(ox, oy); ctx.scale(scale, scale);
+  drawScene(era, elapsed, camX);
+  ctx.restore();
+  // 螢幕玻璃反光
+  ctx.save();
+  roundRect(rect.x, rect.y, rect.w, rect.h, rect.r || 6); ctx.clip();
+  const gl = ctx.createLinearGradient(rect.x, rect.y, rect.x + rect.w*0.5, rect.y + rect.h*0.5);
+  gl.addColorStop(0, 'rgba(255,255,255,.14)'); gl.addColorStop(0.4, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gl; ctx.fillRect(rect.x, rect.y, rect.w, rect.h);
+  ctx.restore();
+}
+
+function screenRectFor(dev){
+  if(dev.type === 'tv') return { x:44, y:38, w:872, h:430, r:14 };
+  if(dev.type === 'handheld') return { x:150, y:34, w:660, h:372, r:16 };
+  if(dev.type === 'hybrid') return { x:130, y:40, w:700, h:400, r:12 };
+  return { x:70, y:40, w:820, h:420, r:20 }; // holo
+}
+
+function drawDeviceFrame(idx, elapsed){
+  const dev = DEVICES[idx], rect = screenRectFor(dev);
+  ctx.save();
+  if(dev.type === 'tv'){
+    ctx.fillStyle = dev.shell2;
+    roundRect(rect.x-26, rect.y-24, rect.w+52, rect.h+56, 22); ctx.fill();
+    ctx.fillStyle = dev.shell;
+    roundRect(rect.x-14, rect.y-12, rect.w+28, rect.h+32, 16); ctx.fill();
+    // 底座
+    ctx.fillStyle = dev.shell2;
+    ctx.beginPath();
+    ctx.moveTo(GAME_W/2-70, rect.y+rect.h+44); ctx.lineTo(GAME_W/2+70, rect.y+rect.h+44);
+    ctx.lineTo(GAME_W/2+40, rect.y+rect.h+20); ctx.lineTo(GAME_W/2-40, rect.y+rect.h+20);
+    ctx.closePath(); ctx.fill();
+    // LED
+    ctx.fillStyle = dev.led;
+    ctx.beginPath(); ctx.arc(rect.x+rect.w-20, rect.y+rect.h+8, 3.4, 0, Math.PI*2); ctx.fill();
+  } else if(dev.type === 'handheld'){
+    ctx.fillStyle = dev.shell2;
+    roundRect(rect.x-70, rect.y-24, rect.w+140, rect.h+150, 34); ctx.fill();
+    ctx.fillStyle = dev.shell;
+    roundRect(rect.x-58, rect.y-14, rect.w+116, rect.h+130, 28); ctx.fill();
+    // 下方控制區
+    ctx.fillStyle = dev.shell2;
+    roundRect(rect.x-40, rect.y+rect.h+14, 150, 74, 12); ctx.fill(); // 十字鍵區
+    roundRect(rect.x+rect.w-110, rect.y+rect.h+14, 150, 74, 12); ctx.fill(); // 按鈕區
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 5;
+    ctx.beginPath(); ctx.moveTo(rect.x+35, rect.y+rect.h+30); ctx.lineTo(rect.x+35, rect.y+rect.h+72); ctx.moveTo(rect.x+14, rect.y+rect.h+51); ctx.lineTo(rect.x+56, rect.y+rect.h+51); ctx.stroke();
+    ctx.fillStyle = dev.led;
+    for(let i=0;i<3;i++){ ctx.beginPath(); ctx.arc(rect.x+rect.w-70+i*20, rect.y+rect.h+30, 5, 0, Math.PI*2); ctx.fill(); }
+  } else if(dev.type === 'hybrid'){
+    ctx.fillStyle = dev.shell2;
+    roundRect(rect.x-18, rect.y-18, rect.w+36, rect.h+36, 20); ctx.fill();
+    ctx.fillStyle = dev.shell;
+    roundRect(rect.x-8, rect.y-8, rect.w+16, rect.h+16, 14); ctx.fill();
+    // joy-con
+    ctx.fillStyle = dev.accentL;
+    roundRect(rect.x-70, rect.y-8, 40, rect.h+16, 16); ctx.fill();
+    ctx.fillStyle = dev.accentR;
+    roundRect(rect.x+rect.w+30, rect.y-8, 40, rect.h+16, 16); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.6)';
+    ctx.beginPath(); ctx.arc(rect.x-50, rect.y+40, 6, 0, Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(rect.x+rect.w+50, rect.y+40, 6, 0, Math.PI*2); ctx.fill();
+  } else { // holo
+    const pulse = 0.6 + 0.4*Math.sin(elapsed*2.4);
+    ctx.strokeStyle = `rgba(56,225,255,${0.5+pulse*0.4})`; ctx.lineWidth = 2.5;
+    roundRect(rect.x-6, rect.y-6, rect.w+12, rect.h+12, rect.r+6); ctx.stroke();
+    ctx.strokeStyle = `rgba(56,225,255,${0.2+pulse*0.2})`; ctx.lineWidth = 10;
+    roundRect(rect.x-6, rect.y-6, rect.w+12, rect.h+12, rect.r+6); ctx.stroke();
+    // 角落 HUD 記號
+    ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 3;
+    const cs = 22;
+    [[rect.x-6,rect.y-6,1,1],[rect.x+rect.w+6,rect.y-6,-1,1],[rect.x-6,rect.y+rect.h+6,1,-1],[rect.x+rect.w+6,rect.y+rect.h+6,-1,-1]].forEach(([cx,cy,dx,dy])=>{
+      ctx.beginPath(); ctx.moveTo(cx, cy+cs*dy); ctx.lineTo(cx, cy); ctx.lineTo(cx+cs*dx, cy); ctx.stroke();
+    });
+  }
+  ctx.restore();
+}
+
 // ===== Timeline =====
 const T_INTRO = 2.4;
 const T_ERAS_START = T_INTRO;
@@ -449,12 +544,14 @@ function draw(elapsed){
     }
 
     let camX = Math.sin(localT*0.35)*18;
+    const rect = screenRectFor(DEVICES[idx]);
     ctx.save();
     if(shakeT > 0){
       shakeT -= 1/60;
       ctx.translate((Math.random()*2-1)*2, (Math.random()*2-1)*2);
     }
-    drawScene(era, elapsed, camX);
+    drawDeviceFrame(idx, elapsed);
+    drawScopedScene(rect, era, elapsed, camX);
     ctx.restore();
 
     // crossfade to next era near segment end
@@ -463,7 +560,8 @@ function draw(elapsed){
       const nextEra = ERAS[idx+1];
       ctx.save();
       ctx.globalAlpha = easeInOutSine(clamp01(fadeT));
-      drawScene(nextEra, elapsed, camX);
+      drawDeviceFrame(idx+1, elapsed);
+      drawScopedScene(screenRectFor(DEVICES[idx+1]), nextEra, elapsed, camX);
       ctx.restore();
     }
 
