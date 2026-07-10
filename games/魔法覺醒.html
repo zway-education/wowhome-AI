@@ -248,6 +248,10 @@ const sfx = {
   heal:()=>{ beep(500,0.15,'sine',0.18,700); setTimeout(()=>beep(700,0.18,'sine',0.16,900),90); },
   shield:()=>beep(380,0.3,'sine',0.2,600),
   burst:()=>{ beep(200,0.28,'sawtooth',0.24,50); setTimeout(()=>beep(120,0.3,'square',0.2,40),80); },
+  divine:()=>{
+    beep(392,0.3,'sine',0.22,600); setTimeout(()=>beep(523.25,0.3,'sine',0.22,780),150);
+    setTimeout(()=>beep(659.25,0.35,'sine',0.24,900),300); setTimeout(()=>beep(783.99,0.5,'sine',0.26,1050),450);
+  },
 };
 document.getElementById('muteBtn').addEventListener('click', ()=>{
   muted = !muted;
@@ -466,6 +470,7 @@ makeTouchZones();
 
 /* ---------- Game entities ---------- */
 let player, enemies, bullets, particles, wave, score, spawnTimer, waveTimer, shakeT, shakeMag, hitstop;
+let divineFlashT = 0;
 let stageIndex, bossWave, bossSpawned, bannerText, bannerSub, bannerT, decos;
 
 function stagePos(w){ return (w-1) % WAVES_PER_STAGE; }
@@ -536,11 +541,13 @@ function startGame(){
   player = {
     x:W/2, y:H/2, r:16, hp:100, maxHp:100, invuln:0,
     color: chosenChar.outfit,
-    facing:{x:0,y:1}, walkPhase:0, blinkT:120+Math.random()*160
+    facing:{x:0,y:1}, walkPhase:0, blinkT:120+Math.random()*160,
+    divineUsed:false, divineBuffT:0
   };
   enemies=[]; bullets=[]; particles=[];
   wave=1; score=0; spawnTimer=0; waveTimer=0; shakeT=0; shakeMag=0; hitstop=0;
   stageIndex=0; bossWave=false; bossSpawned=false;
+  divineFlashT=0;
   buildDecos();
   showBanner('第 1 關：'+STAGES[0].name, '存活下去，擊敗魔王過關！');
   updateHud();
@@ -596,6 +603,20 @@ function spawnBoss(){
   });
 }
 
+function triggerDivine(){
+  player.divineUsed = true;
+  player.divineBuffT = 15000;
+  player.hp = Math.min(player.maxHp, player.hp + player.maxHp*0.4);
+  player.invuln = Math.max(player.invuln, 2200);
+  divineFlashT = 900;
+  for(const en of enemies){ en.hp -= 30 + wave*3; en.hitT = 10; }
+  spawnParticles(player.x, player.y, '#ffd9a0', 40);
+  triggerShake(16);
+  sfx.divine();
+  showBanner('天神降臨！', '獲得神聖庇護，攻擊力大幅提升！');
+  updateHud();
+}
+
 function killEnemyAt(j){
   const en = enemies[j];
   if(!en) return;
@@ -618,6 +639,8 @@ function killEnemyAt(j){
   updateHud();
 }
 
+function dmgMult(){ return player.divineBuffT>0 ? 1.6 : 1; }
+
 function fireMagic(dir){
   const m = chosenMagic;
   const n = m.projectiles;
@@ -627,7 +650,7 @@ function fireMagic(dir){
     bullets.push({
       x:player.x, y:player.y,
       vx:Math.cos(ang)*m.speed, vy:Math.sin(ang)*m.speed,
-      r:m.radius, dmg:m.dmg, color:m.color,
+      r:m.radius, dmg:m.dmg*dmgMult(), color:m.color,
       slow:m.slow, pierce:m.pierce, homing:m.homing, aoe:m.aoe,
       life:90
     });
@@ -666,7 +689,7 @@ function castShield(){
 
 function castBurst(){
   if(!enemies.length) return false;
-  const dmg = 34 + wave*3;
+  const dmg = (34 + wave*3) * dmgMult();
   for(const en of enemies){
     en.hp -= dmg; en.hitT = 8;
   }
@@ -814,9 +837,12 @@ function update(dt){
       spawnParticles(player.x,player.y,'#ff3b6b',8);
       updateHud();
       if(player.hp<=0){ gameOver(); return; }
+      if(!player.divineUsed && player.hp <= player.maxHp*0.5){ triggerDivine(); }
     }
   }
   if(player.invuln>0) player.invuln -= dt;
+  if(player.divineBuffT>0) player.divineBuffT -= dt;
+  if(divineFlashT>0) divineFlashT -= dt;
 
   // particles
   for(let i=particles.length-1;i>=0;i--){
@@ -944,6 +970,19 @@ function render(){
     ctx.fillRect(en.x-w/2, en.y-en.r-12, w*Math.max(0,en.hp/en.maxHp), 5);
   }
 
+  // divine buff aura
+  if(player.divineBuffT>0){
+    const pulse = 0.7 + Math.sin(t*0.008)*0.3;
+    ctx.save();
+    ctx.globalAlpha = 0.35 * Math.min(1, player.divineBuffT/1200);
+    const auraR = player.r*2.6 + pulse*6;
+    const aura = ctx.createRadialGradient(player.x,player.y,player.r*0.5,player.x,player.y,auraR);
+    aura.addColorStop(0,'rgba(255,230,160,0.6)'); aura.addColorStop(1,'rgba(255,230,160,0)');
+    ctx.fillStyle=aura;
+    ctx.beginPath(); ctx.arc(player.x,player.y,auraR,0,7); ctx.fill();
+    ctx.restore();
+  }
+
   // player
   drawPlayer();
 
@@ -963,6 +1002,17 @@ function render(){
     ctx.font='700 '+Math.min(16,W*0.032)+'px "PingFang TC","Microsoft JhengHei",sans-serif';
     ctx.fillStyle='#9db3d8';
     ctx.fillText(bannerSub, W/2, H*0.32+62);
+    ctx.restore();
+  }
+
+  // divine descent full-screen flash
+  if(divineFlashT>0){
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, divineFlashT/900) * 0.65;
+    const flash = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.75);
+    flash.addColorStop(0,'rgba(255,244,214,0.9)'); flash.addColorStop(1,'rgba(255,244,214,0)');
+    ctx.fillStyle=flash;
+    ctx.fillRect(0,0,W,H);
     ctx.restore();
   }
 }
