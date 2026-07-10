@@ -2,15 +2,15 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<title>追人遊戲</title>
+<title>恐怖校園追逐</title>
 <style>
   html, body {
     margin: 0;
     height: 100%;
     overflow: hidden;
-    background: #1e1e2f;
-    font-family: sans-serif;
-    color: #fff;
+    background: #050403;
+    font-family: 'Courier New', monospace;
+    color: #b7ffb0;
   }
   #hud {
     position: fixed;
@@ -18,16 +18,20 @@
     left: 10px;
     font-size: 20px;
     z-index: 10;
+    text-shadow: 0 0 6px #000, 0 0 2px #7cff6b;
+    letter-spacing: 1px;
   }
   #gameOver {
     position: fixed;
     top: 50%;
     left: 50%;
     transform: translate(-50%, -50%);
-    font-size: 40px;
+    font-size: 36px;
     display: none;
     text-align: center;
     z-index: 20;
+    color: #ff3b3b;
+    text-shadow: 0 0 14px #ff0000, 0 0 4px #000;
   }
   #restartBtn {
     display: block;
@@ -35,6 +39,9 @@
     padding: 10px 20px;
     font-size: 18px;
     cursor: pointer;
+    background: #1a0000;
+    color: #ff8080;
+    border: 1px solid #660000;
   }
   canvas {
     display: block;
@@ -42,7 +49,7 @@
 </style>
 </head>
 <body>
-<div id="hud">存活時間: <span id="timer">0.0</span> 秒</div>
+<div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
 <div id="gameOver">
   <div id="gameOverText"></div>
   <button id="restartBtn">重新開始</button>
@@ -56,6 +63,7 @@ const timerEl = document.getElementById('timer');
 const gameOverEl = document.getElementById('gameOver');
 const gameOverText = document.getElementById('gameOverText');
 const restartBtn = document.getElementById('restartBtn');
+const weaponStatusEl = document.getElementById('weaponStatus');
 
 const CELL = 50;
 let cols, rows, maze;
@@ -69,12 +77,34 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-const player = { x: 0, y: 0, r: 15, speed: 4, color: '#4fc3f7' };
-const chaser = { x: 0, y: 0, r: 18, speed: 2.2, color: '#ff5252' };
+const player = { x: 0, y: 0, r: 15, speed: 4, color: '#7cff6b' };
+const chaser = { x: 0, y: 0, r: 18, speed: 2.2, color: '#b30000' };
 
 const keys = {};
-window.addEventListener('keydown', e => keys[e.key.toLowerCase()] = true);
+window.addEventListener('keydown', e => {
+  keys[e.key.toLowerCase()] = true;
+  if (e.key === ' ') swing();
+});
 window.addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
+
+const weapon = { x: 0, y: 0, r: 10, collected: false, spawned: false };
+let hasWeapon = false;
+let lastSwingTime = -Infinity;
+const SWING_COOLDOWN = 0.8;
+const SWING_RANGE = CELL * 1.3;
+const STUN_DURATION = 2.5;
+let swingFlashUntil = -Infinity;
+
+function swing() {
+  if (!running || !hasWeapon) return;
+  if (elapsed - lastSwingTime < SWING_COOLDOWN) return;
+  lastSwingTime = elapsed;
+  swingFlashUntil = elapsed + 0.15;
+  const dist = Math.hypot(chaser.x - player.x, chaser.y - player.y);
+  if (dist < SWING_RANGE) {
+    chaser.stunnedUntil = elapsed + STUN_DURATION;
+  }
+}
 
 let mouse = null;
 canvas.addEventListener('mousemove', e => {
@@ -206,6 +236,18 @@ function reset() {
   player.y = startCell.r * CELL + CELL / 2;
   chaser.x = (cols - 1) * CELL + CELL / 2;
   chaser.y = (rows - 1) * CELL + CELL / 2;
+  chaser.stunnedUntil = 0;
+
+  const wc = Math.floor(cols / 2);
+  const wr = Math.floor(rows / 2);
+  weapon.x = wc * CELL + CELL / 2;
+  weapon.y = wr * CELL + CELL / 2;
+  weapon.collected = false;
+  hasWeapon = false;
+  lastSwingTime = -Infinity;
+  swingFlashUntil = -Infinity;
+  weaponStatusEl.textContent = '尚未拿到球棒';
+
   running = true;
   startTime = performance.now();
   elapsed = 0;
@@ -243,20 +285,29 @@ function update() {
   player.x = clamp(player.x, player.r, canvas.width - player.r);
   player.y = clamp(player.y, player.r, canvas.height - player.r);
 
-  const pc = cellOf(player.x, player.y);
-  const cc = cellOf(chaser.x, chaser.y);
-  const path = bfsPath(cc.r, cc.c, pc.r, pc.c);
-  if (path && path.length > 1) {
-    const [nr, nc] = path[1];
-    const targetX = nc * CELL + CELL / 2;
-    const targetY = nr * CELL + CELL / 2;
-    const tdx = targetX - chaser.x;
-    const tdy = targetY - chaser.y;
-    const tdist = Math.hypot(tdx, tdy);
-    if (tdist > 0.5) {
-      const step = Math.min(chaser.speed, tdist);
-      chaser.x += (tdx / tdist) * step;
-      chaser.y += (tdy / tdist) * step;
+  if (!weapon.collected && Math.hypot(player.x - weapon.x, player.y - weapon.y) < player.r + weapon.r) {
+    weapon.collected = true;
+    hasWeapon = true;
+    weaponStatusEl.textContent = '已拿到球棒 (按空白鍵揮擊)';
+  }
+
+  const stunned = elapsed < (chaser.stunnedUntil || 0);
+  if (!stunned) {
+    const pc = cellOf(player.x, player.y);
+    const cc = cellOf(chaser.x, chaser.y);
+    const path = bfsPath(cc.r, cc.c, pc.r, pc.c);
+    if (path && path.length > 1) {
+      const [nr, nc] = path[1];
+      const targetX = nc * CELL + CELL / 2;
+      const targetY = nr * CELL + CELL / 2;
+      const tdx = targetX - chaser.x;
+      const tdy = targetY - chaser.y;
+      const tdist = Math.hypot(tdx, tdy);
+      if (tdist > 0.5) {
+        const step = Math.min(chaser.speed, tdist);
+        chaser.x += (tdx / tdist) * step;
+        chaser.y += (tdy / tdist) * step;
+      }
     }
   }
 
@@ -270,9 +321,9 @@ function update() {
 
   chaser.speed = 2.2 + elapsed * 0.04;
 
-  if (cdist < player.r + chaser.r) {
+  if (!stunned && cdist < player.r + chaser.r) {
     running = false;
-    gameOverText.textContent = `被 GINO 抓到了！你存活了 ${elapsed.toFixed(1)} 秒`;
+    gameOverText.textContent = `被 GINO 抓進儲藏室了……你在恐怖校園撐了 ${elapsed.toFixed(1)} 秒`;
     gameOverEl.style.display = 'block';
   }
 }
@@ -324,11 +375,42 @@ function drawPerson(p, label) {
 }
 
 const VISION_RADIUS = CELL * 4.5;
+let flicker = 1;
+
+function drawBackground() {
+  ctx.fillStyle = '#0c0a08';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.strokeStyle = 'rgba(80,60,40,0.15)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < canvas.width; x += CELL) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, canvas.height);
+    ctx.stroke();
+  }
+  for (let y = 0; y < canvas.height; y += CELL) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(canvas.width, y);
+    ctx.stroke();
+  }
+}
 
 function drawMaze() {
-  ctx.strokeStyle = '#7c8cff';
-  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#5a2a2a';
+  ctx.lineWidth = 6;
   ctx.lineCap = 'square';
+  ctx.beginPath();
+  for (const [x1, y1, x2, y2] of wallSegments) {
+    if (Math.hypot(x1 - player.x, y1 - player.y) > VISION_RADIUS + CELL &&
+        Math.hypot(x2 - player.x, y2 - player.y) > VISION_RADIUS + CELL) continue;
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+  }
+  ctx.stroke();
+
+  ctx.strokeStyle = '#8a4a2a';
+  ctx.lineWidth = 2;
   ctx.beginPath();
   for (const [x1, y1, x2, y2] of wallSegments) {
     if (Math.hypot(x1 - player.x, y1 - player.y) > VISION_RADIUS + CELL &&
@@ -339,28 +421,62 @@ function drawMaze() {
   ctx.stroke();
 }
 
+function drawWeapon() {
+  if (weapon.collected) return;
+  ctx.save();
+  ctx.translate(weapon.x, weapon.y);
+  ctx.rotate(Math.PI / 4);
+  ctx.fillStyle = '#c9a26a';
+  ctx.fillRect(-3, -weapon.r, 6, weapon.r * 2);
+  ctx.fillStyle = '#5a3a1a';
+  ctx.fillRect(-3, weapon.r - 4, 6, 6);
+  ctx.restore();
+}
+
 function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  flicker = 0.85 + Math.random() * 0.15;
+
+  drawBackground();
   drawMaze();
+  drawWeapon();
   drawPerson(chaser, 'GINO');
   drawPerson(player, null);
 
-  // fog of war: darken everything outside the player's vision radius
+  if (elapsed < swingFlashUntil) {
+    ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(player.x, player.y, SWING_RANGE, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  if (elapsed < (chaser.stunnedUntil || 0)) {
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 16px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('暈', chaser.x, chaser.y - chaser.r * 2.5);
+  }
+
+  // fog of war: darken everything outside the player's flickering vision radius
+  const radius = VISION_RADIUS * flicker;
   const fog = ctx.createRadialGradient(
-    player.x, player.y, VISION_RADIUS * 0.5,
-    player.x, player.y, VISION_RADIUS
+    player.x, player.y, radius * 0.45,
+    player.x, player.y, radius
   );
   fog.addColorStop(0, 'rgba(0,0,0,0)');
-  fog.addColorStop(1, 'rgba(10,10,20,1)');
+  fog.addColorStop(1, 'rgba(3,2,1,1)');
   ctx.fillStyle = fog;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(10,10,20,1)';
+  ctx.fillStyle = 'rgba(3,2,1,1)';
   ctx.save();
   ctx.beginPath();
   ctx.rect(0, 0, canvas.width, canvas.height);
-  ctx.arc(player.x, player.y, VISION_RADIUS, 0, Math.PI * 2, true);
+  ctx.arc(player.x, player.y, radius, 0, Math.PI * 2, true);
   ctx.fill('evenodd');
   ctx.restore();
+
+  // subtle red vignette pulse for dread
+  ctx.fillStyle = `rgba(120,0,0,${0.03 + Math.random() * 0.02})`;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 function loop() {
