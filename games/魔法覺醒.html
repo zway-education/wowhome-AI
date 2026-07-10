@@ -122,23 +122,24 @@
   #skillBar{
     position:fixed; left:50%; bottom:14px; transform:translateX(-50%);
     z-index:4; pointer-events:none;
-    display:flex; flex-direction:column; align-items:center; gap:4px;
+    display:flex; flex-direction:row; align-items:flex-end; gap:10px;
   }
-  #skillSlot{
-    width:64px; height:64px; border-radius:16px;
+  .skillSlot{
+    display:flex; flex-direction:column; align-items:center; gap:3px;
+  }
+  .skillIconWrap{
+    width:54px; height:54px; border-radius:14px;
     background:rgba(10,14,26,0.75); border:2px solid rgba(255,255,255,0.25);
     position:relative; overflow:hidden;
     display:flex; align-items:center; justify-content:center;
-    font-size:30px; box-shadow:0 6px 18px rgba(0,0,0,0.4);
+    font-size:24px; box-shadow:0 6px 18px rgba(0,0,0,0.4);
     transition:transform .11s ease-out;
   }
-  #skillSlot.ready{ border-color:#ffcf5c; box-shadow:0 0 18px rgba(255,207,92,0.6); }
-  #skillCooldown{
+  .skillIconWrap.ready{ border-color:#ffcf5c; box-shadow:0 0 16px rgba(255,207,92,0.6); }
+  .skillCooldownMask{
     position:absolute; inset:0; background:rgba(0,0,0,0.62);
-    transform-origin:center; will-change:clip-path;
   }
-  #skillKey{ font-size:11px; color:#9db3d8; font-weight:800; letter-spacing:1px; }
-  #skillName{ font-size:11px; color:#dfe9ff; font-weight:700; text-align:center; max-width:90px; }
+  .skillLabel{ font-size:10px; color:#dfe9ff; font-weight:700; text-align:center; max-width:64px; }
 </style>
 </head>
 <body>
@@ -156,14 +157,7 @@
   </div>
 </div>
 
-<div id="skillBar" class="hidden">
-  <div id="skillSlot">
-    <span id="skillIcon">✦</span>
-    <div id="skillCooldown"></div>
-  </div>
-  <div id="skillName"></div>
-  <div id="skillKey">自動施放</div>
-</div>
+<div id="skillBar" class="hidden"></div>
 
 <div id="joyBase"></div><div id="joyStick"></div>
 
@@ -220,7 +214,14 @@ resize();
 
 /* ---------- Audio ---------- */
 let actx=null, muted=false;
-function ensureAudio(){ if(!actx){ try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } }
+function ensureAudio(){
+  if(!actx){
+    try{ actx = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){}
+    if(actx) startMusic();
+  } else if(actx.state==='suspended'){
+    actx.resume();
+  }
+}
 function beep(freq, dur, type, vol, sweep){
   if(muted || !actx) return;
   const t0 = actx.currentTime;
@@ -244,11 +245,56 @@ const sfx = {
   legendary:()=>{ beep(440,0.3,'sine',0.2,880); setTimeout(()=>beep(660,0.3,'sine',0.2,1200),120); },
   gameover:()=>{ beep(300,0.4,'sawtooth',0.2,80); setTimeout(()=>beep(200,0.5,'sawtooth',0.2,60),180); },
   wave:()=>beep(500,0.25,'triangle',0.2,900),
+  heal:()=>{ beep(500,0.15,'sine',0.18,700); setTimeout(()=>beep(700,0.18,'sine',0.16,900),90); },
+  shield:()=>beep(380,0.3,'sine',0.2,600),
+  burst:()=>{ beep(200,0.28,'sawtooth',0.24,50); setTimeout(()=>beep(120,0.3,'square',0.2,40),80); },
 };
 document.getElementById('muteBtn').addEventListener('click', ()=>{
   muted = !muted;
   document.getElementById('muteBtn').textContent = muted?'🔇':'🔊';
 });
+
+/* ---------- Background music: synthesized looping chiptune ---------- */
+const MUSIC_STEP_MS = 220;
+const BASS_PATTERN = [110,0,110,0,146.83,0,130.81,110,  98,0,98,0,146.83,0,110,0];
+const LEAD_PATTERN  = [0,440,0,523.25,0,440,0,392,  0,349.23,0,440,0,392,0,330];
+let musicTimer=null, musicStep=0, musicGain=null;
+
+function startMusic(){
+  if(musicTimer || !actx) return;
+  musicGain = actx.createGain();
+  musicGain.gain.value = 0.0001;
+  musicGain.connect(actx.destination);
+  musicGain.gain.exponentialRampToValueAtTime(0.16, actx.currentTime+1.5);
+  musicStep = 0;
+  musicTimer = setInterval(musicTick, MUSIC_STEP_MS);
+}
+
+function musicTick(){
+  if(muted || !actx || !musicGain) return;
+  const t0 = actx.currentTime;
+  const bassFreq = BASS_PATTERN[musicStep % BASS_PATTERN.length];
+  const leadFreq = LEAD_PATTERN[musicStep % LEAD_PATTERN.length];
+  if(bassFreq){
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type='triangle'; o.frequency.value=bassFreq;
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.55,t0+0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+MUSIC_STEP_MS/1000*1.7);
+    o.connect(g); g.connect(musicGain);
+    o.start(t0); o.stop(t0+MUSIC_STEP_MS/1000*1.8);
+  }
+  if(leadFreq){
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type='square'; o.frequency.value=leadFreq;
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.22,t0+0.015);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+MUSIC_STEP_MS/1000*0.85);
+    o.connect(g); g.connect(musicGain);
+    o.start(t0); o.stop(t0+MUSIC_STEP_MS/1000*0.9);
+  }
+  musicStep++;
+}
 
 /* ---------- Magic definitions ---------- */
 const MAGICS = [
@@ -278,6 +324,16 @@ const CHARACTERS = [
   {id:'ying', name:'小影', gender:'boy',  magicKey:'dark',    outfit:'#9a6bff', hair:'#181022'},
 ];
 
+/* ---------- Each character has a 4-skill kit: element attack + heal + shield + ultimate ---------- */
+function buildSkillKit(magic){
+  return [
+    {id:'attack', icon:magic.icon, name:magic.name, color:magic.color, cooldown:magic.cooldown, run:castElementAttack},
+    {id:'heal',   icon:'💚', name:'治癒術', color:'#7fffb0', cooldown:8000, run:castHeal},
+    {id:'shield', icon:'🛡️', name:'護盾術', color:'#38e1ff', cooldown:11000, run:castShield},
+    {id:'burst',  icon:'💥', name:'究極爆發', color:'#ffcf5c', cooldown:15000, run:castBurst},
+  ];
+}
+
 /* ---------- Stages ---------- */
 const STAGES = [
   {name:'新手森林', top:'#1b3a2a', bottom:'#0a1810', accent:'#7fffb0', deco:'forest', bossName:'森林領主', bossColor:'#5d8a4a', bossIcon:'🌳'},
@@ -290,6 +346,7 @@ const WAVES_PER_STAGE = 4; // 最後一波為 boss 波
 /* ---------- Global state ---------- */
 let gender = 'girl';
 let chosenMagic = null;
+let chosenKit = [];
 let chosenChar = CHARACTERS[0];
 let state = 'title'; // title, gacha, playing, over
 let best = parseInt(localStorage.getItem('mojue_best')||'0',10);
@@ -408,7 +465,7 @@ function makeTouchZones(){
 makeTouchZones();
 
 /* ---------- Game entities ---------- */
-let player, enemies, bullets, particles, wave, score, spawnTimer, castTimer, waveTimer, shakeT, shakeMag, hitstop;
+let player, enemies, bullets, particles, wave, score, spawnTimer, waveTimer, shakeT, shakeMag, hitstop;
 let stageIndex, bossWave, bossSpawned, bannerText, bannerSub, bannerT, decos;
 
 function stagePos(w){ return (w-1) % WAVES_PER_STAGE; }
@@ -431,31 +488,58 @@ function buildDecos(){
 }
 
 const skillBar = document.getElementById('skillBar');
-const skillIcon = document.getElementById('skillIcon');
-const skillCooldown = document.getElementById('skillCooldown');
-const skillSlot = document.getElementById('skillSlot');
-const skillName = document.getElementById('skillName');
+let skills = []; // [{def, timer, iconEl, maskEl, wrapEl}]
+
+function buildSkillBarUI(){
+  skillBar.innerHTML = '';
+  skills = chosenKit.map(def=>{
+    const slot = document.createElement('div');
+    slot.className = 'skillSlot';
+    const wrap = document.createElement('div');
+    wrap.className = 'skillIconWrap';
+    wrap.style.filter = `drop-shadow(0 0 4px ${def.color})`;
+    const iconEl = document.createElement('span');
+    iconEl.textContent = def.icon;
+    const maskEl = document.createElement('div');
+    maskEl.className = 'skillCooldownMask';
+    wrap.appendChild(iconEl); wrap.appendChild(maskEl);
+    const label = document.createElement('div');
+    label.className = 'skillLabel';
+    label.textContent = def.name;
+    slot.appendChild(wrap); slot.appendChild(label);
+    skillBar.appendChild(slot);
+    return {def, timer:0, wrapEl:wrap, maskEl};
+  });
+}
 
 function updateSkillUI(){
-  const pct = Math.max(0, Math.min(1, castTimer / chosenMagic.cooldown));
-  skillCooldown.style.height = (pct*100)+'%';
-  skillSlot.classList.toggle('ready', pct<=0);
+  for(const s of skills){
+    const pct = Math.max(0, Math.min(1, s.timer / s.def.cooldown));
+    s.maskEl.style.height = (pct*100)+'%';
+    s.wrapEl.classList.toggle('ready', pct<=0);
+  }
+}
+
+function pulseSkill(id){
+  const s = skills.find(sk=>sk.def.id===id);
+  if(!s) return;
+  s.wrapEl.style.transform = 'scale(1.15)';
+  setTimeout(()=>{ s.wrapEl.style.transform = 'scale(1)'; }, 110);
 }
 
 function startGame(){
   hud.classList.remove('hidden');
   skillBar.classList.remove('hidden');
   document.getElementById('magicLabel').textContent = chosenMagic.icon+' '+chosenMagic.name;
-  skillIcon.textContent = chosenMagic.icon;
-  skillName.textContent = chosenMagic.name;
-  skillIcon.style.filter = `drop-shadow(0 0 6px ${chosenMagic.color})`;
+  chosenKit = buildSkillKit(chosenMagic);
+  buildSkillBarUI();
   player = {
     x:W/2, y:H/2, r:16, hp:100, maxHp:100, invuln:0,
     color: chosenChar.outfit,
     facing:{x:0,y:1}, walkPhase:0, blinkT:120+Math.random()*160
   };
   enemies=[]; bullets=[]; particles=[];
-  wave=1; score=0; spawnTimer=0; castTimer=0; waveTimer=0; shakeT=0; shakeMag=0; hitstop=0;
+  wave=1; score=0; spawnTimer=0; waveTimer=0; shakeT=0; shakeMag=0; hitstop=0;
   stageIndex=0; bossWave=false; bossSpawned=false;
   buildDecos();
   showBanner('第 1 關：'+STAGES[0].name, '存活下去，擊敗魔王過關！');
@@ -512,6 +596,28 @@ function spawnBoss(){
   });
 }
 
+function killEnemyAt(j){
+  const en = enemies[j];
+  if(!en) return;
+  if(en.type==='boss'){
+    score += 200;
+    sfx.legendary();
+    spawnParticles(en.x,en.y,en.color,32);
+    triggerShake(14);
+    enemies.splice(j,1);
+    const clearedStage = stageIndex;
+    wave++;
+    enterWave();
+    showBanner('第 '+(clearedStage+1)+' 關過關！', '前往下一關…');
+  } else {
+    score += en.type==='tank' ? 30:15;
+    sfx.score();
+    spawnParticles(en.x,en.y,en.type==='tank'?'#ffcf5c':'#38e1ff',10);
+    enemies.splice(j,1);
+  }
+  updateHud();
+}
+
 function fireMagic(dir){
   const m = chosenMagic;
   const n = m.projectiles;
@@ -528,8 +634,45 @@ function fireMagic(dir){
   }
   sfx.cast();
   spawnParticles(player.x,player.y,m.color,6);
-  skillSlot.style.transform = 'scale(1.15)';
-  setTimeout(()=>{ skillSlot.style.transform = 'scale(1)'; }, 110);
+}
+
+/* ---------- 4-skill kit effects ---------- */
+function castElementAttack(){
+  if(!enemies.length) return false;
+  let nearest=null, nd=Infinity;
+  for(const en of enemies){
+    const d = Math.hypot(en.x-player.x, en.y-player.y);
+    if(d<nd){ nd=d; nearest=en; }
+  }
+  const dx=nearest.x-player.x, dy=nearest.y-player.y, d=Math.hypot(dx,dy)||1;
+  const aim = {x:dx/d, y:dy/d};
+  fireMagic(aim);
+  player.facing = aim;
+}
+
+function castHeal(){
+  if(player.hp >= player.maxHp) return false;
+  player.hp = Math.min(player.maxHp, player.hp + player.maxHp*0.22);
+  sfx.heal();
+  spawnParticles(player.x, player.y, '#7fffb0', 14);
+  updateHud();
+}
+
+function castShield(){
+  player.invuln = Math.max(player.invuln, 1600);
+  sfx.shield();
+  spawnParticles(player.x, player.y, '#38e1ff', 16);
+}
+
+function castBurst(){
+  if(!enemies.length) return false;
+  const dmg = 34 + wave*3;
+  for(const en of enemies){
+    en.hp -= dmg; en.hitT = 8;
+  }
+  spawnParticles(player.x, player.y, '#ffcf5c', 30);
+  triggerShake(10);
+  sfx.burst();
 }
 
 function spawnParticles(x,y,color,n){
@@ -578,23 +721,16 @@ function update(dt){
   player.blinkT -= dts;
   if(player.blinkT<0) player.blinkT = 140+Math.random()*180;
 
-  // casting: auto-target nearest enemy
-  castTimer -= dt;
-  updateSkillUI();
-  if(castTimer<=0 && enemies.length>0){
-    let nearest=null, nd=Infinity;
-    for(const en of enemies){
-      const d = Math.hypot(en.x-player.x, en.y-player.y);
-      if(d<nd){ nd=d; nearest=en; }
-    }
-    if(nearest){
-      const dx=nearest.x-player.x, dy=nearest.y-player.y, d=Math.hypot(dx,dy)||1;
-      const aim = {x:dx/d, y:dy/d};
-      fireMagic(aim);
-      player.facing = aim;
-      castTimer = chosenMagic.cooldown;
+  // casting: 4 skills each auto-trigger on their own cooldown
+  for(const s of skills){
+    s.timer -= dt;
+    if(s.timer<=0){
+      const fired = s.def.run() !== false;
+      s.timer = fired ? s.def.cooldown : 120;
+      if(fired) pulseSkill(s.def.id);
     }
   }
+  updateSkillUI();
 
   // spawn
   if(bossWave){
@@ -650,29 +786,16 @@ function update(dt){
           }
           triggerShake(4);
         }
-        if(en.hp<=0){
-          if(en.type==='boss'){
-            score += 200;
-            sfx.legendary();
-            spawnParticles(en.x,en.y,en.color,32);
-            triggerShake(14);
-            enemies.splice(j,1);
-            const clearedStage = stageIndex;
-            wave++;
-            enterWave();
-            showBanner('第 '+(clearedStage+1)+' 關過關！', '前往下一關…');
-          } else {
-            score += en.type==='tank' ? 30:15;
-            sfx.score();
-            spawnParticles(en.x,en.y,en.type==='tank'?'#ffcf5c':'#38e1ff',10);
-            enemies.splice(j,1);
-          }
-          updateHud();
-        }
+        if(en.hp<=0) killEnemyAt(j);
         if(!b.pierce){ bullets.splice(i,1); }
         break;
       }
     }
+  }
+
+  // sweep any enemies felled by non-bullet damage (e.g. burst skill)
+  for(let i=enemies.length-1;i>=0;i--){
+    if(enemies[i].hp<=0) killEnemyAt(i);
   }
 
   // enemies
