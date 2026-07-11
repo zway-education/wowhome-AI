@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v5：觸控端補上返回選關鈕／移除觸控中央死區／跳躍加角落修正／視窗切走自動重置輸入／新關卡解鎖加慶祝回饋 -->
+<!-- 補強輪：角色臉部表情多狀態(平常/受擊/開心)＋離屏烘焙sprite／觸控可玩性複查／大螢幕提醒浮層 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -14,13 +15,62 @@
     background:rgba(13,2,33,.72);border:2px solid #00f0ff;color:#fff;z-index:9;
     display:flex;align-items:center;justify-content:center;cursor:pointer;padding:0}
   #muteBtn svg{width:26px;height:26px;fill:#fff;pointer-events:none}
+  #backBtn{position:fixed;top:10px;right:66px;width:48px;height:48px;border-radius:50%;
+    background:rgba(13,2,33,.72);border:2px solid #ff2975;color:#fff;z-index:9;
+    display:none;align-items:center;justify-content:center;cursor:pointer;padding:0}
+  #backBtn svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+  #bigScreenHint{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;
+    background:rgba(7,11,20,.9);padding:24px;box-sizing:border-box;touch-action:none;
+    transition:opacity .35s ease;}
+  #bigScreenHint.bsh-hide{opacity:0;pointer-events:none}
+  #bigScreenHint .bsh-card{max-width:380px;width:100%;background:rgba(19,22,36,.94);
+    border:1px solid rgba(255,255,255,.16);border-radius:16px;padding:32px 26px 26px;
+    text-align:center;box-shadow:0 24px 70px rgba(0,0,0,.55);box-sizing:border-box}
+  #bigScreenHint .bsh-icon{width:54px;height:54px;margin:0 auto 16px;display:block}
+  #bigScreenHint h2{margin:0 0 10px;font-size:21px;font-weight:800;line-height:1.4;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);-webkit-background-clip:text;background-clip:text;color:transparent}
+  #bigScreenHint p{margin:0 0 24px;font-size:14.5px;color:rgba(255,255,255,.72);line-height:1.65}
+  #bigScreenHint button{width:100%;min-height:52px;border:none;border-radius:12px;font-size:16px;font-weight:800;
+    color:#08121c;background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);cursor:pointer;
+    -webkit-tap-highlight-color:transparent;touch-action:manipulation}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="bigScreenHint" role="dialog" aria-modal="true" aria-label="建議使用大螢幕遊玩">
+  <div class="bsh-card">
+    <svg class="bsh-icon" viewBox="0 0 24 24" fill="none" stroke="#38e1ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/><circle cx="17" cy="9" r="1.4" fill="#38e1ff" stroke="none"/>
+    </svg>
+    <h2>建議使用大螢幕遊玩</h2>
+    <p>用平板或電腦打開，體驗更完整</p>
+    <button id="bshOk" type="button">知道了，繼續玩</button>
+  </div>
+</div>
+<script>
+// 大螢幕提醒：只在手機尺寸、且本次 session 尚未看過時顯示；不阻擋下方遊戲初始化
+(function(){
+  var isPhone = false;
+  try{ isPhone = Math.min(screen.width, screen.height) < 600 || window.innerWidth < 768; }catch(e){}
+  if(!isPhone) return;
+  var seen = false;
+  try{ seen = !!sessionStorage.getItem('bigscreen-hint'); }catch(e){}
+  if(seen) return;
+  var el = document.getElementById('bigScreenHint');
+  el.style.display = 'flex';
+  document.getElementById('bshOk').addEventListener('click', function(){
+    try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+    el.classList.add('bsh-hide');
+    setTimeout(function(){ if(el && el.parentNode) el.parentNode.removeChild(el); }, 400);
+  }, { once:true });
+})();
+</script>
 <button id="muteBtn" aria-label="靜音切換">
 <svg id="icoOn" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M14 8.5c1.3.9 2 2.1 2 3.5s-.7 2.6-2 3.5v-7z"/><path d="M14 4.8c2.9 1.2 5 4 5 7.2s-2.1 6-5 7.2v-2.2c1.8-1 3-2.9 3-5s-1.2-4-3-5V4.8z"/></svg>
 <svg id="icoOff" viewBox="0 0 24 24" style="display:none"><path d="M3 9v6h4l5 5V4L7 9H3z"/><path d="M16.6 8.2l-1.4 1.4 2.4 2.4-2.4 2.4 1.4 1.4 2.4-2.4 2.4 2.4 1.4-1.4-2.4-2.4 2.4-2.4-1.4-1.4-2.4 2.4-2.4-2.4z"/></svg>
+</button>
+<button id="backBtn" aria-label="返回選關">
+<svg viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></svg>
 </button>
 <script>
 'use strict';
@@ -93,6 +143,11 @@ muteBtn.addEventListener('click', ()=>{
   muted = !muted;
   document.getElementById('icoOn').style.display = muted?'none':'block';
   document.getElementById('icoOff').style.display = muted?'block':'none';
+});
+// 返回選關鈕（觸控裝置沒有實體 ESC 鍵，遊玩中必須也能一鍵離開關卡）
+const backBtn = document.getElementById('backBtn');
+backBtn.addEventListener('click', ()=>{
+  if(state === playState){ sndUI(); setState(selectState); }
 });
 
 // ============ 主題（每關一色系） ============
@@ -167,12 +222,15 @@ function handleTouches(e){
   e.preventDefault(); touchUsed = true;
   const wasAction = touchAction;
   touchDirs.left = touchDirs.right = false; touchAction = false;
+  const splitX = (BTN.left.x + BTN.right.x)/2;   // 左／右移動的分界
   for(const t of e.touches){
     const p = touchPos(t);
-    if(p.x < GAME_W*0.42){                       // 左區：依落點判左右（寬容）
-      if(p.x < (BTN.left.x + BTN.right.x)/2) touchDirs.left = true;
+    // 畫面對半：左半＝移動（再依落點判左右），右半＝跳；中間不留死區，
+    // 確保「任何觸點都有反應」（原本 42%~52% 之間點下去毫無回饋）
+    if(p.x < GAME_W*0.5){
+      if(p.x < splitX) touchDirs.left = true;
       else touchDirs.right = true;
-    } else if(p.x > GAME_W*0.52){                // 右區任意點＝跳（單指友善）
+    } else {
       touchAction = true;
     }
   }
@@ -181,6 +239,16 @@ function handleTouches(e){
 }
 for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
   canvas.addEventListener(ev, handleTouches, { passive:false });
+// 分頁切走／視窗失焦時鍵盤 keyup 可能永遠不會觸發（如 alt-tab），
+// 回來後角色會卡在殘留的移動或跳躍輸入上——切走的當下直接清空所有輸入狀態
+function resetInput(){
+  keyDirs.left = keyDirs.right = false; keyAction = false;
+  touchDirs.left = touchDirs.right = false; touchAction = false;
+  input.actionBuffer = 0;
+  syncInput();
+}
+addEventListener('blur', resetInput);
+addEventListener('visibilitychange', ()=>{ if(document.hidden) resetInput(); });
 // UI 點擊（選單／選關／結算）
 canvas.addEventListener('pointerdown', e => {
   const r = canvas.getBoundingClientRect();
@@ -375,7 +443,7 @@ function respawn(){
 
 // ============ 狀態機 ============
 let state = null;
-function setState(s){ state = s; if(s.enter) s.enter(); }
+function setState(s){ state = s; if(s.enter) s.enter(); backBtn.style.display = (s===playState)?'flex':'none'; }
 function stateName(){ return state===menuState?'menu':state===selectState?'select':state===playState?'play':state===clearState?'clear':'?'; }
 
 function startLevel(i){
@@ -422,9 +490,10 @@ const menuState = {
       ctx.font = 'bold 20px sans-serif'; ctx.fillStyle = PAL.gold;
       ctx.fillText('已收集 '+totalStars()+' / '+LEVEL_COUNT*3+' 顆星', GAME_W/2, 366);
     }
-    // 展示角色奔跑
+    // 展示角色奔跑：每個折返點露臉開心表情，其餘平常表情（標題畫面直接展示多狀態表情系統）
     const px = GAME_W/2 + Math.sin(this.t*0.8)*260;
-    drawCharacter(px-15, GROUND_Y-56, 1, 1, Math.cos(this.t*0.8)>=0?1:-1, this.t*9, '#ff2975', false);
+    const demoExpr = Math.abs(Math.cos(this.t*0.8)) > 0.93 ? 'happy' : 'normal';
+    drawCharacter(px-15, GROUND_Y-56, 1, 1, Math.cos(this.t*0.8)>=0?1:-1, this.t*9, '#ff2975', false, demoExpr);
     ctx.font = '14px sans-serif'; ctx.fillStyle = 'rgba(255,255,255,.55)';
     ctx.fillText('AI未來創作營隊', GAME_W/2, GAME_H-14);
   }
@@ -577,14 +646,26 @@ const playState = {
     const wasGrounded = player.grounded;
     player.grounded = false; let rideNow = null;
     player.y += player.vy * dt;
+    const CORNER_FIX = 8;                     // 角落修正：撞天花板邊角時水平推移量在此範圍內就直接放行
     for(const p of LV.platforms){
       if(!solid(p)) continue;
       if(aabb(box(), p)){
         if(player.vy > 0){ player.y = p.y - player.h; player.vy = 0; player.grounded = true; rideNow = p; }
-        else if(player.vy < 0){ player.y = p.y + p.h; player.vy = 0; }
+        else if(player.vy < 0){
+          const b = box();
+          const overlapL = (b.x + b.w) - p.x;      // 玩家右緣伸入平台左邊多少
+          const overlapR = (p.x + p.w) - b.x;      // 玩家左緣伸入平台右邊多少
+          const minOverlap = Math.min(overlapL, overlapR);
+          if(minOverlap <= CORNER_FIX){
+            player.x += (overlapL < overlapR) ? -overlapL : overlapR;   // 側推通過邊角，不打斷上升
+          } else {
+            player.y = p.y + p.h; player.vy = 0;
+          }
+        }
       }
     }
     player.riding = rideNow;
+    player.x = clamp(player.x, 0, LV.len - player.w);   // 角落修正可能小幅位移，重新夾回關卡範圍
     if(player.grounded && !wasGrounded){
       player.sx = 1.4; player.sy = 0.6;
       burst(player.x+player.w/2, player.y+player.h, '#ffffff', 5, 100);
@@ -706,9 +787,12 @@ function drawTouchUI(){
 const clearState = {
   enter(){
     this.t = 0;
+    const prevUnlocked = unlockedCount();          // 寫入新星星之前，先記住原本解鎖到第幾關
     this.stars = 1 + (score.coins >= score.total ? 1 : 0) + (deaths <= 2 ? 1 : 0);
     this.newRecord = this.stars > save.stars[curLevel];
     if(this.newRecord){ save.stars[curLevel] = this.stars; persist(); }
+    this.justUnlocked = unlockedCount() > prevUnlocked;   // 這次通關剛好解鎖了新關卡
+    this.unlockShown = false;
     this.shown = 0;
     sndWin();
     burst(player.x+player.w/2, player.y, PAL.gold, 30, 260);
@@ -718,6 +802,11 @@ const clearState = {
     this.t += dt;
     const target = Math.min(this.stars, Math.floor((this.t-0.4)/0.45)+1);
     if(target > this.shown && target >= 1){ this.shown = target; sndStar(); burst(GAME_W/2+(this.shown-2)*70, 260, PAL.gold, 16, 200); }
+    if(this.justUnlocked && !this.unlockShown && this.t > 1.15){
+      this.unlockShown = true;
+      sndCheck();
+      burst(GAME_W/2, 352, PAL.accent, 22, 240, 60);
+    }
     if(Math.random()<0.12) burst(Math.random()*GAME_W, -10, [PAL.gold,PAL.accent,PAL.pink][Math.floor(Math.random()*3)], 1, 40);
     updateParts(dt); updateFloaters(dt);
     if(this.t > 0.4 && input.actionBuffer > 0){
@@ -747,7 +836,17 @@ const clearState = {
     }
     ctx.font = '19px sans-serif'; ctx.fillStyle = PAL.white;
     ctx.fillText('金幣 '+score.coins+' / '+score.total+'　　死亡 '+deaths+' 次　　時間 '+elapsed.toFixed(1)+' 秒', GAME_W/2, 320);
-    if(this.newRecord && this.t>1.2){ ctx.fillStyle = PAL.pink; ctx.font='bold 20px sans-serif'; ctx.fillText('★ 新紀錄！ ★', GAME_W/2, 352); }
+    if(this.newRecord && this.t>1.2){
+      ctx.fillStyle = PAL.pink; ctx.font='bold 20px sans-serif';
+      ctx.fillText('★ 新紀錄！ ★', GAME_W/2, this.justUnlocked ? 344 : 352);
+    }
+    if(this.justUnlocked && this.t>1.15){                      // 新關卡解鎖：脈動強調＋獨立一行，不與新紀錄疊字
+      const pulse = 1 + Math.sin((this.t-1.15)*7) * 0.07;
+      ctx.save(); ctx.translate(GAME_W/2, this.newRecord ? 372 : 356); ctx.scale(pulse, pulse);
+      ctx.fillStyle = PAL.accent; ctx.font = 'bold 21px sans-serif';
+      ctx.fillText('解鎖第 '+(curLevel+2)+' 關！', 0, 0);
+      ctx.restore();
+    }
     // 按鈕
     this.btns = [];
     const defs = [];
@@ -895,46 +994,105 @@ function drawPlayerEnt(){
     ctx.fillStyle = 'rgba(0,0,0,.28)';
     ctx.beginPath(); ctx.ellipse(player.x+player.w/2, player.y+player.h+3, 18, 5, 0, 0, Math.PI*2); ctx.fill();
   }
+  // 表情狀態：剛受擊(dead旗標剛翻true的短暫閃現) → 受擊臉；平時 → 平常臉
+  const expr = player.dead ? 'hurt' : 'normal';
   drawCharacter(player.x, player.y - (player.sy-1)*10, player.sx, player.sy, player.facing, player.walkT,
-    '#ff2975', !player.grounded);
+    '#ff2975', !player.grounded, expr);
 }
-// Roblox 風方塊人：頭/軀幹/四肢各自受光面＋表情
-function drawCharacter(x, y, sx, sy, facing, walkT, color, airborne){
-  ctx.save();
-  ctx.translate(x+15, y+56);
-  ctx.scale(sx, sy);
-  const legSwing = airborne ? 6 : Math.sin(walkT)*8;
-  const armSwing = airborne ? -14 : Math.sin(walkT+Math.PI)*7;
+// 臉部表情：眼睛＋嘴巴至少兩種狀態（平常／受擊／開心），依 facing 鏡射
+// c = 目標 2D context（可以是主畫布，也可以是離屏烘焙用的 sprite context）
+function drawFace(c, facing, expr){
+  const ex = facing>=0 ? 2 : -8, ex2 = ex + (facing>=0?7:-7), mx = facing>=0?5:-5;
+  if(expr === 'hurt'){                                       // 受擊：皺眉＋X眼＋驚呼張口
+    c.strokeStyle = '#1a1c2c'; c.lineWidth = 2; c.lineCap = 'round';
+    c.beginPath();                                            // 皺起的眉毛
+    c.moveTo(ex-1.5,-61); c.lineTo(ex+5,-58);
+    c.moveTo(ex2+6.5,-61); c.lineTo(ex2,-58);
+    c.stroke();
+    c.lineWidth = 1.8;
+    c.beginPath();                                            // X 型眼睛
+    c.moveTo(ex-0.5,-57); c.lineTo(ex+4.5,-53); c.moveTo(ex+4.5,-57); c.lineTo(ex-0.5,-53);
+    c.moveTo(ex2-0.5,-57); c.lineTo(ex2+4.5,-53); c.moveTo(ex2+4.5,-57); c.lineTo(ex2-0.5,-53);
+    c.stroke();
+    c.fillStyle = '#1a1c2c';                                  // 驚呼張口
+    c.beginPath(); c.ellipse(mx,-49.5,3.4,4.4,0,0,Math.PI*2); c.fill();
+    c.fillStyle = '#7a2030'; c.beginPath(); c.ellipse(mx,-48.5,1.9,2.6,0,0,Math.PI*2); c.fill();
+  } else if(expr === 'happy'){                                // 開心：瞇眼弧線＋咧嘴大笑＋腮紅
+    c.strokeStyle = '#1a1c2c'; c.lineWidth = 2.2; c.lineCap = 'round';
+    c.beginPath();
+    c.arc(ex+2.5,-56.5,3.6,Math.PI*0.08,Math.PI*0.92);
+    c.moveTo(ex2+2.5-3.6,-56.5); c.arc(ex2+2.5,-56.5,3.6,Math.PI*0.08,Math.PI*0.92);
+    c.stroke();
+    c.fillStyle = '#1a1c2c';                                  // 咧嘴大笑
+    c.beginPath(); c.arc(mx,-50.5,5,0.05*Math.PI,0.95*Math.PI); c.fill();
+    c.fillStyle = '#fff';
+    c.beginPath(); c.rect(mx-3.6,-50.5,7.2,2); c.fill();
+    c.fillStyle = 'rgba(255,120,150,.55)';                    // 腮紅
+    c.beginPath(); c.arc(ex-3.5,-51,2.4,0,Math.PI*2); c.arc(ex2+5.5,-51,2.4,0,Math.PI*2); c.fill();
+  } else {                                                    // 平常：睜眼＋微笑
+    c.fillStyle = '#1a1c2c';
+    c.fillRect(ex,-58,5,6); c.fillRect(ex2,-58,5,6);
+    c.fillStyle = '#fff'; c.fillRect(ex+1,-57,2,2); c.fillRect(ex2+1,-57,2,2);
+    c.strokeStyle = '#1a1c2c'; c.lineWidth = 2; c.lineCap = 'round';
+    c.beginPath(); c.arc(mx, -50, 4.5, 0.15*Math.PI, 0.85*Math.PI); c.stroke();
+  }
+}
+// Roblox 風方塊人本體：頭/軀幹/四肢各自受光面＋多狀態表情（畫在傳入的 context 上，供離屏烘焙重用）
+function paintCharacterBody(c, facing, legSwing, armSwing, color, expr){
   const face = (px,py,w,h,base,darkR)=>{           // 方塊：正面＋右暗面＋頂亮面
-    ctx.fillStyle = base; ctx.fillRect(px,py,w,h);
-    ctx.fillStyle = darkR; ctx.fillRect(px+w-3,py,3,h);
-    ctx.fillStyle = 'rgba(255,255,255,.28)'; ctx.fillRect(px,py,w,3);
-    ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.lineWidth = 1.5; ctx.strokeRect(px+0.5,py+0.5,w-1,h-1);
+    c.fillStyle = base; c.fillRect(px,py,w,h);
+    c.fillStyle = darkR; c.fillRect(px+w-3,py,3,h);
+    c.fillStyle = 'rgba(255,255,255,.28)'; c.fillRect(px,py,w,3);
+    c.strokeStyle = 'rgba(0,0,0,.5)'; c.lineWidth = 1.5; c.strokeRect(px+0.5,py+0.5,w-1,h-1);
   };
   // 後腿/後手
   face(-11 + legSwing*0.4, -22, 9, 22, '#23233a', '#15152a');
   face(facing>=0?-21:13, -42 + armSwing*0.4, 8, 21, shade(color,-30), shade(color,-55));
   // 軀幹
   face(-14, -44, 28, 25, color, shade(color,-45));
-  ctx.fillStyle = 'rgba(255,255,255,.2)'; ctx.fillRect(-14,-44,28,6);
-  ctx.fillStyle = '#fff';                                    // 胸前徽章
-  ctx.beginPath(); ctx.arc(0,-32,4.5,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle = color; ctx.beginPath(); ctx.arc(0,-32,2.2,0,Math.PI*2); ctx.fill();
+  c.fillStyle = 'rgba(255,255,255,.2)'; c.fillRect(-14,-44,28,6);
+  c.fillStyle = '#fff';                                      // 胸前徽章
+  c.beginPath(); c.arc(0,-32,4.5,0,Math.PI*2); c.fill();
+  c.fillStyle = color; c.beginPath(); c.arc(0,-32,2.2,0,Math.PI*2); c.fill();
   // 前腿/前手
   face(3 - legSwing*0.4, -22, 9, 22, '#2f2f4a', '#1c1c33');
   face(facing>=0?13:-21, -42 - armSwing*0.4, 8, 21, color, shade(color,-45));
   // 頭
   face(-13, -68, 26, 25, '#ffd9a0', '#d9b070');
-  ctx.fillStyle = '#3a2a1c';                                 // 瀏海
-  ctx.fillRect(-13,-68,26,6);
-  ctx.fillRect(facing>=0?-13:5,-68,8,10);
-  // 臉（依方向）
-  const ex = facing>=0 ? 2 : -8;
-  ctx.fillStyle = '#1a1c2c';
-  ctx.fillRect(ex,-58,5,6); ctx.fillRect(ex+ (facing>=0?7:-7),-58,5,6);
-  ctx.fillStyle = '#fff'; ctx.fillRect(ex+1,-57,2,2); ctx.fillRect(ex+(facing>=0?8:-6),-57,2,2);
-  ctx.strokeStyle = '#1a1c2c'; ctx.lineWidth = 2;            // 微笑
-  ctx.beginPath(); ctx.arc(facing>=0?5:-5, -50, 4.5, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+  c.fillStyle = '#3a2a1c';                                   // 瀏海
+  c.fillRect(-13,-68,26,6);
+  c.fillRect(facing>=0?-13:5,-68,8,10);
+  drawFace(c, facing, expr || 'normal');
+}
+// ---- 角色 sprite 離屏快取：走路循環量化成 16 格＋2 方向＋3 表情，烘焙一次重複貼圖 ----
+// 避免每幀對每個角色重畫～20 次 fillRect/strokeRect/arc（尤其標題展示角色＋玩家同框時）
+const SPR_W = 56, SPR_H = 80, SPR_OX = 28, SPR_OY = 72;
+const charSpriteCache = new Map();
+function bakeCharSprite(key, facing, legSwing, armSwing, color, expr){
+  const cv = document.createElement('canvas'); cv.width = SPR_W; cv.height = SPR_H;
+  const c = cv.getContext('2d');
+  c.translate(SPR_OX, SPR_OY);
+  paintCharacterBody(c, facing, legSwing, armSwing, color, expr);
+  charSpriteCache.set(key, cv);
+  return cv;
+}
+function drawCharacter(x, y, sx, sy, facing, walkT, color, airborne, expr){
+  expr = expr || 'normal';
+  const fdir = facing >= 0 ? 1 : -1;
+  let phase, legSwing, armSwing;
+  if(airborne){ phase = 'air'; legSwing = 6; armSwing = -14; }
+  else {
+    const sinV = Math.sin(walkT);
+    phase = Math.round((sinV + 1) * 7.5);              // 量化成 0~15，16 格走路循環
+    const q = phase / 7.5 - 1;
+    legSwing = q * 8; armSwing = -q * 7;
+  }
+  const key = fdir + '|' + phase + '|' + expr + '|' + color;
+  const sprite = charSpriteCache.get(key) || bakeCharSprite(key, fdir, legSwing, armSwing, color, expr);
+  ctx.save();
+  ctx.translate(x + 15, y + 56);
+  ctx.scale(sx, sy);
+  ctx.drawImage(sprite, -SPR_OX, -SPR_OY);
   ctx.restore();
 }
 function shade(hex, amt){

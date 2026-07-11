@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v5：難度鋸齒喘息波(安全+獎勵段)、直向裝置轉橫提示、接取寬容度加大、連擊里程碑大回饋、破關依星級分級慶祝 -->
+<!-- +補強：角色精細化/觸控/大螢幕提醒 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -19,12 +20,46 @@
     font-size:13px;letter-spacing:1px;pointer-events:none;text-shadow:0 1px 3px #000;
     opacity:0;transition:opacity .4s;text-align:center;width:96%}
   #hint.show{opacity:1}
+  #rotate-hint{position:fixed;left:0;top:0;width:100%;box-sizing:border-box;padding:9px 14px;
+    background:rgba(10,14,10,.78);color:#fff5d6;font-size:13px;letter-spacing:.5px;
+    display:flex;align-items:center;justify-content:center;gap:8px;z-index:20;
+    pointer-events:none;opacity:0;transition:opacity .4s;text-shadow:0 1px 2px #000}
+  #rotate-hint.show{opacity:1}
+  #rotate-hint svg{width:20px;height:20px;flex:none;animation:rotIcon 1.6s ease-in-out infinite}
+  @keyframes rotIcon{0%,45%{transform:rotate(0deg)}55%,100%{transform:rotate(90deg)}}
+  /* ===== 大螢幕提醒浮層（手機才跳、一個session一次） ===== */
+  #bigscreen-hint{position:fixed;inset:0;z-index:99999;display:none;align-items:center;justify-content:center;
+    background:rgba(7,11,20,.9);padding:20px;box-sizing:border-box}
+  #bigscreen-hint.show{display:flex}
+  #bigscreen-hint.fade-out{opacity:0;transition:opacity .32s ease}
+  #bigscreen-hint .bsh-card{max-width:380px;width:100%;background:rgba(20,26,42,.97);
+    border:1px solid rgba(143,184,255,.35);border-radius:16px;padding:30px 24px 26px;
+    text-align:center;box-shadow:0 12px 40px rgba(0,0,0,.55)}
+  #bigscreen-hint .bsh-icon{width:44px;height:44px;margin-bottom:14px}
+  #bigscreen-hint .bsh-title{margin:0 0 10px;font-size:20px;font-weight:900;letter-spacing:.5px;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);-webkit-background-clip:text;background-clip:text;
+    color:#9a6bff;-webkit-text-fill-color:transparent}
+  #bigscreen-hint .bsh-sub{margin:0 0 24px;font-size:14px;line-height:1.7;color:#c7d2e8}
+  #bigscreen-hint .bsh-btn{display:block;width:70%;min-width:60%;height:52px;margin:0 auto;border:none;
+    border-radius:12px;background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);color:#0a1220;
+    font-size:16px;font-weight:900;letter-spacing:.5px;cursor:pointer;
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif}
+  #bigscreen-hint .bsh-btn:active{filter:brightness(.9)}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <button id="mute" aria-label="靜音切換">🔊</button>
 <div id="hint"></div>
+<div id="rotate-hint"><svg viewBox="0 0 24 24" fill="none" stroke="#fff5d6" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2" width="10" height="18" rx="2"/><line x1="12" y1="17" x2="12" y2="17"/></svg>建議將裝置轉為橫向，遊戲畫面更大更好玩！</div>
+<div id="bigscreen-hint" role="dialog" aria-label="建議使用大螢幕遊玩">
+  <div class="bsh-card">
+    <svg class="bsh-icon" viewBox="0 0 24 24" fill="none" stroke="#8fb8ff" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+    <h2 class="bsh-title">建議使用大螢幕遊玩</h2>
+    <p class="bsh-sub">用平板或電腦打開，體驗更完整</p>
+    <button id="bsh-ok" class="bsh-btn" type="button">知道了，繼續玩</button>
+  </div>
+</div>
 <script>
 'use strict';
 /* =====================================================================
@@ -46,6 +81,43 @@ function resize(){
   canvas._scale = scale;
 }
 addEventListener('resize', resize); resize();
+
+/* ===== v5：直向手機提示轉橫（不阻擋操作，數秒後自動淡出） ===== */
+const rotateHintEl = document.getElementById('rotate-hint');
+let rotateHintTimer = null;
+function checkOrientation(){
+  const portrait = innerHeight > innerWidth && innerWidth < 820;
+  clearTimeout(rotateHintTimer);
+  if(portrait){
+    rotateHintEl.classList.add('show');
+    rotateHintTimer = setTimeout(()=> rotateHintEl.classList.remove('show'), 4500);
+  } else {
+    rotateHintEl.classList.remove('show');
+  }
+}
+addEventListener('resize', checkOrientation);
+checkOrientation();
+
+/* ===== 大螢幕提醒浮層：只在手機尺寸跳出、一個 session 只跳一次；不攔截遊戲初始化 ===== */
+(function(){
+  function isPhoneSize(){
+    return Math.min(screen.width, screen.height) < 600 || innerWidth < 768;
+  }
+  let seen = false;
+  try{ seen = !!sessionStorage.getItem('bigscreen-hint'); }catch(e){}
+  if(isPhoneSize() && !seen){
+    const el = document.getElementById('bigscreen-hint');
+    const btn = document.getElementById('bsh-ok');
+    if(el && btn){
+      el.classList.add('show');
+      btn.addEventListener('click', function(){
+        try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+        el.classList.add('fade-out');
+        setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); }, 340);
+      }, {once:true});
+    }
+  }
+})();
 
 /* ===== 工具 ===== */
 const clamp=(v,a,b)=> v<a?a:v>b?b:v;
@@ -145,8 +217,14 @@ const sfx = {
   frenzy(){ [523,659,784,1047,1319].forEach((f,i)=> beep(f,0.12,'square',0.1,0,i*0.07)); },
   ui(){ beep(rp(660),0.06,'square',0.08); },
   star(i){ beep(880+i*220,0.2,'triangle',0.14); },
-  clear(){ [523,659,784,1047,1319,1568].forEach((f,i)=> beep(f,0.18,'square',0.11,0,i*0.1)); },
-  fail(){ beep(392,0.3,'sawtooth',0.13,-200); beep(261,0.4,'sawtooth',0.11,-150,0.2); }
+  clear(starN){                                    // v5：破關音效依星級分級（1星精簡～3星滿版琶音）
+    const notes = [523,659,784,1047,1319,1568];
+    const n = starN ? Math.max(3, Math.round(notes.length*starN/3)) : notes.length;
+    notes.slice(0,n).forEach((f,i)=> beep(f,0.18,'square',0.11,0,i*0.1));
+  },
+  fail(){ beep(392,0.3,'sawtooth',0.13,-200); beep(261,0.4,'sawtooth',0.11,-150,0.2); },
+  breather(){ beep(rp(784),0.1,'triangle',0.08); beep(rp(988),0.14,'triangle',0.1,0,0.09); },
+  milestone(n){ [659,880,1109,1319,1568].forEach((f,i)=> beep(rp(f),0.09,'square',0.12,0,i*0.045)); }
 };
 const muteBtn = document.getElementById('mute');
 function syncMute(){ muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -272,8 +350,8 @@ function starThresholds(){ const t = L().target; return [t, Math.round(t*1.4), M
 
 /* ===== 玩家（籃子） ===== */
 const GROUND_Y = 460;
-const basket = { x:GAME_W/2, y:486, w:100, h:54, sx:1, sy:1, vx:0, wobble:0, blink:0, mouth:0 };
-function resetBasket(){ basket.x = GAME_W/2; basket.vx = 0; basket.sx=1; basket.sy=1; basket.wobble=0; basket.mouth=0; }
+const basket = { x:GAME_W/2, y:486, w:100, h:54, sx:1, sy:1, vx:0, wobble:0, blink:0, mouth:0, hurt:0 };
+function resetBasket(){ basket.x = GAME_W/2; basket.vx = 0; basket.sx=1; basket.sy=1; basket.wobble=0; basket.mouth=0; basket.hurt=0; }
 
 /* ===== 遊戲狀態 ===== */
 let curLevel = 0, score = 0, lives = 3, combo = 0, comboTimer = 0;
@@ -282,14 +360,23 @@ let elapsed = 0, spawnTimer = 0.6;
 let shake = 0, freeze = 0, flashT = 0, worldT = 0, hintT = 0;
 let wind = 0, windTarget = 0, windTimer = 0;
 let frenzyT = 0, frenzyCooldown = 15, lastTickSec = -1;
+let wasBreather = false;                            // v5：喘息波邊緣偵測（觸發提示）
 
+/* ===== v5：難度鋸齒喘息波 —— 每 13 秒一輪、開頭 2.6 秒沒有炸彈臭鼬、幸運星機率提高，
+   讓長關卡有「難段→喘息段（風景/獎勵）→更難段」的鋸齒節奏，避免玩家持續緊繃 ===== */
+const BREATHER_CYCLE = 13, BREATHER_LEN = 2.6;
+function inBreather(elapsed){
+  if(elapsed < 6) return false;                     // 與開場學習期錯開，避免重疊
+  return (elapsed % BREATHER_CYCLE) < BREATHER_LEN;
+}
 function spawnItem(forceGood){
   const lv = L();
   const learning = elapsed < 6;                     // 開場安全學習期：無炸彈
+  const breather = inBreather(elapsed);
   let key;
   const r = Math.random();
-  if(!forceGood && !learning && r < lv.badRate) key = Math.random() < 0.6 ? 'bomb' : (curLevel >= 2 ? 'skunk' : 'bomb');
-  else if(r > 1 - lv.starRate) key = 'star';
+  if(!forceGood && !learning && !breather && r < lv.badRate) key = Math.random() < 0.6 ? 'bomb' : (curLevel >= 2 ? 'skunk' : 'bomb');
+  else if(r > 1 - (breather ? Math.min(0.24, lv.starRate*2.4) : lv.starRate)) key = 'star';
   else key = lv.pool[Math.floor(Math.random()*lv.pool.length)];
   const def = DEFS[key];
   const diffMul = 1 + ss(elapsed, 0, lv.time)*0.3;  // 關卡內緩升
@@ -302,6 +389,7 @@ function spawnItem(forceGood){
 function currentSpawnInterval(){
   const lv = L();
   let s = lv.spawn * (elapsed < 6 ? 1.5 : 1) * lerp(1, 0.72, ss(elapsed, 0, lv.time));
+  if(inBreather(elapsed)) s *= 0.82;                // 喘息波間水果更密集，補足專注閃避時的分數缺口
   if(frenzyT > 0) s /= 3;
   return s;
 }
@@ -326,6 +414,13 @@ function onCatch(e){
       floatText(bx, by-10, '+'+gained + (comboBonus>0 ? ' 連擊×'+combo : ''), '#fff5d6');
       basket.sx = 1.25; basket.sy = 0.75;
     }
+    /* v5：連擊里程碑（5/10/15…）給一次「大聲」的加倍回饋，讓連擊成長感更明顯 */
+    if(combo > 0 && combo % 5 === 0){
+      sfx.milestone(combo);
+      burst(bx, by-6, '#ffcf5c', 26, 320); burst(bx, by-6, '#ff6cc7', 14, 260);
+      floatText(GAME_W/2, 150, combo+' 連擊大爆發！', '#ffcf5c', 30);
+      shake = Math.max(shake, 7);
+    }
   } else {
     combo = 0;
     lives--;
@@ -333,6 +428,7 @@ function onCatch(e){
     burst(bx, by, '#d94f45', 18, 260);
     floatText(bx, by-10, e.key==='bomb' ? '砰！炸彈！' : '好臭呀！', '#ff6b5a', 24);
     basket.sx = 0.65; basket.sy = 1.35;
+    basket.hurt = 1;
     shake = Math.max(shake, 8);
     freeze = Math.max(freeze, 0.1);
     flashT = 0.45;
@@ -435,53 +531,94 @@ function rrp(x,y,w,h,r){
   ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
+/* v5.1：角色精細化——籃身（輪廓＋漸層陰影＋高光點＋環境遮蔽）離屏預烘焙成 sprite，
+   每幀只 drawImage 貼圖；手臂／表情等動態部件才即時重繪，避免每幀重算複雜路徑拖慢效能 */
+const BSPR_W = 148, BSPR_H = 84, BSPR_OY = 30;
+let basketSprite = null;
+function bakeBasketSprite(){
+  const k = Math.min(devicePixelRatio||1, 2);
+  const c = document.createElement('canvas');
+  c.width = BSPR_W*k; c.height = BSPR_H*k;
+  const g = c.getContext('2d');
+  g.scale(k,k);
+  g.translate(BSPR_W/2, BSPR_OY);
+  const bw = basket.w, bh = basket.h*0.64;
+  const bodyPath = () => {
+    g.beginPath();
+    g.moveTo(-bw/2, -bh/2); g.lineTo(bw/2, -bh/2);
+    g.lineTo(bw*0.42, bh/2); g.lineTo(-bw*0.42, bh/2);
+    g.closePath();
+  };
+  /* 地面陰影 */
+  g.fillStyle = 'rgba(0,0,0,.25)';
+  g.beginPath(); g.ellipse(0, basket.h*0.55, bw*0.52, 8, 0, 0, TAU); g.fill();
+  /* 籃身主體：受光面（左上偏亮）→背光面（右下偏暗）漸層 */
+  const grad = g.createLinearGradient(-bw*0.32,-bh/2, bw*0.32,bh/2);
+  grad.addColorStop(0,'#e2a765'); grad.addColorStop(0.5,'#c98a4f'); grad.addColorStop(1,'#7c4b2e');
+  g.fillStyle = grad; bodyPath(); g.fill();
+  g.strokeStyle = 'rgba(60,32,8,.55)'; g.lineWidth=3; g.stroke();
+  /* 編織紋 */
+  g.strokeStyle = 'rgba(70,40,10,.35)'; g.lineWidth=1.6;
+  for(let i=-2;i<=2;i++){
+    g.beginPath(); g.moveTo(i*bw*0.16, -bh/2+2); g.lineTo(i*bw*0.13, bh/2-2); g.stroke();
+  }
+  g.beginPath(); g.moveTo(-bw*0.46, -bh*0.12); g.lineTo(bw*0.46, -bh*0.12); g.stroke();
+  g.beginPath(); g.moveTo(-bw*0.44, bh*0.2); g.lineTo(bw*0.44, bh*0.2); g.stroke();
+  /* 高光點（左上柔和光澤）＋環境遮蔽（右下加深立體感），皆裁切在籃身輪廓內 */
+  g.save(); bodyPath(); g.clip();
+  const hi = g.createRadialGradient(-bw*0.2,-bh*0.34,1, -bw*0.2,-bh*0.34, bw*0.36);
+  hi.addColorStop(0,'rgba(255,244,214,.55)'); hi.addColorStop(1,'rgba(255,244,214,0)');
+  g.fillStyle = hi; g.fillRect(-bw/2,-bh/2,bw,bh);
+  const ao = g.createRadialGradient(bw*0.32,bh*0.32,1, bw*0.32,bh*0.32, bw*0.55);
+  ao.addColorStop(0,'rgba(28,14,4,.32)'); ao.addColorStop(1,'rgba(28,14,4,0)');
+  g.fillStyle = ao; g.fillRect(-bw/2,-bh/2,bw,bh);
+  g.restore();
+  /* 籃口＋口緣高光 */
+  g.fillStyle = '#e8b878';
+  g.beginPath(); g.ellipse(0, -bh/2, bw/2, 9, 0, 0, TAU); g.fill();
+  g.strokeStyle = 'rgba(70,40,10,.5)'; g.lineWidth=2.4; g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.4)';
+  g.beginPath(); g.ellipse(-bw*0.14, -bh/2-1.6, bw*0.2, 2.6, 0, 0, TAU); g.fill();
+  basketSprite = c;
+}
+bakeBasketSprite();
 function drawBasket(x, y, sx, sy, wobble){
   wobble = wobble || 0;
+  /* 移動速度換算成彈跳循環：走位時肢體有起伏，純視覺位移不影響碰撞判定 */
+  const moveAmt = clamp(Math.abs(basket.vx)/460, 0, 1);
+  const bounceY = Math.sin(worldT*11) * moveAmt * 3;
   ctx.save();
-  ctx.translate(x, y + basket.h*0.5);
+  ctx.translate(x, y + basket.h*0.5 - bounceY);
   ctx.scale(sx, sy);
   ctx.rotate(wobble*0.12);
-  ctx.fillStyle = 'rgba(0,0,0,.25)';
-  ctx.beginPath(); ctx.ellipse(0, basket.h*0.55, basket.w*0.52, 8, 0, 0, TAU); ctx.fill();
+  if(basketSprite) ctx.drawImage(basketSprite, -BSPR_W/2, -BSPR_OY, BSPR_W, BSPR_H);
   const bw = basket.w, bh = basket.h*0.64;
-  const g = ctx.createLinearGradient(0,-bh/2,0,bh/2);
-  g.addColorStop(0,'#c98a4f'); g.addColorStop(1,'#8c5a3c');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.moveTo(-bw/2, -bh/2); ctx.lineTo(bw/2, -bh/2);
-  ctx.lineTo(bw*0.42, bh/2); ctx.lineTo(-bw*0.42, bh/2);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(70,40,10,.5)'; ctx.lineWidth=3; ctx.stroke();
-  /* 編織紋 */
-  ctx.strokeStyle = 'rgba(70,40,10,.35)'; ctx.lineWidth=1.6;
-  for(let i=-2;i<=2;i++){
-    ctx.beginPath(); ctx.moveTo(i*bw*0.16, -bh/2+2); ctx.lineTo(i*bw*0.13, bh/2-2); ctx.stroke();
-  }
-  ctx.beginPath(); ctx.moveTo(-bw*0.46, -bh*0.12); ctx.lineTo(bw*0.46, -bh*0.12); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(-bw*0.44, bh*0.2); ctx.lineTo(bw*0.44, bh*0.2); ctx.stroke();
-  /* 籃口 */
-  ctx.fillStyle = '#e8b878';
-  ctx.beginPath(); ctx.ellipse(0, -bh/2, bw/2, 9, 0, 0, TAU); ctx.fill();
-  ctx.strokeStyle = 'rgba(70,40,10,.5)'; ctx.lineWidth=2.4; ctx.stroke();
-  /* 小手臂：接到時舉起 */
+  /* 小手臂：接到時舉起／移動時輕微擺動 */
   const arm = basket.mouth;
   for(const side of [-1,1]){
     ctx.save();
     ctx.translate(side*bw*0.5, -bh*0.1);
-    ctx.rotate(side*(0.5 - arm*1.1));
+    ctx.rotate(side*(0.5 - arm*1.1) + Math.sin(worldT*7 + side*2.4)*0.06*moveAmt);
     ctx.strokeStyle = '#8c5a3c'; ctx.lineWidth = 5; ctx.lineCap='round';
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(side*14, -10); ctx.stroke();
     ctx.fillStyle = '#e8b878'; ctx.beginPath(); ctx.arc(side*15, -11, 4.4, 0, TAU); ctx.fill();
     ctx.restore();
   }
-  /* 臉：眼睛看移動方向＋眨眼＋接到嘴巴開心 */
+  /* 臉：平常眨眼／接到開心／受擊驚呼——三態表情 */
   const eyeY = -bh/2 - 3;
-  const blink = basket.blink < 0.1;
+  const hurt = basket.hurt > 0.3;
+  const blink = !hurt && basket.blink < 0.1;
   for(const side of [-1,1]){
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(side*15, eyeY, 7.4, 0, TAU); ctx.fill();
     ctx.strokeStyle = 'rgba(40,30,20,.4)'; ctx.lineWidth=1.4; ctx.stroke();
-    if(blink){
+    if(hurt){
+      ctx.strokeStyle = '#c23b2e'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(side*15-3.6, eyeY-3.6); ctx.lineTo(side*15+3.6, eyeY+3.6);
+      ctx.moveTo(side*15+3.6, eyeY-3.6); ctx.lineTo(side*15-3.6, eyeY+3.6);
+      ctx.stroke();
+    } else if(blink){
       ctx.strokeStyle = '#2a2016'; ctx.lineWidth=2;
       ctx.beginPath(); ctx.moveTo(side*15-3.4, eyeY); ctx.lineTo(side*15+3.4, eyeY); ctx.stroke();
     } else {
@@ -492,7 +629,10 @@ function drawBasket(x, y, sx, sy, wobble){
   }
   ctx.strokeStyle = '#2a2016'; ctx.lineWidth = 2.2; ctx.lineCap='round';
   ctx.beginPath();
-  if(basket.mouth > 0.3){
+  if(hurt){
+    ctx.fillStyle = '#5c2f22';
+    ctx.arc(0, eyeY+8, 5.2, 0, TAU); ctx.fill();
+  } else if(basket.mouth > 0.3){
     ctx.fillStyle = '#5c2f22';
     ctx.arc(0, eyeY+7, 5+basket.mouth*3, 0, Math.PI); ctx.fill();
   } else {
@@ -781,6 +921,7 @@ const playState = {
     shake = 0; freeze = 0; flashT = 0; hintT = 4;
     wind = 0; windTarget = 0; windTimer = 0;
     frenzyT = 0; frenzyCooldown = 15; lastTickSec = -1;
+    wasBreather = false;
     resetBasket();
     hintEl.textContent = '💻 ← → 移動　📱 手指拖曳｜接水果、避開炸彈臭鼬！';
     hintEl.classList.add('show');
@@ -792,6 +933,14 @@ const playState = {
     if(freeze > 0){ freeze -= dt; return; }
     const lv = L();
     elapsed += dt;
+
+    /* v5：喘息波開始時輕聲提示（只在真的有炸彈威脅的關卡才提示，避免第1關洗版） */
+    const breatherNow = lv.badRate > 0 && inBreather(elapsed);
+    if(breatherNow && !wasBreather){
+      sfx.breather();
+      floatText(GAME_W/2, 170, '安全波動，安心接水果！', '#aee239', 22);
+    }
+    wasBreather = breatherNow;
 
     /* 風（第4關起） */
     if(lv.wind){
@@ -829,6 +978,7 @@ const playState = {
     basket.sx += (1-basket.sx)*10*dt; basket.sy += (1-basket.sy)*10*dt;
     basket.blink -= dt; if(basket.blink < -0.12) basket.blink = rnd(1.6,3.4);
     basket.mouth = Math.max(0, basket.mouth - dt*3);
+    basket.hurt = Math.max(0, basket.hurt - dt*2.2);
 
     /* 出怪 */
     spawnTimer -= dt;
@@ -838,15 +988,15 @@ const playState = {
     }
     if(comboTimer > 0){ comboTimer -= dt; if(comboTimer <= 0) combo = 0; }
 
-    /* 物件更新與接取 */
+    /* 物件更新與接取（v5：接取寬容度加大——判定範圍略比籃子視覺寬，符合「寬容設計」原則） */
     const catchY = basket.y - basket.h*0.3;
-    const catchHalfW = basket.w*0.46;
+    const catchHalfW = basket.w*0.55;
     for(const e of entities){
       if(e.dead) continue;
       e.y += e.vy*dt;
       e.x = clamp(e.x + wind*dt*(e.def.kind==='star'?0.6:1), 20, GAME_W-20);
       e.rot += e.spin*dt; e.wob += dt*3;
-      if(e.y > catchY-12 && e.y < catchY+36 && Math.abs(e.x - basket.x) < catchHalfW){
+      if(e.y > catchY-16 && e.y < catchY+42 && Math.abs(e.x - basket.x) < catchHalfW){
         e.dead = true; onCatch(e);
         if(state !== playState) return;
         continue;
@@ -894,9 +1044,9 @@ const resultState = {
   name:'result', t:0,
   enter(){
     this.t = 0;
-    sfx.clear();
     const [t1,t2,t3] = starThresholds();
     this.starGot = score >= t3 ? 3 : score >= t2 ? 2 : 1;
+    sfx.clear(this.starGot);                        // v5：音效規模依星級分級
     this._played = 0;
     if(this.starGot > stars[curLevel]){ stars[curLevel] = this.starGot; saveStars(); }
     if(score > best){ best = score; LS.set('fruitpro_best', String(best)); }
@@ -907,8 +1057,9 @@ const resultState = {
     bts.push({ x:GAME_W/2-70, y:400, w:140, h:58, label:'選關畫面', fs:20, cb:()=> setState(selectState) });
     if(hasNext) bts.push({ x:GAME_W/2+90, y:400, w:160, h:58, label:'下一關 ▶', gold:true, fs:20, cb:()=> startLevel(curLevel+1) });
     this._btn = bts;
-    /* 慶祝彩帶 */
-    for(let i=0;i<3;i++) burst(rnd(200,760), rnd(120,260), ['#aee239','#ffcf5c','#ff6cc7'][i], 16, 260);
+    /* v5：慶祝彩帶依星級分級——星星越多，彩帶越盛大（1星精簡、3星滿版金雨） */
+    for(let i=0;i<this.starGot;i++) burst(rnd(200,760), rnd(110,260), ['#aee239','#ffcf5c','#ff6cc7'][i], 16 + this.starGot*4, 260);
+    if(this.starGot === 3) for(let i=0;i<3;i++) burst(rnd(150,810), rnd(70,180), '#fff5d6', 14, 300);
   },
   buttons(){ return this.t > 0.4 ? this._btn : []; },
   update(dt){
@@ -1021,6 +1172,7 @@ window.__test = {
   get stars(){ return stars.slice(); },
   get entityCount(){ return entities.length; },
   get frenzy(){ return frenzyT; },
+  get breather(){ return inBreather(elapsed); },
   get buttons(){ return activeButtons().map(b=>({label:b.label, x:b.x+b.w/2, y:b.y+b.h/2, w:b.w, h:b.h, disabled:!!b.disabled})); },
   startLevel(i){ startLevel(i); },
   goSelect(){ setState(selectState); },

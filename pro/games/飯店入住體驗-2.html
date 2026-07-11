@@ -1,6 +1,12 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v5 -->
+<!-- v5 補強：①角色精細化(頭部漸層/輪廓線/高光/髮絲漸層/開心表情第二狀態) ②觸控可玩稽核(雙搖桿已達標，見稽核註記) ③新增手機版大螢幕提醒浮層(sessionStorage一次/純CSS+SVG) -->
 <!-- v2 系列：AMY 與 RUBY 的雙人飯店假期（庭園／大廳／雙人房／頂樓泳池）升級為五日假期關卡制 -->
+<!-- v5 升級摘要：①觸控玩家新增「重來本日」按鈕(原本卡關只能硬撐到結算)
+     ②提示訊息加優先權佇列(場景切換提示不再蓋掉任務指示)
+     ③當日目標熱點加脈動光暈+箭頭引導(衣櫃/櫃檯/浴缸/床/集合點)
+     ④計時器依三星/二星門檻即時變色，讓玩家隨時知道自己的進度
+     ⑤收集類任務(泳圈/星星/小鴨)湊滿瞬間加 hit-stop+震動+三音階慶祝，強化「達標」的重量感 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -20,7 +26,7 @@
     -webkit-user-select:none;user-select:none;overscroll-behavior:none}
   #stage{position:relative;width:100%;height:100%}
   canvas#game{display:block;width:100%;height:100%;touch-action:none}
-  #hud{position:absolute;top:8px;left:8px;right:66px;display:none;justify-content:space-between;
+  #hud{position:absolute;top:8px;left:8px;right:128px;display:none;justify-content:space-between;
     gap:6px;pointer-events:none;flex-wrap:wrap}
   .panel{background:rgba(16,23,40,.88);border:1px solid var(--card-b);border-radius:12px;
     padding:7px 12px;font-size:13px;box-shadow:0 8px 20px rgba(0,0,0,.4)}
@@ -75,7 +81,26 @@
   #muteBtn{position:absolute;top:8px;right:8px;width:52px;height:52px;border-radius:50%;
     background:var(--card);border:1px solid var(--card-b);cursor:pointer;z-index:45;padding:0;
     color:var(--text);display:flex;align-items:center;justify-content:center}
+  #restartBtn{position:absolute;top:8px;right:68px;width:52px;height:52px;border-radius:50%;
+    background:var(--card);border:1px solid var(--card-b);cursor:pointer;z-index:45;padding:0;
+    color:var(--text);display:none;align-items:center;justify-content:center;font-size:24px;
+    font-family:inherit;line-height:1}
+  #restartBtn:active{transform:scale(.92)}
   .foot{color:var(--dim);font-size:12px;margin-top:8px}
+  /* v5 補強：手機版大螢幕提醒浮層（統一規格，一個 session 只跳一次） */
+  #bigScreenHint{position:absolute;inset:0;z-index:999;display:none;align-items:center;justify-content:center;
+    background:rgba(7,11,20,.9);padding:20px}
+  #bigScreenHint .bscard{background:var(--card);border:1px solid var(--card-b);border-radius:16px;
+    padding:28px 22px 24px;text-align:center;max-width:min(380px,92vw);box-shadow:0 24px 60px rgba(0,0,0,.5)}
+  #bigScreenHint .bsicon{margin:0 auto 14px;display:block}
+  #bigScreenHint h2{margin:0 0 8px;font-size:20px;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #bigScreenHint p{margin:0 0 18px;color:var(--dim);font-size:13.5px;line-height:1.7}
+  #bigScreenHint button{display:block;width:64%;min-width:200px;min-height:52px;margin:0 auto;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));color:#04101f;border:none;
+    border-radius:999px;font:700 15px inherit;cursor:pointer;box-shadow:0 8px 20px rgba(56,225,255,.3)}
+  #bigScreenHint button:active{transform:scale(.97)}
 </style>
 </head>
 <body>
@@ -88,6 +113,7 @@
   </div>
   <div id="hintBar"></div>
   <button id="muteBtn" aria-label="切換音效"></button>
+  <button id="restartBtn" aria-label="重新開始這天" title="重新開始這天">↺</button>
 
   <div class="ovl" id="titleOvl">
     <div class="card">
@@ -121,10 +147,44 @@
       <button class="bigbtn alt" id="menuBtn">行程表</button>
     </div>
   </div>
+
+  <div id="bigScreenHint">
+    <div class="bscard">
+      <svg class="bsicon" width="72" height="52" viewBox="0 0 96 68" fill="none">
+        <rect x="2" y="8" width="34" height="52" rx="6" stroke="#38e1ff" stroke-width="3"/>
+        <circle cx="19" cy="52" r="1.6" fill="#38e1ff"/>
+        <path d="M46 34h14m0 0-6-6m6 6-6 6" stroke="#4f7cff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <rect x="64" y="4" width="30" height="60" rx="4" stroke="#9a6bff" stroke-width="3"/>
+        <path d="M70 58h18" stroke="#9a6bff" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+      <h2>建議使用大螢幕遊玩</h2>
+      <p>用平板或電腦打開，體驗更完整</p>
+      <button id="bigScreenHintBtn" type="button">知道了，繼續玩</button>
+    </div>
+  </div>
 </div>
 
 <script>
 'use strict';
+// v5 補強：手機版大螢幕提醒浮層——只在真手機（非平板/電腦）跳出，一個 session 只跳一次，
+// 不攔截遊戲初始化：這是獨立的頂層 IIFE，下面主遊戲照常載入在浮層後面
+(function bigScreenHint(){
+  try{
+    var isPhone = Math.min(screen.width||9999, screen.height||9999) < 600 || innerWidth < 768;
+    if(!isPhone) return;
+    if(sessionStorage.getItem('bigscreen-hint')) return;
+    var el = document.getElementById('bigScreenHint');
+    if(!el) return;
+    el.style.display = 'flex';
+    var btn = document.getElementById('bigScreenHintBtn');
+    btn.addEventListener('click', function(){
+      try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+      el.style.transition = 'opacity .35s ease';
+      el.style.opacity = '0';
+      setTimeout(function(){ if(el.parentNode) el.parentNode.removeChild(el); }, 380);
+    });
+  }catch(e){}
+})();
 (function(){
 /* =========================================================
    飯店入住體驗 PRO v4（-2 系列：AMY 與 RUBY 的五日假期）
@@ -139,6 +199,14 @@ const stage = $('stage'), canvas = $('game'), ctx = canvas.getContext('2d');
 const clamp = (v,a,b)=> v<a?a:v>b?b:v;
 const rnd = (a,b)=> a + Math.random()*(b-a);
 const dist = (ax,ay,bx,by)=> Math.hypot(ax-bx,ay-by);
+// v5 補強：角色精細化用色彩工具——依百分比加亮/加深十六進位色碼，畫漸層與輪廓線用
+function shadeColor(hex, percent){
+  const num = parseInt(hex.slice(1),16);
+  const r = clamp((num>>16) + Math.round(2.55*percent), 0, 255);
+  const g = clamp(((num>>8)&0xff) + Math.round(2.55*percent), 0, 255);
+  const b = clamp((num&0xff) + Math.round(2.55*percent), 0, 255);
+  return '#'+((1<<24)+(r<<16)+(g<<8)+b).toString(16).slice(1);
+}
 
 /* ---------- 音效：Compressor 主匯流排＋隨機音高 ---------- */
 let AC=null, master=null, muted=false;
@@ -146,6 +214,13 @@ try{ muted = localStorage.getItem('hotel2pro_mute')==='1'; }catch(e){}
 const sndOn = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 8a5 5 0 0 1 0 8M18.5 5.5a9 9 0 0 1 0 13"/></svg>';
 const sndOff = '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/><path d="M16 9l6 6M22 9l-6 6"/></svg>';
 const muteBtn = $('muteBtn');
+// v5：平板玩家原本卡關/走錯只能硬撐到結算畫面才能重來，補一顆隨時可按的「重來本日」鈕
+const restartBtn = $('restartBtn');
+restartBtn.addEventListener('click', e=>{
+  e.stopPropagation();
+  if(S.scene!=='play') return;
+  sfx.blip(); startDay(S.day);
+});
 function updateMuteBtn(){ muteBtn.innerHTML = muted ? sndOff : sndOn; }
 updateMuteBtn();
 muteBtn.addEventListener('click', e=>{
@@ -199,7 +274,8 @@ const sfx = {
   splash(){ noiseBurst(.3,.18,700); beep(280,.2,'sine',.08,-100); },
   sleep(){ beep(392,.18,'sine',.1,-60); setTimeout(()=>beep(330,.3,'sine',.08,-40),150); },
   quack(){ beep(340,.1,'sawtooth',.1,-80); setTimeout(()=>beep(300,.08,'sawtooth',.07,-60),90); },
-  win(){ [523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.2,'triangle',.11), i*110)); }
+  win(){ [523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.2,'triangle',.11), i*110)); },
+  collectAll(){ [880,1108,1318].forEach((f,i)=>setTimeout(()=>beep(f,.14,'square',.11), i*70)); }
 };
 
 /* ---------- 世界與場景（沿用 v2 地圖，玩家一眼認得） ---------- */
@@ -281,7 +357,7 @@ function makePlayer(idx){
 let p1 = makePlayer(0), p2 = makePlayer(1), players = [p1,p2];
 
 const S = { scene:'title', area:'outdoor', time:0, over:false, day:0,
-  staffLine:0, staffTalkT:0, doorCooldown:0, shake:0, freeze:0 };
+  staffLine:0, staffTalkT:0, doorCooldown:0, shake:0, freeze:0, collectDone:false };
 let items = [];          // 撿取物 {area,x,y,type,taken,phase}
 let sharedGot = 0, sharedNeed = 0;
 
@@ -302,7 +378,7 @@ function goalLabel(){
   return DAYS[S.day].name;
 }
 function setupDay(d){
-  items = []; sharedGot = 0; sharedNeed = 0;
+  items = []; sharedGot = 0; sharedNeed = 0; S.collectDone = false;
   p1 = makePlayer(0); p2 = makePlayer(1); players=[p1,p2];
   if(d===0){
     S.area='outdoor';
@@ -371,6 +447,7 @@ function updateDayTasks(p, dt){
       updateTaskLabels();
     }
   }
+  checkCollectMilestone();
   if(D===0){
     if(S.area==='lobby' && p.step===1){
       const c = AREAS.lobby.counter;
@@ -453,6 +530,17 @@ function updateSwim(p){
   }else if(!inPool && p.swimming) p.swimming = false;
 }
 
+// v5：收集類任務（泳圈/星星/小鴨）湊滿的那一刻加重手感——hit-stop＋震動＋三音階慶祝
+// 一天只慶祝一次（S.collectDone 在 setupDay 重置），避免同天重複觸發
+function checkCollectMilestone(){
+  if(sharedNeed>0 && sharedGot>=sharedNeed && !S.collectDone){
+    S.collectDone = true;
+    S.freeze = 0.08; S.shake = Math.max(S.shake, 7);
+    sfx.collectAll();
+    const cx = stage.clientWidth/2, cy = stage.clientHeight*0.4;
+    burstConfetti(cx, cy, 16);
+  }
+}
 function calcDayStars(){
   const D = DAYS[S.day];
   if(S.time <= D.fast) return 3;
@@ -483,6 +571,7 @@ function showEnd(st){
     '<br>假期進度 '+dayStars.reduce((a,c)=>a+c,0)+' / 15 顆星';
   $('nextBtn').style.display = (S.day<4) ? 'inline-block' : 'none';
   $('endOvl').style.display='flex'; $('hud').style.display='none';
+  restartBtn.style.display='none';
 }
 
 /* ---------- 進出場景 ---------- */
@@ -492,7 +581,7 @@ function changeArea(to, ex, ey){
   S.doorCooldown = 0.6;
   sfx.door();
   bakeArea();
-  showHint('來到了「'+AREA_LABEL[to]+'」');
+  showHint('來到了「'+AREA_LABEL[to]+'」', 1);
 }
 function updateDoors(){
   if(S.doorCooldown>0) return;
@@ -514,12 +603,17 @@ function updateTaskLabels(){
   $('taskB').textContent = stepLabel(p2);
   $('goalTxt').textContent = goalLabel();
 }
-let hintFade=null;
-function showHint(text){
+// v5：提示訊息加優先權——場景切換的「來到了ＯＯ」（低優先）不再蓋掉還沒讀完的任務指示（高優先），
+// 孩子常常連續穿門，原本會來不及看到下一步該做什麼
+let hintFade=null, hintExpireAt=0, hintPriority=-1;
+function showHint(text, priority=2){
+  const now = performance.now();
+  if(now < hintExpireAt && priority < hintPriority) return; // 低優先權提示不打斷還在顯示的高優先提示
+  hintPriority = priority; hintExpireAt = now + 4200;
   const el=$('hintBar');
   el.textContent=text; el.style.display='block'; el.style.opacity='1';
   clearTimeout(hintFade);
-  hintFade=setTimeout(()=>{ el.style.opacity='0'; setTimeout(()=>{el.style.display='none';},600); }, 4200);
+  hintFade=setTimeout(()=>{ el.style.opacity='0'; hintPriority=-1; setTimeout(()=>{el.style.display='none';},600); }, 4200);
 }
 
 /* ---------- 標題／開始 ---------- */
@@ -527,6 +621,7 @@ function enterTitle(){
   S.scene='title';
   $('titleOvl').style.display='flex'; $('endOvl').style.display='none';
   $('hud').style.display='none'; $('hintBar').style.display='none';
+  restartBtn.style.display='none';
   renderDayGrid();
 }
 function startDay(i){
@@ -537,6 +632,7 @@ function startDay(i){
   bakeArea();
   $('titleOvl').style.display='none'; $('endOvl').style.display='none';
   $('hud').style.display='flex';
+  restartBtn.style.display='flex';
   $('dayTxt').textContent = 'Day '+(i+1)+'・'+DAYS[i].name;
   updateTaskLabels();
   showHint('Day '+(i+1)+'「'+DAYS[i].name+'」：'+DAYS[i].desc);
@@ -589,7 +685,14 @@ addEventListener('keydown', e=>{
 });
 addEventListener('keyup', e=>{ keys[e.code]=false; });
 
-/* ---------- 觸控：左右半屏浮動搖桿（跟隨拇指、含死區） ---------- */
+/* ---------- 觸控：左右半屏浮動搖桿（跟隨拇指、含死區） ----------
+   v5 觸控稽核（原本已達標，本輪未改動邏輯，僅覆核）：
+   - 本作無跳躍/攻擊等額外操作，移動＝唯一操作，雙搖桿已覆蓋 100% 玩法，重來/靜音/選單皆為原生 <button>
+   - 搖桿半徑 R=50（直徑100px）、死區 DEAD=9，遠大於 48px 門檻；muteBtn/restartBtn 52×52px、.bigbtn min-height 50px、
+     日曆格 min-height 84px，均 ≥48px
+   - html/body 與 canvas 皆 touch-action:none，pointerdown/pointermove 皆 preventDefault，遊玩中不會誤觸捲動/縮放
+   - 畫布依 stage 尺寸即時 resize()，直向／橫向皆可玩
+   - 標題畫面已同時列出電腦按鍵（WASD／方向鍵）與平板觸控（左右半邊拖曳）兩行說明 ---------- */
 const sticks = {};
 canvas.addEventListener('pointerdown', e=>{
   if(S.scene!=='play' || e.pointerType==='mouse') return;
@@ -919,7 +1022,13 @@ function update(dt){
   if(S.scene!=='play' || S.over) return;
   S.time += dt;
   const ct = fmtTime(S.time);
-  if(ct !== update._ct){ update._ct = ct; $('clockTxt').textContent = ct; }
+  if(ct !== update._ct){
+    update._ct = ct;
+    const el = $('clockTxt'); el.textContent = ct;
+    // v5：計時器依三星/二星門檻即時變色，玩家不用等到結算才知道自己還在不在星等內
+    const D = DAYS[S.day];
+    el.style.color = S.time<=D.fast ? '#ffcf5c' : (S.time<=D.par ? '#eaf1ff' : '#ff8a8a');
+  }
   S.staffTalkT = Math.max(0, S.staffTalkT - dt);
   S.doorCooldown = Math.max(0, S.doorCooldown - dt);
 
@@ -1043,32 +1152,45 @@ function drawPlayer(p, t){
   ctx.translate(0, bob*sc);
   const sq = p.squash>0 ? 1-Math.sin(p.squash*Math.PI)*.16 : 1;
   ctx.scale(2-sq, sq);
-  // 腳
-  ctx.fillStyle = p.outfit==='swim' ? '#f0c8a0' : '#2a3346';
+  // 腳（含輪廓線，讓四肢跟身體分色分層看得出來）
+  const legCol = p.outfit==='swim' ? '#f0c8a0' : '#2a3346';
+  ctx.fillStyle = legCol;
   ctx.fillRect(-9*sc, (10+Math.max(0,walkA*.3))*sc, 7*sc, 16*sc);
   ctx.fillRect(2*sc, (10+Math.max(0,-walkA*.3))*sc, 7*sc, 16*sc);
+  ctx.strokeStyle = shadeColor(legCol,-28); ctx.lineWidth=.8*sc;
+  ctx.strokeRect(-9*sc, (10+Math.max(0,walkA*.3))*sc, 7*sc, 16*sc);
+  ctx.strokeRect(2*sc, (10+Math.max(0,-walkA*.3))*sc, 7*sc, 16*sc);
   ctx.fillStyle='#e8b58c';
   ctx.fillRect(-9*sc, (22+Math.max(0,walkA*.3))*sc, 7*sc, 4*sc);
   ctx.fillRect(2*sc, (22+Math.max(0,-walkA*.3))*sc, 7*sc, 4*sc);
-  // 身體（洋裝＝上衣＋裙襬 / 泳裝）
+  // 身體（洋裝＝上衣＋裙襬 / 泳裝）——漸層受光/背光＋輪廓線＋高光條
   const bodyH = (p.outfit==='swim' ? 17 : 20) * sc;
-  const bodyG = ctx.createLinearGradient(0,-10*sc,0,bodyH);
-  bodyG.addColorStop(0,p.dress); bodyG.addColorStop(1,p.color);
+  const bodyG = ctx.createLinearGradient(-13*sc,-10*sc,13*sc,bodyH);
+  bodyG.addColorStop(0,shadeColor(p.dress,14));
+  bodyG.addColorStop(.55,p.dress);
+  bodyG.addColorStop(1,shadeColor(p.color,-16));
   ctx.fillStyle=bodyG;
   roundRectPath(ctx,-13*sc, -10*sc, 26*sc, bodyH, 8*sc); ctx.fill();
+  ctx.strokeStyle=shadeColor(p.color,-32); ctx.lineWidth=1.2*sc; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.22)';
+  roundRectPath(ctx,-9*sc,-8*sc,5*sc,bodyH*.5,2.5*sc); ctx.fill();
   if(p.outfit!=='swim'){
     ctx.beginPath();
     ctx.moveTo(-13*sc, 8*sc); ctx.lineTo(13*sc, 8*sc);
     ctx.lineTo(17*sc, 16*sc); ctx.lineTo(-17*sc, 16*sc); ctx.closePath();
-    ctx.fillStyle=p.color; ctx.fill();
+    const skirtG = ctx.createLinearGradient(0,8*sc,0,16*sc);
+    skirtG.addColorStop(0,p.color); skirtG.addColorStop(1,shadeColor(p.color,-22));
+    ctx.fillStyle=skirtG; ctx.fill();
+    ctx.strokeStyle=shadeColor(p.color,-38); ctx.lineWidth=1*sc; ctx.stroke();
   }
-  // 手臂
+  // 手臂（同色輪廓線）
   const armSwing = p.moving ? Math.sin(p.walk)*10 : 0;
-  ctx.fillStyle = p.outfit==='swim' ? '#f0c8a0' : p.dress;
+  const armCol = p.outfit==='swim' ? '#f0c8a0' : p.dress;
+  ctx.fillStyle = armCol; ctx.strokeStyle = shadeColor(armCol,-26); ctx.lineWidth=.8*sc;
   ctx.save(); ctx.translate(-13*sc, -2*sc); ctx.rotate(armSwing*Math.PI/180);
-  ctx.fillRect(-4*sc,0,8*sc,16*sc); ctx.restore();
+  ctx.fillRect(-4*sc,0,8*sc,16*sc); ctx.strokeRect(-4*sc,0,8*sc,16*sc); ctx.restore();
   ctx.save(); ctx.translate(13*sc, -2*sc); ctx.rotate(-armSwing*Math.PI/180);
-  ctx.fillRect(-4*sc,0,8*sc,16*sc); ctx.restore();
+  ctx.fillRect(-4*sc,0,8*sc,16*sc); ctx.strokeRect(-4*sc,0,8*sc,16*sc); ctx.restore();
   // 提著的東西
   if(!p.lying && p.hasSuitcase){
     ctx.save(); ctx.translate(15*sc, 12*sc); ctx.rotate(Math.sin(p.walk)*.06);
@@ -1083,38 +1205,62 @@ function drawPlayer(p, t){
     ctx.fillStyle='#c98d1f'; ctx.beginPath(); ctx.arc(0,-4*sc,2*sc,0,Math.PI*2); ctx.fill();
     ctx.restore();
   }
-  // 頭＋髮＋表情
-  ctx.fillStyle='#f0c8a0';
+  // 頭（漸層膚色＋輪廓線）＋髮（漸層＋高光）＋表情（兩種狀態：平常／開心）
+  const headG = ctx.createRadialGradient(-4*sc,-24*sc,2*sc, 0,-20*sc,14*sc);
+  headG.addColorStop(0,'#ffe0bd'); headG.addColorStop(.6,'#f0c8a0'); headG.addColorStop(1,'#d9a879');
+  ctx.fillStyle=headG;
   ctx.beginPath(); ctx.arc(0, -20*sc, 12*sc, 0, Math.PI*2); ctx.fill();
-  ctx.fillStyle=p.hair;
+  ctx.strokeStyle='rgba(120,80,50,.35)'; ctx.lineWidth=1*sc; ctx.stroke();
+  const hairG = ctx.createLinearGradient(0,-38*sc,0,-10*sc);
+  hairG.addColorStop(0, shadeColor(p.hair,22)); hairG.addColorStop(1, shadeColor(p.hair,-20));
+  ctx.fillStyle=hairG;
   ctx.beginPath(); ctx.arc(0, -24*sc, 13*sc, Math.PI, 0); ctx.fill();
+  ctx.strokeStyle=shadeColor(p.hair,-38); ctx.lineWidth=1*sc; ctx.stroke();
   ctx.fillRect(-13*sc, -24*sc, 5*sc, p.idx===0?18*sc:12*sc);
   ctx.fillRect(8*sc, -24*sc, 5*sc, p.idx===0?18*sc:12*sc);
   if(p.idx===1){ // RUBY 雙馬尾
     ctx.beginPath(); ctx.arc(-14*sc,-14*sc,4*sc,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(14*sc,-14*sc,4*sc,0,Math.PI*2); ctx.fill();
   }
+  ctx.fillStyle='rgba(255,255,255,.25)'; // 髮絲高光
+  ctx.beginPath(); ctx.ellipse(-5*sc,-30*sc,3.6*sc,2*sc,-.4,0,Math.PI*2); ctx.fill();
   // 髮飾
   ctx.fillStyle = p.idx===0 ? '#ffcf5c' : '#ff6cc7';
   ctx.beginPath(); ctx.arc(7*sc,-30*sc,2.6*sc,0,Math.PI*2); ctx.fill();
-  const blink = (Math.sin(t*1.7+p.idx*2) > 0.96);
+  ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.lineWidth=.7*sc; ctx.stroke();
+  // v5：squash 剛觸發時（拿到東西／達成任務／躺床泡澡等）短暫切到「開心」表情，做出第二種臉部狀態
+  const cheer = p.squash > 0.15 && !p.lying;
+  const blink = !cheer && (Math.sin(t*1.7+p.idx*2) > 0.96);
   ctx.fillStyle='#20242e';
   if(p.lying || blink){
+    // 平常／閉眼狀態
     ctx.strokeStyle='#20242e'; ctx.lineWidth=1.2*sc;
     ctx.beginPath(); ctx.moveTo(-6*sc,-20*sc); ctx.lineTo(-2*sc,-20*sc); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(2*sc,-20*sc); ctx.lineTo(6*sc,-20*sc); ctx.stroke();
+    ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1.4*sc; ctx.beginPath();
+    ctx.arc(0, -15*sc, 3*sc, .2, Math.PI-.2); ctx.stroke();
+  }else if(cheer){
+    // 開心狀態：瞇眼弧線上揚＋張嘴大笑
+    ctx.strokeStyle='#20242e'; ctx.lineWidth=1.4*sc; ctx.lineCap='round';
+    ctx.beginPath(); ctx.arc(-4*sc,-19*sc,2.2*sc,Math.PI,0); ctx.stroke();
+    ctx.beginPath(); ctx.arc(4*sc,-19*sc,2.2*sc,Math.PI,0); ctx.stroke();
+    ctx.fillStyle='#7a3a2a';
+    roundRectPath(ctx,-3.4*sc,-15.5*sc,6.8*sc,4.2*sc,2*sc); ctx.fill();
+    ctx.fillStyle='#ff8fa8';
+    ctx.beginPath(); ctx.arc(0,-13*sc,1.6*sc,0,Math.PI); ctx.fill();
   }else{
+    // 平常狀態：圓眼＋高光
     ctx.beginPath(); ctx.arc(-4*sc, -20*sc, 1.7*sc, 0, Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(4*sc, -20*sc, 1.7*sc, 0, Math.PI*2); ctx.fill();
     ctx.fillStyle='#fff';
     ctx.beginPath(); ctx.arc(-3.4*sc,-20.6*sc,.6*sc,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.arc(4.6*sc,-20.6*sc,.6*sc,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1.4*sc; ctx.beginPath();
+    ctx.arc(0, -15*sc, 3*sc, .2, Math.PI-.2); ctx.stroke();
   }
   ctx.fillStyle='rgba(255,130,160,.5)';
   ctx.beginPath(); ctx.arc(-7.5*sc,-16*sc,1.8*sc,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(7.5*sc,-16*sc,1.8*sc,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1.4*sc; ctx.beginPath();
-  ctx.arc(0, -15*sc, 3*sc, .2, Math.PI-.2); ctx.stroke();
   ctx.restore();
   if(!p.lying){
     ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
@@ -1126,12 +1272,21 @@ function drawBather(p){
   const bt = AREAS.room.bathtub;
   const [sx,sy]=toScreen(p.x, bt.y+bt.h*.55);
   const sc = scale;
-  ctx.fillStyle=p.color; ctx.beginPath(); ctx.arc(sx,sy,10*sc,0,Math.PI*2); ctx.fill();
+  const bodyG = ctx.createRadialGradient(sx-3*sc,sy-3*sc,1*sc,sx,sy,10*sc);
+  bodyG.addColorStop(0,shadeColor(p.color,20)); bodyG.addColorStop(1,shadeColor(p.color,-16));
+  ctx.fillStyle=bodyG; ctx.beginPath(); ctx.arc(sx,sy,10*sc,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=shadeColor(p.color,-32); ctx.lineWidth=1*sc; ctx.stroke();
   ctx.fillStyle='#f0c8a0'; ctx.beginPath(); ctx.arc(sx,sy-10*sc,7*sc,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(120,80,50,.3)'; ctx.lineWidth=.8*sc; ctx.stroke();
   ctx.fillStyle=p.hair; ctx.beginPath(); ctx.arc(sx,sy-13*sc,7.5*sc,Math.PI,0); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.2)';
+  ctx.beginPath(); ctx.ellipse(sx-2.5*sc,sy-16*sc,2.4*sc,1.3*sc,-.4,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#20242e'; ctx.lineWidth=1*sc;
   ctx.beginPath(); ctx.moveTo(sx-4*sc,sy-10*sc); ctx.lineTo(sx-1*sc,sy-10*sc); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(sx+1*sc,sy-10*sc); ctx.lineTo(sx+4*sc,sy-10*sc); ctx.stroke();
+  ctx.fillStyle='rgba(255,130,160,.4)';
+  ctx.beginPath(); ctx.arc(sx-5*sc,sy-8*sc,1.3*sc,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx+5*sc,sy-8*sc,1.3*sc,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#a55a4a';
   ctx.beginPath(); ctx.arc(sx, sy-6*sc, 2.2*sc, .2, Math.PI-.2); ctx.stroke();
 }
@@ -1146,12 +1301,21 @@ function drawSwimmer(p, t){
   ctx.strokeStyle=p.color; ctx.lineWidth=4*sc; ctx.lineCap='round';
   ctx.beginPath(); ctx.moveTo(sx-9*sc,sy); ctx.lineTo(sx-17*sc, sy+stroke*sc*.35); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(sx+9*sc,sy); ctx.lineTo(sx+17*sc, sy-stroke*sc*.35); ctx.stroke();
-  ctx.fillStyle=p.color; ctx.beginPath(); ctx.ellipse(sx,sy,12*sc,7*sc,0,0,Math.PI*2); ctx.fill();
+  const bodyG = ctx.createLinearGradient(sx,sy-7*sc,sx,sy+7*sc);
+  bodyG.addColorStop(0,shadeColor(p.color,18)); bodyG.addColorStop(1,shadeColor(p.color,-14));
+  ctx.fillStyle=bodyG; ctx.beginPath(); ctx.ellipse(sx,sy,12*sc,7*sc,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle=shadeColor(p.color,-30); ctx.lineWidth=1*sc; ctx.stroke();
   ctx.fillStyle='#f0c8a0'; ctx.beginPath(); ctx.arc(sx, sy-9*sc, 8*sc,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(120,80,50,.3)'; ctx.lineWidth=.8*sc; ctx.stroke();
   ctx.fillStyle=p.hair; ctx.beginPath(); ctx.arc(sx, sy-12*sc, 8.5*sc, Math.PI,0); ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.2)';
+  ctx.beginPath(); ctx.ellipse(sx-3*sc,sy-15*sc,2.6*sc,1.4*sc,-.4,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#20242e';
   ctx.beginPath(); ctx.arc(sx-3*sc, sy-9*sc, 1*sc,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(sx+3*sc, sy-9*sc, 1*sc,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='rgba(255,130,160,.4)';
+  ctx.beginPath(); ctx.arc(sx-5.5*sc,sy-6.5*sc,1.3*sc,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(sx+5.5*sc,sy-6.5*sc,1.3*sc,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1*sc;
   ctx.beginPath(); ctx.arc(sx, sy-5*sc, 2.4*sc, .2, Math.PI-.2); ctx.stroke();
   ctx.font='bold 11px sans-serif'; ctx.textAlign='center'; ctx.fillStyle='rgba(255,255,255,.85)';
@@ -1165,16 +1329,39 @@ function drawStaff(t){
   ctx.save(); ctx.translate(sx,sy);
   ctx.beginPath(); ctx.ellipse(0,26*sc,18*sc,6*sc,0,0,Math.PI*2); ctx.fillStyle='rgba(0,0,0,.3)'; ctx.fill();
   ctx.translate(0, Math.sin(t*2)*1.2*sc);
-  ctx.fillStyle='#4f5f8a'; roundRectPath(ctx,-12*sc,-8*sc,24*sc,22*sc,7*sc); ctx.fill();
+  // 制服（漸層受光/背光＋輪廓線＋高光條）
+  const jacketG = ctx.createLinearGradient(-12*sc,-8*sc,12*sc,14*sc);
+  jacketG.addColorStop(0,'#6a7cad'); jacketG.addColorStop(.55,'#4f5f8a'); jacketG.addColorStop(1,'#38466b');
+  ctx.fillStyle=jacketG; roundRectPath(ctx,-12*sc,-8*sc,24*sc,22*sc,7*sc); ctx.fill();
+  ctx.strokeStyle='#293659'; ctx.lineWidth=1.2*sc; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.18)'; roundRectPath(ctx,-9*sc,-6*sc,5*sc,10*sc,2.5*sc); ctx.fill();
   ctx.fillStyle='#ffcf5c'; ctx.fillRect(-2*sc,-8*sc,4*sc,10*sc);   // 領帶
-  ctx.fillStyle='#f0c8a0'; ctx.beginPath(); ctx.arc(0,-18*sc,11*sc,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#2a2118'; ctx.beginPath(); ctx.arc(0,-22*sc,12*sc,Math.PI,0); ctx.fill();
+  ctx.strokeStyle='#c98d1f'; ctx.lineWidth=.7*sc; ctx.strokeRect(-2*sc,-8*sc,4*sc,10*sc);
+  // 臉（漸層膚色＋輪廓線）
+  const faceG = ctx.createRadialGradient(-3*sc,-20*sc,1.5*sc,0,-18*sc,11*sc);
+  faceG.addColorStop(0,'#ffe0bd'); faceG.addColorStop(1,'#e0aa7c');
+  ctx.fillStyle=faceG; ctx.beginPath(); ctx.arc(0,-18*sc,11*sc,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(120,80,50,.3)'; ctx.lineWidth=.9*sc; ctx.stroke();
+  // 髮（漸層＋高光）
+  const staffHairG = ctx.createLinearGradient(0,-34*sc,0,-10*sc);
+  staffHairG.addColorStop(0,'#443627'); staffHairG.addColorStop(1,'#201812');
+  ctx.fillStyle=staffHairG; ctx.beginPath(); ctx.arc(0,-22*sc,12*sc,Math.PI,0); ctx.fill();
+  ctx.strokeStyle='#141009'; ctx.lineWidth=.8*sc; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.15)';
+  ctx.beginPath(); ctx.ellipse(-4*sc,-27*sc,3.4*sc,1.8*sc,-.4,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#20242e';
   ctx.beginPath(); ctx.arc(-4*sc,-18*sc,1.4*sc,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(4*sc,-18*sc,1.4*sc,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-3.5*sc,-18.5*sc,.5*sc,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(4.5*sc,-18.5*sc,.5*sc,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#a55a4a'; ctx.lineWidth=1.2*sc;
   ctx.beginPath(); ctx.arc(0,-13*sc,2.6*sc,.2,Math.PI-.2); ctx.stroke();
+  ctx.fillStyle='rgba(255,130,160,.4)';
+  ctx.beginPath(); ctx.arc(-7*sc,-15*sc,1.6*sc,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7*sc,-15*sc,1.6*sc,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#ffcf5c'; ctx.fillRect(-7*sc,-30*sc,14*sc,3.5*sc);
+  ctx.strokeStyle='#c98d1f'; ctx.lineWidth=.7*sc; ctx.strokeRect(-7*sc,-30*sc,14*sc,3.5*sc);
   ctx.restore();
   const near = players.some(p => dist(p.x,p.y,s.x,s.y)<90);
   if(near || S.staffTalkT>0){
@@ -1280,6 +1467,52 @@ function drawDynamic(t){
     }
   }
 }
+// v5：互動熱點缺乏視覺引導，孩子要試探才知道哪裡能互動——依當天任務動態算出「下一步該去哪」，
+// 疊加脈動光暈+箭頭，讓玩家一眼就看到目標（呼應「一眼看懂」原則）
+function hotspotFor(p){
+  const D = S.day;
+  if(D===0){
+    const c = AREAS.lobby.counter, b = AREAS.room.bedA;
+    if(p.step===1) return {area:'lobby', x:c.x+c.w/2, y:c.y+c.h+10};
+    if(p.step===2) return {area:'room', x:b.x+b.w/2, y:b.y+b.h/2};
+  }else if(D===1){
+    const wd = AREAS.room.wardrobe, pl = AREAS.rooftop.pool;
+    if(p.step===0) return {area:'room', x:wd.x+wd.w/2, y:wd.y+wd.h/2};
+    if(p.step===1) return {area:'rooftop', x:pl.x+pl.w/2, y:pl.y+pl.h/2};
+  }else if(D===3){
+    const bt = AREAS.room.bathtub;
+    if(sharedGot>=sharedNeed && !p.hasBathed) return {area:'room', x:bt.x+bt.w/2, y:bt.y+bt.h/2};
+  }else if(D===4){
+    const c = AREAS.lobby.counter, gt = AREAS.outdoor.gate;
+    if(p.step===1) return {area:'lobby', x:c.x+c.w/2, y:c.y+c.h+10};
+    if(p.step===2) return {area:'outdoor', x:gt.x+gt.w/2, y:gt.y+gt.h/2};
+  }
+  return null;
+}
+function drawHotspots(t){
+  if(S.scene!=='play' || S.over) return;
+  const sc = scale, seen = new Set();
+  for(const p of players){
+    const h = hotspotFor(p);
+    if(!h || h.area!==S.area) continue;
+    const key = h.x+','+h.y;
+    if(seen.has(key)) continue;
+    seen.add(key);
+    const [sx,sy] = toScreen(h.x,h.y);
+    const pulse = 0.5 + Math.sin(t*3.4)*0.5;
+    ctx.save();
+    ctx.globalAlpha = 0.3 + pulse*0.35;
+    ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 3*sc;
+    ctx.beginPath(); ctx.arc(sx, sy, (24+pulse*9)*sc, 0, Math.PI*2); ctx.stroke();
+    ctx.globalAlpha = 1;
+    const ay = sy - (44 + Math.sin(t*3.4)*6)*sc;
+    ctx.fillStyle = '#ffcf5c'; ctx.strokeStyle='#c98d1f'; ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(sx, ay+13*sc); ctx.lineTo(sx-7*sc, ay); ctx.lineTo(sx+7*sc, ay); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+}
 function drawSticksVisual(){
   for(const id in sticks){
     const st = sticks[id];
@@ -1302,6 +1535,7 @@ function render(t){
   ctx.save();
   ctx.translate(shx, shy);
   drawDynamic(t);
+  drawHotspots(t);
   drawStaff(t);
   const order = [p1,p2].sort((a,b)=>a.y-b.y);
   order.forEach(p=>drawPlayer(p,t));

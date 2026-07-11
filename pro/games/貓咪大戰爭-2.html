@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v5：路線瞄準佈陣＋直向裝置提示＋難度喘息節奏＋狀態淡入淡出＋連擊系統 -->
+<!-- +補強：角色精細化／觸控／大螢幕提醒 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -10,23 +11,92 @@
   html,body{margin:0;height:100%;background:#0d0221;overflow:hidden;touch-action:none;
     -webkit-user-select:none;user-select:none;font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
   canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  /* 大螢幕提醒浮層（手機才跳、一個 session 一次） */
+  .bsh-overlay{position:fixed;inset:0;z-index:99999;background:rgba(7,11,20,0.9);
+    display:flex;align-items:center;justify-content:center;padding:24px;box-sizing:border-box;
+    touch-action:none;opacity:1;transition:opacity .25s ease}
+  .bsh-overlay[hidden]{display:none}
+  .bsh-overlay.bsh-fade{opacity:0;pointer-events:none}
+  .bsh-card{max-width:380px;width:100%;background:rgba(20,14,40,0.96);
+    border:1px solid rgba(255,255,255,0.16);border-radius:16px;
+    padding:30px 24px;text-align:center;box-shadow:0 20px 60px rgba(0,0,0,0.55);
+    font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
+  .bsh-icon{margin:0 auto 14px}
+  .bsh-title{margin:0 0 10px;font-size:21px;font-weight:700;line-height:1.4;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);
+    -webkit-background-clip:text;background-clip:text;color:#4f7cff;color:transparent}
+  .bsh-sub{margin:0 0 22px;font-size:14px;color:rgba(255,255,255,0.78);line-height:1.7}
+  .bsh-btn{display:block;width:100%;min-width:60%;height:52px;border:0;border-radius:12px;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);color:#07101f;
+    font-size:16px;font-weight:700;font-family:inherit;cursor:pointer}
+  .bsh-btn:active{filter:brightness(0.92)}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="bigscreenHint" class="bsh-overlay" hidden>
+  <div class="bsh-card">
+    <svg class="bsh-icon" width="52" height="52" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="6" y="10" width="40" height="26" rx="3" stroke="#9a6bff" stroke-width="2.4"/>
+      <rect x="18" y="40" width="16" height="4" rx="2" fill="#4f7cff"/>
+      <path d="M26 40v-4" stroke="#4f7cff" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M14 23h24" stroke="#38e1ff" stroke-width="2.4" stroke-linecap="round"/>
+      <path d="M14 28h16" stroke="#38e1ff" stroke-width="2.4" stroke-linecap="round" opacity="0.55"/>
+    </svg>
+    <h2 class="bsh-title">建議使用大螢幕遊玩</h2>
+    <p class="bsh-sub">用平板或電腦打開，體驗更完整</p>
+    <button type="button" class="bsh-btn" id="bshOk">知道了，繼續玩</button>
+  </div>
+</div>
 <script>
 'use strict';
 /* ============================================================
-   貓咪大戰爭（-2 系列）— 專業AI升級版 v4
+   貓咪大戰爭（-2 系列）— 專業AI升級版 v5
    夜色霓虹屋頂 4 路線對戰＋轉蛋收藏。派出貓咪部隊推倒蝙蝠城，
    擊敗蝙蝠王！通關一次解鎖「無盡模式」。
    與 pro/貓咪大戰爭.html（單線推塔＋五關卡＋貓貓砲）為不同作品：
    本作核心是「多路線佈陣 × 轉蛋稀有度養成 × 無盡挑戰」。
+
+   v5 針對性升級（保留 v4 既有系統，只補弱點）：
+   1. 路線瞄準佈陣：v4 出兵路線是輪流分配，玩家完全無法主動指定，
+      與「4 路線大作戰」的賣點矛盾。v5 加入「先點戰場路線／鍵盤↑↓
+      選路線，再出兵＝指定佈陣」，不點則維持原本輪流（向下相容）。
+   2. 直向裝置提示：v4 沒有處理手機直放，卡片觸控高度會被壓縮到
+      遠低於 48px 標準。v5 偵測直向並在選單/結算畫面顯示「請橫放」
+      提示（純線稿圖示，不用表情符號當圖示）。
+   3. 難度喘息節奏：v4 生成頻率單調遞增，沒有鋸齒狀的放鬆段。
+      v5 加入週期性「緊繃→喘息→更緊繃」節奏，喘息時額外給魚幣。
+   4. 狀態轉場與分數呈現：v4 選單/戰鬥/結算/轉蛋切換全部瞬移，
+      結算分數也是瞬間跳出。v5 加入淡入淡出轉場＋分數滾動計數。
+   5. 連擊系統：v4 每次擊殺回饋強度一致。v5 加入短時間內連續擊殺
+      的 COMBO 加成（魚幣/分數加成＋音高遞增＋飄字），呼應「獎勵
+      要大聲」的手感原則。
    ============================================================ */
 const GAME_W = 960, GAME_H = 540;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 
+/* ===================== 大螢幕提醒浮層（手機才跳、一個 session 一次） ===================== */
+(function bigscreenHint(){
+  try{
+    const isMobile = Math.min(screen.width, screen.height) < 600 || window.innerWidth < 768;
+    if(!isMobile) return;
+    if(sessionStorage.getItem('bigscreen-hint')) return;
+    const el = document.getElementById('bigscreenHint');
+    if(!el) return;
+    el.hidden = false;
+    const btn = document.getElementById('bshOk');
+    const dismiss = ()=>{
+      try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+      el.classList.add('bsh-fade');
+      setTimeout(()=>{ el.remove(); }, 280);
+    };
+    if(btn) btn.addEventListener('click', dismiss, { once:true });
+  }catch(e){ /* 偵測失敗就不擋遊戲 */ }
+})();
+// 上面這段是獨立、同步、非阻塞的 DOM 操作：不影響下方畫布初始化與遊戲主迴圈的啟動時機。
+
+let isPortrait = false;    // 直向裝置偵測（提示玩家橫放，見 drawPortraitHint）
 function resize(){
   const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
   const dpr = Math.min(devicePixelRatio || 1, 2);
@@ -36,6 +106,7 @@ function resize(){
   canvas.style.height = GAME_H * scale + 'px';
   ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
   canvas._scale = scale;
+  isPortrait = innerHeight > innerWidth * 1.05;
 }
 addEventListener('resize', resize); resize();
 
@@ -89,7 +160,8 @@ function noiseHit(dur=0.15, vol=0.14){
 const sfx = {
   spawn : ()=>beep(500,0.09,'square',0.11,150),
   hit   : ()=>{ beep(190,0.05,'square',0.1,-60); },
-  kill  : ()=>{ beep(320,0.08,'square',0.12,-120); noiseHit(0.1,0.08); },
+  kill  : (m=1)=>{ beep(320*m,0.08,'square',0.12,-120); noiseHit(0.1,0.08); },
+  aim   : ()=>beep(520,0.05,'sine',0.08,140),
   shoot : ()=>beep(760,0.06,'square',0.07,220),
   deny  : ()=>beep(150,0.09,'sawtooth',0.1,-40),
   baseHit:()=>{ beep(120,0.12,'sawtooth',0.13,-50); noiseHit(0.12,0.1); },
@@ -109,7 +181,13 @@ function evPos(t){
   const r = canvas.getBoundingClientRect();
   return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
 }
-function pointInRect(x,y,r){ return x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h; }
+function pointInRect(x,y,r){
+  // 觸控稽核：無論目前畫布縮放比例多小，命中熱區都保證在實體螢幕上 ≥48px（往外補 padding，不改視覺大小）
+  const scale = canvas._scale || 1;
+  const padX = Math.max(0, (48/scale - r.w)/2);
+  const padY = Math.max(0, (48/scale - r.h)/2);
+  return x>=r.x-padX && x<=r.x+r.w+padX && y>=r.y-padY && y<=r.y+r.h+padY;
+}
 canvas.addEventListener('touchstart', e=>{ e.preventDefault(); const p=evPos(e.touches[0]); onTap(p.x,p.y); }, {passive:false});
 canvas.addEventListener('mousedown', e=>{ e.preventDefault(); const p=evPos(e); onTap(p.x,p.y); });
 canvas.addEventListener('touchmove', e=>e.preventDefault(), {passive:false});
@@ -118,6 +196,16 @@ addEventListener('keydown', e=>{
   const num = {Digit1:0,Numpad1:0,Digit2:1,Numpad2:1,Digit3:2,Numpad3:2,Digit4:3,Numpad4:3}[e.code];
   if(num!==undefined && state===playState){ trySpawn(num); return; }
   if(e.code==='KeyM'){ toggleMute(); return; }
+  if((e.code==='ArrowUp'||e.code==='KeyW') && state===playState){
+    e.preventDefault();
+    laneCursor = (laneCursor-1+LANES)%LANES; targetLane = laneCursor; targetLaneT = 5;
+    sfx.aim(); return;
+  }
+  if((e.code==='ArrowDown'||e.code==='KeyS') && state===playState){
+    e.preventDefault();
+    laneCursor = (laneCursor+1)%LANES; targetLane = laneCursor; targetLaneT = 5;
+    sfx.aim(); return;
+  }
   if(e.code==='Space' || e.code==='Enter'){
     e.preventDefault();
     if(state===menuState) startBattle('normal');
@@ -195,6 +283,11 @@ const FIELD_TOP = 108, FIELD_BOT = 452;
 const LANES = 4;
 const LANE_Y = [168, 262, 356, 448];
 const BASE_X_LEFT = 78, BASE_X_RIGHT = 882;
+function nearestLane(y){
+  let best=0, bd=Infinity;
+  for(let i=0;i<LANES;i++){ const d=Math.abs(LANE_Y[i]-y); if(d<bd){ bd=d; best=i; } }
+  return best;
+}
 
 const bgCanvas = document.createElement('canvas');
 bgCanvas.width = GAME_W; bgCanvas.height = GAME_H;
@@ -346,6 +439,10 @@ let endlessWave = 1;
 let shake = 0, freeze = 0;
 let playerSpawnCounter = 0;
 let hintT = 0;
+let targetLane = -1, targetLaneT = 0, laneCursor = 0;   // 路線瞄準佈陣
+let combo = 0, comboTimer = 0, comboBestRun = 0;         // 連擊系統
+let wasBreather = false;                                  // 難度喘息節奏轉場旗標
+let transitionT = 0;                                      // 狀態切換淡入淡出
 
 function unitMult(typeIdx){
   const owned = collection[typeIdx];
@@ -375,8 +472,13 @@ function trySpawn(slot){
   if(!t || state!==playState) return;
   if(coins < t.cost){ sfx.deny(); addFloat(GAME_W/2, FIELD_BOT-6, '魚幣不夠！', '#ff8c7a'); return; }
   coins -= t.cost;
-  const lane = playerSpawnCounter % LANES;
-  playerSpawnCounter++;
+  let lane;
+  if(targetLane>=0 && targetLaneT>0){          // 玩家已瞄準路線：優先指定佈陣
+    lane = targetLane; targetLane = -1; targetLaneT = 0;
+  } else {                                      // 未瞄準：維持 v4 原本輪流分配
+    lane = playerSpawnCounter % LANES;
+    playerSpawnCounter++;
+  }
   const u = makeUnit(t, 'player', lane);
   entities.push(u);
   burst(u.x, u.y-24, t.color, 8, 130, 0.4);
@@ -408,7 +510,7 @@ function startBattle(m){
 
 /* ===================== 狀態機 ===================== */
 let state = null;
-function setState(s){ state = s; if(s.enter) s.enter(); }
+function setState(s){ state = s; transitionT = 1; if(s.enter) s.enter(); }
 
 /* ---------- 主選單 ---------- */
 const BTN_START   = { x:GAME_W/2-170, y:280, w:340, h:60 };
@@ -435,8 +537,8 @@ const menuState = {
     ctx.font='bold 17px sans-serif'; ctx.fillStyle=COL.yellow;
     ctx.fillText('霓虹屋頂 4 路線大作戰 × 轉蛋收藏', GAME_W/2, 122);
     ctx.font='15px sans-serif'; ctx.fillStyle='#dcd2f5';
-    ctx.fillText('💻 電腦：數字鍵 1〜4 出兵、G 轉蛋、空白鍵開始', GAME_W/2, 152);
-    ctx.fillText('📱 平板：點下方貓咪卡片出兵，一指就能玩', GAME_W/2, 175);
+    ctx.fillText('💻 電腦：1〜4 出兵、↑↓瞄準路線、G 轉蛋、空白鍵開始', GAME_W/2, 152);
+    ctx.fillText('📱 平板：點卡片出兵；先點戰場可指定佈陣路線', GAME_W/2, 175);
     ctx.font='14px sans-serif'; ctx.fillStyle='rgba(255,255,255,0.75)';
     ctx.fillText('最佳分數 '+bestScore+'　　罐頭 '+cans+(endlessUnlocked?('　　無盡最佳 '+bestEndless):''), GAME_W/2, 250);
 
@@ -473,31 +575,54 @@ const playState = {
     endlessWave = 1;
     playerSpawnCounter = 0;
     shake = 0; freeze = 0; hintT = 0;
+    targetLane = -1; targetLaneT = 0; laneCursor = 0;
+    combo = 0; comboTimer = 0; comboBestRun = 0; wasBreather = false;
     parts.length = 0; floats.length = 0;
   },
   update(dt){
     if(freeze>0){ freeze-=dt; return; }
     elapsed += dt; hintT += dt;
+    targetLaneT = Math.max(0, targetLaneT-dt);
+    if(targetLaneT<=0) targetLane = -1;
+    comboTimer = Math.max(0, comboTimer-dt);
+    if(comboTimer<=0) combo = 0;
     const diff = clamp(elapsed/ (mode==='normal'?100:150), 0, 1);
 
-    // 收入
+    // 難度鋸齒節奏：緊繃一段時間後給一段喘息，再拉回更高壓力
+    // （遊戲設計指南(d)(4)：難度鋸齒——避免壓力單調遞增造成疲勞）
+    const rhythmPeriod = mode==='normal' ? 22 : 18;
+    const rhythmPhase = (elapsed % rhythmPeriod) / rhythmPeriod;
+    const breatherStart = 0.7;
+    const tension = rhythmPhase < breatherStart
+      ? 1
+      : lerp(1, mode==='normal'?0.35:0.55, (rhythmPhase-breatherStart)/(1-breatherStart));
+    const inBreather = tension < 0.85;
+    if(inBreather && !wasBreather) addFloat(GAME_W/2, 150, '喘口氣～加緊佈陣！', 'rgba(190,255,220,0.9)');
+    wasBreather = inBreather;
+
+    // 收入（喘息段額外多給魚幣，鼓勵趁機補強陣型——「獎勵大聲」）
     coinTimer += dt;
-    if(coinTimer>=1){ coinTimer-=1; coins = Math.min(999, coins + 5 + Math.floor(diff*4)); }
+    if(coinTimer>=1){
+      coinTimer-=1;
+      coins = Math.min(999, coins + 5 + Math.floor(diff*4) + (inBreather?3:0));
+    }
 
     // 敵人生成
     spawnTimer -= dt;
     if(spawnTimer<=0){
       if(mode==='normal'){
         if(elapsed < 150){
-          spawnTimer = Math.max(1.25, 3.4 - diff*2.1) * (0.8+Math.random()*0.4);
-          spawnEnemy(1 + diff*0.5);
+          const localDiff = diff*tension;
+          spawnTimer = Math.max(1.25, 3.4 - localDiff*2.1) * (0.8+Math.random()*0.4);
+          spawnEnemy(1 + localDiff*0.5);
         } else spawnTimer = 99;   // 收尾：停止生成，保證自然結束
         if(!bossSpawned && (elapsed>=70 || baseHpRight<=55)){
           bossSpawned = true; spawnBoss(1);
         }
       } else {
-        spawnTimer = Math.max(0.9, 3.0 - diff*2.1) * (0.8+Math.random()*0.4);
-        spawnEnemy(1 + elapsed/90);
+        const localDiff = diff*tension;
+        spawnTimer = Math.max(0.9, 3.0 - localDiff*2.1) * (0.8+Math.random()*0.4);
+        spawnEnemy(1 + elapsed/90*tension);
         if(elapsed > endlessWave*45){
           endlessWave++;
           spawnBoss(0.55 + endlessWave*0.3);
@@ -597,6 +722,7 @@ const playState = {
 
     drawBase(BASE_X_LEFT-18, 'player');
     drawBase(BASE_X_RIGHT+18, 'enemy');
+    drawLaneAim();
 
     const sorted = entities.slice().sort((a,b)=>a.y-b.y);
     for(const e of sorted) drawUnit(e);
@@ -616,12 +742,14 @@ const playState = {
       const a = hintT<5 ? 1 : (6-hintT);
       ctx.globalAlpha = a*(0.75+0.25*Math.sin(performance.now()/200));
       ctx.fillStyle='rgba(0,0,0,0.55)';
-      rr(ctx, GAME_W/2-250, 200, 500, 62, 14); ctx.fill();
-      ctx.strokeStyle=COL.yellow; ctx.lineWidth=2; rr(ctx, GAME_W/2-250, 200, 500, 62, 14); ctx.stroke();
+      rr(ctx, GAME_W/2-260, 196, 520, 92, 14); ctx.fill();
+      ctx.strokeStyle=COL.yellow; ctx.lineWidth=2; rr(ctx, GAME_W/2-260, 196, 520, 92, 14); ctx.stroke();
       ctx.fillStyle='#fff'; ctx.font='bold 19px sans-serif'; ctx.textAlign='center';
-      ctx.fillText('點下方卡片派出貓咪，保護左邊的貓咪塔！', GAME_W/2, 226);
+      ctx.fillText('點下方卡片派出貓咪，保護左邊的貓咪塔！', GAME_W/2, 222);
       ctx.font='15px sans-serif'; ctx.fillStyle=COL.yellow;
-      ctx.fillText('▼ 敵人 8 秒後進攻，先佈好陣！（電腦按 1〜4）', GAME_W/2, 250);
+      ctx.fillText('先點路線可指定佈陣，不點則自動輪流', GAME_W/2, 248);
+      ctx.font='13px sans-serif'; ctx.fillStyle='rgba(255,255,255,0.8)';
+      ctx.fillText('▼ 敵人 8 秒後進攻！電腦：1〜4 出兵、↑↓ 選路線', GAME_W/2, 272);
       ctx.globalAlpha = 1;
     }
   }
@@ -640,10 +768,16 @@ function hitUnit(target, atk, side){
     burst(target.x, target.y-24, side==='player'?COL.pink:COL.cyan, target.type.kind==='boss'?36:16, 200, 0.6);
     if(side==='player'){
       const r = target.type.reward||0;
-      coins = Math.min(999, coins+r);
-      score += r*10;
-      addFloat(target.x, target.y-46, '+'+r+' 魚幣', COL.yellow);
-      sfx.kill();
+      // 連擊系統：1.3秒內連續擊殺會疊 combo，3連殺起額外加成（獎勵要大聲）
+      combo++; comboTimer = 1.3;
+      comboBestRun = Math.max(comboBestRun, combo);
+      const comboBonus = combo>=3 ? Math.min(combo-2, 8) : 0;
+      const gained = r + comboBonus;
+      coins = Math.min(999, coins+gained);
+      score += gained*10 + (combo>=3 ? combo*2 : 0);
+      addFloat(target.x, target.y-46, '+'+gained+' 魚幣', COL.yellow);
+      if(combo>=3) addFloat(target.x, target.y-66, combo+' 連殺！', combo>=6?'#ffcf5c':'#ff9dd6', combo>=6);
+      sfx.kill(1 + Math.min(combo,8)*0.05);
       if(target.type.kind==='boss'){
         bossAlive = false;
         shake = 12;
@@ -664,6 +798,7 @@ const gameOverState = {
     this.t = 0;
     const timeBonus = this.win ? Math.max(0, Math.floor((180-elapsed))*2) : 0;
     score += kills*5 + Math.floor(elapsed)* (mode==='endless'?10:2) + timeBonus;
+    this.dispScore = 0;   // 分數滾動計數起點（避免結算瞬間跳出最終值）
     if(mode==='normal'){
       if(this.win && !endlessUnlocked){ endlessUnlocked = true; localStorage.setItem('catwars2_endless','1'); }
       if(score>bestScore){ bestScore=score; localStorage.setItem('catwars2_best', bestScore); }
@@ -675,7 +810,12 @@ const gameOverState = {
     cans += this.cansEarned;
     saveMeta();
   },
-  update(dt){ this.t += dt; updateParts(dt); updateFloats(dt); shake *= Math.pow(0.001, dt); },
+  update(dt){
+    this.t += dt;
+    this.dispScore += (score - this.dispScore) * Math.min(1, dt*5);   // 分數滾動計數（不瞬移）
+    if(Math.abs(score-this.dispScore) < 0.6) this.dispScore = score;
+    updateParts(dt); updateFloats(dt); shake *= Math.pow(0.001, dt);
+  },
   draw(){
     playState.draw();
     ctx.fillStyle = 'rgba(4,1,14,0.72)'; ctx.fillRect(0,0,GAME_W,GAME_H);
@@ -693,9 +833,9 @@ const gameOverState = {
     }
     ctx.restore();
     ctx.font='22px sans-serif'; ctx.fillStyle='#fff';
-    ctx.fillText('分數 '+score+'　　最佳 '+(mode==='endless'?bestEndless:bestScore), GAME_W/2, 178);
+    ctx.fillText('分數 '+Math.round(this.dispScore)+'　　最佳 '+(mode==='endless'?bestEndless:bestScore), GAME_W/2, 178);
     ctx.font='17px sans-serif'; ctx.fillStyle='#cfc2ff';
-    ctx.fillText('擊倒 '+kills+' 隻敵人　　戰鬥時間 '+Math.floor(elapsed)+' 秒', GAME_W/2, 208);
+    ctx.fillText('擊倒 '+kills+' 隻敵人　　戰鬥時間 '+Math.floor(elapsed)+' 秒'+(comboBestRun>=3?('　　最高連殺 '+comboBestRun):''), GAME_W/2, 208);
     ctx.font='bold 24px sans-serif'; ctx.fillStyle=COL.yellow;
     ctx.fillText('獲得 '+this.cansEarned+' 罐頭！', GAME_W/2, 248);
     if(this.win && mode==='normal'){
@@ -876,6 +1016,194 @@ function drawBase(x, side){
   ctx.restore();
 }
 
+function drawLaneAim(){
+  // 玩家瞄準中的路線高亮（配合鍵盤↑↓／先點戰場的佈陣瞄準）
+  if(targetLane<0 || targetLaneT<=0) return;
+  const y = LANE_Y[targetLane];
+  const pulse = 0.5+0.3*Math.sin(performance.now()/120);
+  ctx.save();
+  ctx.globalAlpha = Math.min(1,targetLaneT)*pulse;
+  const grad = ctx.createLinearGradient(BASE_X_LEFT,0,BASE_X_RIGHT,0);
+  grad.addColorStop(0,'rgba(255,207,92,0)'); grad.addColorStop(0.5,'rgba(255,207,92,0.55)'); grad.addColorStop(1,'rgba(255,207,92,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(BASE_X_LEFT, y-20, BASE_X_RIGHT-BASE_X_LEFT, 40);
+  ctx.globalAlpha = Math.min(1,targetLaneT);
+  ctx.fillStyle = COL.yellow;
+  ctx.beginPath();
+  ctx.moveTo(BASE_X_LEFT+18, y-11); ctx.lineTo(BASE_X_LEFT+34, y); ctx.lineTo(BASE_X_LEFT+18, y+11);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+/* ===================== 角色精細化：離屏預烘焙 sprite（漸層受光/背光陰影）＋雙表情狀態 =====================
+   設計：身體/頭/耳等「跟著 bob 整體移動、顏色固定」的靜態部件先烘焙成 offscreen canvas sprite（漸層陰影＋輪
+   廓線只算一次，戰鬥中大量單位同框也不會每幀重算漸層拖速度）；尾巴/腳/翅膀/表情等「會擺動或需要即時反應」
+   的部件維持即時路徑繪製，疊在 sprite 上方。表情依 hitFlash 分「平常（含眨眼）／受擊（皺眉+驚呼嘴或泛紅瞪
+   眼）」兩態，滿足「至少兩種狀態」且呼應受擊回饋。 */
+const spriteCache = new Map();
+function lightenColor(hex, amt){
+  const n = parseInt(hex.slice(1),16);
+  let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+  r=Math.min(255, Math.round(r+(255-r)*amt));
+  g=Math.min(255, Math.round(g+(255-g)*amt));
+  b=Math.min(255, Math.round(b+(255-b)*amt));
+  return 'rgb('+r+','+g+','+b+')';
+}
+function bakeCatSprite(type, flash){
+  const key = 'cat_'+type.name+(flash?'_h':'');
+  if(spriteCache.has(key)) return spriteCache.get(key);
+  const W=90,H=76,OX=44,OY=58;
+  const cv = document.createElement('canvas'); cv.width=W; cv.height=H;
+  const g = cv.getContext('2d');
+  g.translate(OX,OY);
+  const c = flash ? '#ffffff' : type.color;
+  const d = flash ? '#dddddd' : type.dark;
+  // 身體：左上受光→右下背光漸層，做出立體感（取代原本的單色平塗）
+  const bodyGrad = g.createLinearGradient(-15,-28,14,-3);
+  bodyGrad.addColorStop(0, lightenColor(c,0.3));
+  bodyGrad.addColorStop(0.55, c);
+  bodyGrad.addColorStop(1, d);
+  g.fillStyle = bodyGrad;
+  g.beginPath(); g.ellipse(0,-16,15,14,0,0,Math.PI*2); g.fill();
+  g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1.5; g.stroke();
+  // 肚子亮面
+  g.fillStyle='rgba(255,255,255,0.4)';
+  g.beginPath(); g.ellipse(2,-12,7,7,0,0,Math.PI*2); g.fill();
+  // 頭：同樣的受光/背光漸層
+  const headGrad = g.createLinearGradient(-5,-46,19,-22);
+  headGrad.addColorStop(0, lightenColor(c,0.32));
+  headGrad.addColorStop(0.6, c);
+  headGrad.addColorStop(1, d);
+  g.fillStyle = headGrad;
+  g.beginPath(); g.arc(8,-34,13,0,Math.PI*2); g.fill();
+  g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1.5; g.stroke();
+  // 耳朵
+  g.fillStyle=c; g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1.5;
+  g.beginPath(); g.moveTo(-1,-43); g.lineTo(3,-53); g.lineTo(9,-44); g.closePath(); g.fill(); g.stroke();
+  g.beginPath(); g.moveTo(12,-44); g.lineTo(17,-53); g.lineTo(20,-42); g.closePath(); g.fill(); g.stroke();
+  g.fillStyle='#ff9db8';
+  g.beginPath(); g.moveTo(2,-44); g.lineTo(4,-50); g.lineTo(7,-44); g.closePath(); g.fill();
+  const spr = { canvas:cv, ox:OX, oy:OY };
+  spriteCache.set(key, spr);
+  return spr;
+}
+function drawCatFace(hurt, seed){
+  if(hurt){
+    // 受擊表情：皺眉＋瞇眼＋驚呼嘴
+    ctx.strokeStyle='#191919'; ctx.lineWidth=1.6; ctx.lineCap='round';
+    ctx.beginPath();
+    ctx.moveTo(2.5,-38); ctx.lineTo(7,-36);
+    ctx.moveTo(15.5,-36); ctx.lineTo(11,-38);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(3,-35); ctx.lineTo(7,-33);
+    ctx.moveTo(15,-33); ctx.lineTo(11,-35);
+    ctx.stroke();
+    ctx.fillStyle='#7a1020';
+    ctx.beginPath(); ctx.ellipse(9,-29.5,2.2,3,0,0,Math.PI*2); ctx.fill();
+  } else {
+    // 平常表情：圓眼＋高光，偶爾眨眼；嘴巴維持微笑弧線
+    const blink = Math.sin(performance.now()/900 + seed*3) > 0.965;
+    if(blink){
+      ctx.strokeStyle='#191919'; ctx.lineWidth=1.6; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(3,-35); ctx.lineTo(7,-35);
+      ctx.moveTo(11,-35); ctx.lineTo(15,-35); ctx.stroke();
+    } else {
+      ctx.fillStyle='#191919';
+      ctx.beginPath(); ctx.arc(5,-35,2.2,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(13,-35,2.2,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(5.8,-35.8,0.8,0,Math.PI*2); ctx.fill();
+      ctx.beginPath(); ctx.arc(13.8,-35.8,0.8,0,Math.PI*2); ctx.fill();
+    }
+    ctx.strokeStyle='#191919'; ctx.lineWidth=1.2;
+    ctx.beginPath(); ctx.arc(9,-30,2.6,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+  }
+}
+function bakeEnemySprite(type, hurt){
+  const key = 'enemy_'+type.name+(hurt?'_h':'');
+  if(spriteCache.has(key)) return spriteCache.get(key);
+  const c = hurt ? '#ffffff' : type.color;
+  const d = hurt ? '#e2e2e2' : type.dark;
+  let spr;
+  if(type.kind==='bat' || type.kind==='boss'){
+    const s = type.kind==='boss' ? 2.1 : 1;
+    const W=170,H=150,OX=85,OY=90;
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+    const g=cv.getContext('2d'); g.translate(OX,OY);
+    const bg=g.createLinearGradient(-9*s,-11*s,9*s,11*s);
+    bg.addColorStop(0,lightenColor(c,0.32)); bg.addColorStop(0.55,c); bg.addColorStop(1,d);
+    g.fillStyle=bg;
+    g.beginPath(); g.ellipse(0,0,10*s,12*s,0,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(0,0,0,0.4)'; g.lineWidth=1.5; g.stroke();
+    g.fillStyle=c; g.strokeStyle='rgba(0,0,0,0.35)'; g.lineWidth=1;
+    g.beginPath(); g.moveTo(-8*s,-8*s); g.lineTo(-6*s,-16*s); g.lineTo(-2*s,-9*s); g.closePath(); g.fill(); g.stroke();
+    g.beginPath(); g.moveTo(8*s,-8*s); g.lineTo(6*s,-16*s); g.lineTo(2*s,-9*s); g.closePath(); g.fill(); g.stroke();
+    g.fillStyle='#fff';
+    g.beginPath(); g.moveTo(-3*s,4*s); g.lineTo(-2*s,7*s); g.lineTo(-1*s,4*s); g.closePath(); g.fill();
+    g.beginPath(); g.moveTo(1*s,4*s); g.lineTo(2*s,7*s); g.lineTo(3*s,4*s); g.closePath(); g.fill();
+    if(type.kind==='boss'){
+      g.fillStyle='#ffcf5c';
+      g.beginPath();
+      g.moveTo(-9,-34); g.lineTo(-9,-44); g.lineTo(-4,-37); g.lineTo(0,-46);
+      g.lineTo(4,-37); g.lineTo(9,-44); g.lineTo(9,-34); g.closePath(); g.fill();
+      g.strokeStyle='#b8860b'; g.lineWidth=1.5; g.stroke();
+    }
+    spr={canvas:cv,ox:OX,oy:OY};
+  } else if(type.kind==='beetle'){
+    const W=90,H=90,OX=35,OY=55;
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+    const g=cv.getContext('2d'); g.translate(OX,OY);
+    const shellGrad=g.createLinearGradient(-15,-24,14,-4);
+    shellGrad.addColorStop(0,lightenColor(c,0.3)); shellGrad.addColorStop(0.55,c); shellGrad.addColorStop(1,d);
+    g.fillStyle=shellGrad;
+    g.beginPath(); g.ellipse(0,-14,17,12,0,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(0,0,0,0.45)'; g.lineWidth=2; g.stroke();
+    g.strokeStyle=d; g.lineWidth=2;
+    g.beginPath(); g.moveTo(-14,-18); g.quadraticCurveTo(0,-10,14,-18); g.stroke();
+    g.beginPath(); g.moveTo(-15,-12); g.quadraticCurveTo(0,-5,15,-12); g.stroke();
+    g.fillStyle='rgba(255,255,255,0.3)';
+    g.beginPath(); g.ellipse(-5,-20,6,3.5,-0.4,0,Math.PI*2); g.fill();
+    const headGrad=g.createLinearGradient(8,-21,22,-7);
+    headGrad.addColorStop(0,lightenColor(d,0.32)); headGrad.addColorStop(1,d);
+    g.fillStyle=headGrad;
+    g.beginPath(); g.arc(15,-14,7,0,Math.PI*2); g.fill();
+    g.strokeStyle=d; g.lineWidth=3;
+    g.beginPath(); g.moveTo(19,-18); g.quadraticCurveTo(26,-26,23,-31); g.stroke();
+    spr={canvas:cv,ox:OX,oy:OY};
+  } else {
+    // 殭屍鼠
+    const W=90,H=90,OX=35,OY=55;
+    const cv=document.createElement('canvas'); cv.width=W; cv.height=H;
+    const g=cv.getContext('2d'); g.translate(OX,OY);
+    const bodyGrad=g.createLinearGradient(-14,-22,13,-2);
+    bodyGrad.addColorStop(0,lightenColor(c,0.28)); bodyGrad.addColorStop(0.55,c); bodyGrad.addColorStop(1,d);
+    g.fillStyle=bodyGrad;
+    g.beginPath(); g.ellipse(0,-12,14,11,0,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(0,0,0,0.4)'; g.lineWidth=1.5; g.stroke();
+    g.strokeStyle='#3f6f3a'; g.lineWidth=1.5;
+    g.beginPath(); g.moveTo(-6,-18); g.lineTo(0,-12); g.stroke();
+    g.beginPath(); g.moveTo(-5,-16); g.lineTo(-3,-18); g.moveTo(-3,-15); g.lineTo(-1,-17); g.stroke();
+    const headGrad=g.createLinearGradient(2,-31,20,-13);
+    headGrad.addColorStop(0,lightenColor(c,0.3)); headGrad.addColorStop(0.6,c); headGrad.addColorStop(1,d);
+    g.fillStyle=headGrad;
+    g.beginPath(); g.arc(11,-22,9,0,Math.PI*2); g.fill();
+    g.strokeStyle='rgba(0,0,0,0.4)'; g.stroke();
+    g.fillStyle=d;
+    g.beginPath(); g.arc(5,-30,4.5,0,Math.PI*2); g.fill();
+    g.beginPath(); g.arc(15,-31,4.5,0,Math.PI*2); g.fill();
+    g.fillStyle='#e8768f';
+    g.beginPath(); g.arc(19.5,-20,2,0,Math.PI*2); g.fill();
+    spr={canvas:cv,ox:OX,oy:OY};
+  }
+  spriteCache.set(key, spr);
+  return spr;
+}
+// 開局預熱：先把每種兵種＋兩種表情狀態都烘焙一次，戰鬥中不會臨時卡頓
+CAT_TYPES.forEach(t=>{ bakeCatSprite(t,false); bakeCatSprite(t,true); });
+ENEMY_TYPES.forEach(t=>{ bakeEnemySprite(t,false); bakeEnemySprite(t,true); });
+bakeEnemySprite(BOSS_TYPE,false); bakeEnemySprite(BOSS_TYPE,true);
+
 function drawCatBody(x, y, type, scale, bob, lunge, flash, rarity){
   ctx.save();
   ctx.translate(x + lunge*10, y);
@@ -890,72 +1218,54 @@ function drawCatBody(x, y, type, scale, bob, lunge, flash, rarity){
   // 影子
   ctx.fillStyle='rgba(0,0,0,0.4)';
   ctx.beginPath(); ctx.ellipse(0,2,18,6,0,0,Math.PI*2); ctx.fill();
-  const c = flash ? '#ffffff' : type.color;
   const d = flash ? '#dddddd' : type.dark;
-  // 尾巴
-  ctx.strokeStyle=d; ctx.lineWidth=5; ctx.lineCap='round';
-  ctx.beginPath(); ctx.moveTo(-14,-14+bob);
-  ctx.quadraticCurveTo(-26,-20+bob+Math.sin(performance.now()/200+x)*3,-24,-34+bob); ctx.stroke();
-  // 腳
+  // 腳（獨立彈跳，不隨 bob，走路循環的抬腳感）
   ctx.fillStyle=d;
   ctx.beginPath(); ctx.ellipse(-8,-2+Math.abs(Math.sin(performance.now()/110+x))*1.5,5,4,0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(8,-2+Math.abs(Math.cos(performance.now()/110+x))*1.5,5,4,0,0,Math.PI*2); ctx.fill();
-  // 身體
-  ctx.fillStyle=c;
-  ctx.beginPath(); ctx.ellipse(0,-16+bob,15,14,0,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
-  // 肚子亮面
-  ctx.fillStyle='rgba(255,255,255,0.4)';
-  ctx.beginPath(); ctx.ellipse(2,-12+bob,7,7,0,0,Math.PI*2); ctx.fill();
-  // 頭
-  ctx.fillStyle=c;
-  ctx.beginPath(); ctx.arc(8,-34+bob,13,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='rgba(0,0,0,0.35)'; ctx.lineWidth=1.5; ctx.stroke();
-  // 耳朵
-  ctx.fillStyle=c;
-  ctx.beginPath(); ctx.moveTo(-1,-43+bob); ctx.lineTo(3,-53+bob); ctx.lineTo(9,-44+bob); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.beginPath(); ctx.moveTo(12,-44+bob); ctx.lineTo(17,-53+bob); ctx.lineTo(20,-42+bob); ctx.closePath(); ctx.fill(); ctx.stroke();
-  ctx.fillStyle='#ff9db8';
-  ctx.beginPath(); ctx.moveTo(2,-44+bob); ctx.lineTo(4,-50+bob); ctx.lineTo(7,-44+bob); ctx.closePath(); ctx.fill();
-  // 表情
-  ctx.fillStyle='#191919';
-  ctx.beginPath(); ctx.arc(5,-35+bob,2.2,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(13,-35+bob,2.2,0,Math.PI*2); ctx.fill();
-  ctx.fillStyle='#fff';
-  ctx.beginPath(); ctx.arc(5.8,-35.8+bob,0.8,0,Math.PI*2); ctx.fill();
-  ctx.beginPath(); ctx.arc(13.8,-35.8+bob,0.8,0,Math.PI*2); ctx.fill();
-  ctx.strokeStyle='#191919'; ctx.lineWidth=1.2;
-  ctx.beginPath(); ctx.arc(9,-30+bob,2.6,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+
+  ctx.save();
+  ctx.translate(0, bob);
+  // 尾巴（隨身體 bob＋自己的擺動）
+  ctx.strokeStyle=d; ctx.lineWidth=5; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-14,-14);
+  ctx.quadraticCurveTo(-26,-20+Math.sin(performance.now()/200+x)*3,-24,-34); ctx.stroke();
+  // 身體＋頭＋耳朵：離屏預烘焙 sprite（漸層受光/背光陰影＋輪廓線）
+  const spr = bakeCatSprite(type, !!flash);
+  ctx.drawImage(spr.canvas, -spr.ox, -spr.oy);
+  // 表情（平常眨眼／受擊皺眉驚呼）
+  drawCatFace(!!flash, x);
   // 鬍鬚
   ctx.strokeStyle='rgba(255,255,255,0.65)'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.moveTo(18,-33+bob); ctx.lineTo(25,-34+bob); ctx.moveTo(18,-30+bob); ctx.lineTo(25,-29+bob); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(18,-33); ctx.lineTo(25,-34); ctx.moveTo(18,-30); ctx.lineTo(25,-29); ctx.stroke();
   // 職業配件
   if(type.kind==='tank'){
     ctx.fillStyle='#c8d6ff'; ctx.strokeStyle='#3057c0'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.arc(8,-40+bob,11,Math.PI*1.05,Math.PI*1.95); ctx.fill(); ctx.stroke();
-    ctx.fillStyle='#8aa8ff'; rr(ctx,16,-28+bob,7,20,3); ctx.fill();
-    ctx.strokeStyle='#3057c0'; rr(ctx,16,-28+bob,7,20,3); ctx.stroke();
+    ctx.beginPath(); ctx.arc(8,-40,11,Math.PI*1.05,Math.PI*1.95); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#8aa8ff'; rr(ctx,16,-28,7,20,3); ctx.fill();
+    ctx.strokeStyle='#3057c0'; rr(ctx,16,-28,7,20,3); ctx.stroke();
   } else if(type.kind==='ninja'){
     ctx.fillStyle='#b8286d';
-    rr(ctx,-3,-32+bob,22,5,2); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(-3,-30+bob); ctx.lineTo(-12,-22+bob); ctx.lineTo(-8,-19+bob); ctx.lineTo(-1,-27+bob); ctx.closePath(); ctx.fill();
+    rr(ctx,-3,-32,22,5,2); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-3,-30); ctx.lineTo(-12,-22); ctx.lineTo(-8,-19); ctx.lineTo(-1,-27); ctx.closePath(); ctx.fill();
   } else if(type.kind==='gunner'){
-    ctx.fillStyle='#4a3080'; rr(ctx,10,-26+bob,16,9,4); ctx.fill();
-    ctx.strokeStyle='#2a1a50'; ctx.lineWidth=1.5; rr(ctx,10,-26+bob,16,9,4); ctx.stroke();
-    ctx.fillStyle='#ffcf5c'; ctx.beginPath(); ctx.arc(26,-21.5+bob,3,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#4a3080'; rr(ctx,10,-26,16,9,4); ctx.fill();
+    ctx.strokeStyle='#2a1a50'; ctx.lineWidth=1.5; rr(ctx,10,-26,16,9,4); ctx.stroke();
+    ctx.fillStyle='#ffcf5c'; ctx.beginPath(); ctx.arc(26,-21.5,3,0,Math.PI*2); ctx.fill();
   } else {
     // 一般貓：條紋
     ctx.strokeStyle='rgba(0,0,0,0.2)'; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(-8,-24+bob); ctx.lineTo(-4,-20+bob); ctx.moveTo(-10,-18+bob); ctx.lineTo(-6,-14+bob); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-8,-24); ctx.lineTo(-4,-20); ctx.moveTo(-10,-18); ctx.lineTo(-6,-14); ctx.stroke();
   }
+  ctx.restore();
   ctx.restore();
 }
 
-function drawEnemyBody(x, y, type, dir, bob, lunge){
+function drawEnemyBody(x, y, type, dir, bob, lunge, hurt){
   ctx.save();
   ctx.translate(x + lunge*10*dir, y);
   ctx.scale(-dir, 1);   // 敵人面向左
-  const c = type.color, d = type.dark;
+  const d = hurt ? '#e2e2e2' : type.dark;
   if(type.kind==='bat' || type.kind==='boss'){
     const s = type.kind==='boss' ? 2.1 : 1;
     const fl = Math.sin(performance.now()/90+x)*10;
@@ -963,36 +1273,26 @@ function drawEnemyBody(x, y, type, dir, bob, lunge){
     // 影子（浮空小）
     ctx.fillStyle='rgba(0,0,0,0.3)';
     ctx.beginPath(); ctx.ellipse(0,34*s,12*s,4*s,0,0,Math.PI*2); ctx.fill();
-    // 翅膀
+    // 翅膀（即時拍動）
     ctx.fillStyle=d;
     ctx.beginPath(); ctx.moveTo(-6*s,0);
     ctx.quadraticCurveTo(-26*s,-14*s+fl,-30*s,4*s); ctx.quadraticCurveTo(-18*s,2*s,-8*s,8*s); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(6*s,0);
     ctx.quadraticCurveTo(26*s,-14*s+fl,30*s,4*s); ctx.quadraticCurveTo(18*s,2*s,8*s,8*s); ctx.closePath(); ctx.fill();
-    // 身體
-    ctx.fillStyle=c;
-    ctx.beginPath(); ctx.ellipse(0,0,10*s,12*s,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=1.5; ctx.stroke();
-    // 耳
-    ctx.fillStyle=c;
-    ctx.beginPath(); ctx.moveTo(-8*s,-8*s); ctx.lineTo(-6*s,-16*s); ctx.lineTo(-2*s,-9*s); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(8*s,-8*s); ctx.lineTo(6*s,-16*s); ctx.lineTo(2*s,-9*s); ctx.closePath(); ctx.fill();
-    // 眼睛（發光）
-    ctx.fillStyle='#fff700';
-    ctx.beginPath(); ctx.arc(-4*s,-3*s,2*s,0,Math.PI*2); ctx.arc(4*s,-3*s,2*s,0,Math.PI*2); ctx.fill();
-    ctx.fillStyle='#191919';
-    ctx.beginPath(); ctx.arc(-4.6*s,-3*s,0.9*s,0,Math.PI*2); ctx.arc(3.4*s,-3*s,0.9*s,0,Math.PI*2); ctx.fill();
-    // 尖牙
-    ctx.fillStyle='#fff';
-    ctx.beginPath(); ctx.moveTo(-3*s,4*s); ctx.lineTo(-2*s,7*s); ctx.lineTo(-1*s,4*s); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(1*s,4*s); ctx.lineTo(2*s,7*s); ctx.lineTo(3*s,4*s); ctx.closePath(); ctx.fill();
-    if(type.kind==='boss'){
-      // 王冠
-      ctx.fillStyle='#ffcf5c';
-      ctx.beginPath();
-      ctx.moveTo(-9,-34); ctx.lineTo(-9,-44); ctx.lineTo(-4,-37); ctx.lineTo(0,-46);
-      ctx.lineTo(4,-37); ctx.lineTo(9,-44); ctx.lineTo(9,-34); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle='#b8860b'; ctx.lineWidth=1.5; ctx.stroke();
+    // 身體＋耳＋獠牙（＋王者王冠）：離屏預烘焙 sprite
+    const spr = bakeEnemySprite(type, !!hurt);
+    ctx.drawImage(spr.canvas, -spr.ox, -spr.oy);
+    // 表情：平常偶爾眨眼／受擊瞪大泛紅眼
+    const blink = !hurt && Math.sin(performance.now()/850 + x*2.7) > 0.97;
+    if(blink){
+      ctx.strokeStyle='#fff700'; ctx.lineWidth=1.4*s; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(-6*s,-3*s); ctx.lineTo(-2*s,-3*s);
+      ctx.moveTo(2*s,-3*s); ctx.lineTo(6*s,-3*s); ctx.stroke();
+    } else {
+      ctx.fillStyle = hurt ? '#ff4d4d' : '#fff700';
+      ctx.beginPath(); ctx.arc(-4*s,-3*s,(hurt?2.6:2)*s,0,Math.PI*2); ctx.arc(4*s,-3*s,(hurt?2.6:2)*s,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle = hurt ? '#3a0000' : '#191919';
+      ctx.beginPath(); ctx.arc(-4.6*s,-3*s,0.9*s,0,Math.PI*2); ctx.arc(3.4*s,-3*s,0.9*s,0,Math.PI*2); ctx.fill();
     }
   } else if(type.kind==='beetle'){
     ctx.fillStyle='rgba(0,0,0,0.4)';
@@ -1003,23 +1303,21 @@ function drawEnemyBody(x, y, type, dir, bob, lunge){
       const lx=-8+i*8, off=Math.sin(performance.now()/100+i+x)*2;
       ctx.beginPath(); ctx.moveTo(lx,-8); ctx.lineTo(lx-3,0+off); ctx.stroke();
     }
-    // 殼（分段）
-    ctx.fillStyle=c;
-    ctx.beginPath(); ctx.ellipse(0,-14+bob,17,12,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=2; ctx.stroke();
-    ctx.strokeStyle=d; ctx.lineWidth=2;
-    ctx.beginPath(); ctx.moveTo(-14,-18+bob); ctx.quadraticCurveTo(0,-10+bob,14,-18+bob); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-15,-12+bob); ctx.quadraticCurveTo(0,-5+bob,15,-12+bob); ctx.stroke();
-    // 亮面
-    ctx.fillStyle='rgba(255,255,255,0.3)';
-    ctx.beginPath(); ctx.ellipse(-5,-20+bob,6,3.5,-0.4,0,Math.PI*2); ctx.fill();
-    // 頭＋角
-    ctx.fillStyle=d;
-    ctx.beginPath(); ctx.arc(15,-14+bob,7,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle=d; ctx.lineWidth=3;
-    ctx.beginPath(); ctx.moveTo(19,-18+bob); ctx.quadraticCurveTo(26,-26+bob,23,-31+bob); ctx.stroke();
-    ctx.fillStyle='#fff700';
-    ctx.beginPath(); ctx.arc(17,-15+bob,2,0,Math.PI*2); ctx.fill();
+    ctx.save();
+    ctx.translate(0, bob);
+    // 殼＋頭＋角：離屏預烘焙 sprite
+    const spr = bakeEnemySprite(type, !!hurt);
+    ctx.drawImage(spr.canvas, -spr.ox, -spr.oy);
+    // 表情：單眼發光，平常偶爾眨／受擊變大泛紅
+    const blink = !hurt && Math.sin(performance.now()/800 + x*2.2) > 0.97;
+    if(blink){
+      ctx.strokeStyle='#fff700'; ctx.lineWidth=1.4; ctx.lineCap='round';
+      ctx.beginPath(); ctx.moveTo(14,-15); ctx.lineTo(20,-15); ctx.stroke();
+    } else {
+      ctx.fillStyle = hurt ? '#ff4d4d' : '#fff700';
+      ctx.beginPath(); ctx.arc(17,-15,hurt?3:2,0,Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
   } else {
     // 殭屍鼠
     ctx.fillStyle='rgba(0,0,0,0.4)';
@@ -1032,30 +1330,18 @@ function drawEnemyBody(x, y, type, dir, bob, lunge){
     ctx.fillStyle=d;
     ctx.beginPath(); ctx.ellipse(-6,-1+Math.abs(Math.sin(performance.now()/100+x))*1.5,4,3,0,0,Math.PI*2); ctx.fill();
     ctx.beginPath(); ctx.ellipse(6,-1+Math.abs(Math.cos(performance.now()/100+x))*1.5,4,3,0,0,Math.PI*2); ctx.fill();
-    // 身體
-    ctx.fillStyle=c;
-    ctx.beginPath(); ctx.ellipse(0,-12+bob,14,11,0,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.lineWidth=1.5; ctx.stroke();
-    // 縫線（殭屍感）
-    ctx.strokeStyle='#3f6f3a'; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(-6,-18+bob); ctx.lineTo(0,-12+bob); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(-5,-16+bob); ctx.lineTo(-3,-18+bob); ctx.moveTo(-3,-15+bob); ctx.lineTo(-1,-17+bob); ctx.stroke();
-    // 頭
-    ctx.fillStyle=c;
-    ctx.beginPath(); ctx.arc(11,-22+bob,9,0,Math.PI*2); ctx.fill();
-    ctx.strokeStyle='rgba(0,0,0,0.4)'; ctx.stroke();
-    // 圓耳
-    ctx.fillStyle=d;
-    ctx.beginPath(); ctx.arc(5,-30+bob,4.5,0,Math.PI*2); ctx.fill();
-    ctx.beginPath(); ctx.arc(15,-31+bob,4.5,0,Math.PI*2); ctx.fill();
-    // 眼（一個X一個亮）
-    ctx.strokeStyle='#191919'; ctx.lineWidth=1.5;
-    ctx.beginPath(); ctx.moveTo(6,-25+bob); ctx.lineTo(10,-21+bob); ctx.moveTo(10,-25+bob); ctx.lineTo(6,-21+bob); ctx.stroke();
-    ctx.fillStyle='#fff700';
-    ctx.beginPath(); ctx.arc(15,-23+bob,2.4,0,Math.PI*2); ctx.fill();
-    // 鼻
-    ctx.fillStyle='#e8768f';
-    ctx.beginPath(); ctx.arc(19.5,-20+bob,2,0,Math.PI*2); ctx.fill();
+    ctx.save();
+    ctx.translate(0, bob);
+    // 身體＋縫線＋頭＋圓耳＋鼻：離屏預烘焙 sprite
+    const spr = bakeEnemySprite(type, !!hurt);
+    ctx.drawImage(spr.canvas, -spr.ox, -spr.oy);
+    // 眼（一個X一個發光）：受擊時發光眼變大泛紅、X 眼線條加粗
+    const eyeCol = hurt ? '#ff4d4d' : '#fff700';
+    ctx.strokeStyle='#191919'; ctx.lineWidth = hurt?2.2:1.5;
+    ctx.beginPath(); ctx.moveTo(6,-25); ctx.lineTo(10,-21); ctx.moveTo(10,-25); ctx.lineTo(6,-21); ctx.stroke();
+    ctx.fillStyle=eyeCol;
+    ctx.beginPath(); ctx.arc(15,-23,hurt?3.2:2.4,0,Math.PI*2); ctx.fill();
+    ctx.restore();
   }
   ctx.restore();
 }
@@ -1067,7 +1353,7 @@ function drawUnit(e){
   ctx.scale(e.sx, e.sy);
   ctx.translate(-e.x, -e.y);
   if(e.side==='player') drawCatBody(e.x, e.y, e.type, 1, bob, e.lunge, e.hitFlash>0.4, collection[CAT_TYPES.indexOf(e.type)]);
-  else drawEnemyBody(e.x, e.y, e.type, -1, bob, e.lunge);
+  else drawEnemyBody(e.x, e.y, e.type, -1, bob, e.lunge, e.hitFlash>0.4);
   ctx.restore();
   // 血條
   if(e.hp < e.maxHp){
@@ -1080,6 +1366,42 @@ function drawUnit(e){
 }
 
 /* ===================== HUD ===================== */
+function drawRotateIcon(cx, cy, s){
+  // 手繪旋轉手機圖示（不用表情符號當圖示）：直向淡出框 → 旋轉箭頭 → 橫向實框
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.lineJoin = 'round';
+  ctx.globalAlpha = 0.55;
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2*s;
+  rr(ctx, -6*s, -10*s, 12*s, 20*s, 3*s); ctx.stroke();
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = COL.yellow; ctx.lineWidth = 2.4*s;
+  ctx.beginPath(); ctx.arc(0, 0, 15*s, -0.65*Math.PI, 0.55*Math.PI); ctx.stroke();
+  const ax = 15*s*Math.cos(0.55*Math.PI), ay = 15*s*Math.sin(0.55*Math.PI);
+  ctx.save();
+  ctx.translate(ax, ay); ctx.rotate(0.55*Math.PI + Math.PI/2);
+  ctx.beginPath(); ctx.moveTo(-4*s,-3.5*s); ctx.lineTo(4*s,0); ctx.lineTo(-4*s,3.5*s); ctx.closePath();
+  ctx.fillStyle = COL.yellow; ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2*s;
+  rr(ctx, -10*s, -6*s, 20*s, 12*s, 3*s); ctx.stroke();
+  ctx.restore();
+}
+function drawPortraitHint(){
+  // 直向裝置提示（遊戲設計指南(f)(5)）：只在選單/結算畫面顯示，不擋遊玩中的視野
+  if(!isPortrait) return;
+  if(state!==menuState && state!==gameOverState) return;
+  ctx.save();
+  ctx.fillStyle='rgba(4,1,14,0.82)';
+  rr(ctx, GAME_W/2-170, 6, 340, 30, 15); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=1.5;
+  rr(ctx, GAME_W/2-170, 6, 340, 30, 15); ctx.stroke();
+  drawRotateIcon(GAME_W/2-145, 21, 1);
+  ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif'; ctx.textAlign='left';
+  ctx.fillText('建議將裝置橫放，畫面與觸控範圍更大更好玩', GAME_W/2-118, 25);
+  ctx.textAlign='center';
+  ctx.restore();
+}
 function drawMuteBtn(){
   ctx.save();
   ctx.fillStyle='rgba(4,1,12,0.7)';
@@ -1176,9 +1498,18 @@ function onTap(x,y){
   }
   if(state===playState){
     const cardY = FIELD_BOT+34;
-    if(y >= cardY-8){
+    // 觸控稽核：出兵卡片的縱向命中熱區保證在實體螢幕上 ≥48px（往上補 padding，不改卡片視覺高度）
+    const scale = canvas._scale || 1;
+    const cardH = GAME_H - cardY - 6;
+    const padY = Math.max(0, (48/scale - cardH)/2);
+    if(y >= cardY-padY){
       const idx = Math.floor(x/(GAME_W/CAT_TYPES.length));
       if(idx>=0 && idx<CAT_TYPES.length) trySpawn(idx);
+    } else if(y >= FIELD_TOP-30){
+      // 先點戰場路線＝瞄準佈陣位置，下一次出兵會指定到這條路線
+      const lane = nearestLane(y);
+      laneCursor = lane; targetLane = lane; targetLaneT = 5;
+      sfx.aim();
     }
     return;
   }
@@ -1201,13 +1532,21 @@ const STEP = 1/60;
 let last = performance.now(), acc = 0;
 function frame(now){
   requestAnimationFrame(frame);
-  acc += Math.min((now-last)/1000, 0.1);
+  const rdt = Math.min((now-last)/1000, 0.1);
+  acc += rdt;
   last = now;
   while(acc >= STEP){
     state.update(STEP);
     acc -= STEP;
   }
   state.draw();
+  drawPortraitHint();
+  // 狀態切換淡入淡出：每次 setState 都會把 transitionT 拉回 1，這裡負責淡出
+  if(transitionT > 0){
+    transitionT = Math.max(0, transitionT - rdt*5);
+    ctx.fillStyle = 'rgba(4,1,14,'+(transitionT*0.85)+')';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
 }
 setState(menuState);
 requestAnimationFrame(frame);
@@ -1216,7 +1555,8 @@ requestAnimationFrame(frame);
 window.__dbg = () => ({
   state: state===menuState?'menu':state===playState?'play':state===gameOverState?'over':'gacha',
   coins, score, kills, entities: entities.length,
-  baseL: baseHpLeft, baseR: baseHpRight, cans, mode, endlessUnlocked, muted
+  baseL: baseHpLeft, baseR: baseHpRight, cans, mode, endlessUnlocked, muted,
+  combo, comboBestRun, targetLane, isPortrait
 });
 window.__forceWin = () => { if(state===playState){ baseHpRight = 0; } };
 window.__forceLose = () => { if(state===playState){ baseHpLeft = 0; } };
