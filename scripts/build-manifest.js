@@ -64,8 +64,14 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
       thumb: thumbSlug(f),
     };
     const baseCat = cat.replace(/^pro\//, '');
-    const author = overrides[cat + '/' + f] || overrides[baseCat + '/' + f] || metaAuthor(path.join(dir, f));
+    const isPro = cat.startsWith('pro/');
+    // PRO 版：作者一律沿用原作的原創作者（不看 pro/ 覆寫、不看 pro 檔內的 meta）
+    const author = isPro
+      ? (overrides[baseCat + '/' + f] || metaAuthor(path.join(ROOT, baseCat, f)))
+      : (overrides[cat + '/' + f] || metaAuthor(path.join(dir, f)));
     if (author) entry.author = author;
+    // PRO 版另外標記協作者（JOJO 老師 + Claude 升級）
+    if (isPro) entry.coauthor = 'JOJO+Claude';
     const pv = previews[cat + '/' + thumbSlug(f)];
     if (pv) entry.preview = pv;
     const upd = lastUpdated(cat + '/' + f);
