@@ -1,0 +1,1374 @@
+<!DOCTYPE html>
+<!-- 專業AI升級 v5：搖桿加死區防手震飄移／建造列不再蓋住南牆／難度改鋸齒狀加入喘息夜／直式手機提示轉橫／城牆瀕危加入紅色警示與提示音 -->
+<!-- +補強：角色精細化/觸控/大螢幕提醒 -->
+<!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="人JJ">
+<title>JJ蓋房子躲怪獸</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d0a1f;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);touch-action:none}
+  #muteBtn{position:fixed;right:12px;top:12px;width:52px;height:52px;border-radius:50%;
+    background:rgba(20,20,40,.75);border:2px solid #9a6bff;color:#fff;font-size:24px;
+    z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  #rotateHint{position:fixed;left:0;right:0;bottom:0;padding:8px 10px;text-align:center;
+    background:rgba(20,10,50,.85);color:#ffcf5c;font-size:14px;
+    font-family:"Microsoft JhengHei",sans-serif;z-index:9;pointer-events:none;display:none}
+  @media (orientation: portrait){ #rotateHint{display:block} }
+  #bigscreenHint{position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;
+    background:rgba(7,11,20,.9);padding:24px;box-sizing:border-box;transition:opacity .35s ease}
+  #bigscreenHint.show{display:flex}
+  #bigscreenHint.hide{opacity:0;pointer-events:none}
+  #bigscreenHint .bsh-card{max-width:360px;width:100%;background:rgba(18,16,36,.94);
+    border:1px solid rgba(154,107,255,.45);border-radius:16px;padding:30px 24px;text-align:center;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);box-sizing:border-box}
+  #bigscreenHint .bsh-title{font-size:20px;font-weight:bold;margin:10px 0 10px;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #bigscreenHint .bsh-sub{font-size:14px;color:#cfd6e6;margin:0 0 22px;line-height:1.6}
+  #bigscreenHint .bsh-btn{display:block;width:100%;min-width:60%;height:52px;min-height:52px;
+    border:none;border-radius:12px;font-size:16px;font-weight:bold;color:#0a0716;cursor:pointer;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);font-family:"Microsoft JhengHei",sans-serif}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="muteBtn" aria-label="靜音">🔊</button>
+<div id="rotateHint">📱 建議將裝置轉為橫向，畫面更完整好玩！</div>
+<div id="bigscreenHint">
+  <div class="bsh-card">
+    <svg width="48" height="48" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="6" y="8" width="40" height="26" rx="3" stroke="#4f7cff" stroke-width="2.5"/>
+      <line x1="18" y1="42" x2="34" y2="42" stroke="#9a6bff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="26" y1="34" x2="26" y2="42" stroke="#9a6bff" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <p class="bsh-title">建議使用大螢幕遊玩</p>
+    <p class="bsh-sub">用平板或電腦打開，體驗更完整</p>
+    <button type="button" class="bsh-btn" id="bshOkBtn">知道了，繼續玩</button>
+  </div>
+</div>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = Math.round(GAME_W * scale * dpr);
+  canvas.height = Math.round(GAME_H * scale * dpr);
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+// ===== 大螢幕提醒浮層（只在手機出現，一個 session 只跳一次，不攔截遊戲初始化）=====
+(function(){
+  try{
+    const already = sessionStorage.getItem('bigscreen-hint');
+    const isPhone = Math.min(screen.width, screen.height) < 600 || innerWidth < 768;
+    if(!already && isPhone){
+      const hint = document.getElementById('bigscreenHint');
+      hint.classList.add('show');
+      const dismiss = ()=>{
+        try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+        hint.classList.add('hide');
+        setTimeout(()=>hint.remove(), 400);
+      };
+      const btn = document.getElementById('bshOkBtn');
+      btn.addEventListener('click', dismiss);
+      btn.addEventListener('touchend', e=>{ e.preventDefault(); dismiss(); }, {passive:false});
+    } else {
+      document.getElementById('bigscreenHint').remove();
+    }
+  }catch(e){}
+})();
+
+// ===== OpenMoji 內嵌向量圖（CC BY-SA 4.0, openmoji.org）=====
+const SPRITES = {
+  zombie: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <circle cx="36.9435" cy="28.0392" r="10" fill="#e67a94"/> <path fill="#b1cc33" d="M35.1773,17.1567c-5.8765.5287-10.5159,6.6407-10.5159,14.1212,0,7.8277,5.0764,14.1733,11.3386,14.1733s11.3387-6.3456,11.3387-14.1733a17.2594,17.2594,0,0,0-.7674-5.0941,9.9175,9.9175,0,0,1-11.394-9.0271Z"/> <path fill="#b1cc33" d="M54.9375,60.9094s2-12.6032-10-12.6032c-3.1918,2.128-5.9264,3.5985-9,3.5922h.125c-3.0736.0063-5.8081-1.4642-9-3.5922-12,0-10,12.6032-10,12.6032"/> <path fill="#d0cfce" d="M46.354,48.2762l-.9075.8851a15.6367,15.6367,0,0,1-5.3451,5.81l-2.0029,5.7447-2-4.5853c-3.337.02-6.674-2.2824-9.3481-6.9693L26.2,48.25C15.27,48.9272,17.1609,60.937,17.1609,60.937l3.1531-.007,2.0839-4.7825,1.5287,4.8108,31.18-.05"/> <path fill="#fcea2b" d="M32,38.2987s8-3.11,8,0C40,44.5411,32,38.2987,32,38.2987Z"/> <path fill="#9b9b9a" d="M42.5077,52.7252c6.4062,1.661,6.5337,5.0343,7.1339,8.1842h5.1128s1.8925-11.904-9.0495-12.5747q-.46-.0282-.9505-.0285"/> <path fill="#5c9e31" d="M30,29.9325v2.041a2.1088,2.1088,0,0,0,1.7064,2.1339A2.0016,2.0016,0,0,0,34,32.1283V29.9325a.0571.0571,0,0,0-.0571-.0571H30.0573A.057.057,0,0,0,30,29.9325Z"/> <path fill="#5c9e31" d="M38,29.8754v2.2529a2,2,0,0,0,4,0V29.8754Z"/> <path fill="#fff" d="M42,29.9171a2,2,0,1,1-2-2,2.0007,2.0007,0,0,1,2,2"/> <path fill="#fff" d="M34,29.9171a2,2,0,1,1-2-2,2.0007,2.0007,0,0,1,2,2"/> </g> <g id="line"> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M35.1773,17.1567c-5.8765.5287-10.5159,6.6407-10.5159,14.1212,0,7.8277,5.0764,14.1733,11.3386,14.1733s11.3387-6.3456,11.3387-14.1733a17.2594,17.2594,0,0,0-.7674-5.0941,9.9175,9.9175,0,0,1-11.394-9.0271Z"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M45.3836,25.2642a2,2,0,0,0-1.3286-2.18,1.9753,1.9753,0,0,0,.3775-.8915,1.9931,1.9931,0,0,0-2.79-2.1141,1.9923,1.9923,0,0,0-3.3909-1.3058,1.9922,1.9922,0,0,0-2.7713-.4814"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M35.1773,17.1567q.0408.48.1262.9464a9.9978,9.9978,0,0,0,9.4213,8.1874q.2037.0082.4093.0082a10.0162,10.0162,0,0,0,1.4372-.1149"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M32,38.2987s8-3.11,8,0C40,44.5411,32,38.2987,32,38.2987Z"/> <line x1="39.4332" x2="35.134" y1="40.0153" y2="40.0153" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <line x1="36.9435" x2="36.9435" y1="40.0153" y2="37.0896" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M26.6519,48.9249c2.6741,4.6869,6.0111,6.99,9.3481,6.9693l2,4.0183,2.0029-5.1777a15.6376,15.6376,0,0,0,5.3451-5.81"/> <line x1="43.5496" x2="42.7939" y1="57.2401" y2="59.9029" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <polyline fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="20.216 59.871 22.3 56.308 23.828 59.871"/> <path d="M55,60.9171a1,1,0,0,1-1-1v-3c0-4.4517-4.4961-7.81-8.6518-7.9922-6.2051,5.0117-12.4912,5.0117-18.6963,0C22.4961,49.1066,18,52.4654,18,56.9171v3a1,1,0,1,1-2,0v-3c0-5.3247,5.14-9.9976,11-10h0a.9994.9994,0,0,1,.64.2319c5.625,4.6875,11.0947,4.6875,16.72,0a.9994.9994,0,0,1,.64-.2319h.0005C50.86,46.92,56,51.5924,56,56.9171v3A1,1,0,0,1,55,60.9171Z"/> <path fill="none" stroke="#000" stroke-miterlimit="10" stroke-width="1.5" d="M42,29.9171a2,2,0,1,1-2-2,2.0007,2.0007,0,0,1,2,2"/> <path fill="none" stroke="#000" stroke-miterlimit="10" stroke-width="1.5" d="M34,29.9171a2,2,0,1,1-2-2,2.0007,2.0007,0,0,1,2,2"/> </g> </svg>`,
+  ghost: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <path fill="#fff" d="m13.9953,51.377c-.9623-2.069,3.4028-6.2239,6.017-12.0822,1.1268-2.5251,1.2295-4.7069.738-6.384-1.2826-2.5697-2.3564-3.62-3.4174-6.1225-.8441-1.991,8.174-.2897,8.3927-.3765.8853-.7861,3.2644-9.554,5.4268-12.2402.9874-1.2266,3.396-2.6415,5.7808-2.5013,2.0182.1187,4.1012,1.3013,4.9603,2.3747,2.171,2.7125,4.7139,12.2063,5.4308,12.3544,1.9302.3988,7.9684-1.8974,8.321.4119.0771.5053-1.9201,5.7746-2.2439,6.1147-.5692,1.348-1.1653,3.3725-.3164,5.4799,1.2135,3.0123,6.055,8.5856,6.0544,14.0239,0,.1925-.9263,5.5194-7.6907,3.6474-.1511-.0418-.184-.1383-.2678-.2018-1.5408-1.1691-4.7131-1.7748-7.61-.9184-3.4167,1.01-2.8112,2.9781-6.954,4.7235-1.0835.4565-3.1113,1.2832-5.7731,1.0496-.7152-.0628-2.7788-.2675-4.8115-1.6059-2.9156-1.9198-2.3607-3.9289-4.7879-5.7011-3.2153-2.3478-6.5523-.5481-7.2491-2.0461Z"/> <ellipse cx="39.8979" cy="23.2122" rx="1.7074" ry="3.1872" fill="#3f3f3f"/> <ellipse cx="36.5193" cy="30.3411" rx="1.7742" ry="2.1254" fill="#3f3f3f"/> <path fill="#d0cfce" d="m40.1212,56.6767c.7152-.0627,3.5205-2.5204,5.4482-2.3674,3.4799.2761,9.0034,3.463,11.4306,1.6907,3.2152-2.3476,1.2678-3.0961,1.9646-4.5942.9623-2.069-3.4028-6.2239-6.017-12.0822-1.1268-2.5251-1.2295-4.7069-.738-6.384,1.2826-2.5697,2.3564-3.62,3.4174-6.1225.8441-1.991-8.174-.2897-8.3927-.3765-.8853-.7861-1.9246-3.9216-3.4483-7.7112"/> <ellipse cx="33.1007" cy="23.2122" rx="1.7074" ry="3.1872" fill="#3f3f3f"/> </g> <g id="line"> <ellipse cx="39.8778" cy="23.2122" rx="1.7074" ry="3.1872" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="m13.9753,51.377c-.9623-2.069,3.4028-6.2239,6.017-12.0822,1.1268-2.5251,1.2295-4.7069.738-6.384-1.2826-2.5697-2.3564-3.62-3.4174-6.1225-.8441-1.991,8.174-.2897,8.3927-.3765.8853-.7861,3.2644-9.554,5.4268-12.2402.9874-1.2266,3.396-2.6415,5.7808-2.5013,2.0182.1187,4.1012,1.3013,4.9603,2.3747,2.171,2.7125,4.7139,12.2063,5.4308,12.3544,1.9302.3988,7.9684-1.8974,8.321.4119.0771.5053-1.9201,5.7746-2.2439,6.1147-.5692,1.348-1.1653,3.3725-.3164,5.4799,1.2135,3.0123,6.055,8.5856,6.0544,14.0239,0,.1925-.9263,5.5194-7.6907,3.6474-.1511-.0418-4.9809-1.9766-7.8778-1.1202-3.4167,1.01-2.8112,2.9781-6.954,4.7235-1.0835.4565-3.1113,1.2832-5.7731,1.0496-.7152-.0628-2.7788-.2675-4.8115-1.6059-2.9156-1.9198-2.3607-3.9289-4.7879-5.7011-3.2154-2.3478-6.5524-.5481-7.2491-2.0461Z"/> <ellipse cx="36.4993" cy="30.3411" rx="1.7742" ry="2.1254" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <ellipse cx="33.0806" cy="23.2122" rx="1.7074" ry="3.1872" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> </g> </svg>`,
+  alien: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <polygon fill="#8967AA" points="10,21 10,35 13,35 13,38 16,38 16,45 22,45 22,51 27,51 28,51 28,45 44,45 44,51 50,51 50,45 56,45 56,38 59,38 59,35 62,35 62,20 56,20 56,24 56,25 49,25 49,20 45,20 45,14 39,14 39,20 32,20 32,14 26,14 26,20 22,20 22,25 16,25 16,20 10,20"/> <rect x="16" y="51" width="6" height="6" fill="#8967AA"/> <rect x="50" y="51" width="6" height="6" fill="#8967AA"/> </g> <g id="line"> <rect x="25.175" y="31" width="3.6" height="6" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="22,45 16,45 16,39"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="22.583,25 22.583,20 26,20"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="48.708,25 48.708,20 45.292,20"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="13,35 10,35 10,20 16,20 16,35"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="56,35 56,20 62,20 62,35 59,35"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="26,20 26,14 32,14 32,20"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="39,20 39,14 45,14 45,20"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="16,35 19,35 19,38 13,38 13,35"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="59,35 59,38 53,38 53,35 56,35"/> <rect x="16" y="51" width="6" height="6" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <rect x="50" y="51" width="6" height="6" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="28,45 28,51 22,51 22,45"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="50,45 56,45 56,39"/> <polyline fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="44,45 44,51 50,51 50,45"/> <rect x="43.425" y="31" width="3.6" height="6" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M44,45L44,45z"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M39,20L39,20z"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16,25L16,25z"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M49,25L49,25z"/> <line x1="28" x2="44" y1="45" y2="45" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <line x1="32" x2="39" y1="20" y2="20" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <line x1="16" x2="22" y1="25" y2="25" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <line x1="49" x2="56" y1="25" y2="25" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> </g> </svg>`,
+  wood: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <path fill="#a57939" d="M35.6648,60.7711a31.3627,31.3627,0,0,1-9.832-1.4524.9588.9588,0,0,1-.6528-.9081v-.3919a.8758.8758,0,0,1,.0065-.11,5.694,5.694,0,0,0-.8856-3.8812.9866.9866,0,0,1-.1749-.3788c-.015-.0673-.029-.1328-.043-.1954a11.2648,11.2648,0,0,0,.0486,3.4575.9583.9583,0,0,1-1.429,1.0091c-2.6981-1.603-3.2649-3.3472-3.2649-4.5284V18.3849a.9581.9581,0,0,1,.8941-.9558.9691.9691,0,0,1,1.0128.83c.0075.0411-.5016,5.5907,14.32,5.5907,14.7728,0,14.3126-5.5514,14.3229-5.6076a.99.99,0,0,1,1.025-.8033.9518.9518,0,0,1,.8791.9464v9.0062a3.0992,3.0992,0,0,0,1.5553-1,.968.968,0,0,1,.9941-.3694c2.6673.6275,3.2761,5.6234,3.3706,6.6185a.9556.9556,0,0,1-.3788.8567c-2.23,1.6722-4.6929,7.15-5.5412,9.3326V53.3912C51.8918,57.5988,44.916,60.7711,35.6648,60.7711Z"/> <path fill="#6a462f" d="M26.1377,59.3682a.6074.6074,0,0,1-.1936-.02,11.0947,11.0947,0,0,1-3.364-1.5151.9578.9578,0,0,1-.3274-.55,11.9768,11.9768,0,0,1,.3451-5.7376,1.62,1.62,0,0,1,1.4908-1.3326c1.0128.04,1.4889,1.1578,1.8686,2.843a7.7564,7.7564,0,0,1,1.1381,5.0166v.3376a.9572.9572,0,0,1-.9576.9576Z"/> <path fill="#fcea2b" d="M35.6648,25.7648c-9.2513,0-16.2271-3.1723-16.2271-7.38s6.9758-7.38,16.2271-7.38,16.227,3.1723,16.227,7.38S44.916,25.7648,35.6648,25.7648Z"/> </g> <g id="line"> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M50.934,42.6522s2.91-7.66,5.9244-9.921c0,0-.5023-5.2745-2.6372-5.7768a4.1563,4.1563,0,0,1-3.2872,1.5249V18.3852"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M50.934,46.034v7.3576c0,2.9685-4.7887,5.4666-11.2944,6.2023l-.0175-.0474a11.4324,11.4324,0,0,1-.6936-3.6526,6.2742,6.2742,0,0,1,.3015-2.2668c.2165-.6044.566-1.155.7737-1.7625a8.1179,8.1179,0,0,0,.2887-2.6551l-.0215-10.0733"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.3956,18.3852V53.3916c0,1.38,1.0348,2.6583,2.7959,3.7052a11.088,11.088,0,0,1,.3037-5.2173s.7152-2.3759,1.5671,1.5671a6.6658,6.6658,0,0,1,1.0752,4.5725v.3914a30.5618,30.5618,0,0,0,9.5273,1.4032q.2328,0,.464-.0029"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M38.0678,19.6992c7.1175-2.4351-9.8937-4.0178-8.7109.2467C31.7357,22.66,44.57,22.5016,45.7706,18.5044c1.1582-5.4256-22.2033-4.7544-19.9212.91"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M31.3506,48.3638a75.095,75.095,0,0,1-.5041-9.564,4.6685,4.6685,0,0,0-.2721-2.0361,8.1822,8.1822,0,0,0-.993-1.3624,8.1053,8.1053,0,0,1-1.164-5.5933,53.8785,53.8785,0,0,0,.5412-5.44l-.0053-.2127a33.5233,33.5233,0,0,0,6.7115.652c8.433,0,15.2692-2.8752,15.2692-6.422s-6.8362-6.4221-15.2692-6.4221-15.2692,2.8753-15.2692,6.4221c0,1.9436,2.0528,3.6855,5.2964,4.8632"/> </g> </svg>`,
+  cup: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <polygon fill="#fff" points="18.933 21.376 52.9693 21.495 46.9395 65.7271 25.9937 65.5684 18.933 21.376"/> <polygon fill="#d22f27" points="49.9235 50.25 51.9 35.85 20.4 35.85 22.6588 50.25 49.9235 50.25"/> </g> <g id="line"> <polygon fill="none" stroke="#000" stroke-miterlimit="10" stroke-width="2" points="49.9235 50.25 51.9 35.85 20.4 35.85 22.6588 50.25 49.9235 50.25"/> <polyline fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" points="54 20.55 47.7 66.45 25.2 66.45 18 20.55"/> <line x1="18" x2="54" y1="20.55" y2="20.55" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> <line x1="36" x2="36" y1="5" y2="17" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"/> </g> </svg>`,
+  heart: `<svg id="emoji" viewBox="0 0 72 72" version="1.1" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <path fill="#d22f27" d="m59.5 25c0-6.904-5.596-12.5-12.5-12.5-4.753 0-8.886 2.654-11 6.56-2.114-3.906-6.247-6.56-11-6.56-6.904 0-12.5 5.596-12.5 12.5 0 2.97 1.04 5.694 2.77 7.839l-0.0043 0.0034 20.73 25.7 20.73-25.7-0.0043-0.0034c1.73-2.145 2.77-4.869 2.77-7.839z"/> </g> <g id="line"> <path fill="none" stroke="#000" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m59.5 25c0-6.904-5.596-12.5-12.5-12.5-4.753 0-8.886 2.654-11 6.56-2.114-3.906-6.247-6.56-11-6.56-6.904 0-12.5 5.596-12.5 12.5 0 2.97 1.04 5.694 2.77 7.839l-0.0043 0.0034 20.73 25.7 20.73-25.7-0.0043-0.0034c1.73-2.145 2.77-4.869 2.77-7.839z"/> </g> </svg>`,
+  star: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <polygon fill="#FCEA2B" stroke="none" points="35.9928,10.7363 27.7913,27.3699 9.4394,30.0436 22.7245,42.9838 19.5962,61.2637 36.0084,52.6276 52.427,61.2515 49.2851,42.9739 62.5606,30.0239 44.2067,27.3638"/> </g> <g id="hair"/> <g id="skin"/> <g id="skin-shadow"/> <g id="line"> <polygon fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" points="35.9928,10.7363 27.7913,27.3699 9.4394,30.0436 22.7245,42.9838 19.5962,61.2637 36.0084,52.6276 52.427,61.2515 49.2851,42.9739 62.5606,30.0239 44.2067,27.3638"/> </g> </svg>`,
+  sun: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <polygon fill="#FCEA2B" stroke="none" points="36,10 31.4483,4.3216 28.6708,11.0465 22.7014,6.8864 21.9435,14.1231 15.0427,11.817 16.3488,18.9749 9.0779,18.6961 12.3422,25.1984 5.2887,26.9833 10.2616,32.295 4,36 10.2616,39.7051 5.2889,45.0172 12.3426,46.8026 9.0787,53.3052 16.3497,53.0261 15.044,60.1842 21.9445,57.8775 22.7026,65.1141 28.6713,60.9536 31.4484,67.6784 36,62 40.5517,67.6784 43.3292,60.9535 49.2986,65.1135 50.0565,57.8769 56.9573,60.183 55.6512,53.0251 62.9221,53.3039 59.6578,46.8016 66.7113,45.0167 61.7384,39.705 68,36 61.7384,32.2949 66.7111,26.9828 59.6573,25.1974 62.9213,18.6948 55.6503,18.9739 56.956,11.8158 50.0555,14.1225 49.2974,6.8859 43.3287,11.0464 40.5516,4.3216"/> </g> <g id="hair"/> <g id="skin"/> <g id="skin-shadow"/> <g id="line"> <polygon fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" points="36,10 31.4483,4.3216 28.6708,11.0465 22.7014,6.8864 21.9435,14.1231 15.0427,11.817 16.3488,18.9749 9.0779,18.6961 12.3422,25.1984 5.2887,26.9833 10.2616,32.295 4,36 10.2616,39.7051 5.2889,45.0172 12.3426,46.8026 9.0787,53.3052 16.3497,53.0261 15.044,60.1842 21.9445,57.8775 22.7026,65.1141 28.6713,60.9536 31.4484,67.6784 36,62 40.5517,67.6784 43.3292,60.9535 49.2986,65.1135 50.0565,57.8769 56.9573,60.183 55.6512,53.0251 62.9221,53.3039 59.6578,46.8016 66.7113,45.0167 61.7384,39.705 68,36 61.7384,32.2949 66.7111,26.9828 59.6573,25.1974 62.9213,18.6948 55.6503,18.9739 56.956,11.8158 50.0555,14.1225 49.2974,6.8859 43.3287,11.0464 40.5516,4.3216"/> <circle cx="27.8456" cy="33.789" r="3" fill="#000000" stroke="none"/> <circle cx="44.1544" cy="33.789" r="3" fill="#000000" stroke="none"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="M43.6763,46.3816c-2.1347,1.5846-4.8139,2.5518-7.6766,2.5518c-2.9019,0-5.5262-0.9282-7.6759-2.5523"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="M31.7748,23.0042c0,0-4.7748-2.6003-9.5496,1.6523"/> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="M40.2252,23.0042c0,0,4.7748-2.6003,9.5496,1.6523"/> </g> </svg>`,
+  moon: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <path fill="#FCEA2B" stroke="none" d="M7.3634,42.4095c4.5525,6.1703,11.874,10.1726,20.1303,10.1726c13.8071,0,25-11.1929,25-25 c0-8.5226-4.2646-16.0492-10.7763-20.5621c13.0383,2.8385,22.7812,14.4426,22.7812,28.3317c0,16.0163-12.9837,29-29,29 C21.9109,64.3517,10.5097,55.0229,7.3634,42.4095z"/> <path fill="#F1B31C" stroke="none" d="M45.8373,9.2108c8.25,4.25,16.1946,11.8724,16.1946,24.6742c0,15.4494-12.5242,27.9735-27.9735,27.9735 c-9.2431,0-19.7524-4.8353-24.294-15.5436c0,0,4.3805,18.6568,25.7189,18.665c19.327,0.0074,28.0419-20.6218,28.0419-20.6218 C70.033,12.3815,45.8373,9.2108,45.8373,9.2108z"/> </g> <g id="hair"/> <g id="skin"/> <g id="skin-shadow"/> <g id="line"> <path fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="M7.3634,42.4095c4.5525,6.1703,11.874,10.1726,20.1303,10.1726c13.8071,0,25-11.1929,25-25 c0-8.5226-4.2646-16.0492-10.7763-20.5621c13.0383,2.8385,22.7812,14.4426,22.7812,28.3317c0,16.0163-12.9837,29-29,29 C21.9109,64.3517,10.5097,55.0229,7.3634,42.4095z"/> </g> </svg>`,
+  sofa: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <rect x="6.833" y="55.62" width="5.422" height="7.064" fill="#a57939" stroke-width="1.042"/> <rect x="51.82" y="55.62" width="5.422" height="7.064" fill="#a57939" stroke-width="1.042"/> <path fill="#92d3f5" d="m12.54 28.49h38.94l0.243 26.82-38.96-0.2078z"/> <rect x="12.62" y="46.36" width="39.1" height="8.952" fill="#61b2e4" stroke-width="0.9064"/> <path transform="rotate(90 56.28 44.95)" fill="#61b2e4" d="m45.93 43.3h20.69l0.01452 6.212-20.71-0.1735z"/> <path transform="rotate(90 7.178 44.95)" fill="#61b2e4" d="m-1.848 39.65 19.39-0.1405-0.01452 7.167h-21.36z"/> <polyline fill="#A57939" points="52.74 57.65 52.74 62.46 56.17 62.46 56.17 57.65"/> <polyline fill="#A57939" points="7.444 57.61 7.444 62.46 10.87 62.46 10.87 57.61"/> <path fill="#FCEA2B" d="m34.46 9.549v8.465s6.279 3.422 12.56 0v-8.465c1e-4 0-6.279-3.782-12.56 0z"/> </g> <g id="hair"/> <g id="skin"/> <g id="skin-shadow"/> <g id="line"> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m12.61 36.87v-8.385h38.94v8.274c2.138-2.907 3.386-2.824 6.768-2.824v21.36h-52.47v-21.36c3.594-0.509 4.265 0.6135 6.768 2.935z"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m7.833 58.61v3.852h3.422v-3.852"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m52.82 58.61v3.852h3.422v-3.852"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m34.53 9.549v8.465c4.382 2.115 8.559 2.125 12.56 0v-8.465c-4.033-2.29-8.197-2.384-12.56 0z"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m12.7 46.42h38.86"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m51.56 54.6-0.0113-17.84"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m12.61 36.87 0.01095 18.44"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m47.09 13.7s15.18-2.847 15.56 19.74c0.0985 5.856 0 23.43 0 23.43"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m58.92 59.61h7.546"/> </g> </svg>`,
+  bed: `<svg id="emoji" viewBox="0 0 72 72" xmlns="http://www.w3.org/2000/svg"> <g id="color"> <rect x="5" y="42.5" width="62" height="6.5" fill="#a57939"/> <path fill="#d0cfce" d="m5 42v-4c0-1.65 1.35-3 3-3h56c1.65 0 3 1.35 3 3v4"/> <path fill="#92d3f5" d="m5.125 30.44s6.387-2.767 12.27-2.721c2.296 0.01784 5.686 1.897 5.712 3.874l-1.104 2.16-15 1-0.8125 1.25-1.062-1.625-0.125-3.625z"/> <path fill="#92d3f5" d="m22 41.6 0.4337-8.291c-3.052-4.924 32.48-2.528 44.6-2.638 0.8175 4.338 0.0439 6.264-0.0301 11.32"/> </g> <g id="hair"/> <g id="skin"/> <g id="skin-shadow"/> <g id="line"> <rect x="5" y="42" width="62" height="7" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m5 40.99v-4c0-1.65 1.35-3 3-3h13.83"/> <line x1="5" x2="5" y1="55.03" y2="16.97" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/> <line x1="67" x2="67" y1="27.04" y2="55.04" fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m20.42 29.73c-1.61-1.197-4.604-1.538-7.357-1.598-4.582 0.01116-8.882 1.329-7.933 5.274"/> <path fill="none" stroke="#000" stroke-linecap="round" stroke-linejoin="round" stroke-miterlimit="10" stroke-width="2" d="m67 41.99v-8.32c0-1.65-1.35-3-2.99-3.001l-38.81-0.001398c-1.65-5.9e-5 -3 1.35-3 3v8"/> </g> </svg>`,
+};
+const IMG = {};
+for(const k in SPRITES){
+  const im = new Image();
+  im.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(SPRITES[k]);
+  IMG[k] = im;
+}
+function drawSprite(key, x, y, size){
+  const im = IMG[key];
+  if(im && im.complete && im.naturalWidth>0) ctx.drawImage(im, x-size/2, y-size/2, size, size);
+}
+
+// ===== 音效：DynamicsCompressor 母線 + 隨機音高 =====
+let AC = null, master = null, muted = false;
+function audio(){
+  if(!AC){
+    AC = new (window.AudioContext||window.webkitAudioContext)();
+    const comp = AC.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 6;
+    const g = AC.createGain(); g.gain.value = 0.9;
+    g.connect(comp).connect(AC.destination);
+    master = g;
+  }
+  if(AC.state==='suspended') AC.resume();
+  return AC;
+}
+addEventListener('pointerdown', audio, { once:true });
+addEventListener('keydown', audio, { once:true });
+function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
+  if(muted) return;
+  const ac = audio(); if(!ac||!master) return;
+  const f = freq * (0.94 + Math.random()*0.12);   // 隨機音高 ±6%
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(f, ac.currentTime);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,f+slide), ac.currentTime+dur);
+  g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  o.connect(g).connect(master);
+  o.start(); o.stop(ac.currentTime+dur);
+}
+function noiseBurst(dur=0.2, vol=0.2){
+  if(muted) return;
+  const ac = audio(); if(!ac||!master) return;
+  const buf = ac.createBuffer(1, Math.max(1, ac.sampleRate*dur|0), ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain(); g.gain.setValueAtTime(vol, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime+dur);
+  src.connect(g).connect(master); src.start();
+}
+function chord(freqs, gap=80, dur=0.12, type='square', vol=0.12){
+  freqs.forEach((f,i)=>setTimeout(()=>beep(f,dur,type,vol), i*gap));
+}
+document.getElementById('muteBtn').addEventListener('pointerdown', e=>{
+  e.stopPropagation(); e.preventDefault(); muted = !muted;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+});
+
+// ===== 座標系（俯視方格）=====
+// v5：CELL 由 56 縮到 50，讓棋盤底排（南牆）不會被白天的建造列蓋住
+const CELL = 50;
+const GRID = 7;
+const ORIGIN_X = GAME_W/2 - (GRID*CELL)/2, ORIGIN_Y = 96;
+function isoX(gx,gy){ return ORIGIN_X + gx*CELL + CELL/2; }
+function isoY(gx,gy){ return ORIGIN_Y + gy*CELL + CELL/2; }
+function clamp(v,a,b){ return Math.max(a,Math.min(b,v)); }
+
+// ===== 輸入 =====
+const input = { left:false, right:false, up:false, down:false, action:false, actionBuffer:0 };
+const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
+                 ArrowUp:'up', KeyW:'up', ArrowDown:'down', KeyS:'down',
+                 Space:'action', KeyE:'action', KeyJ:'action' };
+addEventListener('keydown', e=>{
+  if(e.code==='Digit1'||e.code==='Digit2'||e.code==='Digit3'){
+    const i = +e.code.slice(-1)-1;
+    if(state===playState && phase==='day' && BUILD_TYPES[i]){ selectBuild(BUILD_TYPES[i].id); }
+    if(state===menuState){ menuState.pick(i); }
+    return;
+  }
+  if(e.code==='Digit4' && state===menuState){ menuState.pick(3); return; }
+  const a = KEYMAP[e.code]; if(!a) return;
+  e.preventDefault();
+  if(a==='action' && !input.action) input.actionBuffer = 0.15;
+  input[a] = true;
+});
+addEventListener('keyup', e=>{ const a = KEYMAP[e.code]; if(a) input[a] = false; });
+
+// 觸控：左半浮動搖桿、右半＝動作鍵（大按鈕提示）
+let joy = { active:false, id:null, cx:0, cy:0, dx:0, dy:0 };
+let tapAction = false;
+let tapPoint = null;   // 選單點擊用
+const JOY_R = 54;
+const ACT_CX = GAME_W-96, ACT_CY = GAME_H-108, ACT_R = 52;
+function touchPos(t){
+  const r = canvas.getBoundingClientRect();
+  return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
+}
+const JOY_DEAD = 10;   // 死區：手指微抖不算移動，避免角色原地漂移
+function joyApply(p){
+  const dx = p.x-joy.cx, dy = p.y-joy.cy;
+  const d = Math.hypot(dx,dy);
+  if(d<=JOY_DEAD){ joy.dx=0; joy.dy=0; return; }
+  // 死區外重新映射到 0~JOY_R，避免一超過死區就瞬間跳成全速
+  const t = Math.min(1, (d-JOY_DEAD)/(JOY_R-JOY_DEAD));
+  joy.dx = dx/d*t*JOY_R; joy.dy = dy/d*t*JOY_R;
+}
+function onTouchStart(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    const p = touchPos(t);
+    tapPoint = p;
+    if(state!==playState){ tapAction = true; input.actionBuffer = 0.15; continue; }
+    if(checkBuildBar(p.x, p.y)) continue;
+    if(p.x < GAME_W*0.5 && !joy.active){
+      joy.active = true; joy.id = t.identifier;
+      joy.cx = clamp(p.x, JOY_R+16, GAME_W*0.5-JOY_R);   // 浮動搖桿：跟隨拇指落點
+      joy.cy = clamp(p.y, JOY_R+16, GAME_H-JOY_R-16);
+      joyApply(p);
+    } else if(p.x >= GAME_W*0.5){
+      tapAction = true; input.actionBuffer = 0.15;
+    }
+  }
+}
+function onTouchMove(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joy.active && t.identifier===joy.id) joyApply(touchPos(t));
+  }
+}
+function onTouchEnd(e){
+  e.preventDefault();
+  for(const t of e.changedTouches){
+    if(joy.active && t.identifier===joy.id){ joy.active=false; joy.dx=0; joy.dy=0; }
+  }
+}
+canvas.addEventListener('touchstart', onTouchStart, {passive:false});
+canvas.addEventListener('touchmove', onTouchMove, {passive:false});
+canvas.addEventListener('touchend', onTouchEnd, {passive:false});
+canvas.addEventListener('touchcancel', onTouchEnd, {passive:false});
+
+// 滑鼠：選單點擊、遊玩時左半拖曳搖桿 / 右半＝動作
+let mouseJoyDown = false;
+canvas.addEventListener('mousedown', e=>{
+  const r = canvas.getBoundingClientRect();
+  const p = { x:(e.clientX-r.left)/canvas._scale, y:(e.clientY-r.top)/canvas._scale };
+  tapPoint = p;
+  if(state!==playState){ tapAction = true; input.actionBuffer = 0.15; return; }
+  if(checkBuildBar(p.x,p.y)) return;
+  if(p.x < GAME_W*0.5){
+    mouseJoyDown = true; joy.active = true;
+    joy.cx = clamp(p.x, JOY_R+16, GAME_W*0.5-JOY_R);
+    joy.cy = clamp(p.y, JOY_R+16, GAME_H-JOY_R-16);
+    joyApply(p);
+  } else {
+    tapAction = true; input.actionBuffer = 0.15;
+  }
+});
+addEventListener('mousemove', e=>{
+  if(!mouseJoyDown) return;
+  const r = canvas.getBoundingClientRect();
+  joyApply({ x:(e.clientX-r.left)/canvas._scale, y:(e.clientY-r.top)/canvas._scale });
+});
+addEventListener('mouseup', ()=>{
+  if(mouseJoyDown){ mouseJoyDown=false; joy.active=false; joy.dx=0; joy.dy=0; }
+});
+
+function moveVector(){
+  let mx=0,my=0;
+  if(input.left) mx-=1; if(input.right) mx+=1;
+  if(input.up) my-=1; if(input.down) my+=1;
+  if(joy.active){ mx += joy.dx/JOY_R; my += joy.dy/JOY_R; }
+  const len = Math.hypot(mx,my);
+  if(len>1){ mx/=len; my/=len; }
+  return {mx,my};
+}
+
+// ===== 關卡設定 =====
+const LEVELS = [
+  { name:'新手小屋', days:3, dayLen:26, nightLen:16, types:['zombie'], spawnBase:2.8, desc:'撐過 3 天' },
+  { name:'鬼影之夜', days:5, dayLen:24, nightLen:19, types:['zombie','ghost'], spawnBase:2.3, desc:'撐過 5 天' },
+  { name:'怪獸總攻', days:7, dayLen:22, nightLen:22, types:['zombie','ghost','alien'], spawnBase:1.9, desc:'撐過 7 天' },
+  { name:'無盡挑戰', days:0, dayLen:22, nightLen:22, types:['zombie','ghost','alien'], spawnBase:2.1, desc:'能撐幾天？' },
+];
+let levelIdx = 0;
+const SAVE_KEY = 'jjhouse_pro_v4';
+function loadSave(){
+  try{ return JSON.parse(localStorage.getItem(SAVE_KEY)) || {stars:[0,0,0,0], best:0}; }
+  catch(e){ return {stars:[0,0,0,0], best:0}; }
+}
+let save = loadSave();
+function persist(){ try{ localStorage.setItem(SAVE_KEY, JSON.stringify(save)); }catch(e){} }
+
+// ===== 建造選單 =====
+const BUILD_TYPES = [
+  { id:'wall', name:'木牆', cost:1, color:'#e8c07d' },
+  { id:'trap', name:'尖刺陷阱', cost:2, color:'#c0392b' },
+  { id:'demolish', name:'拆牆回收', cost:0, color:'#9aa0a6' },
+];
+let selectedBuild = 'wall';
+function selectBuild(id){
+  if(selectedBuild!==id){ selectedBuild = id; beep(520,0.06,'square',0.1,80); }
+}
+const BAR_H = 78, BAR_Y = GAME_H - BAR_H, SLOT = 64, SLOT_GAP = 12;
+function barSlotRects(){
+  const total = BUILD_TYPES.length*SLOT + (BUILD_TYPES.length-1)*SLOT_GAP;
+  const startX = GAME_W/2 - total/2;
+  return BUILD_TYPES.map((b,i)=>({ b, x:startX+i*(SLOT+SLOT_GAP), y:BAR_Y+(BAR_H-SLOT)/2, w:SLOT, h:SLOT }));
+}
+function checkBuildBar(x,y){
+  if(state!==playState || phase!=='day') return false;
+  if(y < BAR_Y) return false;
+  for(const s of barSlotRects()){
+    if(x>=s.x-6 && x<=s.x+s.w+6 && y>=s.y-6 && y<=s.y+s.h+6){ selectBuild(s.b.id); return true; }
+  }
+  return true;
+}
+
+// ===== 遊戲資料 =====
+const PALETTE = {
+  skyDay1:'#8fd7ff', skyDay2:'#d6f4ff', skyNight1:'#0d0a2b', skyNight2:'#221a52',
+  grass1:'#4db86a', grass2:'#3fa35b', dirt:'#8c5a3c',
+  wallDone:'#e8c07d', wallHalf:'#caa165', wallEmpty:'#6b5a45',
+};
+function hexLerp(a,b,t){
+  const pa = parseInt(a.slice(1),16), pb = parseInt(b.slice(1),16);
+  const r=Math.round(((pa>>16)&255)+((((pb>>16)&255)-((pa>>16)&255))*t));
+  const g=Math.round(((pa>>8)&255)+((((pb>>8)&255)-((pa>>8)&255))*t));
+  const bl=Math.round((pa&255)+(((pb&255)-(pa&255))*t));
+  return `rgb(${r},${g},${bl})`;
+}
+function traceRoundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+function makeWalls(){
+  const out=[]; const seen=new Set(); const N=GRID;
+  const push=(gx,gy)=>{ const k=gx+','+gy; if(!seen.has(k)){seen.add(k); out.push({gx,gy,built:0,need:3});} };
+  for(let i=0;i<N;i++){ push(i,0); push(i,N-1); push(0,i); push(N-1,i); }
+  return out;
+}
+
+let wood=0, day=1, phase='day', phaseTimer=0, score=0;
+let shake=0, freeze=0, flashT=0;
+let walls=[], traps=[], monsters=[], woodNodes=[];
+let houseHp=0, houseHpMax=1;
+let spawnTimer=0, nightSpawned=0, nightQuota=0;
+let nightIsBreather=false;   // v5：鋸齒狀難度的喘息夜
+let dangerBeepT=0;           // v5：城牆瀕危警示音節流
+let hintT = 0;   // 開場提示浮層
+
+const player = { gx:3, gy:3, x:0, y:0, sx:1, sy:1, facing:1, blinkT:2, bob:0,
+                 hp:3, maxHp:3, invuln:0, atkT:0, atkDir:1, mood:'normal', moodT:0 };
+function updatePlayerPos(){ player.x = isoX(player.gx, player.gy); player.y = isoY(player.gx, player.gy); }
+
+const FURNITURE = [
+  { type:'sofa', gx:1.5, gy:1.5 },
+  { type:'bed', gx:5, gy:1.5 },
+  { type:'fridge', gx:5, gy:5 },
+];
+let fridgeCooldown = 0;
+const FRIDGE_COOLDOWN = 9;
+
+const parts = [];
+function burst(x,y,color,n=12,speed=180){
+  if(parts.length>260) return;
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = speed*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s*0.6-40,life:0.5,color});
+  }
+}
+function updateParts(dt){
+  for(const p of parts){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=300*dt; p.life-=dt; }
+  for(let i=parts.length-1;i>=0;i--) if(parts[i].life<=0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0,p.life*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3,p.y-3,6,6);
+  }
+  ctx.globalAlpha = 1;
+}
+const floatTexts = [];
+function floatText(x,y,text,color='#fff',size=16){
+  floatTexts.push({x,y,text,color,size,life:0.9});
+}
+function updateFloat(dt){
+  for(const f of floatTexts){ f.y -= 42*dt; f.life -= dt; }
+  for(let i=floatTexts.length-1;i>=0;i--) if(floatTexts[i].life<=0) floatTexts.splice(i,1);
+}
+function drawFloat(){
+  ctx.textAlign='center';
+  for(const f of floatTexts){
+    ctx.font = `bold ${f.size}px sans-serif`;
+    ctx.globalAlpha = Math.max(0,f.life);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha=1;
+}
+
+function spawnWoodNodes(){
+  woodNodes = [];
+  const N = GRID;
+  const count = 5 + Math.min(4, Math.floor(day*0.6));
+  for(let i=0;i<count;i++){
+    let gx,gy,ok,tries=0;
+    do{
+      gx = 1+Math.random()*(N-2); gy = 1+Math.random()*(N-2);
+      ok = Math.hypot(gx-player.gx, gy-player.gy) > 0.9
+        && !FURNITURE.some(f=>Math.hypot(f.gx-gx, f.gy-gy) < 1);
+    } while(!ok && ++tries<40);
+    woodNodes.push({gx,gy,taken:false,bob:Math.random()*10});
+  }
+}
+
+function resetGame(){
+  const L = LEVELS[levelIdx];
+  wood = 6; day = 1; phase='day'; phaseTimer = L.dayLen;
+  walls = makeWalls();
+  houseHpMax = walls.reduce((s,w)=>s+w.need,0);
+  houseHp = 0;
+  score = 0;
+  player.gx=3; player.gy=3; player.hp=3; player.invuln=0; player.atkT=0;
+  player.sx=1; player.sy=1;
+  updatePlayerPos();
+  spawnWoodNodes();
+  monsters = []; traps = []; parts.length=0; floatTexts.length=0;
+  selectedBuild = 'wall';
+  fridgeCooldown = 0;
+  shake=0; freeze=0; flashT=0;
+  nightIsBreather=false; dangerBeepT=0;
+  hintT = 5;
+}
+
+// ===== 怪物 =====
+const MON_DEF = {
+  zombie:{ hp:2, speed:0.5, chew:0.7, dmg:1, score:10, size:52, sprite:'zombie' },
+  ghost: { hp:1, speed:0.75, chew:0,   dmg:1, score:15, size:48, sprite:'ghost' },   // 穿牆直追玩家
+  alien: { hp:1, speed:1.0, chew:1.4, dmg:1, score:15, size:46, sprite:'alien' },
+};
+function spawnMonster(){
+  const L = LEVELS[levelIdx];
+  const pool = L.types.filter((t,i)=> i===0 || day > i);   // 越後面天數才出新怪
+  const type = pool[Math.floor(Math.random()*pool.length)];
+  const def = MON_DEF[type];
+  const N = GRID;
+  const edge = Math.floor(Math.random()*4);
+  let gx,gy;
+  if(edge===0){ gx=-1.6; gy=Math.random()*N; }
+  else if(edge===1){ gx=N+0.6; gy=Math.random()*N; }
+  else if(edge===2){ gx=Math.random()*N; gy=-1.6; }
+  else { gx=Math.random()*N; gy=N+0.6; }
+  const speed = def.speed * (1 + day*0.06 + Math.random()*0.12);
+  monsters.push({type, gx, gy, speed, hp:def.hp, dead:false, hitFlash:0, target:null, squash:1, wob:Math.random()*6});
+}
+// 修正原作 BUG：殭屍只鎖定「已經有蓋」的牆；沒牆就直接追玩家（原作會呆站在空牆位）
+function nearestBuiltWall(m){
+  let best=null, bd=Infinity;
+  for(const w of walls){
+    if(w.built<=0) continue;
+    const d = Math.hypot(w.gx-m.gx, w.gy-m.gy);
+    if(d<bd){ bd=d; best=w; }
+  }
+  return best;
+}
+
+// ===== 狀態機 =====
+let state;
+function setState(s){ state = s; if(s.enter) s.enter(); }
+
+// ===== 繪圖 =====
+function drawBackground(nightAmt){
+  const sky = ctx.createLinearGradient(0,0,0,GAME_H);
+  sky.addColorStop(0, hexLerp(PALETTE.skyDay1, PALETTE.skyNight1, nightAmt));
+  sky.addColorStop(1, hexLerp(PALETTE.skyDay2, PALETTE.skyNight2, nightAmt));
+  ctx.fillStyle = sky; ctx.fillRect(0,0,GAME_W,GAME_H);
+  // 遠景山丘（視差感的層次）
+  ctx.fillStyle = hexLerp('#79c98f','#1a1440',nightAmt*0.85);
+  ctx.beginPath(); ctx.moveTo(0,120);
+  for(let x=0;x<=GAME_W;x+=60) ctx.lineTo(x, 96 + Math.sin(x*0.013)*26);
+  ctx.lineTo(GAME_W,140); ctx.lineTo(GAME_W,GAME_H); ctx.lineTo(0,GAME_H); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = hexLerp('#5eb877','#171138',nightAmt*0.85);
+  ctx.beginPath(); ctx.moveTo(0,160);
+  for(let x=0;x<=GAME_W;x+=60) ctx.lineTo(x, 140 + Math.cos(x*0.02)*18);
+  ctx.lineTo(GAME_W,GAME_H); ctx.lineTo(0,GAME_H); ctx.closePath(); ctx.fill();
+  // 星星
+  if(nightAmt>0.3){
+    ctx.fillStyle = `rgba(255,255,255,${(nightAmt-0.3)*0.9})`;
+    for(let i=0;i<48;i++){
+      const sx=(i*97)%GAME_W, sy=(i*53)%150+8;
+      ctx.fillRect(sx,sy,2,2);
+    }
+  }
+  // 太陽 / 月亮沿弧線移動
+  const L = LEVELS[levelIdx];
+  const total = phase==='day'?L.dayLen:L.nightLen;
+  const t = clamp(phaseTimer/total,0,1);
+  const arcX = GAME_W*0.12 + (1-t)*GAME_W*0.76;
+  const arcY = 70 - Math.sin((1-t)*Math.PI)*28;
+  drawSprite(phase==='day'?'sun':'moon', arcX, arcY, 52);
+  // 白天雲朵
+  if(nightAmt<0.6){
+    ctx.globalAlpha = (1-nightAmt)*0.85;
+    const ct = performance.now()/1000;
+    for(let i=0;i<3;i++){
+      const cx = ((ct*12 + i*340)%(GAME_W+160))-80, cy = 46+i*26;
+      ctx.fillStyle='#fff';
+      ctx.beginPath();
+      ctx.ellipse(cx,cy,34,13,0,0,Math.PI*2);
+      ctx.ellipse(cx+24,cy+4,24,10,0,0,Math.PI*2);
+      ctx.ellipse(cx-24,cy+5,22,9,0,0,Math.PI*2);
+      ctx.fill();
+    }
+    ctx.globalAlpha=1;
+  }
+}
+function drawGroundTile(gx,gy,nightAmt){
+  const x = isoX(gx,gy), y = isoY(gx,gy);
+  const base = ((gx+gy)%2===0) ? PALETTE.grass1 : PALETTE.grass2;
+  ctx.fillStyle = hexLerp(base, '#141033', nightAmt*0.6);
+  ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
+  // 草地小點綴
+  if((gx*7+gy*13)%5===0){
+    ctx.fillStyle = hexLerp('#2f8a47','#0e0b28',nightAmt*0.6);
+    ctx.fillRect(x-8, y+4, 3, 6); ctx.fillRect(x+6, y-8, 3, 6);
+  }
+}
+function drawWall(w, nightAmt){
+  const x = Math.round(isoX(w.gx,w.gy)), y = Math.round(isoY(w.gx,w.gy));
+  const ratio = w.built/w.need;
+  const h = 8 + ratio*20;
+  const color = w.built===0 ? PALETTE.wallEmpty : ratio<1 ? PALETTE.wallHalf : PALETTE.wallDone;
+  const half = CELL/2;
+  const topH = half*2-h;
+  ctx.fillStyle = hexLerp(color,'#000',0.35+nightAmt*0.3);
+  ctx.fillRect(x-half, y-half+h-1, CELL+1, topH+1);
+  ctx.fillStyle = hexLerp(color,'#fff',0.1);
+  ctx.fillRect(x-half, y-half-1, CELL+1, topH+2);
+  ctx.strokeStyle = hexLerp(color,'#000',0.18);
+  ctx.lineWidth = 1;
+  for(let ly=y-half+6; ly<y-half+topH; ly+=7){
+    ctx.beginPath(); ctx.moveTo(x-half+2, ly); ctx.lineTo(x+half-2, ly); ctx.stroke();
+  }
+  if(w.built>0 && w.built>=w.need){
+    // 完工牆頂的小尖頂裝飾
+    ctx.fillStyle = hexLerp('#d9584a','#3a1210',nightAmt*0.5);
+    ctx.fillRect(x-half+4, y-half-5, CELL-8, 5);
+  }
+  if(w.built<w.need && phase==='day'){
+    ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(`${Math.ceil(w.built)}/${w.need}`, x, y-half-8);
+  }
+  // v5：牆快被咬穿時（<1/3）畫紅色脈動外框，讓玩家一眼看出哪面牆快破
+  if(w.built>0 && w.built<w.need*0.34){
+    ctx.save();
+    ctx.globalAlpha = 0.45 + Math.sin(performance.now()/170)*0.3;
+    ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 3;
+    ctx.strokeRect(x-half-2, y-half-2, CELL+4, CELL+4);
+    ctx.restore();
+  }
+}
+function drawWoodNode(n,t){
+  const x = isoX(n.gx,n.gy), y = isoY(n.gx,n.gy) + Math.sin(t*3+n.bob)*5;
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath(); ctx.ellipse(isoX(n.gx,n.gy), isoY(n.gx,n.gy)+10, 14, 5, 0,0,Math.PI*2); ctx.fill();
+  drawSprite('wood', x, y-4, 40);
+}
+function drawTrap(t){
+  const x = isoX(t.gx,t.gy), y = isoY(t.gx,t.gy);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x,y,17,7,0,0,Math.PI*2); ctx.fill();
+  const col = t.charges>1 ? '#c0392b' : '#8b3a62';
+  for(const dx of [-9,0,9]){
+    const g = ctx.createLinearGradient(x+dx,y-15,x+dx,y+5);
+    g.addColorStop(0,'#f2f2f2'); g.addColorStop(0.35,col); g.addColorStop(1,hexLerp(col,'#000',0.4));
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.moveTo(x+dx-4,y+4); ctx.lineTo(x+dx,y-15); ctx.lineTo(x+dx+4,y+4);
+    ctx.closePath(); ctx.fill();
+  }
+}
+function drawFurniture(f){
+  const x = isoX(f.gx,f.gy), y = isoY(f.gx,f.gy);
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(x,y+4,26,10,0,0,Math.PI*2); ctx.fill();
+  if(f.type==='sofa'){
+    drawSprite('sofa', x, y-16, 56);
+  } else if(f.type==='bed'){
+    drawSprite('bed', x, y-16, 60);
+  } else if(f.type==='fridge'){
+    const ready = fridgeCooldown<=0 && player.hp<player.maxHp;
+    if(ready){ ctx.save(); ctx.shadowColor='#41d6ff'; ctx.shadowBlur=14; }
+    ctx.fillStyle = ready ? '#e5fbff' : '#d8e6ea';
+    traceRoundRect(x-15,y-46,30,48,4); ctx.fill();
+    if(ready) ctx.restore();
+    ctx.strokeStyle='#8fa3a8'; ctx.lineWidth=2;
+    traceRoundRect(x-15,y-46,30,48,4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x-15,y-28); ctx.lineTo(x+15,y-28); ctx.stroke();
+    ctx.fillStyle='#8fa3a8';
+    ctx.fillRect(x+7,y-40,3,8); ctx.fillRect(x+7,y-22,3,10);
+    drawSprite('cup', x, y-58, 26);
+    ctx.fillStyle = ready ? '#41d6ff' : '#9fb3b8';
+    ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(ready?'喝飲料回血':'飲料', x, y-72);
+  }
+}
+function drawPlayerJJ(){
+  const x = player.x, y = player.y - 5;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle='rgba(0,0,0,0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 8, 19, 7, 0,0,Math.PI*2); ctx.fill();
+  const flash = player.invuln>0 && Math.floor(player.invuln*20)%2===0;
+  ctx.scale(player.facing<0?-player.sx:player.sx, player.sy);
+  const bobY = Math.sin(player.bob*6)*2;
+  ctx.translate(0, bobY);
+  const legPh = Math.sin(player.bob*10);
+  const skinCol = flash?'#fff':'#ffcf9c';
+  const shoeCol = flash?'#ddd':'#3a2a1c';
+  // 腳（大腿旋轉擺動＋鞋子，比原本單純上下位移更有走路感）
+  for(const side of [-1,1]){
+    ctx.save();
+    ctx.translate(side*5, -4);
+    ctx.rotate(side*legPh*0.28);
+    ctx.fillStyle = flash?'#fff':'#4a3728';
+    ctx.fillRect(-3,0,6,8);
+    ctx.fillStyle = shoeCol;
+    traceRoundRect(-3.6,7,7.2,4,1.6); ctx.fill();
+    ctx.restore();
+  }
+  // 身體（漸層上衣＋背光陰影／受光高光帶＋輪廓線）
+  const bg = ctx.createLinearGradient(0,-30,0,-4);
+  bg.addColorStop(0, flash?'#fff':'#6a92ff'); bg.addColorStop(1, flash?'#fff':'#3f66e0');
+  ctx.fillStyle = bg;
+  traceRoundRect(-11,-30,22,26,6); ctx.fill();
+  if(!flash){
+    ctx.save();
+    traceRoundRect(-11,-30,22,26,6); ctx.clip();
+    ctx.fillStyle='rgba(10,10,45,0.22)'; ctx.fillRect(3,-30,8,26);
+    ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(-10,-29,5,22);
+    ctx.restore();
+  }
+  ctx.strokeStyle = flash?'#fff':'#2a3d8f'; ctx.lineWidth=1.6;
+  traceRoundRect(-11,-30,22,26,6); ctx.stroke();
+  // 手臂＋鎚子（攻擊揮動）
+  const swing = player.atkT>0 ? Math.sin((0.28-player.atkT)/0.28*Math.PI)*1.6 : 0;
+  ctx.save();
+  ctx.translate(10,-24);
+  ctx.rotate(-0.5 + swing*1.8);
+  ctx.fillStyle = skinCol;
+  ctx.fillRect(-2,0,5,14);
+  ctx.strokeStyle = flash?'#eee':'#c98f5a'; ctx.lineWidth=1; ctx.strokeRect(-2,0,5,14);
+  // 鎚子
+  ctx.fillStyle = flash?'#eee':'#8c5a3c';
+  ctx.fillRect(-1.5,12,3,14);
+  const hg = ctx.createLinearGradient(-8,24,8,33);
+  hg.addColorStop(0, flash?'#fff':'#c7ccd1'); hg.addColorStop(1, flash?'#ddd':'#84898f');
+  ctx.fillStyle = hg;
+  traceRoundRect(-8,24,16,9,2); ctx.fill();
+  ctx.strokeStyle = flash?'#fff':'#5a5f66'; ctx.lineWidth=1.2; traceRoundRect(-8,24,16,9,2); ctx.stroke();
+  ctx.restore();
+  // 另一手臂（自然反向擺動，取代原本固定不動的手臂）
+  ctx.save();
+  ctx.translate(-14,-26);
+  ctx.rotate(0.15 - legPh*0.22);
+  ctx.fillStyle = skinCol;
+  ctx.fillRect(-2.5,0,5,13);
+  ctx.strokeStyle = flash?'#eee':'#c98f5a'; ctx.lineWidth=1; ctx.strokeRect(-2.5,0,5,13);
+  ctx.restore();
+  // 頭（漸層膚色＋輪廓線＋高光點）
+  const fg = ctx.createRadialGradient(-4,-42,2,0,-38,13);
+  fg.addColorStop(0, flash?'#fff':'#ffdcb0'); fg.addColorStop(1, flash?'#eee':'#e0a878');
+  ctx.fillStyle = fg;
+  ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = flash?'#fff':'#c98f5a'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.stroke();
+  // 頭髮（底色＋暗部＋高光，取代原本純平塗）
+  ctx.fillStyle = flash?'#eee':'#2b2118';
+  ctx.beginPath(); ctx.arc(0,-42,12,Math.PI,Math.PI*2); ctx.fill();
+  ctx.fillRect(-12,-44,24,4);
+  if(!flash){
+    ctx.fillStyle='#1a130d';
+    ctx.beginPath(); ctx.ellipse(3,-47,5,3.5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.beginPath(); ctx.ellipse(-5,-46,3,1.6,-0.4,0,Math.PI*2); ctx.fill();
+    // 臉部高光點
+    ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.ellipse(-4,-42,2.4,1.6,-0.5,0,Math.PI*2); ctx.fill();
+  }
+  // 眼睛（眨眼＝兩態）
+  const blink = player.blinkT<0.1;
+  ctx.fillStyle='#222';
+  if(!blink){
+    ctx.beginPath(); ctx.arc(4,-38,2.2,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.arc(-3,-38,2.2,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillRect(1,-38,5,1.5); ctx.fillRect(-6,-38,5,1.5);
+  }
+  // 腮紅
+  ctx.fillStyle='rgba(255,120,120,0.5)';
+  ctx.beginPath(); ctx.arc(7,-33,2.5,0,Math.PI*2); ctx.arc(-7,-33,2.5,0,Math.PI*2); ctx.fill();
+  // 嘴巴：平常淺笑／受擊「哦」／開心咧嘴（三態表情，取代原本沒有嘴巴的臉）
+  ctx.lineCap='round';
+  if(player.mood==='hurt'){
+    ctx.fillStyle='#7a3020';
+    ctx.beginPath(); ctx.ellipse(0,-30,2.3,3,0,0,Math.PI*2); ctx.fill();
+  } else if(player.mood==='happy'){
+    ctx.strokeStyle='#8a4a3a'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(0,-32,4,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.moveTo(-3,-30.5); ctx.quadraticCurveTo(0,-27.5,3,-30.5); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.strokeStyle='#8a4a3a'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(0,-32,3,0.2*Math.PI,0.8*Math.PI); ctx.stroke();
+  }
+  ctx.restore();
+  ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center';
+  ctx.fillText('人JJ', x, y-62);
+  // 攻擊弧光
+  if(player.atkT>0){
+    const p = 1 - player.atkT/0.28;
+    ctx.save();
+    ctx.translate(x + player.facing*26, y-24);
+    ctx.globalAlpha = (1-p)*0.8;
+    ctx.strokeStyle = '#ffe27a'; ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(0,0, 26+p*10, -1.2*player.facing, 1.0*player.facing, player.facing<0);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+function drawMonster(m){
+  const def = MON_DEF[m.type];
+  const x = isoX(m.gx,m.gy), y = isoY(m.gx,m.gy);
+  ctx.save();
+  const wob = Math.sin(performance.now()/1000*6 + m.wob);
+  const hitJit = m.hitFlash>0 ? Math.sin(performance.now()/22)*0.16*(m.hitFlash/0.15) : 0;
+  if(m.type==='ghost'){
+    ctx.globalAlpha = 0.85;
+    ctx.translate(x, y-14 + wob*4);
+  } else {
+    ctx.fillStyle='rgba(0,0,0,0.3)';
+    ctx.beginPath(); ctx.ellipse(x,y+6,16,5,0,0,Math.PI*2); ctx.fill();
+    ctx.translate(x, y-14);
+    ctx.rotate(wob*0.08 + hitJit);
+  }
+  ctx.scale(m.squash, 2-m.squash);
+  drawSprite(def.sprite, 0, 0, def.size);
+  if(m.hitFlash>0){
+    ctx.globalAlpha = 0.7; ctx.globalCompositeOperation='lighter';
+    drawSprite(def.sprite, 0, 0, def.size);
+  }
+  ctx.restore();
+  // 血條（受過傷才顯示）
+  if(m.hp < def.hp){
+    ctx.fillStyle='rgba(0,0,0,0.5)'; ctx.fillRect(x-14, y-44, 28, 5);
+    ctx.fillStyle='#ff6cc7'; ctx.fillRect(x-14, y-44, 28*Math.max(0,m.hp/def.hp), 5);
+  }
+}
+function drawJoypad(){
+  if(!joy.active){
+    // 靜態提示圈（左下）
+    ctx.save(); ctx.globalAlpha=0.3;
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2;
+    ctx.beginPath(); ctx.arc(110, GAME_H-130, JOY_R, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='12px sans-serif'; ctx.textAlign='center';
+    ctx.fillText('移動', 110, GAME_H-126);
+    ctx.restore();
+  } else {
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = 'rgba(20,15,45,0.5)';
+    ctx.beginPath(); ctx.arc(joy.cx,joy.cy,JOY_R+12,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.4)'; ctx.lineWidth=2; ctx.stroke();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = 'rgba(154,107,255,0.9)';
+    ctx.beginPath(); ctx.arc(joy.cx+joy.dx,joy.cy+joy.dy,24,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
+    ctx.restore();
+  }
+  // 右下動作鍵
+  ctx.save();
+  ctx.globalAlpha = 0.55;
+  const grad = ctx.createRadialGradient(ACT_CX,ACT_CY,8,ACT_CX,ACT_CY,ACT_R);
+  grad.addColorStop(0,'rgba(255,207,92,0.8)'); grad.addColorStop(1,'rgba(255,126,61,0.55)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(ACT_CX,ACT_CY,ACT_R,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.6)'; ctx.lineWidth=3; ctx.stroke();
+  ctx.globalAlpha=0.95;
+  ctx.fillStyle='#fff'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center';
+  ctx.fillText(phase==='day'?'建造':'攻擊', ACT_CX, ACT_CY+6);
+  ctx.restore();
+}
+function drawHud(){
+  const L = LEVELS[levelIdx];
+  // 頂部資訊板
+  ctx.fillStyle='rgba(10,8,30,0.45)';
+  traceRoundRect(8,8,206,92,10); ctx.fill();
+  ctx.textAlign='left'; ctx.font='bold 16px sans-serif'; ctx.fillStyle='#fff';
+  ctx.fillText(L.days>0 ? `第 ${day}/${L.days} 天` : `第 ${day} 天`, 18, 30);
+  drawSprite('wood', 28, 50, 24);
+  ctx.fillText(`x ${wood}`, 44, 56);
+  ctx.fillText(phase==='day'?'白天｜收集＆建造':'夜晚｜怪物來襲！', 18, 80);
+  // 玩家 HP
+  for(let i=0;i<player.maxHp;i++){
+    ctx.globalAlpha = i<player.hp ? 1 : 0.22;
+    drawSprite('heart', 140+i*24, 50, 22);
+  }
+  ctx.globalAlpha=1;
+  // 右上
+  ctx.textAlign='right'; ctx.fillStyle='#fff';
+  ctx.fillText(`分數 ${score}`, GAME_W-80, 30);
+  const hpRatio = clamp(houseHp/houseHpMax,0,1);
+  ctx.fillText(`房屋 ${Math.round(hpRatio*100)}%`, GAME_W-80, 54);
+  ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(GAME_W-230,60,150,9);
+  ctx.fillStyle = hpRatio>0.5?'#7ee27e':hpRatio>0.2?'#ffcf5c':'#ff6c6c';
+  ctx.fillRect(GAME_W-230,60,150*hpRatio,9);
+  // 中央倒數條
+  const total = phase==='day'?L.dayLen:L.nightLen;
+  const ratio = clamp(phaseTimer/total,0,1);
+  ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(GAME_W/2-100,12,200,10);
+  ctx.fillStyle = phase==='day' ? '#ffcf5c' : '#9a6bff';
+  ctx.fillRect(GAME_W/2-100,12,200*ratio,10);
+}
+function drawBuildBar(){
+  ctx.fillStyle = 'rgba(10,8,30,0.55)';
+  ctx.fillRect(0, BAR_Y, GAME_W, BAR_H);
+  ctx.textAlign='center';
+  for(const s of barSlotRects()){
+    const affordable = wood >= s.b.cost;
+    const selected = selectedBuild === s.b.id;
+    ctx.fillStyle = selected ? 'rgba(154,107,255,0.4)' : 'rgba(255,255,255,0.08)';
+    traceRoundRect(s.x, s.y, s.w, s.h, 10); ctx.fill();
+    ctx.strokeStyle = selected ? '#c9a8ff' : 'rgba(255,255,255,0.25)';
+    ctx.lineWidth = selected ? 3 : 1.5;
+    ctx.stroke();
+    const cx = s.x+s.w/2, cy = s.y+s.h/2-6;
+    ctx.globalAlpha = affordable ? 1 : 0.35;
+    if(s.b.id==='wall'){
+      ctx.fillStyle = s.b.color;
+      ctx.fillRect(cx-14, cy-10, 28, 20);
+      ctx.strokeStyle = '#5a4326'; ctx.lineWidth=2; ctx.strokeRect(cx-14, cy-10, 28, 20);
+      ctx.strokeStyle='#5a4326'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(cx-14,cy); ctx.lineTo(cx+14,cy); ctx.stroke();
+    } else if(s.b.id==='trap'){
+      ctx.fillStyle = s.b.color;
+      for(const dx of [-9,0,9]){
+        ctx.beginPath();
+        ctx.moveTo(cx+dx-5,cy+9); ctx.lineTo(cx+dx,cy-11); ctx.lineTo(cx+dx+5,cy+9);
+        ctx.closePath(); ctx.fill();
+      }
+    } else {
+      ctx.fillStyle = '#c9a876';
+      ctx.fillRect(cx-14, cy-10, 28, 20);
+      ctx.strokeStyle = '#ff5a5a'; ctx.lineWidth=4;
+      ctx.beginPath(); ctx.moveTo(cx-15,cy-13); ctx.lineTo(cx+15,cy+13); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(cx+15,cy-13); ctx.lineTo(cx-15,cy+13); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = affordable ? '#fff' : '#ff8a8a';
+    ctx.font='bold 12px sans-serif';
+    ctx.fillText(s.b.cost>0 ? `${s.b.name} 木${s.b.cost}` : s.b.name, cx, s.y+s.h-4);
+  }
+}
+function drawStars(x, y, n, size=18, gap=24){
+  for(let i=0;i<3;i++){
+    ctx.globalAlpha = i<n ? 1 : 0.22;
+    drawSprite('star', x+(i-1)*gap, y, size);
+  }
+  ctx.globalAlpha=1;
+}
+
+// ===== 選單 =====
+const menuBtns = [];
+const menuState = {
+  enter(){
+    menuBtns.length = 0;
+    const bw = 200, bh = 116, gap = 22;
+    const startX = GAME_W/2 - (bw*2+gap)/2, startY = 268;
+    for(let i=0;i<4;i++){
+      menuBtns.push({ i, x:startX + (i%2)*(bw+gap), y:startY + Math.floor(i/2)*(bh+18), w:bw, h:bh });
+    }
+    tapPoint = null; tapAction = false; input.actionBuffer = 0;
+  },
+  pick(i){
+    if(!LEVELS[i]) return;
+    levelIdx = i;
+    chord([523,659,784],70,0.1,'triangle',0.14);
+    resetGame(); setState(playState);
+  },
+  update(dt){
+    if(tapPoint){
+      const p = tapPoint; tapPoint = null; tapAction = false; input.actionBuffer = 0;
+      for(const b of menuBtns){
+        if(p.x>=b.x && p.x<=b.x+b.w && p.y>=b.y && p.y<=b.y+b.h){ this.pick(b.i); return; }
+      }
+    }
+    if(input.actionBuffer>0){ input.actionBuffer=0; tapAction=false; this.pick(levelIdx); }
+  },
+  draw(){
+    drawBackground(0.55);
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffcf5c'; ctx.font='bold 46px sans-serif';
+    ctx.fillText('JJ蓋房子躲怪獸', GAME_W/2, 84);
+    ctx.fillStyle='#fff'; ctx.font='bold 20px sans-serif';
+    ctx.fillText('豪華版', GAME_W/2, 114);
+    drawSprite('zombie', GAME_W/2-220, 90, 64);
+    drawSprite('ghost', GAME_W/2+220, 90, 60);
+    ctx.font='17px sans-serif'; ctx.fillStyle='#e6f4ff';
+    ctx.fillText('白天撿木材蓋牆、放陷阱；夜晚拿鎚子保衛家園！鬼魂會穿牆，小心！', GAME_W/2, 152);
+    ctx.font='15px sans-serif'; ctx.fillStyle='#c9f2ff';
+    ctx.fillText('💻 電腦：方向鍵/WASD 移動｜空白鍵 建造・攻擊｜1/2/3 切換建造', GAME_W/2, 186);
+    ctx.fillText('📱 平板：左半螢幕拖曳搖桿移動｜點右半螢幕大按鈕 建造・攻擊', GAME_W/2, 212);
+    ctx.font='bold 18px sans-serif'; ctx.fillStyle='#ffcf5c';
+    ctx.fillText('選一個關卡開始（電腦可按 1～4）', GAME_W/2, 248);
+    for(const b of menuBtns){
+      const L = LEVELS[b.i];
+      const unlocked = b.i===0 || b.i===3 || save.stars[b.i-1]>0;
+      ctx.globalAlpha = unlocked?1:0.4;
+      ctx.fillStyle='rgba(20,16,50,0.72)';
+      traceRoundRect(b.x,b.y,b.w,b.h,14); ctx.fill();
+      ctx.strokeStyle = b.i===3 ? '#ff6cc7' : '#9a6bff'; ctx.lineWidth=2.5;
+      traceRoundRect(b.x,b.y,b.w,b.h,14); ctx.stroke();
+      ctx.fillStyle='#fff'; ctx.font='bold 20px sans-serif';
+      ctx.fillText(`${b.i+1}. ${L.name}`, b.x+b.w/2, b.y+32);
+      ctx.font='14px sans-serif'; ctx.fillStyle='#c9f2ff';
+      ctx.fillText(unlocked ? L.desc : '先通過上一關解鎖', b.x+b.w/2, b.y+56);
+      if(b.i<3) drawStars(b.x+b.w/2, b.y+84, save.stars[b.i], 20, 26);
+      else {
+        ctx.fillStyle='#ffcf5c'; ctx.font='bold 14px sans-serif';
+        ctx.fillText(save.best>0?`最佳 ${save.best} 分`:'挑戰最高分', b.x+b.w/2, b.y+88);
+      }
+      ctx.globalAlpha=1;
+    }
+  }
+};
+
+// ===== 遊玩 =====
+const playState = {
+  update(dt){
+    const L = LEVELS[levelIdx];
+    player.blinkT -= dt; if(player.blinkT<0) player.blinkT = 2.5+Math.random();
+    player.invuln = Math.max(0, player.invuln-dt);
+    player.atkT = Math.max(0, player.atkT-dt);
+    player.sx += (1-player.sx)*10*dt; player.sy += (1-player.sy)*10*dt;
+    fridgeCooldown = Math.max(0, fridgeCooldown-dt);
+    hintT = Math.max(0, hintT-dt);
+    player.moodT = Math.max(0, player.moodT-dt);
+    if(player.moodT<=0) player.mood = 'normal';
+
+    const {mx,my} = moveVector();
+    const spd = 3.3*dt;
+    if(mx!==0||my!==0){
+      player.bob += dt;
+      if(mx>0.05) player.facing=1; else if(mx<-0.05) player.facing=-1;
+      const PLAYER_R = 0.16;
+      const isBlocked = (gx,gy) => walls.some(w=>w.built>=w.need
+          && Math.abs(w.gx-gx)<0.5+PLAYER_R && Math.abs(w.gy-gy)<0.5+PLAYER_R)
+        || FURNITURE.some(f=>Math.abs(f.gx-gx)<0.45+PLAYER_R && Math.abs(f.gy-gy)<0.45+PLAYER_R);
+      const ngx = clamp(player.gx + mx*spd, 0.3, GRID-1.3);
+      if(!isBlocked(ngx, player.gy)) player.gx = ngx;
+      const ngy = clamp(player.gy + my*spd, 0.3, GRID-1.3);
+      if(!isBlocked(player.gx, ngy)) player.gy = ngy;
+      updatePlayerPos();
+    }
+
+    if(input.actionBuffer>0 || tapAction){
+      input.actionBuffer=0; tapAction=false;
+      handleAction();
+    }
+
+    if(phase==='day'){
+      for(const n of woodNodes){
+        if(n.taken) continue;
+        if(Math.hypot(n.gx-player.gx, n.gy-player.gy) < 0.62){
+          n.taken = true; wood += 2; score += 5;
+          player.mood = 'happy'; player.moodT = 0.4;
+          floatText(player.x, player.y-72, '+2 木材', '#ffcf5c');
+          burst(player.x, player.y-40, '#c9975f', 8, 130);
+          beep(700,0.08,'square',0.12); setTimeout(()=>beep(1000,0.1,'square',0.1),70);
+        }
+      }
+      phaseTimer -= dt;
+      if(phaseTimer<=0) startNight();
+    } else {
+      spawnTimer -= dt;
+      const spawnRate = Math.max(0.7, L.spawnBase - day*0.14) * (nightIsBreather ? 1.3 : 1);
+      if(spawnTimer<=0 && nightSpawned<nightQuota){
+        spawnMonster(); nightSpawned++; spawnTimer = spawnRate;
+      }
+      for(const m of monsters){
+        const def = MON_DEF[m.type];
+        m.hitFlash = Math.max(0, m.hitFlash-dt);
+        m.squash += (1-m.squash)*8*dt;
+        let tx, ty;
+        if(m.type==='ghost'){
+          tx=player.gx; ty=player.gy;   // 鬼魂穿牆直追玩家
+        } else {
+          if(!m.target || m.target.built<=0) m.target = nearestBuiltWall(m);
+          if(m.target){ tx=m.target.gx; ty=m.target.gy; }
+          else { tx=player.gx; ty=player.gy; }   // 沒牆可咬 → 追玩家（修正原作呆站BUG）
+        }
+        const dx=tx-m.gx, dy=ty-m.gy, d=Math.hypot(dx,dy);
+        const chewing = m.type!=='ghost' && m.target && d<=0.55;
+        if(d>0.5 && !chewing){
+          m.gx += dx/d*m.speed*dt; m.gy += dy/d*m.speed*dt;
+        } else if(chewing){
+          m.target.built = Math.max(0, m.target.built - def.chew*dt);
+          if(Math.random()<dt*3) burst(isoX(m.target.gx,m.target.gy), isoY(m.target.gx,m.target.gy)-14, '#caa165', 2, 90);
+        }
+        // 撞到玩家
+        if(player.invuln<=0 && Math.hypot(m.gx-player.gx, m.gy-player.gy)<0.55){
+          player.hp -= def.dmg; player.invuln = 1.2;
+          player.mood = 'hurt'; player.moodT = 0.6;
+          player.sx = 0.72; player.sy = 1.32;
+          shake = 8; freeze = 0.08; flashT = 0.1;
+          burst(player.x, player.y-30, '#ff6cc7', 16, 200);
+          beep(220,0.25,'sawtooth',0.2,-150);
+          if(player.hp<=0){ setState(gameOverState); return; }
+        }
+        // 陷阱（鬼魂飄浮不會踩到）
+        if(m.type!=='ghost') for(const trap of traps){
+          if(trap.dead) continue;
+          if(Math.hypot(m.gx-trap.gx, m.gy-trap.gy) < 0.5){
+            trap.charges -= 1; if(trap.charges<=0) trap.dead = true;
+            m.hp -= 2; m.hitFlash = 0.15; m.squash = 1.5;
+            shake = 5; freeze = 0.05;
+            burst(isoX(trap.gx,trap.gy), isoY(trap.gx,trap.gy)-20, '#c0392b', 14, 200);
+            beep(900,0.1,'sawtooth',0.15,-300); noiseBurst(0.1,0.12);
+            if(m.hp<=0 && !m.dead) killMonster(m);
+          }
+        }
+      }
+      traps = traps.filter(t=>!t.dead);
+      monsters = monsters.filter(m=>!m.dead);
+      houseHp = walls.reduce((s,w)=>s+w.built,0);
+
+      // v5：城牆瀕危警示——任一動工過的牆被咬到剩不到1/3時，畫面閃紅框＋警示音提醒玩家去救
+      const wallCritical = walls.some(w=>w.built>0 && w.built<w.need*0.34);
+      if(wallCritical){
+        dangerBeepT -= dt;
+        if(dangerBeepT<=0){ beep(780,0.09,'square',0.11,-40); dangerBeepT = 2.2; }
+      } else {
+        dangerBeepT = 0;
+      }
+
+      phaseTimer -= dt;
+      if(phaseTimer<=0 && nightSpawned>=nightQuota && monsters.length===0){
+        // 天亮：是否通關
+        if(L.days>0 && day>=L.days){ setState(winState); return; }
+        startDay();
+      } else if(phaseTimer<=-6){
+        // 保底：夜晚拖太久（怪剩很少）也天亮，怪物逃走
+        for(const m of monsters){ burst(isoX(m.gx,m.gy), isoY(m.gx,m.gy)-20, '#9a6bff', 8, 150); }
+        monsters = [];
+        if(L.days>0 && day>=L.days){ setState(winState); return; }
+        startDay();
+      }
+    }
+
+    updateParts(dt); updateFloat(dt);
+    shake *= Math.pow(0.001, dt);
+    flashT = Math.max(0, flashT-dt);
+    houseHp = walls.reduce((s,w)=>s+w.built,0);
+  },
+  draw(){
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    const L = LEVELS[levelIdx];
+    const nightAmt = phase==='night' ? 1 : (phaseTimer<3 ? 1-(phaseTimer/3) : 0);
+    drawBackground(nightAmt);
+    for(let gy=0; gy<GRID; gy++)
+      for(let gx=0; gx<GRID; gx++)
+        drawGroundTile(gx,gy,nightAmt);
+    const drawables = [];
+    for(const w of walls) drawables.push({y:w.gy, draw:()=>drawWall(w,nightAmt)});
+    if(phase==='day') for(const n of woodNodes) if(!n.taken) drawables.push({y:n.gy-0.1, draw:()=>drawWoodNode(n,performance.now()/1000)});
+    for(const trap of traps) drawables.push({y:trap.gy-0.05, draw:()=>drawTrap(trap)});
+    for(const f of FURNITURE) drawables.push({y:f.gy, draw:()=>drawFurniture(f)});
+    drawables.push({y:player.gy, draw:drawPlayerJJ});
+    for(const m of monsters) drawables.push({y:m.gy, draw:()=>drawMonster(m)});
+    drawables.sort((a,b)=>a.y-b.y);
+    for(const d of drawables) d.draw();
+    drawParts();
+    ctx.restore();
+    if(phase==='night'){
+      ctx.fillStyle='rgba(20,10,50,0.14)';
+      ctx.fillRect(0,0,GAME_W,GAME_H);
+    }
+    if(flashT>0){
+      ctx.fillStyle=`rgba(255,80,80,${flashT*2.4})`;
+      ctx.fillRect(0,0,GAME_W,GAME_H);
+    }
+    drawFloat();
+    drawHud();
+    if(phase==='day') drawBuildBar();
+    drawJoypad();
+    if(hintT>0){
+      ctx.globalAlpha = Math.min(1, hintT);
+      ctx.fillStyle='rgba(10,8,30,0.6)';
+      traceRoundRect(GAME_W/2-260, 116, 520, 34, 10); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.font='bold 16px sans-serif'; ctx.textAlign='center';
+      ctx.fillText('走到木頭旁撿木材 → 靠近城牆按「建造」把牆蓋滿！', GAME_W/2, 139);
+      ctx.globalAlpha=1;
+    }
+  }
+};
+
+function killMonster(m){
+  const def = MON_DEF[m.type];
+  m.dead = true; score += def.score;
+  burst(isoX(m.gx,m.gy), isoY(m.gx,m.gy)-20, m.type==='ghost'?'#cfd8ff':'#8b3a62', 18, 220);
+  floatText(isoX(m.gx,m.gy), isoY(m.gx,m.gy)-40, '+'+def.score, '#ff8c61');
+  beep(880,0.1,'square',0.15); setTimeout(()=>beep(1200,0.12,'square',0.12),60);
+}
+
+function handleAction(){
+  const fridge = FURNITURE.find(f=>f.type==='fridge');
+  if(fridge && Math.hypot(fridge.gx-player.gx, fridge.gy-player.gy) < 0.8){
+    if(player.hp>=player.maxHp){
+      floatText(player.x, player.y-64, '血量已滿', '#9a6bff');
+    } else if(fridgeCooldown>0){
+      floatText(player.x, player.y-64, `冰箱冷卻中 ${Math.ceil(fridgeCooldown)}s`, '#ff6cc7');
+    } else {
+      player.hp = Math.min(player.maxHp, player.hp+1);
+      fridgeCooldown = FRIDGE_COOLDOWN;
+      player.sx=1.3; player.sy=0.7;
+      player.mood='happy'; player.moodT=0.5;
+      floatText(player.x, player.y-64, '+1 HP 喝飲料', '#41d6ff');
+      burst(player.x, player.y-30, '#41d6ff', 14, 160);
+      beep(700,0.1,'sine',0.15); setTimeout(()=>beep(950,0.12,'sine',0.12),80);
+    }
+    return;
+  }
+  // 揮鎚攻擊（白天夜晚都可以）
+  player.atkT = 0.28;
+  let hitAny=false;
+  for(const m of monsters){
+    if(Math.hypot(m.gx-player.gx,m.gy-player.gy)<0.9){
+      m.hp -= 1; m.hitFlash=0.12; m.squash=1.4; hitAny=true;
+      // 擊退
+      const kd = Math.hypot(m.gx-player.gx, m.gy-player.gy)||1;
+      m.gx += (m.gx-player.gx)/kd*0.35; m.gy += (m.gy-player.gy)/kd*0.35;
+      if(m.hp<=0) killMonster(m);
+    }
+  }
+  if(hitAny){ shake=4; freeze=0.05; beep(300,0.06,'square',0.12,-100); noiseBurst(0.06,0.08); return; }
+
+  if(phase==='day'){
+    if(selectedBuild==='trap'){ buildTrap(); return; }
+    if(selectedBuild==='demolish'){ demolishWall(); return; }
+    let best=null, bd=Infinity;
+    for(const w of walls){
+      if(w.built>=w.need) continue;
+      const d = Math.hypot(w.gx-player.gx, w.gy-player.gy);
+      if(d<bd){ bd=d; best=w; }
+    }
+    if(best && bd<0.95 && wood>0){
+      best.built = Math.min(best.need, Math.floor(best.built)+1);
+      wood -= 1; score += 3;
+      player.sx=1.3; player.sy=0.7;
+      player.mood='happy'; player.moodT=0.4;
+      floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-40, '+1', '#e8c07d');
+      burst(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-20, '#e8c07d', 10, 140);
+      beep(500,0.08,'square',0.12,120);
+      if(best.built>=best.need){ beep(700,0.15,'triangle',0.15,200); floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-58, '完工！', '#7ee27e'); }
+    } else if(best && bd<0.95 && wood<=0){
+      floatText(player.x, player.y-64, '沒有木材了！去撿木頭', '#ff6cc7');
+      beep(150,0.1,'sawtooth',0.1);
+    } else {
+      floatText(player.x, player.y-64, '靠近城牆才能蓋', '#ff6cc7');
+      beep(200,0.08,'triangle',0.08);
+    }
+  } else {
+    beep(260,0.05,'triangle',0.07,-60);  // 揮空
+  }
+}
+
+function buildTrap(){
+  const cost = BUILD_TYPES.find(b=>b.id==='trap').cost;
+  const gx = Math.round(player.gx), gy = Math.round(player.gy);
+  const interior = gx>=1 && gx<=GRID-2 && gy>=1 && gy<=GRID-2;
+  const occupied = traps.some(t=>t.gx===gx && t.gy===gy)
+    || FURNITURE.some(f=>Math.hypot(f.gx-gx,f.gy-gy)<0.8);
+  if(wood<cost){
+    floatText(player.x, player.y-64, '木材不夠', '#ff6cc7'); beep(150,0.1,'sawtooth',0.1);
+  } else if(!interior){
+    floatText(player.x, player.y-64, '要放在屋內空地', '#ff6cc7'); beep(150,0.1,'sawtooth',0.1);
+  } else if(occupied){
+    floatText(player.x, player.y-64, '這裡放不下', '#ff6cc7'); beep(150,0.1,'sawtooth',0.1);
+  } else {
+    traps.push({gx,gy,dead:false,charges:2});
+    wood -= cost; score += 4;
+    player.sx=1.3; player.sy=0.7;
+    player.mood='happy'; player.moodT=0.4;
+    floatText(player.x, player.y-64, '放置陷阱（可電2次）', '#ff8a8a');
+    burst(player.x, player.y-20, '#c0392b', 10, 140);
+    beep(400,0.1,'sawtooth',0.12,-80);
+  }
+}
+function demolishWall(){
+  let best=null, bd=Infinity;
+  for(const w of walls){
+    if(w.built<=0) continue;
+    const d = Math.hypot(w.gx-player.gx, w.gy-player.gy);
+    if(d<bd){ bd=d; best=w; }
+  }
+  if(!best || bd>=0.95){
+    floatText(player.x, player.y-64, '附近沒有牆可以拆', '#ff6cc7');
+    return;
+  }
+  best.built = Math.max(0, Math.ceil(best.built)-1);
+  wood += 1;
+  player.sx=1.3; player.sy=0.7;
+  floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-40, '拆除 +1木材', '#cfd4da');
+  burst(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-20, '#9aa0a6', 10, 130);
+  beep(300,0.12,'sawtooth',0.12,-200);
+}
+
+function startNight(){
+  const L = LEVELS[levelIdx];
+  phase='night'; phaseTimer = L.nightLen; spawnTimer = 1.2;
+  nightSpawned = 0;
+  const baseQuota = 3 + day*2 + (levelIdx===3? Math.floor(day*0.8):levelIdx);
+  // v5：難度改成鋸齒狀——每 4 天安排一次「喘息夜」，怪物少三成，玩家能喘口氣再迎接更難的夜晚
+  nightIsBreather = day>=4 && day%4===0;
+  nightQuota = nightIsBreather ? Math.max(3, Math.round(baseQuota*0.7)) : baseQuota;
+  dangerBeepT = 0;
+  if(nightIsBreather){
+    floatText(GAME_W/2, 160, '今晚怪物比較少，喘口氣！', '#7ee27e', 24);
+    chord([659,880],90,0.12,'triangle',0.12);
+  } else {
+    floatText(GAME_W/2, 160, '夜晚降臨...怪物出沒！', '#ff6cc7', 24);
+    beep(220,0.3,'sawtooth',0.15,-80);
+  }
+  shake = 4;
+}
+function startDay(){
+  const L = LEVELS[levelIdx];
+  day += 1; phase='day'; phaseTimer = L.dayLen;
+  monsters = [];
+  score += 20;  // 撐過一晚獎勵
+  spawnWoodNodes();
+  floatText(GAME_W/2, 160, `第 ${day} 天開始！+20分`, '#ffcf5c', 24);
+  chord([523,659,784,1047],70,0.12,'triangle',0.13);
+  if(levelIdx===3 && day>save.best){ save.best = day-1; }
+}
+
+// ===== 勝利 =====
+const winState = {
+  enter(){
+    this.t = 0;
+    // 星星結算：通關1星、血量≥2再1星、房屋≥60%再1星
+    const hpRatio = houseHp/houseHpMax;
+    this.stars = 1 + (player.hp>=2?1:0) + (hpRatio>=0.6?1:0);
+    if(levelIdx<3 && this.stars > save.stars[levelIdx]){
+      save.stars[levelIdx] = this.stars; persist();
+    }
+    score += this.stars*30;
+    chord([523,659,784,1047,1319],90,0.16,'triangle',0.15);
+    for(let i=0;i<5;i++) setTimeout(()=>burst(120+Math.random()*(GAME_W-240), 100+Math.random()*220, ['#ffcf5c','#ff6cc7','#38e1ff'][i%3], 16, 240), i*160);
+    tapPoint=null; tapAction=false; input.actionBuffer=0;
+  },
+  update(dt){
+    this.t += dt;
+    updateParts(dt); updateFloat(dt);
+    if(this.t>0.8 && (input.actionBuffer>0 || tapAction)){
+      input.actionBuffer=0; tapAction=false;
+      setState(menuState);
+    }
+  },
+  draw(){
+    playState.draw();
+    ctx.fillStyle='rgba(10,6,30,0.72)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#ffcf5c'; ctx.font='bold 44px sans-serif';
+    ctx.fillText('守住家園了！', GAME_W/2, 180);
+    drawStars(GAME_W/2, 232, this.stars, 44, 62);
+    ctx.fillStyle='#fff'; ctx.font='22px sans-serif';
+    ctx.fillText(`${LEVELS[levelIdx].name} 通關！分數 ${score}`, GAME_W/2, 300);
+    ctx.font='15px sans-serif'; ctx.fillStyle='#c9f2ff';
+    ctx.fillText('評分：通關 ★｜剩 2 顆心以上 ★｜房屋保存 60% 以上 ★', GAME_W/2, 334);
+    if(this.t>0.8){
+      ctx.fillStyle='#9a6bff'; ctx.font='bold 20px sans-serif';
+      ctx.globalAlpha = 0.7+Math.sin(performance.now()/300)*0.3;
+      ctx.fillText('按空白鍵 / 點擊螢幕 回選關', GAME_W/2, 400);
+      ctx.globalAlpha=1;
+    }
+  }
+};
+
+// ===== 失敗 =====
+const gameOverState = {
+  enter(){
+    this.t = 0;
+    shake = 10; freeze = 0.15;
+    burst(player.x, player.y-30, '#ff6cc7', 24, 260);
+    beep(180,0.4,'sawtooth',0.2,-120); noiseBurst(0.3,0.18);
+    if(levelIdx===3){
+      const d = day-1;
+      if(d>save.best){ save.best = d; persist(); }
+    }
+    tapPoint=null; tapAction=false; input.actionBuffer=0;
+  },
+  update(dt){
+    this.t += dt;
+    updateParts(dt); updateFloat(dt);
+    if(this.t>0.6 && (input.actionBuffer>0 || tapAction)){
+      input.actionBuffer=0; tapAction=false;
+      if(tapPoint && tapPoint.y>380 && tapPoint.y<440 && Math.abs(tapPoint.x-GAME_W/2)>150){ tapPoint=null; setState(menuState); return; }
+      tapPoint=null;
+      resetGame(); setState(playState);   // <1 秒重開同一關
+    }
+  },
+  draw(){
+    playState.draw();
+    ctx.fillStyle='rgba(0,0,0,0.62)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    ctx.fillStyle='#fff'; ctx.font='bold 40px sans-serif';
+    ctx.fillText('被怪獸抓到了！', GAME_W/2, 210);
+    ctx.font='22px sans-serif';
+    ctx.fillText(`撐過 ${day-1} 晚　分數 ${score}`, GAME_W/2, 258);
+    if(levelIdx===3){
+      ctx.fillStyle='#ffcf5c';
+      ctx.fillText(`無盡模式最佳：${save.best} 晚`, GAME_W/2, 292);
+    }
+    if(this.t>0.6){
+      ctx.fillStyle='#ffcf5c'; ctx.font='bold 22px sans-serif';
+      ctx.globalAlpha = 0.7+Math.sin(performance.now()/300)*0.3;
+      ctx.fillText('按空白鍵 / 點螢幕中央 再挑戰！', GAME_W/2, 350);
+      ctx.globalAlpha=1;
+      ctx.fillStyle='#9a6bff'; ctx.font='16px sans-serif';
+      ctx.fillText('（點畫面左右邊緣回選關）', GAME_W/2, 386);
+    }
+  }
+};
+
+// ===== 主迴圈：固定時間步進 =====
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now-last)/1000, 0.1);
+  last = now;
+  try{
+    while(acc>=STEP){
+      if(freeze>0){ freeze -= STEP; acc -= STEP; continue; }
+      input.actionBuffer = Math.max(0, input.actionBuffer-STEP);
+      state.update(STEP);
+      acc -= STEP;
+    }
+    state.draw();
+  } catch(err){
+    console.error('frame error', err);
+    acc = 0;
+  }
+}
+setState(menuState);
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

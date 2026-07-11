@@ -1,0 +1,1936 @@
+<!DOCTYPE html>
+<!-- 專業AI升級 v5：模擬行動延長至72秒並加入漸進難度曲線、補給箱/無人靶機重繪為立體漸層多部件美術、連段(combo)加成系統、射擊後座回饋、修正撤離階段落空無反饋的問題、時限告急畫面警示、重新校準評分門檻 -->
+<!-- +補強：角色精細化/觸控/大螢幕提醒 -->
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="未命名">
+<title>三角洲行動｜作戰情報終端 PRO</title>
+<style>
+  :root{
+    color-scheme: dark;
+    --bg: #12140f;
+    --bg-raised: #1a1e15;
+    --bg-card: #181c13;
+    --ink: #e7e2d2;
+    --ink-dim: #9aa088;
+    --line: #333a27;
+    --line-bright: #4a5536;
+    --accent: #ff7a1a;
+    --accent-soft: rgba(255,122,26,.14);
+    --olive: #8fae52;
+    --danger: #d64b3f;
+    --font-display: "Bahnschrift", "Arial Narrow", "Segoe UI Semibold", sans-serif;
+    --font-body: "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; }
+  body{
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  ::selection{ background: var(--accent); color: #14150f; }
+  a{ color: inherit; }
+
+  /* ===== 背景戰術網格紋理 ===== */
+  .grid-bg{
+    position: fixed; inset: 0; z-index: -1;
+    background-image:
+      linear-gradient(180deg, #14170f 0%, #0f110c 60%, #0c0e08 100%),
+      repeating-linear-gradient(0deg, rgba(143,174,82,.05) 0px, rgba(143,174,82,.05) 1px, transparent 1px, transparent 34px),
+      repeating-linear-gradient(90deg, rgba(143,174,82,.05) 0px, rgba(143,174,82,.05) 1px, transparent 1px, transparent 34px);
+  }
+
+  /* ===== 掃描線覆層（終端感） ===== */
+  .scanlines{
+    position: fixed; inset: 0; z-index: 60; pointer-events: none;
+    background: repeating-linear-gradient(0deg, rgba(0,0,0,.09) 0 1px, transparent 1px 3px);
+    mix-blend-mode: multiply;
+  }
+  .scanbeam{
+    position: fixed; left:0; right:0; top:-10%; height: 90px; z-index: 61; pointer-events: none;
+    background: linear-gradient(180deg, transparent, rgba(143,174,82,.05), transparent);
+    animation: beam 7s linear infinite;
+  }
+  @keyframes beam{ 0%{ transform: translateY(-10vh);} 100%{ transform: translateY(115vh);} }
+
+  .wrap{ max-width: 1100px; margin: 0 auto; padding: 0 28px 96px; }
+
+  .statusbar{
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 14px 28px; border-bottom: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .06em;
+    color: var(--ink-dim);
+  }
+  .statusbar .dot{ color: var(--olive); animation: blink 2.4s steps(2) infinite; }
+  @keyframes blink{ 50%{ opacity: .35; } }
+  .statusbar strong{ color: var(--ink); font-weight: 600; }
+
+  .hero{
+    padding: 64px 0 52px;
+    display: grid; grid-template-columns: 1.2fr 1fr; gap: 40px; align-items: end;
+  }
+  .eyebrow{
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: .22em;
+    text-transform: uppercase; color: var(--accent); margin: 0 0 14px;
+  }
+  .eyebrow::before{ content: "▲ "; }
+  h1{
+    font-family: var(--font-display); font-weight: 700;
+    font-size: clamp(48px, 8vw, 92px); line-height: .95; margin: 0;
+    letter-spacing: .01em; text-wrap: balance; text-transform: uppercase;
+  }
+  h1 span{ color: var(--accent); }
+  .hero-sub{ margin: 20px 0 0; max-width: 46ch; color: var(--ink-dim); font-size: 16px; }
+
+  .hud-panel{
+    background: var(--bg-card); border: 1px solid var(--line-bright);
+    padding: 20px 22px; position: relative;
+  }
+  .hud-panel::before{
+    content: ""; position: absolute; top: -1px; left: -1px; width: 18px; height: 18px;
+    border-top: 2px solid var(--accent); border-left: 2px solid var(--accent);
+  }
+  .hud-panel::after{
+    content: ""; position: absolute; bottom: -1px; right: -1px; width: 18px; height: 18px;
+    border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent);
+  }
+  .hud-row{ display: flex; justify-content: space-between; align-items: baseline; padding: 9px 0; border-bottom: 1px dashed var(--line); }
+  .hud-row:last-child{ border-bottom: none; }
+  .hud-label{ font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .1em; color: var(--ink-dim); text-transform: uppercase; }
+  .hud-value{ font-family: var(--font-mono); font-size: 20px; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .hud-value.accent{ color: var(--accent); }
+  #timer{ font-size: 30px; }
+  .timer-controls{ display:flex; gap: 8px; margin-top: 14px; }
+  .btn{
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    background: transparent; color: var(--ink-dim); border: 1px solid var(--line-bright);
+    padding: 12px 18px; min-height: 48px; cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+    touch-action: manipulation;
+  }
+  .btn:hover{ color: var(--ink); border-color: var(--accent); }
+  .btn:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary{ color: var(--accent); border-color: var(--accent); }
+  .btn.primary:hover{ background: var(--accent-soft); }
+
+  /* 雷達 */
+  .radar{
+    position: absolute; top: 16px; right: 16px; width: 54px; height: 54px; border-radius: 50%;
+    border: 1px solid var(--line-bright);
+    background:
+      radial-gradient(circle, transparent 58%, rgba(143,174,82,.12) 59% 60%, transparent 61%),
+      radial-gradient(circle, transparent 28%, rgba(143,174,82,.12) 29% 30%, transparent 31%),
+      linear-gradient(0deg, transparent 49%, rgba(143,174,82,.14) 50%, transparent 51%),
+      linear-gradient(90deg, transparent 49%, rgba(143,174,82,.14) 50%, transparent 51%);
+    overflow: hidden; opacity: .9;
+  }
+  .radar::before{
+    content:""; position: absolute; inset: 0; border-radius: 50%;
+    background: conic-gradient(from 0deg, rgba(143,174,82,.55), transparent 70deg, transparent);
+    animation: sweep 3.2s linear infinite;
+  }
+  @keyframes sweep{ to{ transform: rotate(360deg); } }
+
+  section{ margin-top: 72px; }
+  .section-head{ display: flex; align-items: baseline; gap: 14px; margin-bottom: 28px; }
+  .section-head h2{
+    font-family: var(--font-display); font-size: 28px; text-transform: uppercase;
+    letter-spacing: .02em; margin: 0; text-wrap: balance;
+  }
+  .section-head .tag{
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-dim);
+    border: 1px solid var(--line-bright); padding: 3px 10px; letter-spacing: .06em;
+  }
+  .section-head .rule{ flex: 1; height: 1px; background: var(--line); }
+
+  /* ===== 幹員 ===== */
+  .operators{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .op-card{
+    background: var(--bg-card); border: 1px solid var(--line);
+    padding: 26px 22px 20px; position: relative; overflow: hidden;
+    transition: border-color .18s, transform .18s, box-shadow .18s;
+  }
+  .op-card:hover{ border-color: var(--line-bright); transform: translateY(-3px); }
+  .op-card.selected{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 10px 30px rgba(0,0,0,.4); }
+  .op-card.selected::after{
+    content: "✓ 已部署"; position: absolute; top: 12px; right: 12px;
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em;
+    color: #14150f; background: var(--accent); padding: 3px 8px;
+  }
+  .op-card .stripe{ position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+  .op-glyph{
+    width: 76px; height: 76px; border: 1px solid var(--line-bright);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 18px; overflow: hidden;
+    background: radial-gradient(circle at 35% 28%, #262c1c, #12140f 78%);
+  }
+  .op-portrait{ display: block; width: 100%; height: 100%; }
+  .op-card h3{ font-family: var(--font-display); font-size: 22px; margin: 0 0 4px; letter-spacing: .01em; }
+  .op-role{ font-family: var(--font-mono); font-size: 11.5px; letter-spacing: .08em; text-transform: uppercase; margin: 0 0 14px; }
+  .op-desc{ font-size: 14px; color: var(--ink-dim); margin: 0 0 18px; }
+  .op-stats{ display: flex; flex-direction: column; gap: 8px; }
+  .stat-row{ display: grid; grid-template-columns: 64px 1fr 28px; align-items: center; gap: 10px; }
+  .stat-row .k{ font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-dim); letter-spacing: .06em; }
+  .stat-row .v{ font-family: var(--font-mono); font-size: 11px; text-align: right; color: var(--ink-dim); }
+  .meter{ height: 5px; background: var(--line); position: relative; overflow: hidden; }
+  .meter i{ position: absolute; inset: 0; display: block; background: var(--accent); transform-origin: left; }
+  .op-bonus{
+    font-family: var(--font-mono); font-size: 11px; color: var(--olive);
+    border-top: 1px dashed var(--line); margin-top: 16px; padding-top: 12px; letter-spacing: .04em;
+  }
+  .op-deploy{ width: 100%; margin-top: 14px; }
+  .op-card.selected .op-deploy{ color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+
+  /* ===== 模擬行動 ===== */
+  .sim-shell{
+    background: var(--bg-card); border: 1px solid var(--line-bright); position: relative;
+  }
+  .sim-shell::before{
+    content: ""; position: absolute; top: -1px; left: -1px; width: 18px; height: 18px; z-index: 2;
+    border-top: 2px solid var(--accent); border-left: 2px solid var(--accent); pointer-events: none;
+  }
+  .sim-shell::after{
+    content: ""; position: absolute; bottom: -1px; right: -1px; width: 18px; height: 18px; z-index: 2;
+    border-bottom: 2px solid var(--accent); border-right: 2px solid var(--accent); pointer-events: none;
+  }
+  .sim-topbar{
+    display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; border-bottom: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 12px; color: var(--ink-dim); letter-spacing: .06em;
+  }
+  .sim-topbar b{ color: var(--accent); font-weight: 600; }
+  .sim-canvas-box{ position: relative; width: 100%; touch-action: none; }
+  #simCanvas{
+    display: block; width: 100%; height: auto;
+    touch-action: none; cursor: crosshair;
+    -webkit-user-select: none; user-select: none;
+  }
+  .sim-help{
+    display: flex; gap: 18px; flex-wrap: wrap; padding: 14px 16px;
+    border-top: 1px solid var(--line); font-size: 13.5px; color: var(--ink-dim);
+  }
+  .sim-help span{ display: inline-flex; align-items: center; gap: 7px; }
+
+  /* ===== 行動流程 ===== */
+  .flow{ display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: stretch; gap: 0; }
+  .flow-step{
+    background: var(--bg-card); border: 1px solid var(--line); padding: 26px 22px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .flow-step .n{ font-family: var(--font-mono); font-size: 11px; color: var(--accent); letter-spacing: .1em; }
+  .flow-step h3{ font-family: var(--font-display); font-size: 24px; margin: 0; text-transform: uppercase; }
+  .flow-step p{ margin: 0; font-size: 13.5px; color: var(--ink-dim); }
+  .flow-arrow{ display: flex; align-items: center; justify-content: center; color: var(--line-bright); font-size: 22px; padding: 0 6px; }
+
+  /* ===== 地圖 ===== */
+  .maps{ display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .map-card{ background: var(--bg-card); border: 1px solid var(--line); overflow: hidden; }
+  .map-visual{
+    height: 128px; position: relative;
+    background: repeating-linear-gradient(45deg, rgba(255,255,255,.025) 0 2px, transparent 2px 14px);
+  }
+  .map-visual .fill{ position: absolute; inset: 0; opacity: .5; }
+  .map-body{ padding: 20px 20px 22px; }
+  .map-body h3{ font-family: var(--font-display); font-size: 20px; margin: 0 0 6px; text-transform: uppercase; }
+  .map-body .biome{ font-size: 13px; color: var(--ink-dim); margin: 0 0 16px; }
+  .chips{ display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip{
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .05em;
+    border: 1px solid var(--line-bright); color: var(--ink-dim); padding: 4px 9px;
+    display: flex; align-items: center; gap: 5px;
+  }
+  .chip b{ color: var(--ink); font-weight: 600; }
+  .chip.danger{ border-color: var(--danger); color: var(--danger); }
+
+  /* ===== 武器 ===== */
+  .weapon-tabs{ display: flex; gap: 8px; margin-bottom: 22px; flex-wrap: wrap; }
+  .wtab{
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase;
+    background: var(--bg-card); color: var(--ink-dim); border: 1px solid var(--line-bright);
+    padding: 13px 20px; min-height: 48px; min-width: 72px; cursor: pointer;
+    transition: border-color .15s, color .15s, background .15s;
+    touch-action: manipulation;
+  }
+  .wtab:hover{ color: var(--ink); }
+  .wtab:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wtab.active{ color: var(--accent); border-color: var(--accent); background: var(--accent-soft); }
+  .weapon-card{
+    background: var(--bg-card); border: 1px solid var(--line-bright);
+    display: grid; grid-template-columns: 1fr 1.3fr; gap: 0;
+  }
+  .weapon-visual{
+    padding: 34px; display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid var(--line); position: relative; overflow: hidden;
+    background:
+      radial-gradient(circle at 62% 46%, rgba(255,122,26,.16), transparent 55%),
+      repeating-linear-gradient(0deg, rgba(143,174,82,.05) 0 1px, transparent 1px 30px),
+      repeating-linear-gradient(90deg, rgba(143,174,82,.05) 0 1px, transparent 1px 30px);
+    min-height: 260px;
+  }
+  .weapon-visual .reticle{
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 210px; height: 210px; border-radius: 50%;
+    border: 1px solid rgba(255,122,26,.35);
+    animation: retpulse 3.4s ease-in-out infinite;
+  }
+  @keyframes retpulse{ 50%{ transform: translate(-50%,-50%) scale(1.05); opacity:.7; } }
+  .weapon-visual .reticle::before,
+  .weapon-visual .reticle::after{ content: ""; position: absolute; background: rgba(255,122,26,.35); }
+  .weapon-visual .reticle::before{ left: 50%; top: -14px; bottom: -14px; width: 1px; transform: translateX(-50%); }
+  .weapon-visual .reticle::after{ top: 50%; left: -14px; right: -14px; height: 1px; transform: translateY(-50%); }
+  .weapon-visual .reticle-inner{
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+    width: 120px; height: 120px; border-radius: 50%;
+    border: 1px dashed rgba(255,122,26,.22);
+  }
+  .weapon-visual svg{ position: relative; filter: drop-shadow(0 6px 18px rgba(0,0,0,.55)); }
+  .weapon-visual .corner-tag{
+    position: absolute; top: 14px; left: 16px; font-family: var(--font-mono);
+    font-size: 10.5px; letter-spacing: .12em; color: var(--olive); text-transform: uppercase;
+  }
+  .weapon-visual .corner-tag span{ color: var(--accent); }
+  .weapon-body{ padding: 30px 34px; }
+  .weapon-kicker{ font-family: var(--font-mono); font-size: 11.5px; color: var(--accent); letter-spacing: .12em; margin: 0 0 6px; }
+  .weapon-body h3{ font-family: var(--font-display); font-size: 34px; margin: 0 0 4px; letter-spacing: .01em; }
+  .weapon-class{ font-size: 13.5px; color: var(--ink-dim); margin: 0 0 22px; }
+  .weapon-stats{ display: flex; flex-direction: column; gap: 12px; margin-bottom: 22px; }
+  .weapon-stats .stat-row{ grid-template-columns: 84px 1fr 34px; }
+  .weapon-note{ font-size: 13.5px; color: var(--ink-dim); border-top: 1px dashed var(--line); padding-top: 16px; margin: 0; }
+
+  footer{
+    margin-top: 90px; padding-top: 24px; border-top: 1px solid var(--line);
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-dim); letter-spacing: .05em;
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: 10px;
+  }
+
+  /* 靜音鈕 */
+  #muteBtn{
+    position: fixed; right: 16px; bottom: 16px; z-index: 80;
+    width: 52px; height: 52px; padding: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg-card); border: 1px solid var(--line-bright); color: var(--ink-dim);
+    cursor: pointer; touch-action: manipulation;
+  }
+  #muteBtn:hover{ border-color: var(--accent); color: var(--ink); }
+  #muteBtn:focus-visible{ outline: 2px solid var(--accent); outline-offset: 2px; }
+  #muteBtn svg{ width: 26px; height: 26px; }
+  #muteBtn.muted{ color: var(--danger); }
+
+  @media (max-width: 860px){
+    .hero{ grid-template-columns: 1fr; }
+    .operators, .maps{ grid-template-columns: 1fr; }
+    .flow{ grid-template-columns: 1fr; }
+    .flow-arrow{ transform: rotate(90deg); padding: 8px 0; }
+    .weapon-card{ grid-template-columns: 1fr; }
+    .weapon-visual{ border-right: none; border-bottom: 1px solid var(--line); }
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .op-card{ transition: none; }
+    .scanbeam, .radar::before, .statusbar .dot, .weapon-visual .reticle{ animation: none; }
+    #bigscreenHint, #bigscreenHint.bsh-out{ animation: none; }
+  }
+
+  /* ===== 大螢幕提醒浮層（統一規格，手機端顯示） ===== */
+  #bigscreenHint{
+    position: fixed; inset: 0; z-index: 999999;
+    background: rgba(7,11,20,.9);
+    display: flex; align-items: center; justify-content: center;
+    padding: 24px; animation: bshIn .22s ease-out;
+  }
+  #bigscreenHint.bsh-out{ animation: bshOut .22s ease-in forwards; }
+  @keyframes bshIn{ from{ opacity: 0; } to{ opacity: 1; } }
+  @keyframes bshOut{ from{ opacity: 1; } to{ opacity: 0; } }
+  .bsh-card{
+    width: 100%; max-width: 360px;
+    background: rgba(18,22,28,.96); border: 1px solid rgba(255,255,255,.14);
+    border-radius: 16px; padding: 32px 26px 26px; text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,.5);
+    font-family: "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  }
+  .bsh-icon{ width: 48px; height: 48px; margin: 0 auto 18px; display: block; }
+  .bsh-title{
+    margin: 0 0 10px; font-size: 20px; font-weight: 700; line-height: 1.4;
+    background: linear-gradient(92deg, #38e1ff, #4f7cff 55%, #9a6bff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .bsh-sub{ margin: 0 0 24px; font-size: 14px; line-height: 1.6; color: rgba(231,226,210,.72); }
+  .bsh-btn{
+    display: block; width: 100%; min-height: 52px; margin: 0 auto;
+    border: none; border-radius: 10px; cursor: pointer; touch-action: manipulation;
+    background: linear-gradient(92deg, #38e1ff, #4f7cff 55%, #9a6bff);
+    color: #070b14; font-size: 16px; font-weight: 700; font-family: inherit; letter-spacing: .02em;
+  }
+  .bsh-btn:active{ transform: scale(.98); }
+</style>
+</head>
+<body>
+
+<div class="grid-bg"></div>
+<div class="scanlines" aria-hidden="true"></div>
+<div class="scanbeam" aria-hidden="true"></div>
+
+<div class="statusbar">
+  <span><span class="dot">●</span> 頻道連線正常</span>
+  <span>戰術情報終端 <strong>DF-OPS/07 · PRO</strong></span>
+</div>
+
+<div class="wrap">
+
+  <section class="hero">
+    <div>
+      <p class="eyebrow">作戰簡報 · 現正待命</p>
+      <h1>三角洲<span>行動</span></h1>
+      <p class="hero-sub">高風險撤離行動：小隊深入敵後地圖，蒐集情報與戰利品，與敵對小隊交火，並在時限內撤離戰場——生存下來的才是贏家。選擇幹員後，進入下方「模擬行動」進行實戰演練。</p>
+    </div>
+    <div class="hud-panel">
+      <div class="radar" aria-hidden="true"></div>
+      <div class="hud-row">
+        <span class="hud-label">行動時限</span>
+        <span class="hud-value accent" id="timer">30:00</span>
+      </div>
+      <div class="hud-row">
+        <span class="hud-label">在場人數</span>
+        <span class="hud-value"><span id="rollCount">0</span> / 13</span>
+      </div>
+      <div class="hud-row">
+        <span class="hud-label">當前地圖</span>
+        <span class="hud-value">零號大壩</span>
+      </div>
+      <div class="timer-controls">
+        <button class="btn primary" id="btnStart">開始倒數</button>
+        <button class="btn" id="btnReset">重設</button>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="op-head">
+    <div class="section-head">
+      <h2 id="op-head">幹員檔案</h2>
+      <span class="tag">3 名可選幹員 · 點擊部署</span>
+      <div class="rule"></div>
+    </div>
+    <div class="operators">
+
+      <article class="op-card selected" data-op="assault">
+        <div class="stripe" style="background:var(--accent)"></div>
+        <div class="op-glyph"><canvas class="op-portrait" data-op="assault" aria-hidden="true"></canvas></div>
+        <h3>威龍</h3>
+        <p class="op-role" style="color:var(--accent)">突擊 · 前線破門</p>
+        <p class="op-desc">重裝突擊手，擅長強攻與近距離交火，小隊的第一波衝擊力來自於他。</p>
+        <div class="op-stats">
+          <div class="stat-row"><span class="k">火力</span><div class="meter"><i style="width:90%"></i></div><span class="v">9</span></div>
+          <div class="stat-row"><span class="k">機動</span><div class="meter"><i style="width:55%"></i></div><span class="v">5</span></div>
+          <div class="stat-row"><span class="k">隱蔽</span><div class="meter"><i style="width:30%"></i></div><span class="v">3</span></div>
+        </div>
+        <p class="op-bonus">模擬加成：交戰階段擊靶分數 ×1.5</p>
+        <button class="btn op-deploy" type="button">部署此幹員</button>
+      </article>
+
+      <article class="op-card" data-op="recon">
+        <div class="stripe" style="background:var(--danger)"></div>
+        <div class="op-glyph"><canvas class="op-portrait" data-op="recon" aria-hidden="true"></canvas></div>
+        <h3>紅狼</h3>
+        <p class="op-role" style="color:var(--danger)">遊擊 · 遠程壓制</p>
+        <p class="op-desc">冷靜的狙擊與遊擊專家，負責在遠距離牽制敵方，掩護小隊推進與撤離。</p>
+        <div class="op-stats">
+          <div class="stat-row"><span class="k">火力</span><div class="meter"><i style="width:70%;background:var(--danger)"></i></div><span class="v">7</span></div>
+          <div class="stat-row"><span class="k">機動</span><div class="meter"><i style="width:65%;background:var(--danger)"></i></div><span class="v">6</span></div>
+          <div class="stat-row"><span class="k">隱蔽</span><div class="meter"><i style="width:80%;background:var(--danger)"></i></div><span class="v">8</span></div>
+        </div>
+        <p class="op-bonus">模擬加成：撤離階段訊號充能 ×1.5</p>
+        <button class="btn op-deploy" type="button">部署此幹員</button>
+      </article>
+
+      <article class="op-card" data-op="ghost">
+        <div class="stripe" style="background:var(--olive)"></div>
+        <div class="op-glyph"><canvas class="op-portrait" data-op="ghost" aria-hidden="true"></canvas></div>
+        <h3>無名</h3>
+        <p class="op-role" style="color:var(--olive)">潛行 · 情報蒐集</p>
+        <p class="op-desc">身份不明的獨行者，擅長潛入與資訊蒐集，總能悄悄摸到別人摸不到的地方。</p>
+        <div class="op-stats">
+          <div class="stat-row"><span class="k">火力</span><div class="meter"><i style="width:45%;background:var(--olive)"></i></div><span class="v">4</span></div>
+          <div class="stat-row"><span class="k">機動</span><div class="meter"><i style="width:85%;background:var(--olive)"></i></div><span class="v">8</span></div>
+          <div class="stat-row"><span class="k">隱蔽</span><div class="meter"><i style="width:95%;background:var(--olive)"></i></div><span class="v">9</span></div>
+        </div>
+        <p class="op-bonus">模擬加成：搜索階段物資分數 ×1.5</p>
+        <button class="btn op-deploy" type="button">部署此幹員</button>
+      </article>
+
+    </div>
+  </section>
+
+  <section aria-labelledby="sim-head">
+    <div class="section-head">
+      <h2 id="sim-head">模擬行動</h2>
+      <span class="tag">收 → 打 → 撤 · 實戰演練</span>
+      <div class="rule"></div>
+    </div>
+    <div class="sim-shell">
+      <div class="sim-topbar">
+        <span>部署幹員：<b id="simOpName">威龍</b></span>
+        <span>最佳評分：<b id="simBest">--</b></span>
+      </div>
+      <div class="sim-canvas-box">
+        <canvas id="simCanvas" width="960" height="540" aria-label="模擬行動訓練場"></canvas>
+      </div>
+      <div class="sim-help">
+        <span>💻 滑鼠移動瞄準、點擊射擊（也可方向鍵/WASD 移動準星＋空白鍵射擊）</span>
+        <span>📱 直接用手指點擊目標即可</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="flow-head">
+    <div class="section-head">
+      <h2 id="flow-head">行動節奏</h2>
+      <span class="tag">收 → 打 → 撤</span>
+      <div class="rule"></div>
+    </div>
+    <div class="flow">
+      <div class="flow-step">
+        <span class="n">STAGE 1</span>
+        <h3>收</h3>
+        <p>空降後分散搜索地圖上的武器箱、藥品與情報文件，優先武裝自己再談交戰。</p>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <span class="n">STAGE 2</span>
+        <h3>打</h3>
+        <p>與遭遇的敵對小隊交火，判斷該強攻搶奪戰利品，還是繞路避戰保存戰力。</p>
+      </div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">
+        <span class="n">STAGE 3</span>
+        <h3>撤</h3>
+        <p>時限前抵達撤離點完成撤離，戰利品才真正屬於你——空手而歸等於白打。</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="map-head">
+    <div class="section-head">
+      <h2 id="map-head">戰場地圖</h2>
+      <span class="tag">3 張地圖輪替</span>
+      <div class="rule"></div>
+    </div>
+    <div class="maps">
+
+      <div class="map-card">
+        <div class="map-visual" style="background:linear-gradient(160deg,#3a4a3f,#1a2118)">
+          <div class="fill" style="background:linear-gradient(0deg,rgba(0,0,0,.5),transparent 60%)"></div>
+        </div>
+        <div class="map-body">
+          <h3>零號大壩</h3>
+          <p class="biome">大型水壩與周邊機電設施，垂直落差大，適合中長距離交戰。</p>
+          <div class="chips">
+            <span class="chip">👥 <b>13</b> 人</span>
+            <span class="chip">⏱ <b>30</b> 分鐘</span>
+            <span class="chip danger">高風險區</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="map-card">
+        <div class="map-visual" style="background:linear-gradient(160deg,#4a4126,#211d12)">
+          <div class="fill" style="background:linear-gradient(0deg,rgba(0,0,0,.5),transparent 60%)"></div>
+        </div>
+        <div class="map-body">
+          <h3>長弓溪谷</h3>
+          <p class="biome">狹長溪谷地形搭配村落與農田，視野開闊，遊擊與伏擊皆宜。</p>
+          <div class="chips">
+            <span class="chip">👥 <b>13</b> 人</span>
+            <span class="chip">⏱ <b>30</b> 分鐘</span>
+            <span class="chip">開闊地形</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="map-card">
+        <div class="map-visual" style="background:linear-gradient(160deg,#2c3a4a,#12181f)">
+          <div class="fill" style="background:linear-gradient(0deg,rgba(0,0,0,.5),transparent 60%)"></div>
+        </div>
+        <div class="map-body">
+          <h3>航天機密</h3>
+          <p class="biome">廢棄航太研發基地，室內外交錯，高價值情報資料集中於此。</p>
+          <div class="chips">
+            <span class="chip">👥 <b>13</b> 人</span>
+            <span class="chip">⏱ <b>30</b> 分鐘</span>
+            <span class="chip danger">情報重地</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section aria-labelledby="weapon-head">
+    <div class="section-head">
+      <h2 id="weapon-head">武器裝備</h2>
+      <span class="tag">4 款武器</span>
+      <div class="rule"></div>
+    </div>
+    <div class="weapon-tabs" role="tablist">
+      <button class="wtab active" data-w="awm">AWM</button>
+      <button class="wtab" data-w="m14">M14</button>
+      <button class="wtab" data-w="m7">M7</button>
+      <button class="wtab" data-w="kc16">KC16</button>
+    </div>
+    <div class="weapon-card" data-weapon="awm">
+      <div class="weapon-visual">
+        <span class="corner-tag">WEAPON SCAN <span>// AWM-338</span></span>
+        <div class="reticle"></div>
+        <div class="reticle-inner"></div>
+        <svg width="380" height="160" viewBox="0 0 440 170" aria-label="AWM 狙擊步槍側面示意圖">
+          <defs>
+            <linearGradient id="stockG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#5c6a44"></stop>
+              <stop offset=".45" stop-color="#3f4a2f"></stop>
+              <stop offset="1" stop-color="#252c1c"></stop>
+            </linearGradient>
+            <linearGradient id="metalG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#565f47"></stop>
+              <stop offset=".5" stop-color="#3a4230"></stop>
+              <stop offset="1" stop-color="#20261a"></stop>
+            </linearGradient>
+            <linearGradient id="barrelG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#4d5540"></stop>
+              <stop offset=".4" stop-color="#2f3527"></stop>
+              <stop offset="1" stop-color="#181c13"></stop>
+            </linearGradient>
+            <radialGradient id="lensG" cx=".35" cy=".3" r=".8">
+              <stop offset="0" stop-color="#dff3ff"></stop>
+              <stop offset=".35" stop-color="#7fd1e6"></stop>
+              <stop offset=".7" stop-color="#1c5a6e"></stop>
+              <stop offset="1" stop-color="#08181d"></stop>
+            </radialGradient>
+            <linearGradient id="brakeG" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#454d3a"></stop>
+              <stop offset="1" stop-color="#1c2116"></stop>
+            </linearGradient>
+          </defs>
+
+          <ellipse cx="230" cy="152" rx="190" ry="7" fill="#000" opacity=".38"></ellipse>
+          <path d="M8,112 C10,96 30,84 58,80 C74,77 84,79 84,86 L84,108 L64,110 L48,124 L14,124 C8,122 6,118 8,112 Z" fill="url(#stockG)" stroke="#14170f" stroke-width="1.2"></path>
+          <ellipse cx="40" cy="98" rx="14" ry="9" fill="none" stroke="#14170f" stroke-width="1.4" opacity=".5"></ellipse>
+          <rect x="46" y="79" width="32" height="4.5" rx="1" fill="#ff7a1a"></rect>
+          <rect x="84" y="82" width="80" height="24" rx="2" fill="url(#metalG)" stroke="#14170f" stroke-width="1.2"></rect>
+          <rect x="92" y="74" width="122" height="7" rx="1.5" fill="#20261a" stroke="#14170f" stroke-width="1"></rect>
+          <g fill="#141810">
+            <rect x="98" y="74" width="4" height="7"></rect><rect x="108" y="74" width="4" height="7"></rect>
+            <rect x="118" y="74" width="4" height="7"></rect><rect x="128" y="74" width="4" height="7"></rect>
+            <rect x="138" y="74" width="4" height="7"></rect><rect x="196" y="74" width="4" height="7"></rect>
+            <rect x="206" y="74" width="4" height="7"></rect>
+          </g>
+          <rect x="98" y="88" width="20" height="3.5" fill="#ff7a1a" opacity=".9"></rect>
+          <circle cx="150" cy="94" r="3.5" fill="#14170f"></circle>
+          <path d="M118,106 L138,106 L142,116 C142,124 134,132 122,134 L114,134 L114,120 Z" fill="url(#metalG)" stroke="#14170f" stroke-width="1.2"></path>
+          <path d="M120,108 C114,112 111,120 113,128" fill="none" stroke="#14170f" stroke-width="2"></path>
+          <rect x="124" y="112" width="3" height="10" rx="1.5" fill="#14170f"></rect>
+          <path d="M150,106 L176,106 L184,140 C184,144 180,146 176,146 L160,148 C156,148 154,146 154,142 Z" fill="url(#metalG)" stroke="#14170f" stroke-width="1.2"></path>
+          <rect x="156" y="112" width="22" height="3" fill="#14170f" opacity=".5"></rect>
+          <rect x="158" y="120" width="20" height="3" fill="#14170f" opacity=".4"></rect>
+          <rect x="112" y="60" width="12" height="16" fill="url(#metalG)" stroke="#14170f" stroke-width="1"></rect>
+          <rect x="212" y="60" width="12" height="16" fill="url(#metalG)" stroke="#14170f" stroke-width="1"></rect>
+          <rect x="134" y="42" width="92" height="20" rx="10" fill="url(#metalG)" stroke="#14170f" stroke-width="1.3"></rect>
+          <rect x="160" y="38" width="36" height="6" rx="2" fill="#20261a" stroke="#14170f" stroke-width="1"></rect>
+          <circle cx="146" cy="52" r="15" fill="url(#metalG)" stroke="#14170f" stroke-width="1.3"></circle>
+          <circle cx="146" cy="52" r="10.5" fill="url(#lensG)"></circle>
+          <circle cx="142" cy="47" r="3" fill="#fff" opacity=".55"></circle>
+          <circle cx="216" cy="52" r="12" fill="url(#metalG)" stroke="#14170f" stroke-width="1.3"></circle>
+          <circle cx="216" cy="52" r="8" fill="url(#lensG)"></circle>
+          <circle cx="213" cy="48" r="2.2" fill="#fff" opacity=".55"></circle>
+          <path d="M164,88 L268,88 L268,96 L164,98 Z" fill="url(#barrelG)" stroke="#14170f" stroke-width="1.2"></path>
+          <path d="M268,89 L344,90.5 L344,95.5 L268,95.5 Z" fill="url(#barrelG)" stroke="#14170f" stroke-width="1.1"></path>
+          <rect x="164" y="88" width="180" height="2" fill="#7a8a5c" opacity=".55"></rect>
+          <line x1="248" y1="97" x2="222" y2="144" stroke="#20261a" stroke-width="6" stroke-linecap="round"></line>
+          <line x1="248" y1="97" x2="222" y2="144" stroke="#4a5536" stroke-width="1.6" stroke-linecap="round"></line>
+          <line x1="266" y1="97" x2="292" y2="144" stroke="#20261a" stroke-width="6" stroke-linecap="round"></line>
+          <line x1="266" y1="97" x2="292" y2="144" stroke="#4a5536" stroke-width="1.6" stroke-linecap="round"></line>
+          <rect x="212" y="142" width="20" height="6" rx="2" fill="#14170f"></rect>
+          <rect x="282" y="142" width="20" height="6" rx="2" fill="#14170f"></rect>
+          <rect x="344" y="84" width="42" height="20" rx="3" fill="url(#brakeG)" stroke="#14170f" stroke-width="1.3"></rect>
+          <rect x="352" y="84" width="4" height="20" fill="#0e100b"></rect>
+          <rect x="363" y="84" width="4" height="20" fill="#0e100b"></rect>
+          <rect x="374" y="84" width="4" height="20" fill="#0e100b"></rect>
+          <circle cx="388" cy="94" r="4.5" fill="#0e100b" stroke="#ff7a1a" stroke-width="1.4"></circle>
+        </svg>
+      </div>
+      <div class="weapon-body">
+        <p class="weapon-kicker">MARKSMAN · BOLT ACTION</p>
+        <h3>AWM</h3>
+        <p class="weapon-class">大口徑手動槍機狙擊步槍 · 一擊制敵</p>
+        <div class="weapon-stats">
+          <div class="stat-row"><span class="k">傷害</span><div class="meter"><i style="width:97%"></i></div><span class="v">97</span></div>
+          <div class="stat-row"><span class="k">射速</span><div class="meter"><i style="width:18%"></i></div><span class="v">18</span></div>
+          <div class="stat-row"><span class="k">有效射程</span><div class="meter"><i style="width:92%"></i></div><span class="v">92</span></div>
+          <div class="stat-row"><span class="k">後座力</span><div class="meter"><i style="width:75%"></i></div><span class="v">75</span></div>
+        </div>
+        <p class="weapon-note">單發傷害極高，對頭部近乎一擊必殺，代價是換彈與再瞄準速度慢，適合有掩護的遠距離點位。</p>
+      </div>
+    </div>
+
+    <div class="weapon-card" data-weapon="m14" hidden>
+      <div class="weapon-visual">
+        <span class="corner-tag">WEAPON SCAN <span>// M14-DMR</span></span>
+        <div class="reticle"></div>
+        <div class="reticle-inner"></div>
+        <svg width="380" height="160" viewBox="0 0 440 170" aria-label="M14 戰鬥步槍側面示意圖">
+          <defs>
+            <linearGradient id="m14-wood" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#a06a3c"></stop>
+              <stop offset=".5" stop-color="#7a4c26"></stop>
+              <stop offset="1" stop-color="#4a2d16"></stop>
+            </linearGradient>
+            <linearGradient id="m14-metal" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#7d8272"></stop>
+              <stop offset=".5" stop-color="#565c4d"></stop>
+              <stop offset="1" stop-color="#2c2f27"></stop>
+            </linearGradient>
+          </defs>
+          <ellipse cx="220" cy="152" rx="185" ry="7" fill="#000" opacity=".38"></ellipse>
+          <path d="M8,116 C8,100 20,90 44,86 L150,80 L150,104 L110,110 L86,126 L18,126 C10,124 8,120 8,116 Z" fill="url(#m14-wood)" stroke="#1c1006" stroke-width="1.2"></path>
+          <path d="M60,88 C50,92 44,98 42,106" fill="none" stroke="#3a2210" stroke-width="1.2" opacity=".6"></path>
+          <path d="M225,86 L300,84 L300,100 L225,102 Z" fill="url(#m14-wood)" stroke="#1c1006" stroke-width="1.1"></path>
+          <rect x="150" y="80" width="76" height="24" rx="2" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1.2"></rect>
+          <circle cx="163" cy="82" r="4.5" fill="none" stroke="#dfe3d6" stroke-width="1.6"></circle>
+          <rect x="176" y="88" width="16" height="3.5" fill="#ff7a1a" opacity=".9"></rect>
+          <rect x="150" y="72" width="30" height="6" rx="1.5" fill="#20261a" stroke="#14170f" stroke-width="1"></rect>
+          <path d="M186,104 L206,104 L210,114 C210,122 202,130 190,132 L182,132 L182,118 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1.2"></path>
+          <path d="M160,104 C158,120 156,134 148,146 L168,144 C172,130 174,116 176,104 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1.2"></path>
+          <rect x="156" y="112" width="14" height="3" fill="#14170f" opacity=".5"></rect>
+          <path d="M328,80 L340,80 L340,90 L328,90 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1"></path>
+          <line x1="334" y1="78" x2="334" y2="90" stroke="#14170f" stroke-width="1.6"></line>
+          <path d="M226,88 L326,86 L326,94 L226,96 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1.2"></path>
+          <path d="M326,87 L344,87 L344,93 L326,93 Z" fill="url(#m14-metal)"></path>
+          <rect x="238" y="98" width="70" height="5" rx="2" fill="#3a3f30" stroke="#14170f" stroke-width="1"></rect>
+          <rect x="344" y="85" width="16" height="12" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1.1"></rect>
+          <path d="M360,88 L380,80 L378,86 L360,92 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1"></path>
+          <path d="M360,90 L380,102 L378,96 L360,94 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1"></path>
+          <path d="M360,89 L382,90 L378,92 L360,92 Z" fill="url(#m14-metal)" stroke="#14170f" stroke-width="1"></path>
+        </svg>
+      </div>
+      <div class="weapon-body">
+        <p class="weapon-kicker">DESIGNATED MARKSMAN · SEMI-AUTO</p>
+        <h3>M14</h3>
+        <p class="weapon-class">半自動戰鬥步槍 · 中遠距離火力支援</p>
+        <div class="weapon-stats">
+          <div class="stat-row"><span class="k">傷害</span><div class="meter"><i style="width:78%"></i></div><span class="v">78</span></div>
+          <div class="stat-row"><span class="k">射速</span><div class="meter"><i style="width:42%"></i></div><span class="v">42</span></div>
+          <div class="stat-row"><span class="k">有效射程</span><div class="meter"><i style="width:80%"></i></div><span class="v">80</span></div>
+          <div class="stat-row"><span class="k">後座力</span><div class="meter"><i style="width:60%"></i></div><span class="v">60</span></div>
+        </div>
+        <p class="weapon-note">木製槍身、半自動大威力，介於突擊步槍與狙擊槍之間，適合連續點放壓制中遠距離目標。</p>
+      </div>
+    </div>
+
+    <div class="weapon-card" data-weapon="m7" hidden>
+      <div class="weapon-visual">
+        <span class="corner-tag">WEAPON SCAN <span>// M7-XSPR</span></span>
+        <div class="reticle"></div>
+        <div class="reticle-inner"></div>
+        <svg width="380" height="160" viewBox="0 0 440 170" aria-label="M7 制式步槍側面示意圖">
+          <defs>
+            <linearGradient id="m7-tan" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#8a7d63"></stop>
+              <stop offset=".5" stop-color="#655a45"></stop>
+              <stop offset="1" stop-color="#38321f"></stop>
+            </linearGradient>
+            <linearGradient id="m7-metal" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#5a5f57"></stop>
+              <stop offset=".5" stop-color="#3a3e38"></stop>
+              <stop offset="1" stop-color="#1c1f1b"></stop>
+            </linearGradient>
+          </defs>
+          <ellipse cx="220" cy="152" rx="185" ry="7" fill="#000" opacity=".38"></ellipse>
+          <rect x="18" y="92" width="56" height="26" rx="4" fill="url(#m7-metal)" stroke="#0e100c" stroke-width="1.2"></rect>
+          <rect x="10" y="98" width="12" height="16" rx="2" fill="url(#m7-metal)" stroke="#0e100c" stroke-width="1"></rect>
+          <g stroke="#0e100c" stroke-width="1">
+            <line x1="30" y1="92" x2="30" y2="118"></line><line x1="42" y1="92" x2="42" y2="118"></line>
+            <line x1="54" y1="92" x2="54" y2="118"></line><line x1="66" y1="92" x2="66" y2="118"></line>
+          </g>
+          <rect x="74" y="86" width="88" height="26" rx="3" fill="url(#m7-tan)" stroke="#14170f" stroke-width="1.2"></rect>
+          <rect x="80" y="78" width="150" height="7" rx="1.5" fill="#20221a" stroke="#14170f" stroke-width="1"></rect>
+          <rect x="96" y="94" width="20" height="3.5" fill="#ff7a1a" opacity=".9"></rect>
+          <path d="M110,112 L128,112 L128,124 C122,132 112,136 102,136 L98,136 L98,120 Z" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.2"></path>
+          <path d="M140,112 L162,112 L166,144 C166,148 162,150 158,150 L146,150 C142,150 140,148 140,144 Z" fill="url(#m7-tan)" stroke="#14170f" stroke-width="1.2"></path>
+          <rect x="140" y="66" width="34" height="8" rx="2" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.1"></rect>
+          <rect x="148" y="56" width="18" height="12" rx="2" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.1"></rect>
+          <circle cx="157" cy="62" r="3.4" fill="#ff7a1a" opacity=".85"></circle>
+          <rect x="162" y="84" width="120" height="20" rx="3" fill="url(#m7-tan)" stroke="#14170f" stroke-width="1.2"></rect>
+          <g fill="#14170f" opacity=".55">
+            <rect x="172" y="84" width="3" height="20"></rect><rect x="186" y="84" width="3" height="20"></rect>
+            <rect x="200" y="84" width="3" height="20"></rect><rect x="214" y="84" width="3" height="20"></rect>
+            <rect x="228" y="84" width="3" height="20"></rect><rect x="242" y="84" width="3" height="20"></rect>
+          </g>
+          <path d="M198,104 L214,104 L212,128 L200,128 Z" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.1"></path>
+          <rect x="282" y="90" width="60" height="9" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.1"></rect>
+          <rect x="340" y="84" width="66" height="21" rx="10" fill="url(#m7-metal)" stroke="#14170f" stroke-width="1.3"></rect>
+          <circle cx="400" cy="94.5" r="3.6" fill="#0e100b" stroke="#ff7a1a" stroke-width="1.3"></circle>
+        </svg>
+      </div>
+      <div class="weapon-body">
+        <p class="weapon-kicker">SERVICE RIFLE · GAS-OPERATED</p>
+        <h3>M7</h3>
+        <p class="weapon-class">新一代制式步槍 · 全距離均衡表現</p>
+        <div class="weapon-stats">
+          <div class="stat-row"><span class="k">傷害</span><div class="meter"><i style="width:70%"></i></div><span class="v">70</span></div>
+          <div class="stat-row"><span class="k">射速</span><div class="meter"><i style="width:55%"></i></div><span class="v">55</span></div>
+          <div class="stat-row"><span class="k">有效射程</span><div class="meter"><i style="width:70%"></i></div><span class="v">70</span></div>
+          <div class="stat-row"><span class="k">後座力</span><div class="meter"><i style="width:58%"></i></div><span class="v">58</span></div>
+        </div>
+        <p class="weapon-note">模組化制式步槍，可調式槍托搭配消音器與紅點瞄具，各交戰距離都能維持穩定輸出。</p>
+      </div>
+    </div>
+
+    <div class="weapon-card" data-weapon="kc16" hidden>
+      <div class="weapon-visual">
+        <span class="corner-tag">WEAPON SCAN <span>// KC16-CQB</span></span>
+        <div class="reticle"></div>
+        <div class="reticle-inner"></div>
+        <svg width="380" height="160" viewBox="0 0 440 170" aria-label="KC16 犢牛式卡賓槍側面示意圖">
+          <defs>
+            <linearGradient id="kc-black" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#565a5c"></stop>
+              <stop offset=".5" stop-color="#35383a"></stop>
+              <stop offset="1" stop-color="#17191a"></stop>
+            </linearGradient>
+          </defs>
+          <ellipse cx="220" cy="152" rx="150" ry="7" fill="#000" opacity=".38"></ellipse>
+          <path d="M40,84 C30,84 24,90 24,100 L24,112 C24,120 30,126 40,126 L150,124 L150,84 Z" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.2"></path>
+          <rect x="30" y="94" width="10" height="20" rx="3" fill="#0c0d0e" opacity=".6"></rect>
+          <rect x="70" y="76" width="120" height="8" rx="1.5" fill="#202224" stroke="#0c0d0e" stroke-width="1"></rect>
+          <rect x="118" y="60" width="30" height="16" rx="3" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.1"></rect>
+          <circle cx="133" cy="68" r="4" fill="#ff7a1a" opacity=".85"></circle>
+          <path d="M150,110 L168,110 L168,122 C162,130 152,134 142,134 L138,134 L138,118 Z" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.2"></path>
+          <path d="M108,124 L134,124 L138,150 C138,154 134,156 130,156 L114,156 C110,156 108,154 108,150 Z" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.2"></path>
+          <rect x="168" y="94" width="70" height="18" rx="3" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.1"></rect>
+          <path d="M186,112 L200,112 L198,132 L188,132 Z" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1"></path>
+          <rect x="238" y="97" width="46" height="9" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.1"></rect>
+          <rect x="284" y="93" width="30" height="17" rx="4" fill="url(#kc-black)" stroke="#0c0d0e" stroke-width="1.2"></rect>
+          <circle cx="308" cy="101.5" r="3.4" fill="#0c0d0e" stroke="#ff7a1a" stroke-width="1.3"></circle>
+        </svg>
+      </div>
+      <div class="weapon-body">
+        <p class="weapon-kicker">COMPACT BULLPUP · CQB</p>
+        <h3>KC16</h3>
+        <p class="weapon-class">短巧犢牛式卡賓槍 · 近距離機動火力</p>
+        <div class="weapon-stats">
+          <div class="stat-row"><span class="k">傷害</span><div class="meter"><i style="width:55%"></i></div><span class="v">55</span></div>
+          <div class="stat-row"><span class="k">射速</span><div class="meter"><i style="width:88%"></i></div><span class="v">88</span></div>
+          <div class="stat-row"><span class="k">有效射程</span><div class="meter"><i style="width:45%"></i></div><span class="v">45</span></div>
+          <div class="stat-row"><span class="k">後座力</span><div class="meter"><i style="width:30%"></i></div><span class="v">30</span></div>
+        </div>
+        <p class="weapon-note">犢牛式結構讓槍身大幅縮短，室內近距離作戰迴旋更靈活，適合快速清點房間與突入行動。</p>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>三角洲行動 · 作戰情報終端 · AI未來創作營隊</span>
+    <span>此頁為粉絲製作展示頁面，非官方內容</span>
+  </footer>
+
+</div>
+
+<button id="muteBtn" type="button" aria-label="切換音效" aria-pressed="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M11 5 6 9H3v6h3l5 4V5z" fill="currentColor" stroke="none"></path>
+    <path class="ic-on" d="M15.5 9a4 4 0 0 1 0 6"></path>
+    <path class="ic-on" d="M18 6.5a8 8 0 0 1 0 11"></path>
+    <g class="ic-off" style="display:none">
+      <line x1="15" y1="9" x2="21" y2="15"></line>
+      <line x1="21" y1="9" x2="15" y2="15"></line>
+    </g>
+  </svg>
+</button>
+
+<script>
+'use strict';
+/* ================= 大螢幕提醒浮層（手機端偵測，一個 session 僅顯示一次） ================= */
+(function(){
+  var isPhone = false;
+  try{
+    isPhone = Math.min(screen.width, screen.height) < 600 || window.innerWidth < 768;
+  }catch(e){ isPhone = false; }
+  if(!isPhone) return;
+  try{ if(sessionStorage.getItem('bigscreen-hint')) return; }catch(e){}
+
+  var overlay = document.createElement('div');
+  overlay.id = 'bigscreenHint';
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
+  overlay.setAttribute('aria-labelledby', 'bshTitle');
+  overlay.innerHTML =
+    '<div class="bsh-card">' +
+      '<svg class="bsh-icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">' +
+        '<defs><linearGradient id="bshGrad" x1="0" y1="0" x2="48" y2="46" gradientUnits="userSpaceOnUse">' +
+          '<stop offset="0" stop-color="#38e1ff"></stop><stop offset=".55" stop-color="#4f7cff"></stop><stop offset="1" stop-color="#9a6bff"></stop>' +
+        '</linearGradient></defs>' +
+        '<rect x="4" y="8" width="40" height="26" rx="3" stroke="url(#bshGrad)" stroke-width="2.4"></rect>' +
+        '<line x1="16" y1="40" x2="32" y2="40" stroke="url(#bshGrad)" stroke-width="2.4" stroke-linecap="round"></line>' +
+        '<line x1="24" y1="34" x2="24" y2="40" stroke="url(#bshGrad)" stroke-width="2.4"></line>' +
+      '</svg>' +
+      '<h2 class="bsh-title" id="bshTitle">建議使用大螢幕遊玩</h2>' +
+      '<p class="bsh-sub">用平板或電腦打開，體驗更完整</p>' +
+      '<button type="button" class="bsh-btn" id="bshCloseBtn">知道了，繼續玩</button>' +
+    '</div>';
+  document.body.appendChild(overlay);
+
+  function dismiss(){
+    try{ sessionStorage.setItem('bigscreen-hint', '1'); }catch(e){}
+    overlay.classList.add('bsh-out');
+    setTimeout(function(){ if(overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 260);
+  }
+  var closeBtn = document.getElementById('bshCloseBtn');
+  if(closeBtn) closeBtn.addEventListener('click', dismiss);
+})();
+
+/* ================= 音效母線：Web Audio + DynamicsCompressor ================= */
+var SFX = (function(){
+  var ac = null, master = null, muted = false;
+  try{ muted = localStorage.getItem('pro_delta_muted') === '1'; }catch(e){}
+  function ensure(){
+    if(ac) return ac;
+    var Ctx = window.AudioContext || window.webkitAudioContext;
+    if(!Ctx) return null;
+    ac = new Ctx();
+    var comp = ac.createDynamicsCompressor();
+    comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 6;
+    master = ac.createGain();
+    master.gain.value = muted ? 0 : 0.9;
+    master.connect(comp); comp.connect(ac.destination);
+    return ac;
+  }
+  function unlock(){ var a = ensure(); if(a && a.state === 'suspended') a.resume(); }
+  addEventListener('pointerdown', unlock, { once:false });
+  addEventListener('keydown', unlock, { once:false });
+
+  function beep(freq, dur, type, vol, slide){
+    if(muted) return;
+    var a = ensure(); if(!a || a.state !== 'running') return;
+    var o = a.createOscillator(), g = a.createGain();
+    o.type = type || 'square';
+    o.frequency.setValueAtTime(freq, a.currentTime);
+    if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), a.currentTime + dur);
+    g.gain.setValueAtTime(vol || 0.12, a.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, a.currentTime + dur);
+    o.connect(g); g.connect(master);
+    o.start(); o.stop(a.currentTime + dur);
+  }
+  function noise(dur, vol){
+    if(muted) return;
+    var a = ensure(); if(!a || a.state !== 'running') return;
+    var n = Math.floor(a.sampleRate * dur);
+    var buf = a.createBuffer(1, n, a.sampleRate);
+    var d = buf.getChannelData(0);
+    for(var i = 0; i < n; i++) d[i] = (Math.random()*2-1) * (1 - i/n);
+    var src = a.createBufferSource(); src.buffer = buf;
+    var g = a.createGain(); g.gain.value = vol || 0.14;
+    var f = a.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 2400;
+    src.connect(f); f.connect(g); g.connect(master);
+    src.start();
+  }
+  return {
+    beep: beep, noise: noise,
+    ui: function(){ beep(880, 0.05, 'square', 0.07); },
+    shot: function(){ noise(0.09, 0.16); beep(160, 0.07, 'square', 0.09, -90); },
+    pickup: function(){ beep(988, 0.07, 'square', 0.1); setTimeout(function(){ beep(1319, 0.12, 'square', 0.1); }, 70); },
+    hit: function(){ beep(520, 0.06, 'square', 0.11, 220); },
+    warn: function(){ beep(660, 0.12, 'sawtooth', 0.1, -120); },
+    win: function(){ [523,659,784,1047].forEach(function(f,i){ setTimeout(function(){ beep(f, 0.16, 'square', 0.11); }, i*110); }); },
+    charge: function(){ beep(340, 0.08, 'triangle', 0.1, 160); },
+    isMuted: function(){ return muted; },
+    setMuted: function(m){
+      muted = m;
+      try{ localStorage.setItem('pro_delta_muted', m ? '1' : '0'); }catch(e){}
+      if(master) master.gain.value = m ? 0 : 0.9;
+    }
+  };
+})();
+
+(function(){
+  var btn = document.getElementById('muteBtn');
+  function render(){
+    var m = SFX.isMuted();
+    btn.classList.toggle('muted', m);
+    btn.setAttribute('aria-pressed', String(m));
+    btn.querySelector('.ic-off').style.display = m ? '' : 'none';
+    var ons = btn.querySelectorAll('.ic-on');
+    for(var i=0;i<ons.length;i++) ons[i].style.display = m ? 'none' : '';
+  }
+  btn.addEventListener('click', function(){
+    SFX.setMuted(!SFX.isMuted());
+    render();
+    if(!SFX.isMuted()) SFX.ui();
+  });
+  render();
+})();
+
+var REDUCED = false;
+try{ REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches; }catch(e){}
+
+/* ================= 30 分鐘行動倒數 ================= */
+(function(){
+  var DURATION = 30 * 60;
+  var remaining = DURATION;
+  var running = false;
+  var timerEl = document.getElementById('timer');
+  var startBtn = document.getElementById('btnStart');
+  var resetBtn = document.getElementById('btnReset');
+  var interval = null;
+
+  function render(){
+    var m = Math.floor(remaining / 60);
+    var s = remaining % 60;
+    timerEl.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
+    timerEl.style.color = remaining <= 60 ? 'var(--danger)' : 'var(--accent)';
+  }
+  function tick(){
+    remaining = Math.max(0, remaining - 1);
+    render();
+    if(remaining > 0 && remaining <= 10) SFX.warn();
+    if(remaining === 0){ stop(); SFX.win(); }
+  }
+  function start(){
+    if(running) return;
+    running = true;
+    startBtn.textContent = '暫停';
+    interval = setInterval(tick, 1000);
+  }
+  function stop(){
+    running = false;
+    startBtn.textContent = '開始倒數';
+    clearInterval(interval);
+  }
+  startBtn.addEventListener('click', function(){ SFX.ui(); running ? stop() : start(); });
+  resetBtn.addEventListener('click', function(){ SFX.ui(); stop(); remaining = DURATION; render(); });
+  render();
+})();
+
+/* ================= HUD 數字滾動 ================= */
+(function(){
+  var el = document.getElementById('rollCount');
+  if(REDUCED){ el.textContent = '13'; return; }
+  var t0 = null;
+  function step(ts){
+    if(!t0) t0 = ts;
+    var p = Math.min(1, (ts - t0) / 1400);
+    var e = 1 - Math.pow(1 - p, 3);
+    el.textContent = String(Math.round(13 * e));
+    if(p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+})();
+
+/* ================= 武器分頁 ================= */
+(function(){
+  var tabs = document.querySelectorAll('.wtab');
+  var cards = document.querySelectorAll('.weapon-card');
+  tabs.forEach(function(tab){
+    tab.addEventListener('click', function(){
+      SFX.ui();
+      tabs.forEach(function(t){ t.classList.remove('active'); });
+      tab.classList.add('active');
+      var w = tab.dataset.w;
+      cards.forEach(function(c){ c.hidden = c.dataset.weapon !== w; });
+    });
+  });
+})();
+
+/* ================= 幹員頭像：多部件角色精細化（離屏繪製後貼上） ================= */
+var OperatorArt = (function(){
+  var SIZE = 76;
+  var cache = {};
+
+  function shoulders(g, base, dark, accent){
+    var grad = g.createLinearGradient(0, SIZE*0.6, 0, SIZE);
+    grad.addColorStop(0, base); grad.addColorStop(1, dark);
+    g.fillStyle = grad;
+    g.beginPath();
+    g.moveTo(SIZE*0.16, SIZE);
+    g.lineTo(SIZE*0.28, SIZE*0.64);
+    g.quadraticCurveTo(SIZE*0.5, SIZE*0.56, SIZE*0.72, SIZE*0.64);
+    g.lineTo(SIZE*0.84, SIZE);
+    g.closePath(); g.fill();
+    g.strokeStyle = accent; g.lineWidth = SIZE*0.028;
+    g.beginPath();
+    g.moveTo(SIZE*0.36, SIZE*0.66); g.lineTo(SIZE*0.5, SIZE*0.73); g.lineTo(SIZE*0.64, SIZE*0.66);
+    g.stroke();
+  }
+
+  function drawAssault(g, expr){
+    var cx = SIZE*0.5, cy = SIZE*0.4, r = SIZE*0.27;
+    shoulders(g, '#3d4c30', '#181e12', '#ff7a1a');
+    var hg = g.createRadialGradient(cx-r*0.4, cy-r*0.45, r*0.15, cx, cy, r*1.2);
+    hg.addColorStop(0, '#71835a'); hg.addColorStop(.55, '#40502f'); hg.addColorStop(1, '#181e12');
+    g.fillStyle = hg;
+    g.beginPath(); g.ellipse(cx, cy, r, r*1.06, 0, 0, Math.PI*2); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 1; g.stroke();
+    /* 護目鏡帶 */
+    g.fillStyle = 'rgba(16,19,12,.88)';
+    g.fillRect(cx-r*0.98, cy-r*0.14, r*1.96, r*0.52);
+    g.strokeStyle = '#ff7a1a'; g.lineWidth = SIZE*0.02;
+    g.strokeRect(cx-r*0.98, cy-r*0.14, r*1.96, r*0.52);
+    /* 眉稜盔甲 */
+    g.strokeStyle = '#141810'; g.lineWidth = SIZE*0.03;
+    g.beginPath(); g.moveTo(cx-r*0.92, cy-r*0.32); g.lineTo(cx+r*0.92, cy-r*0.32); g.stroke();
+    /* 雙眼：平常/部署（發亮） */
+    var eyeY = cy + r*0.10, eyeR = r*0.18;
+    var alert = expr === 'alert';
+    g.fillStyle = alert ? '#ffe1a3' : '#ffb066';
+    if(alert){ g.shadowColor = '#ffcf5c'; g.shadowBlur = SIZE*0.12; }
+    g.beginPath(); g.arc(cx-r*0.44, eyeY, eyeR, 0, Math.PI*2); g.fill();
+    g.beginPath(); g.arc(cx+r*0.44, eyeY, eyeR, 0, Math.PI*2); g.fill();
+    g.shadowBlur = 0;
+    /* 通話器／嘴：平常一橫線，部署時果決上揚 */
+    var mouthY = cy + r*0.66;
+    g.strokeStyle = alert ? '#ffcf5c' : '#5a6247';
+    g.lineWidth = SIZE*0.024;
+    g.beginPath();
+    if(alert){ g.moveTo(cx-r*0.3, mouthY); g.quadraticCurveTo(cx, mouthY+r*0.16, cx+r*0.3, mouthY); }
+    else{ g.moveTo(cx-r*0.28, mouthY); g.lineTo(cx+r*0.28, mouthY); }
+    g.stroke();
+    g.strokeStyle = 'rgba(255,207,140,.55)'; g.lineWidth = 1.3;
+    g.beginPath(); g.arc(cx, cy, r*1.05, Math.PI*1.1, Math.PI*1.7); g.stroke();
+  }
+
+  function drawRecon(g, expr){
+    var cx = SIZE*0.5, cy = SIZE*0.4, r = SIZE*0.26;
+    shoulders(g, '#4a2d29', '#1c1210', '#d64b3f');
+    var hg = g.createRadialGradient(cx-r*0.4, cy-r*0.45, r*0.15, cx, cy, r*1.2);
+    hg.addColorStop(0, '#6b4640'); hg.addColorStop(.55, '#432a26'); hg.addColorStop(1, '#1c1210');
+    g.fillStyle = hg;
+    g.beginPath(); g.ellipse(cx, cy, r, r*1.06, 0, 0, Math.PI*2); g.fill();
+    g.strokeStyle = 'rgba(0,0,0,.45)'; g.lineWidth = 1; g.stroke();
+    var focus = expr === 'alert';
+    /* 瞄具鏡片（右眼） */
+    var lensR = r*0.32;
+    var lg = g.createRadialGradient(cx+r*0.34-lensR*0.3, cy+r*0.05-lensR*0.3, lensR*0.1, cx+r*0.34, cy+r*0.05, lensR);
+    lg.addColorStop(0, '#ffe8df'); lg.addColorStop(.45, focus ? '#ff8f7c' : '#e8917f'); lg.addColorStop(1, '#4a1a12');
+    g.fillStyle = lg;
+    g.beginPath(); g.arc(cx+r*0.34, cy+r*0.05, lensR, 0, Math.PI*2); g.fill();
+    g.strokeStyle = '#1c1210'; g.lineWidth = SIZE*0.018; g.stroke();
+    /* 左眼（裸眼），專注時瞇眼 */
+    var eyeY = cy + r*0.08;
+    g.fillStyle = focus ? '#ffcabb' : '#e0a898';
+    g.beginPath();
+    if(focus){ g.ellipse(cx-r*0.42, eyeY, r*0.17, r*0.06, 0, 0, Math.PI*2); }
+    else{ g.arc(cx-r*0.42, eyeY, r*0.15, 0, Math.PI*2); }
+    g.fill();
+    /* 頭巾／圍脖 */
+    g.fillStyle = 'rgba(20,13,11,.85)';
+    g.beginPath(); g.ellipse(cx, cy+r*0.86, r*1.05, r*0.34, 0, 0, Math.PI*2); g.fill();
+    /* 嘴線 */
+    var mouthY = cy + r*0.62;
+    g.strokeStyle = focus ? '#ffab98' : '#7a4640'; g.lineWidth = SIZE*0.02;
+    g.beginPath(); g.moveTo(cx-r*0.2, mouthY); g.lineTo(cx+r*0.2, mouthY); g.stroke();
+    g.strokeStyle = 'rgba(255,160,140,.5)'; g.lineWidth = 1.3;
+    g.beginPath(); g.arc(cx, cy, r*1.05, Math.PI*1.15, Math.PI*1.7); g.stroke();
+  }
+
+  function drawGhost(g, expr){
+    var cx = SIZE*0.5, cy = SIZE*0.4, r = SIZE*0.27;
+    shoulders(g, '#3a4030', '#161a10', '#8fae52');
+    var hg = g.createRadialGradient(cx-r*0.4, cy-r*0.5, r*0.15, cx, cy, r*1.25);
+    hg.addColorStop(0, '#57604a'); hg.addColorStop(.55, '#333a26'); hg.addColorStop(1, '#141810');
+    g.fillStyle = hg;
+    g.beginPath(); g.ellipse(cx, cy, r, r*1.08, 0, 0, Math.PI*2); g.fill();
+    /* 頭巾折痕 */
+    g.strokeStyle = 'rgba(0,0,0,.35)'; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(cx-r*0.7, cy-r*0.2); g.quadraticCurveTo(cx, cy-r*0.5, cx+r*0.7, cy-r*0.2); g.stroke();
+    var alert = expr === 'alert';
+    /* 面罩（遮住口鼻，只留眼縫） */
+    g.fillStyle = 'rgba(14,17,10,.92)';
+    g.beginPath(); g.ellipse(cx, cy+r*0.28, r*0.92, r*0.62, 0, 0, Math.PI*2); g.fill();
+    /* 眼縫發光：平常/戒備兩態 */
+    var eyeY = cy + r*0.02, eyeW = alert ? r*0.24 : r*0.19, eyeH = r*0.09;
+    g.fillStyle = alert ? '#d9ffb0' : '#a8c97e';
+    g.shadowColor = '#8fae52'; g.shadowBlur = alert ? SIZE*0.14 : SIZE*0.06;
+    g.beginPath(); g.ellipse(cx-r*0.34, eyeY, eyeW, eyeH, 0, 0, Math.PI*2); g.fill();
+    g.beginPath(); g.ellipse(cx+r*0.34, eyeY, eyeW, eyeH, 0, 0, Math.PI*2); g.fill();
+    g.shadowBlur = 0;
+    /* 面罩下緣縫線（隱約的嘴部輪廓），戒備時線條收緊顯堅毅 */
+    g.strokeStyle = alert ? '#c8e0a0' : 'rgba(200,224,160,.4)'; g.lineWidth = SIZE*0.014;
+    g.beginPath();
+    g.moveTo(cx-r*(alert?0.16:0.22), cy+r*0.58); g.lineTo(cx+r*(alert?0.16:0.22), cy+r*0.58);
+    g.stroke();
+    g.strokeStyle = 'rgba(200,224,160,.5)'; g.lineWidth = 1.3;
+    g.beginPath(); g.arc(cx, cy, r*1.06, Math.PI*1.1, Math.PI*1.7); g.stroke();
+  }
+
+  function draw(g, key, expr){
+    g.clearRect(0, 0, SIZE, SIZE);
+    if(key === 'assault') drawAssault(g, expr);
+    else if(key === 'recon') drawRecon(g, expr);
+    else drawGhost(g, expr);
+  }
+
+  function buildBust(key, expr, dpr){
+    var off = document.createElement('canvas');   // 離屏畫布：先畫好完整角色 sprite 再貼到可見 canvas
+    off.width = SIZE * dpr; off.height = SIZE * dpr;
+    var g = off.getContext('2d');
+    g.scale(dpr, dpr);
+    draw(g, key, expr);
+    return off;
+  }
+
+  function paint(canvasEl, key, expr){
+    var dpr = Math.min(devicePixelRatio || 1, 2);
+    canvasEl.width = SIZE * dpr; canvasEl.height = SIZE * dpr;
+    var cacheKey = key + '|' + expr + '|' + dpr;
+    var off = cache[cacheKey];
+    if(!off){ off = buildBust(key, expr, dpr); cache[cacheKey] = off; }
+    var ctx2 = canvasEl.getContext('2d');
+    ctx2.clearRect(0, 0, canvasEl.width, canvasEl.height);
+    ctx2.drawImage(off, 0, 0, canvasEl.width, canvasEl.height);
+  }
+
+  function paintAll(selectedKey){
+    var list = document.querySelectorAll('.op-portrait');
+    for(var i = 0; i < list.length; i++){
+      var cv = list[i];
+      paint(cv, cv.dataset.op, cv.dataset.op === selectedKey ? 'alert' : 'idle');
+    }
+  }
+
+  return { paintAll: paintAll };
+})();
+OperatorArt.paintAll('assault');
+
+/* ================= 模擬行動小遊戲 ================= */
+(function(){
+  var W = 960, H = 540;
+  var cv = document.getElementById('simCanvas');
+  var ctx = cv.getContext('2d');
+  var box = cv.parentElement;
+
+  function resize(){
+    var w = box.clientWidth || W;
+    var scale = w / W;
+    var dpr = Math.min(devicePixelRatio || 1, 2);
+    cv.width = Math.round(W * scale * dpr);
+    cv.height = Math.round(H * scale * dpr);
+    cv.style.width = '100%';
+    cv.style.height = Math.round(H * scale) + 'px';
+    ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+    cv._scale = scale * dpr;
+    cv._cssScale = scale;
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  /* 幹員選擇 */
+  var OPS = {
+    assault: { name: '威龍', color: '#ff7a1a', mult: [1, 1, 1.5, 1] },
+    recon:   { name: '紅狼', color: '#d64b3f', mult: [1, 1, 1, 1.5] },
+    ghost:   { name: '無名', color: '#8fae52', mult: [1, 1.5, 1, 1] }
+  };
+  var curOp = 'assault';
+  var opNameEl = document.getElementById('simOpName');
+  var cards = document.querySelectorAll('.op-card');
+  cards.forEach(function(card){
+    function pick(){
+      SFX.pickup();
+      curOp = card.dataset.op;
+      cards.forEach(function(c){ c.classList.toggle('selected', c === card); });
+      opNameEl.textContent = OPS[curOp].name;
+      OperatorArt.paintAll(curOp);
+    }
+    card.querySelector('.op-deploy').addEventListener('click', pick);
+    card.addEventListener('click', function(e){
+      if(e.target.closest('.op-deploy')) return;
+      pick();
+    });
+  });
+
+  /* 遊戲狀態 */
+  var PHASE_TIME = [0, 20, 28, 24];
+  var PHASE_NAME = ['', '收 · 搜索物資', '打 · 交戰壓制', '撤 · 撤離充能'];
+  var PHASE_TIP  = ['', '點擊補給箱蒐集物資！時間越後密度越高！', '射擊出現的無人靶機！連續命中疊連段加成！', '連續點擊撤離訊號圈充能！'];
+  var state = 'idle';           // idle | play | result
+  var phase = 1, phaseT = 0, bannerT = 0;
+  var score = 0, shots = 0, hits = 0;
+  var ents = [], parts = [], floats = [];
+  var pad = null, padProg = 0, extracted = false;
+  var spawnT = 0, warned = false;
+  var shake = 0, freeze = 0, flash = 0, recoil = 0;
+  var combo = 0, comboMax = 0, comboFlashT = 0;
+  var endTime = 0;
+  var muzzle = { t: 0, x: 0, y: 0 };
+  var best = null;
+  try{ best = localStorage.getItem('pro_delta_best'); }catch(e){}
+  var bestEl = document.getElementById('simBest');
+  if(best) bestEl.textContent = best;
+
+  var ch = { x: W/2, y: H/2 };
+  var keys = {};
+  var KEYMAP = { ArrowLeft:'l', KeyA:'l', ArrowRight:'r', KeyD:'r', ArrowUp:'u', KeyW:'u', ArrowDown:'d', KeyS:'d' };
+  var lastPointerType = 'mouse';   // 觸控可玩稽核：記錄輸入裝置，觸控時放大射擊判定容錯
+
+  /* 平常 → 部署(alert) 兩態的彈性放大動畫：命中/生成時的 squash & stretch 手感 */
+  function popScale(age, dur){
+    var t = Math.min(1, Math.max(0, age / (dur || 0.22)));
+    var c1 = 1.70158, c3 = c1 + 1;
+    return Math.max(0, 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2));
+  }
+
+  function nearCanvas(){
+    var r = cv.getBoundingClientRect();
+    return r.bottom > 0 && r.top < innerHeight;
+  }
+  addEventListener('keydown', function(e){
+    if(!nearCanvas()) return;
+    if(e.code === 'Space'){
+      e.preventDefault();
+      trigger(ch.x, ch.y, true);
+      return;
+    }
+    var k = KEYMAP[e.code];
+    if(k){ e.preventDefault(); keys[k] = true; }
+  });
+  addEventListener('keyup', function(e){
+    var k = KEYMAP[e.code];
+    if(k) keys[k] = false;
+  });
+
+  function ptFromEvent(e){
+    var r = cv.getBoundingClientRect();
+    return { x: (e.clientX - r.left) / cv._cssScale, y: (e.clientY - r.top) / cv._cssScale };
+  }
+  cv.addEventListener('pointermove', function(e){
+    lastPointerType = e.pointerType || lastPointerType;
+    var p = ptFromEvent(e);
+    ch.x = p.x; ch.y = p.y;
+  });
+  cv.addEventListener('pointerdown', function(e){
+    e.preventDefault();
+    lastPointerType = e.pointerType || lastPointerType;
+    var p = ptFromEvent(e);
+    ch.x = p.x; ch.y = p.y;
+    trigger(p.x, p.y, false);
+  });
+  cv.addEventListener('touchstart', function(e){ e.preventDefault(); }, { passive:false });
+
+  function startGame(){
+    state = 'play';
+    phase = 1; phaseT = PHASE_TIME[1]; bannerT = 2;
+    score = 0; shots = 0; hits = 0;
+    ents = []; parts = []; floats = [];
+    pad = null; padProg = 0; extracted = false;
+    spawnT = 0; warned = false;
+    combo = 0; comboMax = 0; comboFlashT = 0;
+    SFX.beep(440, 0.12, 'square', 0.12, 240);
+  }
+
+  function trigger(x, y, isKey){
+    if(state === 'idle'){ startGame(); return; }
+    if(state === 'result'){
+      if(performance.now() - endTime > 600) startGame();
+      return;
+    }
+    fire(x, y);
+  }
+
+  function burst(x, y, color, n, speed){
+    for(var i = 0; i < n; i++){
+      var a = Math.random() * Math.PI * 2, s = (speed || 200) * (0.3 + Math.random() * 0.7);
+      parts.push({ x:x, y:y, vx:Math.cos(a)*s, vy:Math.sin(a)*s, life:0.5, color:color });
+    }
+  }
+  function floatText(x, y, txt, color){
+    floats.push({ x:x, y:y, txt:txt, color:color, life:0.8 });
+  }
+  function addShake(v){ if(!REDUCED) shake = Math.max(shake, v); }
+
+  /* 連段（combo）：連續命中不中斷則每 5 下發一次額外加成，落空即歸零 */
+  function registerCombo(x, y){
+    combo++;
+    if(combo > comboMax) comboMax = combo;
+    if(combo % 5 === 0){
+      var comboBonus = Math.round(10 * (combo / 5) * OPS[curOp].mult[phase]);
+      score += comboBonus;
+      floatText(x, y - 46, '連段 ×' + combo + ' +' + comboBonus, '#ffcf5c');
+      SFX.beep(720 + combo * 6, 0.1, 'square', 0.12, 260);
+      addShake(4);
+      comboFlashT = 0.4;
+    }
+  }
+
+  function fire(x, y){
+    shots++;
+    SFX.shot();
+    muzzle = { t: 0.08, x: x, y: y };
+    recoil = 1;                      // 開火後座回饋，drawCrosshair() 用來做瞬間放大
+    var hitAny = false;
+
+    if(phase === 3 && pad){
+      var dx = x - pad.x, dy = y - pad.y;
+      if(dx*dx + dy*dy < pad.r * pad.r){
+        hitAny = true; hits++;
+        registerCombo(x, y);
+        var gain = 12 * OPS[curOp].mult[3];
+        padProg = Math.min(100, padProg + gain);
+        score += Math.round(20 * OPS[curOp].mult[3]);
+        SFX.charge();
+        burst(x, y, '#8fae52', 8, 160);
+        floatText(x, y - 20, '+充能', '#8fae52');
+        addShake(3);
+        pad.x = 120 + Math.random() * (W - 240);
+        pad.y = 130 + Math.random() * (H - 260);
+        if(padProg >= 100 && !extracted){
+          extracted = true;
+          score += Math.round(phaseT * 20);   // 提前撤離時間獎勵
+          endGame(true);
+          return;
+        }
+      }
+    }
+
+    if(!hitAny){
+      var bi = -1, bd = 1e9;
+      var tol = lastPointerType === 'touch' ? 22 : 16;   // 觸控手指較粗，放寬命中容錯
+      for(var i = 0; i < ents.length; i++){
+        var e = ents[i];
+        if(e.dead) continue;
+        var ddx = x - e.x, ddy = y - e.y;
+        var d = Math.sqrt(ddx*ddx + ddy*ddy);
+        if(d < e.r + tol && d < bd){ bd = d; bi = i; }
+      }
+      if(bi >= 0){
+        var t = ents[bi];
+        t.dead = true; hitAny = true; hits++;
+        registerCombo(t.x, t.y);
+        if(t.type === 'crate'){
+          var v1 = Math.round(50 * OPS[curOp].mult[1]);
+          score += v1;
+          SFX.pickup();
+          burst(t.x, t.y, '#ffcf5c', 12, 220);
+          floatText(t.x, t.y - 26, '+' + v1, '#ffcf5c');
+          addShake(3);
+          if(!REDUCED) freeze = 0.02;   // 撿補給也給一點點停頓重量感
+        } else {
+          var v2 = Math.round(80 * OPS[curOp].mult[2]);
+          score += v2;
+          SFX.hit();
+          burst(t.x, t.y, '#ff7a1a', 14, 260);
+          floatText(t.x, t.y - 26, '+' + v2, '#ff7a1a');
+          addShake(5);
+          if(!REDUCED) freeze = 0.05;
+          flash = 0.06;
+        }
+      }
+    }
+    /* 任何階段落空都要有回饋（原版撤離階段落空完全沒有視覺/聽覺反應，已修正） */
+    if(!hitAny){
+      combo = 0;
+      SFX.beep(220, 0.05, 'triangle', 0.05);
+      parts.push({ x:x, y:y, vx:0, vy:0, life:0.25, color:'#5a6247' });
+    }
+  }
+
+  function endGame(success){
+    state = 'result';
+    endTime = performance.now();
+    var rating = score >= 3000 ? 'S' : score >= 2000 ? 'A' : score >= 1200 ? 'B' : 'C';
+    var rec = rating + ' / ' + score;
+    var prevScore = 0;
+    if(best){ var mm = best.match(/(\d+)/g); if(mm) prevScore = parseInt(mm[mm.length-1], 10) || 0; }
+    if(score > prevScore){
+      best = rec;
+      bestEl.textContent = rec;
+      try{ localStorage.setItem('pro_delta_best', rec); }catch(e){}
+    }
+    resultData = { success: success, rating: rating };
+    if(success) SFX.win(); else SFX.warn();
+    addShake(success ? 6 : 4);
+  }
+  var resultData = { success: false, rating: 'C' };
+
+  function nextPhase(){
+    phase++;
+    if(phase > 3){ endGame(false); return; }   // 不會走到（phase3 由時間或充能結束）
+    phaseT = PHASE_TIME[phase];
+    bannerT = 2;
+    warned = false;
+    ents = [];
+    spawnT = 0;
+    if(phase === 3){
+      pad = { x: W/2, y: H/2 + 30, r: 74 };
+      padProg = 0;
+    }
+    SFX.beep(660, 0.14, 'square', 0.12, 200);
+  }
+
+  function spawn(){
+    if(phase === 3) return;
+    /* 難度漸進：0（階段剛開始）→ 1（階段快結束），密度與速度隨之提升 */
+    var prog = Math.min(1, Math.max(0, 1 - phaseT / PHASE_TIME[phase]));
+    var cap = Math.min(7, 4 + Math.floor(prog * 4));
+    var alive = ents.filter(function(e){ return !e.dead; }).length;
+    if(alive >= cap) return;
+    var m = 90;
+    var e = {
+      x: m + Math.random() * (W - m*2),
+      y: 120 + Math.random() * (H - 220),
+      r: phase === 1 ? 34 : 30,
+      type: phase === 1 ? 'crate' : 'drone',
+      life: phase === 1 ? Math.max(2.4, 4 - prog*1.4) : Math.max(2.1, 3.2 - prog*0.9),
+      t: 0,
+      vx: phase === 2 ? (Math.random() < .5 ? -1 : 1) * (30 + Math.random()*50 + prog*90) : 0,
+      dead: false
+    };
+    ents.push(e);
+  }
+
+  function update(dt){
+    if(state !== 'play') return;
+    if(freeze > 0){ freeze -= dt; return; }
+
+    /* 準星鍵盤移動 */
+    var sp = 420 * dt;
+    if(keys.l) ch.x -= sp; if(keys.r) ch.x += sp;
+    if(keys.u) ch.y -= sp; if(keys.d) ch.y += sp;
+    ch.x = Math.max(10, Math.min(W-10, ch.x));
+    ch.y = Math.max(10, Math.min(H-10, ch.y));
+
+    bannerT = Math.max(0, bannerT - dt);
+    phaseT -= dt;
+    if(phaseT <= 3 && !warned && phaseT > 0){ warned = true; SFX.warn(); }
+    if(phaseT <= 0){
+      if(phase === 3) endGame(padProg >= 100);
+      else nextPhase();
+      return;
+    }
+
+    spawnT -= dt;
+    if(spawnT <= 0){
+      spawn();
+      var ramp = Math.min(1, Math.max(0, 1 - phaseT / PHASE_TIME[phase]));
+      var base = phase === 1 ? 0.95 : 0.85;
+      var floorT = phase === 1 ? 0.5 : 0.42;
+      spawnT = base - (base - floorT) * ramp;   // 生成間隔隨階段進行縮短＝密度漸增
+    }
+
+    for(var i = 0; i < ents.length; i++){
+      var e = ents[i];
+      e.t += dt; e.life -= dt;
+      if(e.vx){
+        e.x += e.vx * dt;
+        if(e.x < 70 || e.x > W - 70) e.vx *= -1;
+      }
+      if(e.life <= 0) e.dead = true;
+    }
+    ents = ents.filter(function(e){ return !e.dead; });
+
+    if(pad){
+      pad.t = (pad.t || 0) + dt;
+    }
+
+    for(var j = 0; j < parts.length; j++){
+      var p = parts[j];
+      p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.life -= dt;
+    }
+    parts = parts.filter(function(p){ return p.life > 0; });
+    for(var k = 0; k < floats.length; k++){
+      floats[k].y -= 50 * dt; floats[k].life -= dt;
+    }
+    floats = floats.filter(function(f){ return f.life > 0; });
+
+    shake *= Math.pow(0.001, dt);
+    flash = Math.max(0, flash - dt);
+    recoil = Math.max(0, recoil - dt * 6);
+    comboFlashT = Math.max(0, comboFlashT - dt);
+    muzzle.t = Math.max(0, muzzle.t - dt);
+  }
+
+  /* ===== 繪圖 ===== */
+  function drawBG(){
+    ctx.fillStyle = '#10130c';
+    ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(143,174,82,.08)';
+    ctx.lineWidth = 1;
+    for(var x = 0; x <= W; x += 48){ ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+    for(var y = 0; y <= H; y += 48){ ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+    ctx.strokeStyle = 'rgba(255,122,26,.5)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(6, 6, W-12, H-12);
+    ctx.strokeStyle = 'rgba(255,122,26,.9)';
+    [[6,6,1,1],[W-6,6,-1,1],[6,H-6,1,-1],[W-6,H-6,-1,-1]].forEach(function(c){
+      ctx.beginPath();
+      ctx.moveTo(c[0] + 18*c[2], c[1]);
+      ctx.lineTo(c[0], c[1]);
+      ctx.lineTo(c[0], c[1] + 18*c[3]);
+      ctx.stroke();
+    });
+  }
+
+  function drawCrate(e){
+    var urgent = e.life < 1.2;
+    var blink = urgent && Math.floor(e.t * 8) % 2 === 0;
+    var s = popScale(e.t) * (1 + Math.sin(e.t * 5) * 0.04);   // 生成彈跳 + 待機呼吸
+    var IX = 10, IY = 7;   // 等角偏移，做出立體透視感
+    ctx.save();
+    ctx.translate(e.x, e.y);
+
+    /* 地面陰影，給補給箱一點重量感 */
+    ctx.globalAlpha = 0.32;
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(2, 30, 28, 7, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.scale(s, s);
+    ctx.globalAlpha = blink ? 0.4 : 1;
+
+    /* 左側面（暗，暗示厚度） */
+    ctx.fillStyle = '#232a19';
+    ctx.beginPath();
+    ctx.moveTo(-22, -8); ctx.lineTo(-22-IX, -8-IY); ctx.lineTo(-22-IX, 20-IY); ctx.lineTo(-22, 20); ctx.closePath();
+    ctx.fill();
+
+    /* 正面（漸層） */
+    var frontG = ctx.createLinearGradient(0, -8, 0, 22);
+    frontG.addColorStop(0, '#54643a');
+    frontG.addColorStop(1, '#2e3a20');
+    ctx.fillStyle = frontG;
+    ctx.fillRect(-22, -8, 44, 30);
+    ctx.strokeStyle = '#ffcf5c';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(-22, -8, 44, 30);
+
+    /* 頂面（亮，透視向上偏移） */
+    ctx.fillStyle = '#7c9152';
+    ctx.beginPath();
+    ctx.moveTo(-22, -8); ctx.lineTo(-22-IX, -8-IY); ctx.lineTo(22-IX, -8-IY); ctx.lineTo(22, -8); ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,207,92,.6)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+
+    /* 束帶十字 */
+    ctx.strokeStyle = 'rgba(255,207,92,.8)';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.moveTo(0, -8); ctx.lineTo(0, 22); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-22, 7); ctx.lineTo(22, 7); ctx.stroke();
+
+    /* 鉚釘細節 */
+    ctx.fillStyle = '#161b10';
+    [[-16,-3],[16,-3],[-16,16],[16,16]].forEach(function(p){
+      ctx.beginPath(); ctx.arc(p[0], p[1], 1.6, 0, Math.PI*2); ctx.fill();
+    });
+
+    /* 警示燈：存活時間越少越急促發光 */
+    ctx.fillStyle = urgent ? '#ff5c3d' : '#8fae52';
+    if(!REDUCED && urgent){ ctx.shadowColor = '#ff5c3d'; ctx.shadowBlur = 8; }
+    ctx.beginPath(); ctx.arc(14-IX, -8-IY+2, 2.6, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+
+    ctx.fillStyle = '#fff5d6';
+    ctx.font = 'bold 12px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('補給', 0, 12);
+    ctx.restore();
+  }
+
+  function drawDrone(e){
+    var wob = Math.sin(e.t * 6) * 4;
+    var urgent = e.life < 1;
+    var blink = urgent && Math.floor(e.t * 8) % 2 === 0;
+    var dir = e.vx >= 0 ? 1 : -1;
+    var pop = popScale(e.t);   // 生成彈跳，避免無人靶機瞬間硬生生蹦出
+
+    /* 地面陰影：與機身分開繪製，凸顯飛行高度 */
+    ctx.save();
+    ctx.globalAlpha = 0.28;
+    ctx.fillStyle = '#000';
+    ctx.beginPath(); ctx.ellipse(e.x, e.y + 42, 22, 6, 0, 0, Math.PI*2); ctx.fill();
+    ctx.globalAlpha = 1;
+
+    ctx.translate(e.x, e.y + wob);
+    ctx.scale(pop, pop);
+    ctx.globalAlpha = blink ? 0.4 : 1;
+
+    /* 旋翼殘影環 */
+    ctx.save();
+    ctx.rotate(e.t * 3);
+    ctx.strokeStyle = 'rgba(214,75,63,.35)';
+    ctx.lineWidth = 6;
+    ctx.beginPath(); ctx.arc(0, 0, 32, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+
+    /* 四支機臂 + 旋翼頭 */
+    ctx.save();
+    ctx.rotate(e.t * 2);
+    for(var i = 0; i < 4; i++){
+      ctx.rotate(Math.PI/2);
+      ctx.strokeStyle = '#7a2620';
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(15, 0); ctx.lineTo(30, 0); ctx.stroke();
+      ctx.strokeStyle = 'rgba(214,75,63,.7)';
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(30, 0, 5, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+
+    /* 機身：放射狀漸層做出球體光感 */
+    var bodyG = ctx.createRadialGradient(-4, -4, 2, 0, 0, 20);
+    bodyG.addColorStop(0, '#ff8a72');
+    bodyG.addColorStop(.55, '#d64b3f');
+    bodyG.addColorStop(1, '#7a2620');
+    ctx.fillStyle = bodyG;
+    ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#3a1512'; ctx.lineWidth = 1.6; ctx.stroke();
+
+    /* 機首方向指示（朝移動方向） */
+    ctx.fillStyle = '#2a0d0a';
+    ctx.beginPath();
+    ctx.moveTo(dir*20, 0); ctx.lineTo(dir*10, -6); ctx.lineTo(dir*10, 6); ctx.closePath();
+    ctx.fill();
+
+    /* 感應眼：脈動光暈，剩餘時間少時更急促 */
+    var eyePulse = urgent ? 1.4 : (1 + Math.sin(e.t*10)*0.15);
+    if(!REDUCED){ ctx.shadowColor = '#ffb199'; ctx.shadowBlur = 10 * eyePulse; }
+    ctx.fillStyle = '#fff3ec';
+    ctx.beginPath(); ctx.arc(0, 0, 5*eyePulse, 0, Math.PI*2); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#3a1512';
+    ctx.beginPath(); ctx.arc(0, 0, 2.4, 0, Math.PI*2); ctx.fill();
+
+    /* 警報格柵（嘴）：平常＝冷靜橫紋，告急＝張開警報口，補上臉部表情二態 */
+    ctx.strokeStyle = urgent ? '#ff5c3d' : '#7a2620';
+    ctx.lineWidth = 1.6;
+    if(urgent){
+      ctx.beginPath();
+      ctx.moveTo(-7, 11); ctx.quadraticCurveTo(0, 18, 7, 11);
+      ctx.stroke();
+    } else {
+      ctx.beginPath();
+      ctx.moveTo(-6, 10); ctx.lineTo(6, 10);
+      ctx.moveTo(-5, 13); ctx.lineTo(5, 13);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = '#e7e2d2';
+    ctx.font = 'bold 10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('靶機', 0, 40);
+    ctx.restore();
+  }
+
+  function drawPad(){
+    if(!pad) return;
+    var t = pad.t || 0;
+    ctx.save();
+    ctx.translate(pad.x, pad.y);
+    var pulse = REDUCED ? 1 : 1 + Math.sin(t * 4) * 0.05;
+    ctx.strokeStyle = '#8fae52';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 8]);
+    ctx.save();
+    if(!REDUCED) ctx.rotate(t * 0.8);
+    ctx.beginPath(); ctx.arc(0, 0, pad.r * pulse, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+    ctx.setLineDash([]);
+    ctx.strokeStyle = 'rgba(143,174,82,.5)';
+    ctx.beginPath(); ctx.arc(0, 0, pad.r * 0.55, 0, Math.PI*2); ctx.stroke();
+    ctx.fillStyle = '#8fae52';
+    ctx.font = 'bold 15px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('撤離訊號', 0, -6);
+    ctx.fillText(Math.round(padProg) + '%', 0, 16);
+    ctx.restore();
+    /* 充能條 */
+    ctx.fillStyle = 'rgba(0,0,0,.5)';
+    ctx.fillRect(W/2 - 150, 62, 300, 14);
+    ctx.fillStyle = '#8fae52';
+    ctx.fillRect(W/2 - 148, 64, 296 * (padProg/100), 10);
+    ctx.strokeStyle = '#4a5536';
+    ctx.strokeRect(W/2 - 150, 62, 300, 14);
+  }
+
+  function drawCrosshair(){
+    ctx.save();
+    ctx.translate(ch.x, ch.y);
+    var kick = 1 + recoil * 0.4;      // 開火瞬間短暫放大，模擬後座回饋
+    ctx.scale(kick, kick);
+    ctx.strokeStyle = '#ff7a1a';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI*2); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-22, 0); ctx.lineTo(-8, 0);
+    ctx.moveTo(8, 0); ctx.lineTo(22, 0);
+    ctx.moveTo(0, -22); ctx.lineTo(0, -8);
+    ctx.moveTo(0, 8); ctx.lineTo(0, 22);
+    ctx.stroke();
+    if(muzzle.t > 0){
+      ctx.strokeStyle = 'rgba(255,207,92,.9)';
+      ctx.beginPath(); ctx.arc(0, 0, 14 + (0.08 - muzzle.t) * 300, 0, Math.PI*2); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function drawHUD(){
+    ctx.font = 'bold 16px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#9aa088';
+    ctx.fillText('SCORE', 24, 34);
+    ctx.fillStyle = '#e7e2d2';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText(String(score), 24, 58);
+    if(combo >= 3){
+      ctx.save();
+      var cs = 1 + comboFlashT * 0.5;
+      ctx.translate(24, 84);
+      ctx.scale(cs, cs);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffcf5c';
+      ctx.font = 'bold 15px monospace';
+      ctx.fillText('連段 ×' + combo, 0, 0);
+      ctx.restore();
+    }
+    ctx.textAlign = 'center';
+    ctx.fillStyle = phaseT <= 3 ? '#d64b3f' : '#ff7a1a';
+    ctx.font = 'bold 26px monospace';
+    ctx.fillText(Math.ceil(phaseT) + 's', W/2, 44);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#9aa088';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('STAGE ' + phase + ' · ' + PHASE_NAME[phase], W - 24, 38);
+    if(bannerT > 0){
+      ctx.globalAlpha = Math.min(1, bannerT);
+      ctx.fillStyle = 'rgba(0,0,0,.55)';
+      ctx.fillRect(0, H/2 - 52, W, 104);
+      ctx.fillStyle = '#ff7a1a';
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 34px "Microsoft JhengHei", sans-serif';
+      ctx.fillText(PHASE_NAME[phase], W/2, H/2 - 6);
+      ctx.fillStyle = '#e7e2d2';
+      ctx.font = '18px "Microsoft JhengHei", sans-serif';
+      ctx.fillText(PHASE_TIP[phase], W/2, H/2 + 30);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  function drawIdle(){
+    drawBG();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = '#ff7a1a';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText('▲ SIMULATION READY', W/2, H/2 - 106);
+    ctx.fillStyle = '#e7e2d2';
+    ctx.font = 'bold 44px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('模 擬 行 動', W/2, H/2 - 52);
+    ctx.font = '19px "Microsoft JhengHei", sans-serif';
+    ctx.fillStyle = '#9aa088';
+    ctx.fillText('三階段演練：收（搜物資）→ 打（擊靶機）→ 撤（充能撤離）', W/2, H/2 - 8);
+    ctx.fillText('部署幹員：' + OPS[curOp].name + ' · 連續命中疊連段加成，越後密度越高', W/2, H/2 + 24);
+    var t = performance.now() / 600;
+    ctx.globalAlpha = REDUCED ? 1 : 0.6 + Math.sin(t) * 0.4;
+    ctx.fillStyle = '#ff7a1a';
+    ctx.font = 'bold 24px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('點擊畫面 / 按空白鍵 開始行動', W/2, H/2 + 84);
+    ctx.globalAlpha = 1;
+    drawCrosshair();
+  }
+
+  function drawResult(){
+    drawBG();
+    ctx.textAlign = 'center';
+    ctx.fillStyle = resultData.success ? '#8fae52' : '#ff7a1a';
+    ctx.font = 'bold 15px monospace';
+    ctx.fillText(resultData.success ? '▲ EXTRACTION COMPLETE' : '▲ MISSION REPORT', W/2, H/2 - 118);
+    ctx.fillStyle = '#e7e2d2';
+    ctx.font = 'bold 40px "Microsoft JhengHei", sans-serif';
+    ctx.fillText(resultData.success ? '撤離成功！' : '演練結束', W/2, H/2 - 66);
+    ctx.font = 'bold 76px monospace';
+    ctx.fillStyle = resultData.rating === 'S' ? '#ffcf5c' : '#ff7a1a';
+    ctx.fillText(resultData.rating, W/2, H/2 + 18);
+    ctx.fillStyle = '#e7e2d2';
+    ctx.font = 'bold 24px monospace';
+    ctx.fillText('SCORE ' + score, W/2, H/2 + 58);
+    ctx.fillStyle = '#9aa088';
+    ctx.font = '16px monospace';
+    var acc = shots > 0 ? Math.round(hits / shots * 100) : 0;
+    ctx.fillText('命中率 ' + acc + '%　·　最高連段 ×' + comboMax, W/2, H/2 + 86);
+    ctx.fillText('最佳紀錄 ' + (best || '--'), W/2, H/2 + 108);
+    ctx.fillStyle = '#ff7a1a';
+    ctx.font = 'bold 20px "Microsoft JhengHei", sans-serif';
+    ctx.fillText('點擊畫面再挑戰一次！', W/2, H/2 + 142);
+  }
+
+  function draw(){
+    if(state === 'idle'){ drawIdle(); return; }
+    if(state === 'result'){ drawResult(); return; }
+    ctx.save();
+    if(shake > 0.3) ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    drawBG();
+    if(phase === 3) drawPad();
+    for(var i = 0; i < ents.length; i++){
+      var e = ents[i];
+      if(e.type === 'crate') drawCrate(e); else drawDrone(e);
+    }
+    for(var j = 0; j < parts.length; j++){
+      var p = parts[j];
+      ctx.globalAlpha = Math.max(0, p.life * 2);
+      ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    }
+    ctx.globalAlpha = 1;
+    for(var k = 0; k < floats.length; k++){
+      var f = floats[k];
+      ctx.globalAlpha = Math.max(0, f.life * 1.5);
+      ctx.fillStyle = f.color;
+      ctx.font = 'bold 20px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(f.txt, f.x, f.y);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    if(flash > 0){
+      ctx.fillStyle = 'rgba(255,255,255,' + (flash * 2) + ')';
+      ctx.fillRect(0, 0, W, H);
+    }
+    /* 時限告急：畫面級紅色脈動暈影，不只是數字變色，避免玩家盯著準星漏看時間 */
+    if(!REDUCED && phaseT <= 3 && phaseT > 0){
+      var pulse = 0.10 + Math.abs(Math.sin(performance.now() / 140)) * 0.10;
+      var grad = ctx.createRadialGradient(W/2, H/2, H*0.26, W/2, H/2, H*0.66);
+      grad.addColorStop(0, 'rgba(214,75,63,0)');
+      grad.addColorStop(1, 'rgba(214,75,63,' + pulse.toFixed(3) + ')');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, H);
+    }
+    drawHUD();
+    drawCrosshair();
+  }
+
+  var STEP = 1/60;
+  var last = performance.now(), acc = 0;
+  function frame(now){
+    requestAnimationFrame(frame);
+    acc += Math.min((now - last) / 1000, 0.1);
+    last = now;
+    while(acc >= STEP){
+      update(STEP);
+      acc -= STEP;
+    }
+    draw();
+  }
+  requestAnimationFrame(frame);
+
+  /* 供自動測試檢查狀態 */
+  window.__sim = {
+    getState: function(){ return { state: state, phase: phase, score: score, padProg: padProg }; },
+    _ents: function(){ return ents; }
+  };
+})();
+</script>
+
+</body>
+</html>
