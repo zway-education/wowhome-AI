@@ -256,7 +256,7 @@
     途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
     走廊是環狀的，被追時繞另一條路！阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了,趕快閃進轉角！
     用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br><br>
-    <b>電腦</b>：方向鍵/WASD 移動、滑鼠拖曳看方向、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
+    <b>電腦</b>：方向鍵/WASD 移動、點畫面鎖定滑鼠後移動滑鼠看方向（Esc 解鎖）、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
     <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
   </div>
   <button id="startBtn">開始遊戲</button>
@@ -738,9 +738,9 @@ const PLAYER_SPEED = 2.6;
 // 防頭暈＋實測回饋：轉向靈敏度三段可調（預設低），視角變化經臨界阻尼低通濾波（無過衝）
 const SENS_KEY = 'horrorCampusChase_turnSens';
 const SENS_LEVELS = [
-  { label: '低', turn: 1.5, drag: 0.0013 },
-  { label: '中', turn: 2.0, drag: 0.0019 },
-  { label: '高', turn: 2.6, drag: 0.0026 },
+  { label: '低', turn: 1.0, drag: 0.0013 },
+  { label: '中', turn: 1.4, drag: 0.0019 },
+  { label: '高', turn: 1.9, drag: 0.0026 },
 ];
 let sensIdx = 0;
 try { const v = parseInt(localStorage.getItem(SENS_KEY), 10); if (v >= 0 && v < SENS_LEVELS.length) sensIdx = v; } catch (e) {}
@@ -981,13 +981,28 @@ document.getElementById('hideBtn').addEventListener('pointerdown', e => { toggle
 // mouse-drag to look
 let dragging = false, lastDragX = 0;
 canvas.addEventListener('contextmenu', e => e.preventDefault());
-canvas.addEventListener('pointerdown', e => { ensureAudio(); dragging = true; lastDragX = e.clientX; e.preventDefault(); });
+canvas.addEventListener('pointerdown', e => {
+  ensureAudio();
+  // 桌機滑鼠：點畫面鎖定滑鼠，改用滑鼠移動轉向（Esc 解鎖）；觸控維持拖曳
+  if (e.pointerType === 'mouse' && !document.pointerLockElement && canvas.requestPointerLock) {
+    try { canvas.requestPointerLock(); } catch (err) {}
+    e.preventDefault();
+    return;
+  }
+  dragging = true; lastDragX = e.clientX; e.preventDefault();
+});
 window.addEventListener('pointerup', () => dragging = false);
 window.addEventListener('pointermove', e => {
+  if (document.pointerLockElement === canvas) return; // 鎖定時改由 mousemove 的 movementX 控制
   if (!dragging) return;
   const dx = e.clientX - lastDragX;
   lastDragX = e.clientX;
   player.angleTarget += dx * DRAG_SENS; // 只改目標角，實際視角在 update 中低通平滑跟上
+});
+// 滑鼠視角（pointer lock）：movementX 直接進目標角，仍走臨界阻尼低通，平滑不暈
+document.addEventListener('mousemove', e => {
+  if (document.pointerLockElement !== canvas) return;
+  player.angleTarget += e.movementX * DRAG_SENS;
 });
 
 // ---------- game state ----------
