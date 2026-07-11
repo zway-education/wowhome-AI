@@ -28,6 +28,7 @@
     text-shadow: 0 0 6px #000, 0 0 2px #7cff6b;
     letter-spacing: 1px;
     color: #6bcf5a;
+    max-width: 56vw;
   }
   #crosshair {
     position: fixed;
@@ -71,6 +72,22 @@
   }
   canvas {
     display: block;
+  }
+  #minimapWrap {
+    position: fixed;
+    top: 10px;
+    right: 60px;
+    z-index: 10;
+    border: 1px solid rgba(150,255,140,0.4);
+    background: rgba(5,5,3,0.55);
+    border-radius: 4px;
+    padding: 3px;
+  }
+  #minimap { display: block; max-width: 128px; height: auto; }
+  @media (max-width: 480px) {
+    #hud { font-size: 13px; top: 58px; }
+    #minimapWrap { top: 6px; right: 56px; }
+    #minimap { max-width: 86px; }
   }
   #touchControls {
     position: fixed;
@@ -200,6 +217,18 @@
     color: #ffb0b0;
     border: 1px solid #a00000;
     border-radius: 4px;
+    min-height: 48px;
+  }
+  #sensBtn {
+    margin-top: 12px;
+    padding: 12px 24px;
+    font-size: 16px;
+    cursor: pointer;
+    background: #0a2a10;
+    color: #b0ffc0;
+    border: 1px solid #1a6b2c;
+    border-radius: 4px;
+    min-height: 48px;
   }
   #winScreen h1 { color: #7fffb0; text-shadow: 0 0 16px #00ff66, 0 0 4px #000; }
   #winScreen #winText { color: #cdeab9; font-size: 18px; margin-bottom: 22px; }
@@ -223,13 +252,15 @@
 <div id="titleScreen">
   <h1>恐怖校園追逐</h1>
   <div class="howto">
-    找到地圖另一端的<b>逃生門</b>離開恐怖校園,途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,
-    危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
-    阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了,趕快閃進轉角！用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……<br><br>
+    深夜的學校有長走廊、教室、保健室和圖書室，找到另一端的<b>逃生門</b>離開！
+    途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
+    走廊是環狀的，被追時繞另一條路！阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了,趕快閃進轉角！
+    用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br><br>
     <b>電腦</b>：方向鍵/WASD 移動、滑鼠拖曳看方向、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
     <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
   </div>
   <button id="startBtn">開始遊戲</button>
+  <button id="sensBtn">轉向靈敏度：低</button>
 </div>
 <div id="winScreen">
   <h1>成功逃出！</h1>
@@ -237,6 +268,7 @@
   <button id="winRestartBtn">再玩一次</button>
 </div>
 <button id="muteBtn">🔊</button>
+<div id="minimapWrap"><canvas id="minimap" width="120" height="96"></canvas></div>
 <div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
 <div id="crosshair"></div>
 <div id="interactPrompt"></div>
@@ -277,6 +309,8 @@ const winTextEl = document.getElementById('winText');
 const startBtn = document.getElementById('startBtn');
 const winRestartBtn = document.getElementById('winRestartBtn');
 const muteBtn = document.getElementById('muteBtn');
+const minimapCanvas = document.getElementById('minimap');
+const mctx = minimapCanvas.getContext('2d');
 let muted = false;
 
 const BEST_TIME_KEY = 'horrorCampusChase_bestEscapeTime';
@@ -299,22 +333,65 @@ function resize() {
 }
 window.addEventListener('resize', resize);
 
-// 靜態漸層離屏烘焙（不再每幀 createGradient，維持 60fps）
-let ceilGrad = null, floorGrad = null, fogGrad = null;
+// ---------- 靜態離屏烘焙（不每幀 createGradient，維持 60fps） ----------
 const vignetteCanvas = document.createElement('canvas');
+const bakeBG = document.createElement('canvas');
+const fogCanvas = document.createElement('canvas');
+const lightCanvas = document.createElement('canvas'); // 手電筒光暈（柔和多層）
+const overlayCanvas = document.createElement('canvas'); // 光暈＋距離霧＋基礎紅暈 預合成單張
 function bakeStaticLayers() {
   const w = canvas.width, h = canvas.height;
   if (w < 2 || h < 2) return;
   const horizon = h / 2;
-  ceilGrad = ctx.createLinearGradient(0, 0, 0, horizon);
-  ceilGrad.addColorStop(0, '#131007');
-  ceilGrad.addColorStop(1, '#1e1a0e');
-  floorGrad = ctx.createLinearGradient(0, horizon, 0, h);
-  floorGrad.addColorStop(0, '#2c2411');
-  floorGrad.addColorStop(1, '#493c1a');
-  fogGrad = ctx.createLinearGradient(0, horizon - h * 0.05, 0, horizon + h * 0.4);
-  fogGrad.addColorStop(0, 'rgba(5,4,3,0)');
-  fogGrad.addColorStop(1, 'rgba(5,4,3,0.3)');
+  bakeBG.width = 4; bakeBG.height = h;
+  const bctx = bakeBG.getContext('2d');
+  let g = bctx.createLinearGradient(0, 0, 0, horizon);
+  g.addColorStop(0, '#100d06'); g.addColorStop(1, '#1e1a0e');
+  bctx.fillStyle = g; bctx.fillRect(0, 0, 4, horizon);
+  bctx.fillStyle = 'rgba(240,230,160,0.16)';
+  bctx.fillRect(0, horizon * 0.15, 4, 4);
+  let g2 = bctx.createLinearGradient(0, horizon, 0, h);
+  g2.addColorStop(0, '#262009'); g2.addColorStop(0.5, '#3a3013'); g2.addColorStop(1, '#4d3f1c');
+  bctx.fillStyle = g2; bctx.fillRect(0, horizon, 4, h - horizon);
+  // 透視地磚/天花板帶（層次細膩、含磁磚反光縫）
+  const BANDS = 22;
+  for (let i = 0; i < BANDS; i++) {
+    const t = Math.pow(i / BANDS, 1.7);
+    const tNext = Math.pow((i + 1) / BANDS, 1.7);
+    const fy0 = horizon + (h - horizon) * t;
+    const fy1 = horizon + (h - horizon) * tNext;
+    if (i % 2 === 0) { bctx.fillStyle = `rgba(15,10,3,${0.13 - i * 0.004})`; bctx.fillRect(0, fy0, 4, Math.max(1, fy1 - fy0)); }
+    else if (i > 4) { bctx.fillStyle = `rgba(255,240,190,${0.020 - i * 0.0006})`; bctx.fillRect(0, fy0, 4, 2); }
+    const cy0 = horizon - horizon * t;
+    const cy1 = horizon - horizon * tNext;
+    if (i % 2 === 0) { bctx.fillStyle = `rgba(0,0,0,${0.17 - i * 0.005})`; bctx.fillRect(0, cy1, 4, Math.max(1, cy0 - cy1)); }
+  }
+
+  fogCanvas.width = w; fogCanvas.height = h;
+  const fctx = fogCanvas.getContext('2d');
+  const fogGrad = fctx.createLinearGradient(0, horizon - h * 0.07, 0, horizon + h * 0.4);
+  fogGrad.addColorStop(0, 'rgba(6,5,4,0)');
+  fogGrad.addColorStop(0.45, 'rgba(6,5,4,0.16)');
+  fogGrad.addColorStop(1, 'rgba(6,5,4,0.3)');
+  fctx.fillStyle = fogGrad;
+  fctx.fillRect(0, 0, w, h);
+
+  lightCanvas.width = w; lightCanvas.height = h;
+  const lctx = lightCanvas.getContext('2d');
+  const lx = w / 2, ly = h * 0.58;
+  let lg = lctx.createRadialGradient(lx, ly, 0, lx, ly, Math.max(w, h) * 0.62);
+  lg.addColorStop(0, 'rgba(255,226,160,0.16)');
+  lg.addColorStop(0.35, 'rgba(255,214,140,0.08)');
+  lg.addColorStop(0.7, 'rgba(255,200,120,0.025)');
+  lg.addColorStop(1, 'rgba(255,200,120,0)');
+  lctx.fillStyle = lg;
+  lctx.fillRect(0, 0, w, h);
+  lg = lctx.createRadialGradient(lx, ly, 0, lx, ly, Math.min(w, h) * 0.22);
+  lg.addColorStop(0, 'rgba(255,238,190,0.10)');
+  lg.addColorStop(1, 'rgba(255,238,190,0)');
+  lctx.fillStyle = lg;
+  lctx.fillRect(0, 0, w, h);
+
   vignetteCanvas.width = w; vignetteCanvas.height = h;
   const vctx = vignetteCanvas.getContext('2d');
   const vign = vctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.75);
@@ -322,111 +399,330 @@ function bakeStaticLayers() {
   vign.addColorStop(1, 'rgba(150,0,0,1)');
   vctx.fillStyle = vign;
   vctx.fillRect(0, 0, w, h);
-}
-resize();
 
-// ---------- maze (perfect maze via DFS backtracker) ----------
-const MAZE_COLS = 22, MAZE_ROWS = 18;
-let maze;
-
-function buildMaze() {
-  maze = [];
-  for (let r = 0; r < MAZE_ROWS; r++) {
-    const row = [];
-    for (let c = 0; c < MAZE_COLS; c++) row.push({ N: true, E: true, S: true, W: true, visited: false });
-    maze.push(row);
-  }
-  const stack = [[0, 0]];
-  maze[0][0].visited = true;
-  while (stack.length) {
-    const [r, c] = stack[stack.length - 1];
-    const neighbors = [];
-    if (r > 0 && !maze[r - 1][c].visited) neighbors.push(['N', r - 1, c]);
-    if (r < MAZE_ROWS - 1 && !maze[r + 1][c].visited) neighbors.push(['S', r + 1, c]);
-    if (c > 0 && !maze[r][c - 1].visited) neighbors.push(['W', r, c - 1]);
-    if (c < MAZE_COLS - 1 && !maze[r][c + 1].visited) neighbors.push(['E', r, c + 1]);
-    if (!neighbors.length) { stack.pop(); continue; }
-    const [dir, nr, nc] = neighbors[Math.floor(Math.random() * neighbors.length)];
-    const opposite = { N: 'S', S: 'N', E: 'W', W: 'E' };
-    maze[r][c][dir] = false;
-    maze[nr][nc][opposite[dir]] = false;
-    maze[nr][nc].visited = true;
-    stack.push([nr, nc]);
-  }
+  // 預先合成「光暈＋距離霧＋基礎紅暈」：每幀只需 1 次全螢幕混合（維持 60fps）
+  overlayCanvas.width = w; overlayCanvas.height = h;
+  const octx = overlayCanvas.getContext('2d');
+  octx.drawImage(lightCanvas, 0, 0);
+  octx.drawImage(fogCanvas, 0, 0);
+  octx.globalAlpha = 0.12;
+  octx.drawImage(vignetteCanvas, 0, 0);
+  octx.globalAlpha = 1;
 }
 
-// grid-doubled boolean solid map for raycasting: (2*MAZE_ROWS+1) x (2*MAZE_COLS+1)
-let solid, gridW, gridH;
-// per solid-cell "grime" seed for wall texture variety
-let wallSeed;
-
-function buildSolidGrid() {
-  gridW = MAZE_COLS * 2 + 1;
-  gridH = MAZE_ROWS * 2 + 1;
-  solid = Array.from({ length: gridH }, () => new Array(gridW).fill(true));
-  wallSeed = Array.from({ length: gridH }, () => new Array(gridW).fill(0).map(() => Math.random()));
-  for (let r = 0; r < MAZE_ROWS; r++) {
-    for (let c = 0; c < MAZE_COLS; c++) {
-      const gy = 2 * r + 1, gx = 2 * c + 1;
-      solid[gy][gx] = false;
-      const cell = maze[r][c];
-      if (!cell.N) solid[gy - 1][gx] = false;
-      if (!cell.S) solid[gy + 1][gx] = false;
-      if (!cell.W) solid[gy][gx - 1] = false;
-      if (!cell.E) solid[gy][gx + 1] = false;
-    }
-  }
+// ---------- 學校平面圖產生器（走廊環＋教室/保健室/圖書室，保證連通、無死路挫折） ----------
+function mulberry32(a) {
+  return function () {
+    a |= 0; a = a + 0x6D2B79F5 | 0;
+    let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
 }
+const WT_BRICK = 0, WT_TILE = 1, WT_LOCKER = 2, WT_BULLETIN = 3, WT_WINDOW = 4, WT_BOARD = 5, WT_SHELF = 6;
+const ROOM_WALL = { classroom: WT_BOARD, lab: WT_TILE, nurse: WT_TILE, library: WT_SHELF, storage: WT_LOCKER };
+const SCHOOL = { w: 32, h: 22, vx: [2, 15, 28], hy: [2, 18], roomTypes: ['classroom', 'nurse', 'classroom', 'library'] };
 
+let solid, wallType, gridW, gridH, wallSeed;
+let decor = [];
+let rooms = [];
+let cabinets = [];
+let genInfo = null;
+
+function inBounds(x, y) { return x >= 0 && y >= 0 && x < gridW && y < gridH; }
 function isSolid(x, y) {
   const gx = Math.floor(x), gy = Math.floor(y);
-  if (gx < 0 || gy < 0 || gx >= gridW || gy >= gridH) return true;
+  if (!inBounds(gx, gy)) return true;
   return solid[gy][gx];
 }
-
-function cellCenter(r, c) { return { x: 2 * c + 1.5, y: 2 * r + 1.5 }; }
-
-// maze connectivity graph (for BFS pathfinding of chaser), operates on MAZE_ROWS x MAZE_COLS cells
-function connected(r1, c1, r2, c2) {
-  if (r2 === r1 - 1 && c2 === c1) return !maze[r1][c1].N;
-  if (r2 === r1 + 1 && c2 === c1) return !maze[r1][c1].S;
-  if (c2 === c1 - 1 && r2 === r1) return !maze[r1][c1].W;
-  if (c2 === c1 + 1 && r2 === r1) return !maze[r1][c1].E;
-  return false;
+function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+function worldToTile(x, y) {
+  return { x: clamp(Math.floor(x), 0, gridW - 1), y: clamp(Math.floor(y), 0, gridH - 1) };
 }
-function bfsPath(startR, startC, goalR, goalC) {
-  const visited = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(false));
-  const prev = Array.from({ length: MAZE_ROWS }, () => new Array(MAZE_COLS).fill(null));
-  const queue = [[startR, startC]];
-  visited[startR][startC] = true;
-  while (queue.length) {
-    const [r, c] = queue.shift();
-    if (r === goalR && c === goalC) break;
-    const dirs = [[r - 1, c], [r + 1, c], [r, c - 1], [r, c + 1]];
-    for (const [nr, nc] of dirs) {
-      if (nr < 0 || nr >= MAZE_ROWS || nc < 0 || nc >= MAZE_COLS) continue;
-      if (visited[nr][nc]) continue;
-      if (!connected(r, c, nr, nc)) continue;
-      visited[nr][nc] = true;
-      prev[nr][nc] = [r, c];
-      queue.push([nr, nc]);
+function tileCenter(tx, ty) { return { x: tx + 0.5, y: ty + 0.5 }; }
+
+function tileDistField(sx, sy) {
+  const dist = new Int32Array(gridW * gridH).fill(-1);
+  if (solid[sy][sx]) return dist;
+  const qx = [sx], qy = [sy];
+  dist[sy * gridW + sx] = 0;
+  let head = 0;
+  while (head < qx.length) {
+    const x = qx[head], y = qy[head]; head++;
+    const d = dist[y * gridW + x];
+    const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+    for (const [nx, ny] of nb) {
+      if (!inBounds(nx, ny) || solid[ny][nx]) continue;
+      const i = ny * gridW + nx;
+      if (dist[i] !== -1) continue;
+      dist[i] = d + 1;
+      qx.push(nx); qy.push(ny);
     }
   }
-  if (!visited[goalR][goalC]) return null;
-  const path = [[goalR, goalC]];
-  let cur = [goalR, goalC];
-  while (!(cur[0] === startR && cur[1] === startC)) { cur = prev[cur[0]][cur[1]]; path.push(cur); }
+  return dist;
+}
+function bfsPath(sx, sy, tx, ty) {
+  if (!inBounds(sx, sy) || !inBounds(tx, ty) || solid[sy][sx] || solid[ty][tx]) return null;
+  const prev = new Int32Array(gridW * gridH).fill(-2);
+  const qx = [sx], qy = [sy];
+  prev[sy * gridW + sx] = -1;
+  let head = 0, found = (sx === tx && sy === ty);
+  while (head < qx.length && !found) {
+    const x = qx[head], y = qy[head]; head++;
+    const nb = [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]];
+    for (const [nx, ny] of nb) {
+      if (!inBounds(nx, ny) || solid[ny][nx]) continue;
+      const i = ny * gridW + nx;
+      if (prev[i] !== -2) continue;
+      prev[i] = y * gridW + x;
+      if (nx === tx && ny === ty) { found = true; break; }
+      qx.push(nx); qy.push(ny);
+    }
+  }
+  if (!found) return null;
+  const path = [];
+  let cur = ty * gridW + tx;
+  while (cur !== -1) { path.push([cur % gridW, Math.floor(cur / gridW)]); cur = prev[cur]; }
   path.reverse();
   return path;
 }
-function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
-function worldToCell(x, y) {
-  return { r: clamp(Math.floor((y - 1) / 2), 0, MAZE_ROWS - 1), c: clamp(Math.floor((x - 1) / 2), 0, MAZE_COLS - 1) };
+
+function genSchool(cfg, seed) {
+  const rnd = mulberry32(seed);
+  gridW = cfg.w; gridH = cfg.h;
+  solid = Array.from({ length: gridH }, () => new Array(gridW).fill(true));
+  wallType = Array.from({ length: gridH }, () => new Array(gridW).fill(WT_BRICK));
+  wallSeed = Array.from({ length: gridH }, () => Array.from({ length: gridW }, () => rnd()));
+  decor = []; rooms = []; cabinets = [];
+  const open = (x, y) => { if (x > 0 && y > 0 && x < gridW - 1 && y < gridH - 1) solid[y][x] = false; };
+
+  // 走廊環（寬2格，橫豎互通 → 2~3 條逃脫路線）
+  const vxs = cfg.vx, hys = cfg.hy;
+  for (const cx of vxs) for (let y = 2; y < gridH - 2; y++) { open(cx, y); open(cx + 1, y); }
+  for (const cy of hys) for (let x = 2; x < gridW - 2; x++) { open(x, cy); open(x, cy + 1); }
+
+  // 房間（教室/保健室/圖書室），門開向走廊
+  let ti = 0;
+  for (let i = 0; i < vxs.length - 1; i++) {
+    for (let j = 0; j < hys.length - 1; j++) {
+      const xa = vxs[i] + 3, xb = vxs[i + 1] - 2;
+      const ya = hys[j] + 3, yb = hys[j + 1] - 2;
+      if (xb - xa < 2 || yb - ya < 2) continue;
+      const bw = xb - xa + 1, bh = yb - ya + 1;
+      const nCols = Math.max(1, Math.round(bw / 6));
+      const nRows = Math.min(2, Math.max(1, Math.round(bh / 6)));
+      for (let rr = 0; rr < nRows; rr++) {
+        for (let rc = 0; rc < nCols; rc++) {
+          const rxa = xa + Math.floor(rc * (bw + 1) / nCols);
+          const rxb = xa + Math.floor((rc + 1) * (bw + 1) / nCols) - 2;
+          const rya = ya + Math.floor(rr * (bh + 1) / nRows);
+          const ryb = ya + Math.floor((rr + 1) * (bh + 1) / nRows) - 2;
+          if (rxb - rxa < 1 || ryb - rya < 1) continue;
+          for (let y = rya; y <= ryb; y++) for (let x = rxa; x <= rxb; x++) open(x, y);
+          const type = cfg.roomTypes[ti % cfg.roomTypes.length]; ti++;
+          const room = { xa: rxa, xb: rxb, ya: rya, yb: ryb, type,
+            cx: (rxa + rxb) / 2 + 0.5, cy: (rya + ryb) / 2 + 0.5 };
+          rooms.push(room);
+          const doorAt = (wy) => {
+            const dx = rxa + Math.floor(rnd() * Math.max(1, rxb - rxa));
+            open(dx, wy); open(Math.min(dx + 1, rxb), wy);
+          };
+          if (rr === 0) {
+            doorAt(rya - 1);
+            if (nRows === 1 && (rnd() < 0.6 || nCols === 1)) doorAt(ryb + 1);
+          }
+          if (nRows > 1 && rr === nRows - 1) doorAt(ryb + 1);
+          if (nRows === 2 && rr === 1 && rnd() < 0.4) {
+            const dx = rxa + 1 + Math.floor(rnd() * Math.max(1, rxb - rxa - 1));
+            open(dx, rya - 1);
+          }
+          const wt = ROOM_WALL[type];
+          for (let y = rya - 1; y <= ryb + 1; y++) for (let x = rxa - 1; x <= rxb + 1; x++) {
+            if (inBounds(x, y) && solid[y][x]) wallType[y][x] = wt;
+          }
+          if (type === 'classroom' || type === 'lab') {
+            let n = 0;
+            for (let y = rya + 1; y <= ryb - 1 && n < 8; y += 2)
+              for (let x = rxa + 1; x <= rxb - 1 && n < 8; x += 2) { decor.push({ x: x + 0.5, y: y + 0.5, kind: 'desk' }); n++; }
+            cabinets.push({ x: rxa + 0.5, y: rya + 0.5 });
+          } else if (type === 'library') {
+            for (let x = rxa + 1; x <= rxb - 1; x += 2) decor.push({ x: x + 0.5, y: room.cy, kind: 'shelf' });
+            cabinets.push({ x: rxa + 0.5, y: ryb + 0.5 }, { x: rxb + 0.5, y: rya + 0.5 });
+          } else if (type === 'nurse') {
+            decor.push({ x: room.cx, y: room.cy, kind: 'bed' });
+            cabinets.push({ x: rxa + 0.5, y: rya + 0.5 });
+          } else {
+            decor.push({ x: room.cx, y: room.cy, kind: 'desk' });
+            cabinets.push({ x: rxa + 0.5, y: rya + 0.5 }, { x: rxb + 0.5, y: ryb + 0.5 });
+          }
+        }
+      }
+    }
+  }
+
+  // 走廊牆面：成排置物櫃/佈告欄；外牆夜窗
+  for (let y = 1; y < gridH - 1; y++) for (let x = 1; x < gridW - 1; x++) {
+    if (!solid[y][x] || wallType[y][x] !== WT_BRICK) continue;
+    const nearOpen = !isSolid(x - 1, y) || !isSolid(x + 1, y) || !isSolid(x, y - 1) || !isSolid(x, y + 1);
+    if (!nearOpen) continue;
+    const s = wallSeed[y][x];
+    if (((x + y * 3) % 9) < 3 && s < 0.7) wallType[y][x] = WT_LOCKER;
+    else if (s > 0.88) wallType[y][x] = WT_BULLETIN;
+  }
+  for (let x = 1; x < gridW - 1; x++) {
+    if (!solid[1][x] && ((x % 5) < 3)) wallType[0][x] = WT_WINDOW;
+    if (!solid[gridH - 2][x] && ((x % 5) < 3)) wallType[gridH - 1][x] = WT_WINDOW;
+  }
+  for (let y = 1; y < gridH - 1; y++) {
+    if (!solid[y][1] && ((y % 5) < 3)) wallType[y][0] = WT_WINDOW;
+    if (!solid[y][gridW - 2] && ((y % 5) < 3)) wallType[y][gridW - 1] = WT_WINDOW;
+  }
+  for (const cx of vxs) for (let y = 5; y < gridH - 4; y += 6) {
+    if (!solid[y][cx] && Math.hypot(cx - 3, y - 3) > 4) cabinets.push({ x: cx + 0.5, y: y + 0.5 });
+  }
+  for (const cy of hys) for (let x = 6; x < gridW - 4; x += 7) {
+    if (!solid[cy][x] && Math.hypot(x - 3, cy - 3) > 4) cabinets.push({ x: x + 0.5, y: cy + 0.5 });
+  }
+
+  // 出生點（左上）/ 阿嬤（左下錯開）/ 逃生門（右下對角）/ 球棒（中途房間）
+  const spawnT = { x: 3, y: 3 };
+  const exitT = { x: gridW - 3, y: gridH - 3 };
+  const grannyT = { x: 3, y: gridH - 3 };
+  const carveTo = (tx, ty) => {
+    for (let x = Math.min(3, tx); x <= Math.max(3, tx); x++) open(x, 3);
+    for (let y = Math.min(3, ty); y <= Math.max(3, ty); y++) open(tx, y);
+  };
+  let dist = tileDistField(spawnT.x, spawnT.y);
+  if (dist[exitT.y * gridW + exitT.x] < 0) { carveTo(exitT.x, exitT.y); dist = tileDistField(spawnT.x, spawnT.y); }
+  if (dist[grannyT.y * gridW + grannyT.x] < 0) { carveTo(grannyT.x, grannyT.y); dist = tileDistField(spawnT.x, spawnT.y); }
+  const exitD = dist[exitT.y * gridW + exitT.x];
+  let batRoom = null, bestDiff = Infinity;
+  for (const r of rooms) {
+    const t = worldToTile(r.cx, r.cy);
+    const d = dist[t.y * gridW + t.x];
+    if (d < 0) continue;
+    const diff = Math.abs(d - exitD * 0.5);
+    if (diff < bestDiff) { bestDiff = diff; batRoom = r; }
+  }
+  genInfo = {
+    spawn: tileCenter(spawnT.x, spawnT.y),
+    granny: tileCenter(grannyT.x, grannyT.y),
+    exit: tileCenter(exitT.x, exitT.y),
+    batPos: batRoom ? { x: batRoom.cx, y: batRoom.cy } : tileCenter(gridW - 3, 3),
+  };
 }
+
+// ---------- 程序化牆面紋理圖集（離屏烘焙一次，逐列取樣；對比溫和防閃爍） ----------
+// 並預先烘焙 25 階「距離霧暗度」列（渲染時每列只需 1 次 drawImage，維持 60fps）
+const TEXW = 128, TEXH = 128, N_TEX = 7, N_SHADE = 25;
+const atlas = document.createElement('canvas');
+function bakeTextures() {
+  // 先以 64px 手繪母版，再平滑放大 2 倍進圖集：運行時牆列用最近取樣（軟體渲染快 40%）
+  // 仍保有柔和的紋理邊緣（放大時已預先平滑），對比溫和不閃爍
+  const TW = 64, TH = 64;
+  const tmp = document.createElement('canvas');
+  tmp.width = TW * N_TEX; tmp.height = TH;
+  const a = tmp.getContext('2d');
+  const rnd = mulberry32(20260711);
+  const base = (i, color) => { a.fillStyle = color; a.fillRect(i * TW, 0, TW, TH); };
+  // 磚牆
+  base(WT_BRICK, '#84754f');
+  for (let y = 0; y < TH; y += 8) {
+    a.fillStyle = 'rgba(30,22,10,0.30)';
+    a.fillRect(WT_BRICK * TW, y, TW, 1);
+    const off = (y / 8) % 2 === 0 ? 0 : 8;
+    for (let x = off; x < TW; x += 16) {
+      a.fillRect(WT_BRICK * TW + x, y, 1, 8);
+      if (rnd() < 0.3) { a.fillStyle = 'rgba(0,0,0,0.07)'; a.fillRect(WT_BRICK * TW + x + 1, y + 1, 15, 7); a.fillStyle = 'rgba(30,22,10,0.30)'; }
+    }
+  }
+  a.fillStyle = 'rgba(255,240,200,0.05)'; a.fillRect(WT_BRICK * TW, 0, TW, 3);
+  // 瓷磚腰牆
+  base(WT_TILE, '#877a5c');
+  a.fillStyle = '#7e8a80'; a.fillRect(WT_TILE * TW, 30, TW, TH - 30);
+  a.fillStyle = 'rgba(230,240,235,0.10)';
+  for (let y = 30; y < TH; y += 8) for (let x = 0; x < TW; x += 8) a.fillRect(WT_TILE * TW + x + 1, y + 1, 6, 6);
+  a.fillStyle = 'rgba(20,25,20,0.35)'; a.fillRect(WT_TILE * TW, 29, TW, 2);
+  a.fillStyle = 'rgba(15,18,15,0.25)';
+  for (let y = 30; y < TH; y += 8) a.fillRect(WT_TILE * TW, y, TW, 1);
+  for (let x = 0; x < TW; x += 8) a.fillRect(WT_TILE * TW + x, 30, 1, TH - 30);
+  // 置物櫃牆
+  base(WT_LOCKER, '#4c5f47');
+  a.fillStyle = 'rgba(10,16,10,0.45)'; a.fillRect(WT_LOCKER * TW, 0, TW, 4); a.fillRect(WT_LOCKER * TW, TH - 5, TW, 5);
+  for (let x = 0; x < TW; x += 16) {
+    a.fillStyle = 'rgba(10,16,10,0.5)'; a.fillRect(WT_LOCKER * TW + x, 4, 2, TH - 9);
+    a.fillStyle = 'rgba(210,230,200,0.10)'; a.fillRect(WT_LOCKER * TW + x + 3, 6, 2, TH - 14);
+    a.fillStyle = 'rgba(10,16,10,0.4)';
+    for (let vy = 12; vy <= 22; vy += 5) a.fillRect(WT_LOCKER * TW + x + 5, vy, 8, 2);
+    a.fillStyle = 'rgba(220,220,190,0.5)'; a.fillRect(WT_LOCKER * TW + x + 12, 34, 2, 5);
+  }
+  // 佈告欄
+  base(WT_BULLETIN, '#84754f');
+  a.fillStyle = '#6d5230'; a.fillRect(WT_BULLETIN * TW + 4, 10, TW - 8, 44);
+  a.fillStyle = 'rgba(30,20,8,0.6)'; a.fillRect(WT_BULLETIN * TW + 4, 10, TW - 8, 2); a.fillRect(WT_BULLETIN * TW + 4, 52, TW - 8, 2);
+  a.fillRect(WT_BULLETIN * TW + 4, 10, 2, 44); a.fillRect(WT_BULLETIN * TW + TW - 6, 10, 2, 44);
+  const paperCols = ['#cfc7a4', '#c2c9b0', '#d1beA0', '#c9c2ab'];
+  for (let p = 0; p < 5; p++) {
+    const px = 8 + rnd() * (TW - 26), py = 14 + rnd() * 26;
+    a.fillStyle = paperCols[p % paperCols.length];
+    a.fillRect(WT_BULLETIN * TW + px, py, 12, 14);
+    a.fillStyle = 'rgba(60,50,30,0.5)';
+    for (let l = 0; l < 3; l++) a.fillRect(WT_BULLETIN * TW + px + 2, py + 3 + l * 4, 8, 1);
+    a.fillStyle = '#a33'; a.fillRect(WT_BULLETIN * TW + px + 5, py - 1, 2, 2);
+  }
+  // 夜窗
+  base(WT_WINDOW, '#6b6045');
+  a.fillStyle = '#3a3226'; a.fillRect(WT_WINDOW * TW + 6, 8, TW - 12, 48);
+  const ng = a.createLinearGradient(0, 8, 0, 56);
+  ng.addColorStop(0, '#16202e'); ng.addColorStop(0.55, '#0d141f'); ng.addColorStop(1, '#0a0e14');
+  a.fillStyle = ng; a.fillRect(WT_WINDOW * TW + 9, 11, TW - 18, 42);
+  a.fillStyle = 'rgba(150,180,220,0.14)'; a.fillRect(WT_WINDOW * TW + 12, 13, 8, 18);
+  a.fillStyle = 'rgba(200,210,230,0.5)'; a.beginPath(); a.arc(WT_WINDOW * TW + 44, 18, 3, 0, Math.PI * 2); a.fill();
+  a.fillStyle = '#3a3226';
+  a.fillRect(WT_WINDOW * TW + 6, 30, TW - 12, 3);
+  a.fillRect(WT_WINDOW * TW + TW / 2 - 1, 8, 3, 48);
+  // 黑板牆
+  base(WT_BOARD, '#84754f');
+  a.fillStyle = '#5a4326'; a.fillRect(WT_BOARD * TW + 3, 12, TW - 6, 42);
+  a.fillStyle = '#24382c'; a.fillRect(WT_BOARD * TW + 6, 15, TW - 12, 34);
+  a.fillStyle = 'rgba(225,235,215,0.12)';
+  for (let l = 0; l < 4; l++) a.fillRect(WT_BOARD * TW + 9 + rnd() * 6, 19 + l * 7, 16 + rnd() * 24, 1.5);
+  a.fillStyle = 'rgba(225,235,215,0.25)'; a.fillRect(WT_BOARD * TW + 10, 50, 8, 2);
+  a.fillStyle = 'rgba(255,255,255,0.35)'; a.fillRect(WT_BOARD * TW + 24, 50, 5, 2);
+  // 書櫃牆
+  base(WT_SHELF, '#54402a');
+  const bookCols = ['#6d3c34', '#3d5546', '#575434', '#44475e', '#5e4a34', '#513f4e'];
+  for (let s = 0; s < 3; s++) {
+    const sy = 4 + s * 20;
+    a.fillStyle = 'rgba(20,12,4,0.55)'; a.fillRect(WT_SHELF * TW, sy + 16, TW, 4);
+    let x = 2;
+    while (x < TW - 3) {
+      const bw = 3 + Math.floor(rnd() * 4);
+      a.fillStyle = bookCols[Math.floor(rnd() * bookCols.length)];
+      const bh = 13 + Math.floor(rnd() * 3);
+      a.fillRect(WT_SHELF * TW + x, sy + 16 - bh, bw, bh);
+      a.fillStyle = 'rgba(255,240,200,0.10)';
+      a.fillRect(WT_SHELF * TW + x, sy + 16 - bh + 2, bw, 1);
+      x += bw + 1;
+    }
+  }
+  a.fillStyle = 'rgba(255,240,200,0.04)'; a.fillRect(WT_SHELF * TW, 0, TW, TH);
+  atlas.width = TEXW * N_TEX; atlas.height = TEXH * N_SHADE;
+  const g = atlas.getContext('2d');
+  g.imageSmoothingEnabled = true;
+  g.drawImage(tmp, 0, 0, TW * N_TEX, TH, 0, 0, TEXW * N_TEX, TEXH);
+  // 距離霧暗度列：第 s 列 = 原紋理覆蓋 s/(N_SHADE-1) 的暗色
+  for (let s = 1; s < N_SHADE; s++) {
+    g.drawImage(atlas, 0, 0, TEXW * N_TEX, TEXH, 0, s * TEXH, TEXW * N_TEX, TEXH);
+    g.fillStyle = `rgba(6,5,8,${(s / (N_SHADE - 1)).toFixed(3)})`;
+    g.fillRect(0, s * TEXH, TEXW * N_TEX, TEXH);
+  }
+}
+bakeTextures();
 
 // ---------- entities ----------
 const player = { x: 0, y: 0, angle: 0, angleTarget: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: Infinity };
-const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, charge: 'none', chargeT: 0, dashDx: 0, dashDy: 0, nextChargeOk: 0, confusedUntil: 0, angryUntil: 0 };
+const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, pathTimer: 0, cachedPath: null, charge: 'none', chargeT: 0, dashDx: 0, dashDy: 0, nextChargeOk: 0, confusedUntil: 0, angryUntil: 0 };
 const SEARCH_RANGE = 1.4;
 const weapon = { x: 0, y: 0, collected: false };
 const exit = { x: 0, y: 0 };
@@ -439,41 +735,38 @@ let swingFlashUntil = -Infinity;
 let shakeMag = 0; // 只在被抓/擊中瞬間短促出現，快速衰減（防頭暈）
 
 const PLAYER_SPEED = 2.6;
-// 防頭暈：降低轉向速度與拖曳靈敏度，視角變化經臨界阻尼低通濾波（無過衝）
-const TURN_SPEED = 2.1;
-const DRAG_SENS = 0.0022;
+// 防頭暈＋實測回饋：轉向靈敏度三段可調（預設低），視角變化經臨界阻尼低通濾波（無過衝）
+const SENS_KEY = 'horrorCampusChase_turnSens';
+const SENS_LEVELS = [
+  { label: '低', turn: 1.5, drag: 0.0013 },
+  { label: '中', turn: 2.0, drag: 0.0019 },
+  { label: '高', turn: 2.6, drag: 0.0026 },
+];
+let sensIdx = 0;
+try { const v = parseInt(localStorage.getItem(SENS_KEY), 10); if (v >= 0 && v < SENS_LEVELS.length) sensIdx = v; } catch (e) {}
+let TURN_SPEED = SENS_LEVELS[sensIdx].turn;
+let DRAG_SENS = SENS_LEVELS[sensIdx].drag;
+const sensBtn = document.getElementById('sensBtn');
+function applySens() {
+  TURN_SPEED = SENS_LEVELS[sensIdx].turn;
+  DRAG_SENS = SENS_LEVELS[sensIdx].drag;
+  sensBtn.textContent = '轉向靈敏度：' + SENS_LEVELS[sensIdx].label;
+  try { localStorage.setItem(SENS_KEY, String(sensIdx)); } catch (e) {}
+}
+sensBtn.addEventListener('pointerdown', e => {
+  e.preventDefault();
+  e.stopPropagation();
+  sensIdx = (sensIdx + 1) % SENS_LEVELS.length;
+  applySens();
+});
+applySens();
 const LOOK_DAMP = 12;
 let turnVel = 0; // 鍵盤轉向角速度（平滑起步/停止）
 let moveVel = 0; // 前後移動比例（平緩加減速）
 const VIEW_DIST = 9;
 const JUMP_DURATION = 0.5;
 const HIDE_RANGE = 1.0;
-let cabinets = [];
 let nearCabinet = null;
-
-function placeCabinets() {
-  cabinets = [];
-  const wc = { r: Math.floor(MAZE_ROWS / 2), c: Math.floor(MAZE_COLS / 2) };
-  const candidates = [];
-  for (let r = 0; r < MAZE_ROWS; r++) {
-    for (let c = 0; c < MAZE_COLS; c++) {
-      if (r === 0 && c === 0) continue;
-      if (r === MAZE_ROWS - 1 && c === MAZE_COLS - 1) continue;
-      if (r === 0 && c === MAZE_COLS - 1) continue;
-      if (r === wc.r && c === wc.c) continue;
-      candidates.push([r, c]);
-    }
-  }
-  for (let i = candidates.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
-  }
-  const count = Math.min(100, candidates.length);
-  for (let i = 0; i < count; i++) {
-    const center = cellCenter(candidates[i][0], candidates[i][1]);
-    cabinets.push({ x: center.x, y: center.y });
-  }
-}
 
 function moveWithCollision(entity, nx, ny) {
   if (!isSolid(nx, entity.y)) entity.x = nx;
@@ -496,7 +789,7 @@ function toggleHide() {
   } else if (nearCabinet) {
     player.hiding = true;
     player.hidingCabinet = nearCabinet;
-    player.lastKnownCell = worldToCell(player.x, player.y);
+    player.lastKnownCell = worldToTile(player.x, player.y);
     hideOverlayEl.style.display = 'flex';
   }
 }
@@ -700,12 +993,56 @@ window.addEventListener('pointermove', e => {
 // ---------- game state ----------
 let running = true, startTime = null, elapsed = 0, lastFrameTime = null;
 
+// ---------- 小地圖：已探索區域漸顯，玩家/逃生門標記，阿嬤不顯示（保持緊張感） ----------
+const MM_SCALE = 4;
+let exploredT = null;
+function markExplored() {
+  const pt = worldToTile(player.x, player.y);
+  const R = 3;
+  for (let dy = -R; dy <= R; dy++) for (let dx = -R; dx <= R; dx++) {
+    const x = pt.x + dx, y = pt.y + dy;
+    if (!inBounds(x, y)) continue;
+    const i = y * gridW + x;
+    if (exploredT[i] === 0) exploredT[i] = Math.max(elapsed, 0.001);
+  }
+}
+const MM_WALL_COLS = ['#5c5340', '#5d6a60', '#3f5240', '#6b563a', '#3c4658', '#3f5747', '#5a452a'];
+function drawMinimap() {
+  const w = gridW * MM_SCALE, h = gridH * MM_SCALE;
+  if (minimapCanvas.width !== w) { minimapCanvas.width = w; minimapCanvas.height = h; }
+  mctx.fillStyle = 'rgba(8,10,6,0.92)';
+  mctx.fillRect(0, 0, w, h);
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const t0 = exploredT[y * gridW + x];
+      if (t0 === 0) continue;
+      const alpha = Math.min(1, (elapsed - t0) / 0.6);
+      mctx.globalAlpha = alpha;
+      if (solid[y][x]) { mctx.fillStyle = MM_WALL_COLS[wallType[y][x]] || MM_WALL_COLS[0]; }
+      else { mctx.fillStyle = '#1c2418'; }
+      mctx.fillRect(x * MM_SCALE, y * MM_SCALE, MM_SCALE, MM_SCALE);
+    }
+  }
+  mctx.globalAlpha = 1;
+  const pulse = 0.7 + 0.3 * Math.sin(elapsed * 3);
+  const et = worldToTile(exit.x, exit.y);
+  mctx.fillStyle = `rgba(127,255,176,${pulse})`;
+  mctx.fillRect(et.x * MM_SCALE - 1, et.y * MM_SCALE - 1, MM_SCALE + 2, MM_SCALE + 2);
+  mctx.save();
+  mctx.translate(player.x * MM_SCALE, player.y * MM_SCALE);
+  mctx.rotate(player.angle);
+  mctx.fillStyle = '#fff';
+  mctx.beginPath();
+  mctx.moveTo(MM_SCALE * 1.1, 0); mctx.lineTo(-MM_SCALE * 0.8, -MM_SCALE * 0.7); mctx.lineTo(-MM_SCALE * 0.8, MM_SCALE * 0.7);
+  mctx.closePath(); mctx.fill();
+  mctx.restore();
+}
+
 function reset() {
-  buildMaze();
-  buildSolidGrid();
-  placeCabinets();
-  const start = cellCenter(0, 0);
-  player.x = start.x; player.y = start.y; player.angle = 0;
+  genSchool(SCHOOL, Math.floor(Math.random() * 2147483647));
+  exploredT = new Float32Array(gridW * gridH);
+  player.x = genInfo.spawn.x; player.y = genInfo.spawn.y;
+  player.angle = 0; // 出生在左上走廊交叉口，面向東側長走廊
   player.angleTarget = 0;
   turnVel = 0; moveVel = 0;
   acc = 0;
@@ -713,12 +1050,13 @@ function reset() {
   player.jumpT = -Infinity;
   hideOverlayEl.style.display = 'none';
 
-  const chaserStart = cellCenter(MAZE_ROWS - 1, MAZE_COLS - 1);
-  chaser.x = chaserStart.x; chaser.y = chaserStart.y;
+  chaser.x = genInfo.granny.x; chaser.y = genInfo.granny.y;
   chaser.stunnedUntil = 0;
   chaser.speed = PLAYER_SPEED / 2;
   chaser.searching = false;
   chaser.searchCabinet = null;
+  chaser.pathTimer = 0;
+  chaser.cachedPath = null;
   chaser.charge = 'none';
   chaser.chargeT = 0;
   chaser.nextChargeOk = 0;
@@ -726,15 +1064,13 @@ function reset() {
   chaser.angryUntil = 0;
   shakeMag = 0;
 
-  const wc = cellCenter(Math.floor(MAZE_ROWS / 2), Math.floor(MAZE_COLS / 2));
-  weapon.x = wc.x; weapon.y = wc.y; weapon.collected = false;
+  weapon.x = genInfo.batPos.x; weapon.y = genInfo.batPos.y; weapon.collected = false;
   hasWeapon = false;
   lastSwingTime = -Infinity;
   swingFlashUntil = -Infinity;
   weaponStatusEl.textContent = '尚未拿到球棒';
 
-  const exitCenter = cellCenter(0, MAZE_COLS - 1);
-  exit.x = exitCenter.x; exit.y = exitCenter.y;
+  exit.x = genInfo.exit.x; exit.y = genInfo.exit.y;
 
   running = true;
   dying = false;
@@ -780,6 +1116,8 @@ function update(dt) {
   // 相機臨界阻尼追隨目標角：低通濾波、無過衝、無漂移
   player.angle += (player.angleTarget - player.angle) * (1 - Math.exp(-LOOK_DAMP * dt));
 
+  markExplored();
+
   nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
   if (player.hiding) {
     interactPromptEl.style.display = 'none';
@@ -799,8 +1137,8 @@ function update(dt) {
     let turnAxis = 0;
     if (keys['arrowleft'] || keys['a']) turnAxis -= 1;
     if (keys['arrowright'] || keys['d']) turnAxis += 1;
-    // 平滑阻尼轉向：角速度低通，起步/停止皆平緩
-    turnVel += (turnAxis * TURN_SPEED - turnVel) * (1 - Math.exp(-10 * dt));
+    // 平滑阻尼轉向：角速度低通，起步/停止皆平緩（實測回饋：再放緩）
+    turnVel += (turnAxis * TURN_SPEED - turnVel) * (1 - Math.exp(-8 * dt));
     player.angleTarget += turnVel * dt;
 
     let move = 0;
@@ -847,6 +1185,7 @@ function update(dt) {
       if (chaser.chargeT <= 0 || blocked) {
         chaser.charge = 'none';
         chaser.nextChargeOk = elapsed + 4.5;
+        chaser.cachedPath = null;
         if (blocked) chaser.confusedUntil = elapsed + 0.9; // 衝過頭撞牆，愣住
       }
     } else if (elapsed < (chaser.confusedUntil || 0)) {
@@ -889,21 +1228,27 @@ function update(dt) {
           chaser.chargeT = 0.9;
           playThump(0.35);
         } else {
-          const targetCell = player.hiding ? player.lastKnownCell : worldToCell(player.x, player.y);
-          const cc = worldToCell(chaser.x, chaser.y);
-          const path = bfsPath(cc.r, cc.c, targetCell.r, targetCell.c);
+          chaser.pathTimer -= dt;
+          const targetCell = player.hiding ? player.lastKnownCell : worldToTile(player.x, player.y);
+          if (chaser.pathTimer <= 0 || !chaser.cachedPath) {
+            const cc = worldToTile(chaser.x, chaser.y);
+            chaser.cachedPath = bfsPath(cc.x, cc.y, targetCell.x, targetCell.y);
+            chaser.pathTimer = 0.22;
+          }
+          const path = chaser.cachedPath;
           if (path && path.length > 1) {
-            const target = cellCenter(path[1][0], path[1][1]);
+            const target = tileCenter(path[1][0], path[1][1]);
             const tdx = target.x - chaser.x, tdy = target.y - chaser.y;
             const tdist = Math.hypot(tdx, tdy);
             if (tdist > 0.05) {
               const step = Math.min(chaser.speed * dt, tdist);
               chaser.x += (tdx / tdist) * step;
               chaser.y += (tdy / tdist) * step;
-            }
+            } else { chaser.pathTimer = 0; }
           } else if (player.hiding) {
             // 抵達玩家最後出現的位置卻找不到人 → 困惑東張西望
             chaser.confusedUntil = elapsed + 1.4;
+            chaser.cachedPath = null;
           }
         }
       }
@@ -946,16 +1291,20 @@ function castRay(rayAngle) {
   else { stepY = 1; sideDistY = (mapY + 1 - player.y) * deltaDistY; }
 
   let side = 0, hitGX = mapX, hitGY = mapY;
-  for (let i = 0; i < 64; i++) {
+  for (let i = 0; i < 96; i++) {
     if (sideDistX < sideDistY) { sideDistX += deltaDistX; mapX += stepX; side = 0; }
     else { sideDistY += deltaDistY; mapY += stepY; side = 1; }
     if (mapX < 0 || mapY < 0 || mapX >= gridW || mapY >= gridH || solid[mapY][mapX]) { hitGX = mapX; hitGY = mapY; break; }
   }
-  const perpDist = side === 0 ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY);
-  return { dist: Math.max(perpDist, 0.0001), side, gx: hitGX, gy: hitGY };
+  const perpDist = Math.max(side === 0 ? (sideDistX - deltaDistX) : (sideDistY - deltaDistY), 0.0001);
+  // 紋理 U 座標（沿牆面的水平位置）
+  let wallX = side === 0 ? player.y + perpDist * dirY : player.x + perpDist * dirX;
+  wallX -= Math.floor(wallX);
+  return { dist: perpDist, side, gx: hitGX, gy: hitGY, wallX };
 }
 
 const DREAD_RANGE = 4;
+let zbuffer = new Float32Array(1100);
 function drawScene() {
   const w = canvas.width, h = canvas.height;
   const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
@@ -964,7 +1313,7 @@ function drawScene() {
   const dyingT = dying ? clamp((elapsed - deathTime) / DEATH_ANIM_DURATION, 0, 1) : 0;
   const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
   const dread = dying ? 1 : clamp(1 - chaserDist / DREAD_RANGE, 0, 1);
-  // 防頭暈：不再依距離持續晃動，只有受擊/被抓瞬間的短促 shake（shakeMag 於 loop 中快速衰減）
+  // 防頭暈：不依距離持續晃動，只有受擊/被抓瞬間的短促 shake（shakeMag 於 loop 中快速衰減）
   const shakeX = (Math.random() - 0.5) * shakeMag;
   const shakeY = (Math.random() - 0.5) * shakeMag;
   ctx.save();
@@ -972,41 +1321,19 @@ function drawScene() {
 
   const horizon = h / 2; // 地平線固定（跳躍位移只套用在牆列，背景不上下晃）
 
-  // ceiling（烘焙漸層）
-  ctx.fillStyle = ceilGrad;
-  ctx.fillRect(0, 0, w, horizon);
+  // 天花板＋地板＋透視磁磚帶（離屏烘焙）
+  ctx.drawImage(bakeBG, 0, 0, 4, h, 0, 0, w, h);
   // flickering fluorescent tube strip
-  ctx.fillStyle = `rgba(240,230,160,${0.1 + flicker * 0.16})`;
+  ctx.fillStyle = `rgba(240,230,160,${0.05 + flicker * 0.08})`;
   ctx.fillRect(0, horizon * 0.15 - jumpBob, w, 4);
 
-  // floor（烘焙漸層）
-  ctx.fillStyle = floorGrad;
-  ctx.fillRect(0, horizon, w, h - horizon);
-
-  // perspective tile bands to sell floor/ceiling depth
-  const BANDS = 14;
-  for (let i = 0; i < BANDS; i++) {
-    const t = Math.pow(i / BANDS, 1.7);
-    const tNext = Math.pow((i + 1) / BANDS, 1.7);
-    const fy0 = horizon + (h - horizon) * t;
-    const fy1 = horizon + (h - horizon) * tNext;
-    if (i % 2 === 0) {
-      ctx.fillStyle = `rgba(15,10,3,${0.14 - i * 0.006})`;
-      ctx.fillRect(0, fy0, w, Math.max(1, fy1 - fy0));
-    }
-    const cy0 = horizon - horizon * t;
-    const cy1 = horizon - horizon * tNext;
-    if (i % 2 === 0) {
-      ctx.fillStyle = `rgba(0,0,0,${0.18 - i * 0.007})`;
-      ctx.fillRect(0, cy1, w, Math.max(1, cy0 - cy1));
-    }
-  }
-
-  // 畫質：列取樣密度提高至接近全解析度（原上限 400 列在高解析畫布會糊成粗條）
+  // 近全解析度列取樣（上限 1100 列），牆面紋理透視取樣＋細膩距離霧
   const RAY_COUNT = Math.max(240, Math.min(w, 1100));
   const colWidth = w / RAY_COUNT;
-  const zbuffer = new Array(RAY_COUNT);
+  if (zbuffer.length < RAY_COUNT) zbuffer = new Float32Array(RAY_COUNT);
 
+  const flickBase = 0.90 + flicker * 0.10; // 溫和呼吸亮度（防閃爍暈）
+  ctx.imageSmoothingEnabled = false; // 牆列最近取樣（圖集已預平滑，畫質不變、軟體渲染更快）
   for (let i = 0; i < RAY_COUNT; i++) {
     const rayAngle = player.angle - FOV / 2 + (i / RAY_COUNT) * FOV;
     const hit = castRay(rayAngle);
@@ -1018,29 +1345,28 @@ function drawScene() {
     const x0 = Math.floor(i * colWidth);
     const cw = Math.max(1, Math.floor((i + 1) * colWidth) - x0);
 
-    const seed = (wallSeed[hit.gy] && wallSeed[hit.gy][hit.gx]) || 0.5;
-    const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.15, 1);
-    let baseR = 110 + seed * 45, baseG = 92 + seed * 35, baseB = 50 + seed * 20;
-    if (hit.side === 1) { baseR *= 0.75; baseG *= 0.75; baseB *= 0.75; }
-    const lightMul = distShade * (0.86 + flicker * 0.14); // 降低亮度調變幅度（防閃爍暈）
-    ctx.fillStyle = `rgb(${Math.floor(baseR * lightMul)},${Math.floor(baseG * lightMul)},${Math.floor(baseB * lightMul)})`;
-    ctx.fillRect(x0, y0, cw, lineHeight);
-
-    // damp stain speckle for backrooms grime
-    if (seed > 0.82) {
-      ctx.fillStyle = `rgba(20,15,5,${0.25 * distShade})`;
-      ctx.fillRect(x0, y0 + lineHeight * 0.55, cw, lineHeight * 0.35);
-    }
+    // 牆面紋理逐列取樣（透視正確）＋距離霧/側面陰影（選預烘焙暗度列，單次 drawImage）
+    const wtRow = wallType[hit.gy];
+    const wt = wtRow ? (wtRow[hit.gx] || 0) : 0;
+    const tx = Math.min(TEXW - 1, Math.floor(hit.wallX * TEXW));
+    const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.08, 1);
+    const brightness = clamp(distShade * flickBase - (hit.side === 1 ? 0.13 : 0), 0, 1);
+    const row = ((1 - brightness) * (N_SHADE - 1) + 0.5) | 0;
+    ctx.drawImage(atlas, wt * TEXW + tx, row * TEXH, 1, TEXH, x0, y0, cw, lineHeight);
   }
+  ctx.imageSmoothingEnabled = true;
 
-  drawSprite(weapon.collected ? null : weapon, zbuffer, RAY_COUNT, colWidth, 'bat');
-  drawSprite(exit, zbuffer, RAY_COUNT, colWidth, 'exit');
-  for (const cb of cabinets) drawSprite(cb, zbuffer, RAY_COUNT, colWidth, 'cabinet');
-  if (dying) {
-    drawDeathCloseup(dyingT, w, h, horizon);
-  } else {
-    drawSprite(chaser, zbuffer, RAY_COUNT, colWidth, 'chaser');
-  }
+  // 精靈統一收集、遠→近排序（正確遮擋層次），受距離霧影響、貼地
+  const sprites = [];
+  if (!weapon.collected) sprites.push({ x: weapon.x, y: weapon.y, kind: 'bat' });
+  sprites.push({ x: exit.x, y: exit.y, kind: 'exit' });
+  for (const cb of cabinets) sprites.push({ x: cb.x, y: cb.y, kind: 'cabinet' });
+  for (const d of decor) sprites.push({ x: d.x, y: d.y, kind: d.kind });
+  if (!dying) sprites.push({ x: chaser.x, y: chaser.y, kind: 'chaser' });
+  for (const s of sprites) s._d = Math.hypot(s.x - player.x, s.y - player.y);
+  sprites.sort((a, b) => b._d - a._d);
+  for (const s of sprites) drawSprite(s, RAY_COUNT, s.kind);
+  if (dying) drawDeathCloseup(dyingT, w, h, horizon);
 
   if (elapsed < swingFlashUntil) {
     ctx.strokeStyle = 'rgba(255,255,255,0.55)';
@@ -1050,14 +1376,14 @@ function drawScene() {
     ctx.stroke();
   }
 
-  // depth fog（烘焙漸層）
-  ctx.fillStyle = fogGrad;
-  ctx.fillRect(0, 0, w, h);
-
-  // red dread vignette — 防頭暈：固定不脈動，只隨距離平滑加深（離屏烘焙）
-  ctx.globalAlpha = clamp(0.12 + dread * 0.3, 0, 1);
-  ctx.drawImage(vignetteCanvas, 0, 0);
-  ctx.globalAlpha = 1;
+  // 手電筒光暈＋距離霧＋基礎紅暈（預先合成單張，離屏烘焙）
+  ctx.drawImage(overlayCanvas, 0, 0);
+  // 防頭暈：紅暈不脈動，只隨阿嬤距離平滑加深（靠近時才多疊一層）
+  if (dread > 0.02) {
+    ctx.globalAlpha = clamp(dread * 0.3, 0, 1);
+    ctx.drawImage(vignetteCanvas, 0, 0);
+    ctx.globalAlpha = 1;
+  }
 
   ctx.restore();
   updateDreadAudio(dread, chaserDist);
@@ -1118,10 +1444,18 @@ function drawDeathCloseup(t, w, h, horizon) {
   ctx.fillRect(0, 0, w, h);
 }
 
-function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
+// 貼地落影（所有精靈共用，強化貼地感）
+function drawGroundShadow(size, shade, widthMul) {
+  ctx.fillStyle = `rgba(0,0,0,${0.32 * shade})`;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.5, size * (widthMul || 0.2), size * 0.045, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function drawSprite(entity, RAY_COUNT, kind) {
   if (!entity) return;
   const dx = entity.x - player.x, dy = entity.y - player.y;
-  const dist = Math.hypot(dx, dy);
+  const dist = entity._d !== undefined ? entity._d : Math.hypot(dx, dy);
   if (dist > VIEW_DIST || dist < 0.05) return;
   const angleTo = normalizeAngle(Math.atan2(dy, dx) - player.angle);
   if (Math.abs(angleTo) > FOV / 2 + 0.3) return;
@@ -1133,6 +1467,9 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
   const size = clamp(canvas.height / dist, 10, canvas.height * 2);
   const horizon = canvas.height / 2;
   const shade = clamp(1 - dist / VIEW_DIST, 0.15, 1);
+  // 距離霧邊緣淡入（避免精靈突然浮現）
+  const edgeFade = clamp((VIEW_DIST - dist) / 1.4, 0, 1);
+  ctx.globalAlpha = edgeFade;
 
   if (kind === 'chaser') {
     const stunned = elapsed < (chaser.stunnedUntil || 0);
@@ -1142,6 +1479,7 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     const confused = !stunned && !windup && !dash && elapsed < (chaser.confusedUntil || 0);
     ctx.save();
     ctx.translate(screenX, horizon + size * 0.18);
+    drawGroundShadow(size / 1.56, shade, 0.34);
     // 狀態表情/標示（讀招與搞笑反應）
     ctx.textAlign = 'center';
     ctx.font = `${Math.max(14, size * 0.12)}px sans-serif`;
@@ -1167,7 +1505,7 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     if (windup) { ctx.rotate(-0.1 + Math.sin(elapsed * 20) * 0.02); ctx.scale(0.94, 1.06); } // 蓄力後仰
     if (dash) ctx.rotate(0.16); // 衝刺前傾
     if (stunned) { ctx.translate(0, size * 0.3); ctx.scale(1.25, 0.45); } // 滑倒躺平
-    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(28 * shade)},${Math.floor(6 * shade)},${Math.floor(6 * shade)},${shade})`;
+    const bodyColor = stunned ? `rgba(150,20,20,${shade})` : `rgba(${Math.floor(30 * shade)},${Math.floor(7 * shade)},${Math.floor(7 * shade)},${shade})`;
     ctx.fillStyle = bodyColor;
     // hunched, gnarled robed silhouette
     ctx.beginPath();
@@ -1179,19 +1517,49 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     ctx.lineTo(-size * 0.28, size * 0.5);
     ctx.closePath();
     ctx.fill();
-    // gnarled reaching arm
+    // 圍裙（阿嬤特徵）
+    ctx.fillStyle = `rgba(${Math.floor(70 * shade)},${Math.floor(45 * shade)},${Math.floor(35 * shade)},${shade})`;
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.12, -size * 0.1);
+    ctx.lineTo(size * 0.12, -size * 0.1);
+    ctx.lineTo(size * 0.15, size * 0.45);
+    ctx.lineTo(-size * 0.15, size * 0.45);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = `rgba(${Math.floor(90 * shade)},${Math.floor(60 * shade)},${Math.floor(45 * shade)},${shade})`;
+    for (let dot = 0; dot < 3; dot++) {
+      ctx.beginPath();
+      ctx.arc((dot - 1) * size * 0.07, size * 0.12 + (dot % 2) * size * 0.1, size * 0.014, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    // 兩隻伸出的手
     ctx.strokeStyle = bodyColor;
     ctx.lineWidth = Math.max(1, size * 0.03);
     ctx.beginPath();
     ctx.moveTo(size * 0.2, -size * 0.1);
     ctx.lineTo(size * 0.42, size * 0.05);
     ctx.lineTo(size * 0.5, -size * 0.02);
+    ctx.moveTo(-size * 0.18, -size * 0.08);
+    ctx.lineTo(-size * 0.38, size * 0.08);
     ctx.stroke();
+    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.beginPath();
+    ctx.arc(size * 0.5, -size * 0.02, size * 0.028, 0, Math.PI * 2);
+    ctx.arc(-size * 0.38, size * 0.08, size * 0.026, 0, Math.PI * 2);
+    ctx.fill();
     // head：困惑時左右東張西望
     const headX = confused ? Math.sin(elapsed * 4) * size * 0.07 - size * 0.02 : -size * 0.02;
     ctx.beginPath();
     ctx.arc(headX, -size * 0.5, size * 0.1, 0, Math.PI * 2);
     ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.fill();
+    // 灰白髮髻
+    ctx.fillStyle = `rgba(${Math.floor(190 * shade)},${Math.floor(185 * shade)},${Math.floor(175 * shade)},${shade})`;
+    ctx.beginPath();
+    ctx.arc(headX, -size * 0.565, size * 0.062, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(headX, -size * 0.615, size * 0.032, 0, Math.PI * 2);
     ctx.fill();
     // eyes：平常兇（紅）、蓄力/生氣放大、被打暈變粉紅
     const eyeR = size * ((windup || angry) ? 0.022 : 0.016);
@@ -1210,46 +1578,129 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
     const glow = 0.6 + 0.4 * Math.sin(elapsed * 3);
     ctx.save();
     ctx.translate(screenX, horizon);
-    ctx.fillStyle = `rgba(${Math.floor(40 * shade)},${Math.floor(70 * shade)},${Math.floor(40 * shade)},1)`;
-    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
-    ctx.strokeStyle = `rgba(${Math.floor(120 * glow * shade)},255,${Math.floor(120 * glow * shade)},${shade})`;
-    ctx.lineWidth = Math.max(1, size * 0.015);
-    ctx.strokeRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
-    ctx.fillStyle = `rgba(120,255,140,${0.35 * glow * shade})`;
-    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.5);
-    ctx.fillStyle = `rgba(200,255,210,${shade})`;
-    ctx.font = `bold ${Math.max(10, size * 0.05)}px sans-serif`;
+    drawGroundShadow(size, shade, 0.17);
+    // 門框
+    ctx.fillStyle = `rgba(${Math.floor(55 * shade)},${Math.floor(45 * shade)},${Math.floor(30 * shade)},1)`;
+    ctx.fillRect(-size * 0.17, -size * 0.54, size * 0.34, size * 1.04);
+    // 門板
+    ctx.fillStyle = `rgba(${Math.floor(42 * shade)},${Math.floor(74 * shade)},${Math.floor(42 * shade)},1)`;
+    ctx.fillRect(-size * 0.14, -size * 0.5, size * 0.28, size * 0.98);
+    // 門縫透光
+    ctx.fillStyle = `rgba(140,255,160,${0.30 * glow * shade})`;
+    ctx.fillRect(-size * 0.14, size * 0.44, size * 0.28, size * 0.04);
+    ctx.fillRect(size * 0.11, -size * 0.5, size * 0.03, size * 0.98);
+    // 門把
+    ctx.fillStyle = `rgba(${Math.floor(200 * shade)},${Math.floor(190 * shade)},${Math.floor(120 * shade)},1)`;
+    ctx.beginPath(); ctx.arc(size * 0.08, size * 0.02, size * 0.018, 0, Math.PI * 2); ctx.fill();
+    // 出口燈牌（綠色發光）
+    ctx.fillStyle = `rgba(20,60,30,1)`;
+    ctx.fillRect(-size * 0.12, -size * 0.66, size * 0.24, size * 0.1);
+    ctx.strokeStyle = `rgba(${Math.floor(120 * glow)},255,${Math.floor(140 * glow)},${shade})`;
+    ctx.lineWidth = Math.max(1, size * 0.008);
+    ctx.strokeRect(-size * 0.12, -size * 0.66, size * 0.24, size * 0.1);
+    ctx.fillStyle = `rgba(150,255,170,${(0.55 + 0.45 * glow) * shade})`;
+    ctx.font = `bold ${Math.max(9, size * 0.055)}px sans-serif`;
     ctx.textAlign = 'center';
-    ctx.fillText('逃生門', 0, -size * 0.55);
+    ctx.fillText('逃生門', 0, -size * 0.585);
     ctx.restore();
   } else if (kind === 'cabinet') {
     ctx.save();
     ctx.translate(screenX, horizon);
-    ctx.fillStyle = `rgba(${Math.floor(60 * shade)},${Math.floor(40 * shade)},${Math.floor(20 * shade)},1)`;
-    ctx.fillRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    drawGroundShadow(size, shade, 0.19);
+    ctx.fillStyle = `rgba(${Math.floor(62 * shade)},${Math.floor(44 * shade)},${Math.floor(22 * shade)},1)`;
+    ctx.fillRect(-size * 0.16, -size * 0.06, size * 0.32, size * 0.56);
+    ctx.fillStyle = `rgba(${Math.floor(90 * shade)},${Math.floor(66 * shade)},${Math.floor(34 * shade)},1)`;
+    ctx.fillRect(-size * 0.16, -size * 0.06, size * 0.32, size * 0.02);
     ctx.strokeStyle = `rgba(20,14,6,${shade})`;
     ctx.lineWidth = Math.max(1, size * 0.01);
-    ctx.strokeRect(-size * 0.16, -size * 0.02, size * 0.32, size * 0.5);
+    ctx.strokeRect(-size * 0.16, -size * 0.06, size * 0.32, size * 0.56);
     ctx.beginPath();
-    ctx.moveTo(0, -size * 0.02);
-    ctx.lineTo(0, size * 0.48);
+    ctx.moveTo(0, -size * 0.06);
+    ctx.lineTo(0, size * 0.5);
     ctx.stroke();
-    ctx.fillStyle = `rgba(150,120,60,${shade})`;
+    ctx.fillStyle = `rgba(20,14,6,${0.7 * shade})`;
+    for (let v = 0; v < 3; v++) {
+      ctx.fillRect(-size * 0.115, size * (0.02 + v * 0.035), size * 0.075, size * 0.012);
+      ctx.fillRect(size * 0.04, size * (0.02 + v * 0.035), size * 0.075, size * 0.012);
+    }
+    ctx.fillStyle = `rgba(${Math.floor(160 * shade)},${Math.floor(130 * shade)},${Math.floor(66 * shade)},${shade})`;
     ctx.beginPath();
-    ctx.arc(-size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
-    ctx.arc(size * 0.04, size * 0.2, size * 0.012, 0, Math.PI * 2);
+    ctx.arc(-size * 0.04, size * 0.24, size * 0.013, 0, Math.PI * 2);
+    ctx.arc(size * 0.04, size * 0.24, size * 0.013, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
-  } else {
+  } else if (kind === 'desk') {
     ctx.save();
-    ctx.translate(screenX, horizon + size * 0.42);
+    ctx.translate(screenX, horizon);
+    drawGroundShadow(size, shade, 0.15);
+    const wood = `rgba(${Math.floor(120 * shade)},${Math.floor(88 * shade)},${Math.floor(48 * shade)},1)`;
+    const woodDark = `rgba(${Math.floor(78 * shade)},${Math.floor(56 * shade)},${Math.floor(30 * shade)},1)`;
+    ctx.fillStyle = woodDark;
+    ctx.fillRect(-size * 0.11, size * 0.3, size * 0.02, size * 0.2);
+    ctx.fillRect(size * 0.09, size * 0.3, size * 0.02, size * 0.2);
+    ctx.fillStyle = wood;
+    ctx.fillRect(-size * 0.14, size * 0.27, size * 0.28, size * 0.035);
+    ctx.fillStyle = `rgba(255,240,200,${0.08 * shade})`;
+    ctx.fillRect(-size * 0.14, size * 0.27, size * 0.28, size * 0.012);
+    ctx.fillStyle = woodDark;
+    ctx.fillRect(size * 0.16, size * 0.22, size * 0.018, size * 0.28);
+    ctx.fillRect(size * 0.13, size * 0.22, size * 0.08, size * 0.02);
+    ctx.restore();
+  } else if (kind === 'bed') {
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    drawGroundShadow(size, shade, 0.24);
+    ctx.fillStyle = `rgba(${Math.floor(70 * shade)},${Math.floor(70 * shade)},${Math.floor(75 * shade)},1)`;
+    ctx.fillRect(-size * 0.2, size * 0.32, size * 0.02, size * 0.18);
+    ctx.fillRect(size * 0.18, size * 0.32, size * 0.02, size * 0.18);
+    ctx.fillStyle = `rgba(${Math.floor(190 * shade)},${Math.floor(195 * shade)},${Math.floor(190 * shade)},1)`;
+    ctx.fillRect(-size * 0.21, size * 0.24, size * 0.42, size * 0.09);
+    ctx.fillStyle = `rgba(${Math.floor(215 * shade)},${Math.floor(218 * shade)},${Math.floor(212 * shade)},1)`;
+    ctx.fillRect(-size * 0.2, size * 0.2, size * 0.1, size * 0.05);
+    ctx.fillStyle = `rgba(${Math.floor(190 * shade)},${Math.floor(40 * shade)},${Math.floor(40 * shade)},1)`;
+    ctx.fillRect(size * 0.06, size * 0.255, size * 0.06, size * 0.016);
+    ctx.fillRect(size * 0.082, size * 0.233, size * 0.016, size * 0.06);
+    ctx.restore();
+  } else if (kind === 'shelf') {
+    ctx.save();
+    ctx.translate(screenX, horizon);
+    drawGroundShadow(size, shade, 0.2);
+    ctx.fillStyle = `rgba(${Math.floor(84 * shade)},${Math.floor(64 * shade)},${Math.floor(40 * shade)},1)`;
+    ctx.fillRect(-size * 0.17, -size * 0.1, size * 0.34, size * 0.6);
+    const bookC = [[150, 90, 80], [90, 120, 100], [120, 115, 80], [95, 100, 130]];
+    for (let row = 0; row < 3; row++) {
+      const ry = -size * 0.06 + row * size * 0.18;
+      ctx.fillStyle = `rgba(30,20,10,${shade})`;
+      ctx.fillRect(-size * 0.15, ry + size * 0.12, size * 0.3, size * 0.014);
+      for (let b = 0; b < 6; b++) {
+        const c = bookC[(row * 2 + b) % bookC.length];
+        ctx.fillStyle = `rgba(${Math.floor(c[0] * shade)},${Math.floor(c[1] * shade)},${Math.floor(c[2] * shade)},1)`;
+        ctx.fillRect(-size * 0.145 + b * size * 0.048, ry + size * 0.01, size * 0.038, size * 0.11);
+      }
+    }
+    ctx.restore();
+  } else { // bat
+    ctx.save();
+    ctx.translate(screenX, horizon + size * 0.4);
+    drawGroundShadow(size, shade, 0.09);
     ctx.rotate(Math.PI / 5);
-    ctx.fillStyle = `rgba(201,162,106,${shade})`;
-    ctx.fillRect(-size * 0.02, -size * 0.16, size * 0.04, size * 0.16);
-    ctx.fillStyle = `rgba(90,58,26,${shade})`;
-    ctx.fillRect(-size * 0.02, -size * 0.02, size * 0.04, size * 0.045);
+    ctx.fillStyle = `rgba(${Math.floor(201 * shade)},${Math.floor(162 * shade)},${Math.floor(106 * shade)},${shade})`;
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.026, -size * 0.17);
+    ctx.lineTo(size * 0.026, -size * 0.17);
+    ctx.lineTo(size * 0.014, size * 0.0);
+    ctx.lineTo(-size * 0.014, size * 0.0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = `rgba(255,240,210,${0.15 * shade})`;
+    ctx.fillRect(-size * 0.02, -size * 0.16, size * 0.012, size * 0.14);
+    ctx.fillStyle = `rgba(${Math.floor(90 * shade)},${Math.floor(58 * shade)},${Math.floor(26 * shade)},${shade})`;
+    ctx.fillRect(-size * 0.014, 0, size * 0.028, size * 0.05);
+    ctx.fillStyle = `rgba(${Math.floor(60 * shade)},${Math.floor(38 * shade)},${Math.floor(18 * shade)},${shade})`;
+    ctx.fillRect(-size * 0.016, size * 0.048, size * 0.032, size * 0.014);
     ctx.restore();
   }
+  ctx.globalAlpha = 1;
 }
 
 // 固定時間步進（accumulator）：更新節奏穩定，不因掉幀產生跳動
@@ -1265,6 +1716,7 @@ function loop(now) {
   acc += dt;
   while (acc >= STEP) { update(STEP); acc -= STEP; }
   drawScene();
+  drawMinimap();
   if (running) requestAnimationFrame(loop);
 }
 
@@ -1282,6 +1734,16 @@ muteBtn.addEventListener('click', () => {
   muteBtn.textContent = muted ? '🔇' : '🔊';
   if (!muted) ensureAudio();
 });
+resize();
+
+// 測試掛鉤（僅暴露唯讀狀態）
+window.__HCC = {
+  get player() { return player; }, get chaser() { return chaser; },
+  get exitDoor() { return exit; }, get weapon() { return weapon; },
+  get solid() { return solid; }, get gridW() { return gridW; }, get gridH() { return gridH; },
+  get running() { return running; }, get elapsed() { return elapsed; },
+  keys, startGame, bfsPath, worldToTile,
+};
 </script>
 </body>
 </html>
