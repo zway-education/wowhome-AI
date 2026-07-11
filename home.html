@@ -359,24 +359,44 @@ const PROVIDERS = [
   },
 ];
 
+// 請求排隊：整頁一次載入會爆出上百個計數查詢，服務會拒絕一部分導致某些卡片沒數字。
+// 限制同時最多 6 個查詢、其餘排隊，載入慢一點點但每張卡都拿得到數字。
+const _cq = []; let _cqActive = 0; const _CQ_MAX = 6;
+function queuedFetch(fn) {
+  return new Promise((resolve, reject) => { _cq.push({ fn, resolve, reject }); _cqPump(); });
+}
+function _cqPump() {
+  while (_cqActive < _CQ_MAX && _cq.length) {
+    const job = _cq.shift();
+    _cqActive++;
+    job.fn().then(job.resolve, job.reject).finally(() => { _cqActive--; _cqPump(); });
+  }
+}
+
+// 同一個 key 查詢中就共用同一個 Promise，避免重複請求
+const _inflight = {};
 async function readCount(name) {
   // 快取 45 秒過期，讓其他人的投票/遊玩數字也能更新
   if (name in countCache && Date.now() - (countCacheAt[name] || 0) < 45000) return countCache[name];
-  for (const p of PROVIDERS) {
-    try {
-      const r = await p.read(name);
-      if (r.status === 404) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; } // 尚未有人計數
-      if (r.ok) {
-        const j = await r.json();
-        const n = j.value ?? j.count ?? 0;
-        countCache[name] = n;
-        countCacheAt[name] = Date.now();
-        return n;
-      }
-    } catch (e) {}
-  }
-  countCache[name] = null;
-  return null;
+  if (_inflight[name]) return _inflight[name];
+  _inflight[name] = (async () => {
+    for (const p of PROVIDERS) {
+      try {
+        const r = await queuedFetch(() => p.read(name));
+        if (r.status === 404) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; } // 尚未有人計數
+        if (r.ok) {
+          const j = await r.json();
+          const n = j.value ?? j.count ?? 0;
+          countCache[name] = n;
+          countCacheAt[name] = Date.now();
+          return n;
+        }
+      } catch (e) {}
+    }
+    countCache[name] = null;
+    return null;
+  })();
+  try { return await _inflight[name]; } finally { delete _inflight[name]; }
 }
 
 async function bumpCount(name) {
@@ -645,7 +665,8 @@ async function hotSort() {
   if (changed) render(document.getElementById('search').value);
 }
 
-loadManifest().then(m => { DATA = m || { games: [], videos: [] }; render(''); hotSort(); });
+// 熱門排序延後 4 秒再跑：先讓看得到的卡片查完數字，避免一開頁就塞爆計數服務
+loadManifest().then(m => { DATA = m || { games: [], videos: [] }; render(''); setTimeout(hotSort, 4000); });
 </script>
 </body>
 </html>
