@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v5：搖桿加死區防手震飄移／建造列不再蓋住南牆／難度改鋸齒狀加入喘息夜／直式手機提示轉橫／城牆瀕危加入紅色警示與提示音 -->
+<!-- +補強：角色精細化/觸控/大螢幕提醒 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -14,11 +15,42 @@
   #muteBtn{position:fixed;right:12px;top:12px;width:52px;height:52px;border-radius:50%;
     background:rgba(20,20,40,.75);border:2px solid #9a6bff;color:#fff;font-size:24px;
     z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  #rotateHint{position:fixed;left:0;right:0;bottom:0;padding:8px 10px;text-align:center;
+    background:rgba(20,10,50,.85);color:#ffcf5c;font-size:14px;
+    font-family:"Microsoft JhengHei",sans-serif;z-index:9;pointer-events:none;display:none}
+  @media (orientation: portrait){ #rotateHint{display:block} }
+  #bigscreenHint{position:fixed;inset:0;z-index:100000;display:none;align-items:center;justify-content:center;
+    background:rgba(7,11,20,.9);padding:24px;box-sizing:border-box;transition:opacity .35s ease}
+  #bigscreenHint.show{display:flex}
+  #bigscreenHint.hide{opacity:0;pointer-events:none}
+  #bigscreenHint .bsh-card{max-width:360px;width:100%;background:rgba(18,16,36,.94);
+    border:1px solid rgba(154,107,255,.45);border-radius:16px;padding:30px 24px;text-align:center;
+    box-shadow:0 12px 40px rgba(0,0,0,.5);box-sizing:border-box}
+  #bigscreenHint .bsh-title{font-size:20px;font-weight:bold;margin:10px 0 10px;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  #bigscreenHint .bsh-sub{font-size:14px;color:#cfd6e6;margin:0 0 22px;line-height:1.6}
+  #bigscreenHint .bsh-btn{display:block;width:100%;min-width:60%;height:52px;min-height:52px;
+    border:none;border-radius:12px;font-size:16px;font-weight:bold;color:#0a0716;cursor:pointer;
+    background:linear-gradient(92deg,#38e1ff,#4f7cff,#9a6bff);font-family:"Microsoft JhengHei",sans-serif}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <button id="muteBtn" aria-label="靜音">🔊</button>
+<div id="rotateHint">📱 建議將裝置轉為橫向，畫面更完整好玩！</div>
+<div id="bigscreenHint">
+  <div class="bsh-card">
+    <svg width="48" height="48" viewBox="0 0 52 52" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect x="6" y="8" width="40" height="26" rx="3" stroke="#4f7cff" stroke-width="2.5"/>
+      <line x1="18" y1="42" x2="34" y2="42" stroke="#9a6bff" stroke-width="2.5" stroke-linecap="round"/>
+      <line x1="26" y1="34" x2="26" y2="42" stroke="#9a6bff" stroke-width="2.5" stroke-linecap="round"/>
+    </svg>
+    <p class="bsh-title">建議使用大螢幕遊玩</p>
+    <p class="bsh-sub">用平板或電腦打開，體驗更完整</p>
+    <button type="button" class="bsh-btn" id="bshOkBtn">知道了，繼續玩</button>
+  </div>
+</div>
 <script>
 'use strict';
 const GAME_W = 960, GAME_H = 540;
@@ -36,6 +68,28 @@ function resize(){
   canvas._scale = scale;
 }
 addEventListener('resize', resize); resize();
+
+// ===== 大螢幕提醒浮層（只在手機出現，一個 session 只跳一次，不攔截遊戲初始化）=====
+(function(){
+  try{
+    const already = sessionStorage.getItem('bigscreen-hint');
+    const isPhone = Math.min(screen.width, screen.height) < 600 || innerWidth < 768;
+    if(!already && isPhone){
+      const hint = document.getElementById('bigscreenHint');
+      hint.classList.add('show');
+      const dismiss = ()=>{
+        try{ sessionStorage.setItem('bigscreen-hint','1'); }catch(e){}
+        hint.classList.add('hide');
+        setTimeout(()=>hint.remove(), 400);
+      };
+      const btn = document.getElementById('bshOkBtn');
+      btn.addEventListener('click', dismiss);
+      btn.addEventListener('touchend', e=>{ e.preventDefault(); dismiss(); }, {passive:false});
+    } else {
+      document.getElementById('bigscreenHint').remove();
+    }
+  }catch(e){}
+})();
 
 // ===== OpenMoji 內嵌向量圖（CC BY-SA 4.0, openmoji.org）=====
 const SPRITES = {
@@ -110,7 +164,8 @@ document.getElementById('muteBtn').addEventListener('pointerdown', e=>{
 });
 
 // ===== 座標系（俯視方格）=====
-const CELL = 56;
+// v5：CELL 由 56 縮到 50，讓棋盤底排（南牆）不會被白天的建造列蓋住
+const CELL = 50;
 const GRID = 7;
 const ORIGIN_X = GAME_W/2 - (GRID*CELL)/2, ORIGIN_Y = 96;
 function isoX(gx,gy){ return ORIGIN_X + gx*CELL + CELL/2; }
@@ -147,11 +202,14 @@ function touchPos(t){
   const r = canvas.getBoundingClientRect();
   return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
 }
+const JOY_DEAD = 10;   // 死區：手指微抖不算移動，避免角色原地漂移
 function joyApply(p){
-  let dx = p.x-joy.cx, dy = p.y-joy.cy;
+  const dx = p.x-joy.cx, dy = p.y-joy.cy;
   const d = Math.hypot(dx,dy);
-  if(d>JOY_R){ dx=dx/d*JOY_R; dy=dy/d*JOY_R; }
-  joy.dx=dx; joy.dy=dy;
+  if(d<=JOY_DEAD){ joy.dx=0; joy.dy=0; return; }
+  // 死區外重新映射到 0~JOY_R，避免一超過死區就瞬間跳成全速
+  const t = Math.min(1, (d-JOY_DEAD)/(JOY_R-JOY_DEAD));
+  joy.dx = dx/d*t*JOY_R; joy.dy = dy/d*t*JOY_R;
 }
 function onTouchStart(e){
   e.preventDefault();
@@ -297,10 +355,12 @@ let shake=0, freeze=0, flashT=0;
 let walls=[], traps=[], monsters=[], woodNodes=[];
 let houseHp=0, houseHpMax=1;
 let spawnTimer=0, nightSpawned=0, nightQuota=0;
+let nightIsBreather=false;   // v5：鋸齒狀難度的喘息夜
+let dangerBeepT=0;           // v5：城牆瀕危警示音節流
 let hintT = 0;   // 開場提示浮層
 
 const player = { gx:3, gy:3, x:0, y:0, sx:1, sy:1, facing:1, blinkT:2, bob:0,
-                 hp:3, maxHp:3, invuln:0, atkT:0, atkDir:1 };
+                 hp:3, maxHp:3, invuln:0, atkT:0, atkDir:1, mood:'normal', moodT:0 };
 function updatePlayerPos(){ player.x = isoX(player.gx, player.gy); player.y = isoY(player.gx, player.gy); }
 
 const FURNITURE = [
@@ -311,7 +371,8 @@ const FURNITURE = [
 let fridgeCooldown = 0;
 const FRIDGE_COOLDOWN = 9;
 
-// 解卡邏輯：玩家若與已完工牆/傢俱重疊（例如牆剛好在玩家腳邊完工），推回最近可行走位置
+// 解卡邏輯：玩家若與已完工牆／傢俱重疊（例如牆剛好在玩家腳邊完工，或被硬塞進牆內），
+// 以遞增半徑向周圍搜尋最近可行走位置把玩家推出。未重疊時零成本早退。
 const PLAYER_R = 0.16;
 function isBlockedAt(gx,gy){
   return walls.some(w=>w.built>=w.need
@@ -399,6 +460,7 @@ function resetGame(){
   selectedBuild = 'wall';
   fridgeCooldown = 0;
   shake=0; freeze=0; flashT=0;
+  nightIsBreather=false; dangerBeepT=0;
   hintT = 5;
 }
 
@@ -520,6 +582,14 @@ function drawWall(w, nightAmt){
     ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif'; ctx.textAlign='center';
     ctx.fillText(`${Math.ceil(w.built)}/${w.need}`, x, y-half-8);
   }
+  // v5：牆快被咬穿時（<1/3）畫紅色脈動外框，讓玩家一眼看出哪面牆快破
+  if(w.built>0 && w.built<w.need*0.34){
+    ctx.save();
+    ctx.globalAlpha = 0.45 + Math.sin(performance.now()/170)*0.3;
+    ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 3;
+    ctx.strokeRect(x-half-2, y-half-2, CELL+4, CELL+4);
+    ctx.restore();
+  }
 }
 function drawWoodNode(n,t){
   const x = isoX(n.gx,n.gy), y = isoY(n.gx,n.gy) + Math.sin(t*3+n.bob)*5;
@@ -576,38 +646,80 @@ function drawPlayerJJ(){
   ctx.scale(player.facing<0?-player.sx:player.sx, player.sy);
   const bobY = Math.sin(player.bob*6)*2;
   ctx.translate(0, bobY);
-  // 腳（走路擺動）
-  const step = Math.sin(player.bob*10)*3;
-  ctx.fillStyle = flash?'#fff':'#4a3728';
-  ctx.fillRect(-8,-4+step*0.4,6,10);
-  ctx.fillRect(2,-4-step*0.4,6,10);
-  // 身體（漸層上衣）
+  const legPh = Math.sin(player.bob*10);
+  const skinCol = flash?'#fff':'#ffcf9c';
+  const shoeCol = flash?'#ddd':'#3a2a1c';
+  // 腳（大腿旋轉擺動＋鞋子，比原本單純上下位移更有走路感）
+  for(const side of [-1,1]){
+    ctx.save();
+    ctx.translate(side*5, -4);
+    ctx.rotate(side*legPh*0.28);
+    ctx.fillStyle = flash?'#fff':'#4a3728';
+    ctx.fillRect(-3,0,6,8);
+    ctx.fillStyle = shoeCol;
+    traceRoundRect(-3.6,7,7.2,4,1.6); ctx.fill();
+    ctx.restore();
+  }
+  // 身體（漸層上衣＋背光陰影／受光高光帶＋輪廓線）
   const bg = ctx.createLinearGradient(0,-30,0,-4);
   bg.addColorStop(0, flash?'#fff':'#6a92ff'); bg.addColorStop(1, flash?'#fff':'#3f66e0');
   ctx.fillStyle = bg;
   traceRoundRect(-11,-30,22,26,6); ctx.fill();
+  if(!flash){
+    ctx.save();
+    traceRoundRect(-11,-30,22,26,6); ctx.clip();
+    ctx.fillStyle='rgba(10,10,45,0.22)'; ctx.fillRect(3,-30,8,26);
+    ctx.fillStyle='rgba(255,255,255,0.25)'; ctx.fillRect(-10,-29,5,22);
+    ctx.restore();
+  }
+  ctx.strokeStyle = flash?'#fff':'#2a3d8f'; ctx.lineWidth=1.6;
+  traceRoundRect(-11,-30,22,26,6); ctx.stroke();
   // 手臂＋鎚子（攻擊揮動）
   const swing = player.atkT>0 ? Math.sin((0.28-player.atkT)/0.28*Math.PI)*1.6 : 0;
   ctx.save();
   ctx.translate(10,-24);
   ctx.rotate(-0.5 + swing*1.8);
-  ctx.fillStyle = flash?'#fff':'#ffcf9c';
+  ctx.fillStyle = skinCol;
   ctx.fillRect(-2,0,5,14);
+  ctx.strokeStyle = flash?'#eee':'#c98f5a'; ctx.lineWidth=1; ctx.strokeRect(-2,0,5,14);
   // 鎚子
   ctx.fillStyle = flash?'#eee':'#8c5a3c';
   ctx.fillRect(-1.5,12,3,14);
-  ctx.fillStyle = flash?'#ddd':'#9aa0a6';
+  const hg = ctx.createLinearGradient(-8,24,8,33);
+  hg.addColorStop(0, flash?'#fff':'#c7ccd1'); hg.addColorStop(1, flash?'#ddd':'#84898f');
+  ctx.fillStyle = hg;
   traceRoundRect(-8,24,16,9,2); ctx.fill();
+  ctx.strokeStyle = flash?'#fff':'#5a5f66'; ctx.lineWidth=1.2; traceRoundRect(-8,24,16,9,2); ctx.stroke();
   ctx.restore();
-  ctx.fillStyle = flash?'#fff':'#ffcf9c';
-  ctx.fillRect(-14,-26,5,13);
-  // 頭
-  ctx.fillStyle = flash?'#fff':'#ffcf9c';
+  // 另一手臂（自然反向擺動，取代原本固定不動的手臂）
+  ctx.save();
+  ctx.translate(-14,-26);
+  ctx.rotate(0.15 - legPh*0.22);
+  ctx.fillStyle = skinCol;
+  ctx.fillRect(-2.5,0,5,13);
+  ctx.strokeStyle = flash?'#eee':'#c98f5a'; ctx.lineWidth=1; ctx.strokeRect(-2.5,0,5,13);
+  ctx.restore();
+  // 頭（漸層膚色＋輪廓線＋高光點）
+  const fg = ctx.createRadialGradient(-4,-42,2,0,-38,13);
+  fg.addColorStop(0, flash?'#fff':'#ffdcb0'); fg.addColorStop(1, flash?'#eee':'#e0a878');
+  ctx.fillStyle = fg;
   ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle = flash?'#fff':'#c98f5a'; ctx.lineWidth=1.4;
+  ctx.beginPath(); ctx.arc(0,-38,12,0,Math.PI*2); ctx.stroke();
+  // 頭髮（底色＋暗部＋高光，取代原本純平塗）
   ctx.fillStyle = flash?'#eee':'#2b2118';
   ctx.beginPath(); ctx.arc(0,-42,12,Math.PI,Math.PI*2); ctx.fill();
   ctx.fillRect(-12,-44,24,4);
-  // 眼睛＋腮紅
+  if(!flash){
+    ctx.fillStyle='#1a130d';
+    ctx.beginPath(); ctx.ellipse(3,-47,5,3.5,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.4)';
+    ctx.beginPath(); ctx.ellipse(-5,-46,3,1.6,-0.4,0,Math.PI*2); ctx.fill();
+    // 臉部高光點
+    ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.ellipse(-4,-42,2.4,1.6,-0.5,0,Math.PI*2); ctx.fill();
+  }
+  // 眼睛（眨眼＝兩態）
   const blink = player.blinkT<0.1;
   ctx.fillStyle='#222';
   if(!blink){
@@ -616,8 +728,23 @@ function drawPlayerJJ(){
   } else {
     ctx.fillRect(1,-38,5,1.5); ctx.fillRect(-6,-38,5,1.5);
   }
+  // 腮紅
   ctx.fillStyle='rgba(255,120,120,0.5)';
   ctx.beginPath(); ctx.arc(7,-33,2.5,0,Math.PI*2); ctx.arc(-7,-33,2.5,0,Math.PI*2); ctx.fill();
+  // 嘴巴：平常淺笑／受擊「哦」／開心咧嘴（三態表情，取代原本沒有嘴巴的臉）
+  ctx.lineCap='round';
+  if(player.mood==='hurt'){
+    ctx.fillStyle='#7a3020';
+    ctx.beginPath(); ctx.ellipse(0,-30,2.3,3,0,0,Math.PI*2); ctx.fill();
+  } else if(player.mood==='happy'){
+    ctx.strokeStyle='#8a4a3a'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(0,-32,4,0.15*Math.PI,0.85*Math.PI); ctx.stroke();
+    ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.moveTo(-3,-30.5); ctx.quadraticCurveTo(0,-27.5,3,-30.5); ctx.closePath(); ctx.fill();
+  } else {
+    ctx.strokeStyle='#8a4a3a'; ctx.lineWidth=1.6;
+    ctx.beginPath(); ctx.arc(0,-32,3,0.2*Math.PI,0.8*Math.PI); ctx.stroke();
+  }
   ctx.restore();
   ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif'; ctx.textAlign='center';
   ctx.fillText('人JJ', x, y-62);
@@ -639,6 +766,7 @@ function drawMonster(m){
   const x = isoX(m.gx,m.gy), y = isoY(m.gx,m.gy);
   ctx.save();
   const wob = Math.sin(performance.now()/1000*6 + m.wob);
+  const hitJit = m.hitFlash>0 ? Math.sin(performance.now()/22)*0.16*(m.hitFlash/0.15) : 0;
   if(m.type==='ghost'){
     ctx.globalAlpha = 0.85;
     ctx.translate(x, y-14 + wob*4);
@@ -646,7 +774,7 @@ function drawMonster(m){
     ctx.fillStyle='rgba(0,0,0,0.3)';
     ctx.beginPath(); ctx.ellipse(x,y+6,16,5,0,0,Math.PI*2); ctx.fill();
     ctx.translate(x, y-14);
-    ctx.rotate(wob*0.08);
+    ctx.rotate(wob*0.08 + hitJit);
   }
   ctx.scale(m.squash, 2-m.squash);
   drawSprite(def.sprite, 0, 0, def.size);
@@ -849,13 +977,15 @@ const playState = {
     player.sx += (1-player.sx)*10*dt; player.sy += (1-player.sy)*10*dt;
     fridgeCooldown = Math.max(0, fridgeCooldown-dt);
     hintT = Math.max(0, hintT-dt);
+    player.moodT = Math.max(0, player.moodT-dt);
+    if(player.moodT<=0) player.mood = 'normal';
 
+    unstickPlayer(); // 若已重疊在碰撞體內（例如牆剛完工在腳邊），先推回可行走位置
     const {mx,my} = moveVector();
     const spd = 3.3*dt;
     if(mx!==0||my!==0){
       player.bob += dt;
       if(mx>0.05) player.facing=1; else if(mx<-0.05) player.facing=-1;
-      unstickPlayer(); // 若已重疊在碰撞體內（例如牆剛完工在腳邊），先推回可行走位置
       const ngx = clamp(player.gx + mx*spd, 0.3, GRID-1.3);
       if(!isBlockedAt(ngx, player.gy)) player.gx = ngx;
       const ngy = clamp(player.gy + my*spd, 0.3, GRID-1.3);
@@ -873,6 +1003,7 @@ const playState = {
         if(n.taken) continue;
         if(Math.hypot(n.gx-player.gx, n.gy-player.gy) < 0.62){
           n.taken = true; wood += 2; score += 5;
+          player.mood = 'happy'; player.moodT = 0.4;
           floatText(player.x, player.y-72, '+2 木材', '#ffcf5c');
           burst(player.x, player.y-40, '#c9975f', 8, 130);
           beep(700,0.08,'square',0.12); setTimeout(()=>beep(1000,0.1,'square',0.1),70);
@@ -882,7 +1013,7 @@ const playState = {
       if(phaseTimer<=0) startNight();
     } else {
       spawnTimer -= dt;
-      const spawnRate = Math.max(0.7, L.spawnBase - day*0.14);
+      const spawnRate = Math.max(0.7, L.spawnBase - day*0.14) * (nightIsBreather ? 1.3 : 1);
       if(spawnTimer<=0 && nightSpawned<nightQuota){
         spawnMonster(); nightSpawned++; spawnTimer = spawnRate;
       }
@@ -909,6 +1040,8 @@ const playState = {
         // 撞到玩家
         if(player.invuln<=0 && Math.hypot(m.gx-player.gx, m.gy-player.gy)<0.55){
           player.hp -= def.dmg; player.invuln = 1.2;
+          player.mood = 'hurt'; player.moodT = 0.6;
+          player.sx = 0.72; player.sy = 1.32;
           shake = 8; freeze = 0.08; flashT = 0.1;
           burst(player.x, player.y-30, '#ff6cc7', 16, 200);
           beep(220,0.25,'sawtooth',0.2,-150);
@@ -930,6 +1063,15 @@ const playState = {
       traps = traps.filter(t=>!t.dead);
       monsters = monsters.filter(m=>!m.dead);
       houseHp = walls.reduce((s,w)=>s+w.built,0);
+
+      // v5：城牆瀕危警示——任一動工過的牆被咬到剩不到1/3時，畫面閃紅框＋警示音提醒玩家去救
+      const wallCritical = walls.some(w=>w.built>0 && w.built<w.need*0.34);
+      if(wallCritical){
+        dangerBeepT -= dt;
+        if(dangerBeepT<=0){ beep(780,0.09,'square',0.11,-40); dangerBeepT = 2.2; }
+      } else {
+        dangerBeepT = 0;
+      }
 
       phaseTimer -= dt;
       if(phaseTimer<=0 && nightSpawned>=nightQuota && monsters.length===0){
@@ -1012,6 +1154,7 @@ function handleAction(){
       player.hp = Math.min(player.maxHp, player.hp+1);
       fridgeCooldown = FRIDGE_COOLDOWN;
       player.sx=1.3; player.sy=0.7;
+      player.mood='happy'; player.moodT=0.5;
       floatText(player.x, player.y-64, '+1 HP 喝飲料', '#41d6ff');
       burst(player.x, player.y-30, '#41d6ff', 14, 160);
       beep(700,0.1,'sine',0.15); setTimeout(()=>beep(950,0.12,'sine',0.12),80);
@@ -1045,13 +1188,11 @@ function handleAction(){
       best.built = Math.min(best.need, Math.floor(best.built)+1);
       wood -= 1; score += 3;
       player.sx=1.3; player.sy=0.7;
+      player.mood='happy'; player.moodT=0.4;
       floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-40, '+1', '#e8c07d');
       burst(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-20, '#e8c07d', 10, 140);
       beep(500,0.08,'square',0.12,120);
-      if(best.built>=best.need){
-        beep(700,0.15,'triangle',0.15,200); floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-58, '完工！', '#7ee27e');
-        unstickPlayer(); // 牆在玩家腳邊完工時，把玩家推回可行走位置，避免被困住
-      }
+      if(best.built>=best.need){ beep(700,0.15,'triangle',0.15,200); floatText(isoX(best.gx,best.gy), isoY(best.gx,best.gy)-58, '完工！', '#7ee27e'); unstickPlayer(); /* 牆在玩家腳邊完工時立刻推開，避免蓋在身上困住 */ }
     } else if(best && bd<0.95 && wood<=0){
       floatText(player.x, player.y-64, '沒有木材了！去撿木頭', '#ff6cc7');
       beep(150,0.1,'sawtooth',0.1);
@@ -1080,6 +1221,7 @@ function buildTrap(){
     traps.push({gx,gy,dead:false,charges:2});
     wood -= cost; score += 4;
     player.sx=1.3; player.sy=0.7;
+    player.mood='happy'; player.moodT=0.4;
     floatText(player.x, player.y-64, '放置陷阱（可電2次）', '#ff8a8a');
     burst(player.x, player.y-20, '#c0392b', 10, 140);
     beep(400,0.1,'sawtooth',0.12,-80);
@@ -1108,9 +1250,18 @@ function startNight(){
   const L = LEVELS[levelIdx];
   phase='night'; phaseTimer = L.nightLen; spawnTimer = 1.2;
   nightSpawned = 0;
-  nightQuota = 3 + day*2 + (levelIdx===3? Math.floor(day*0.8):levelIdx);
-  floatText(GAME_W/2, 160, '夜晚降臨...怪物出沒！', '#ff6cc7', 24);
-  beep(220,0.3,'sawtooth',0.15,-80);
+  const baseQuota = 3 + day*2 + (levelIdx===3? Math.floor(day*0.8):levelIdx);
+  // v5：難度改成鋸齒狀——每 4 天安排一次「喘息夜」，怪物少三成，玩家能喘口氣再迎接更難的夜晚
+  nightIsBreather = day>=4 && day%4===0;
+  nightQuota = nightIsBreather ? Math.max(3, Math.round(baseQuota*0.7)) : baseQuota;
+  dangerBeepT = 0;
+  if(nightIsBreather){
+    floatText(GAME_W/2, 160, '今晚怪物比較少，喘口氣！', '#7ee27e', 24);
+    chord([659,880],90,0.12,'triangle',0.12);
+  } else {
+    floatText(GAME_W/2, 160, '夜晚降臨...怪物出沒！', '#ff6cc7', 24);
+    beep(220,0.3,'sawtooth',0.15,-80);
+  }
   shake = 4;
 }
 function startDay(){
