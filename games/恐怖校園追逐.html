@@ -295,8 +295,34 @@ function resize() {
   canvas.style.height = window.innerHeight + 'px';
   canvas.width = Math.floor(window.innerWidth * dpr);
   canvas.height = Math.floor(window.innerHeight * dpr);
+  bakeStaticLayers();
 }
 window.addEventListener('resize', resize);
+
+// 靜態漸層離屏烘焙（不再每幀 createGradient，維持 60fps）
+let ceilGrad = null, floorGrad = null, fogGrad = null;
+const vignetteCanvas = document.createElement('canvas');
+function bakeStaticLayers() {
+  const w = canvas.width, h = canvas.height;
+  if (w < 2 || h < 2) return;
+  const horizon = h / 2;
+  ceilGrad = ctx.createLinearGradient(0, 0, 0, horizon);
+  ceilGrad.addColorStop(0, '#131007');
+  ceilGrad.addColorStop(1, '#1e1a0e');
+  floorGrad = ctx.createLinearGradient(0, horizon, 0, h);
+  floorGrad.addColorStop(0, '#2c2411');
+  floorGrad.addColorStop(1, '#493c1a');
+  fogGrad = ctx.createLinearGradient(0, horizon - h * 0.05, 0, horizon + h * 0.4);
+  fogGrad.addColorStop(0, 'rgba(5,4,3,0)');
+  fogGrad.addColorStop(1, 'rgba(5,4,3,0.3)');
+  vignetteCanvas.width = w; vignetteCanvas.height = h;
+  const vctx = vignetteCanvas.getContext('2d');
+  const vign = vctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.75);
+  vign.addColorStop(0, 'rgba(120,0,0,0)');
+  vign.addColorStop(1, 'rgba(150,0,0,1)');
+  vctx.fillStyle = vign;
+  vctx.fillRect(0, 0, w, h);
+}
 resize();
 
 // ---------- maze (perfect maze via DFS backtracker) ----------
@@ -399,7 +425,7 @@ function worldToCell(x, y) {
 }
 
 // ---------- entities ----------
-const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: Infinity };
+const player = { x: 0, y: 0, angle: 0, angleTarget: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: Infinity };
 const chaser = { x: 0, y: 0, r: 0.32, speed: 1.5, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, charge: 'none', chargeT: 0, dashDx: 0, dashDy: 0, nextChargeOk: 0, confusedUntil: 0, angryUntil: 0 };
 const SEARCH_RANGE = 1.4;
 const weapon = { x: 0, y: 0, collected: false };
@@ -413,7 +439,12 @@ let swingFlashUntil = -Infinity;
 let shakeMag = 0; // 只在被抓/擊中瞬間短促出現，快速衰減（防頭暈）
 
 const PLAYER_SPEED = 2.6;
-const TURN_SPEED = 2.6;
+// 防頭暈：降低轉向速度與拖曳靈敏度，視角變化經臨界阻尼低通濾波（無過衝）
+const TURN_SPEED = 2.1;
+const DRAG_SENS = 0.0022;
+const LOOK_DAMP = 12;
+let turnVel = 0; // 鍵盤轉向角速度（平滑起步/停止）
+let moveVel = 0; // 前後移動比例（平緩加減速）
 const VIEW_DIST = 9;
 const JUMP_DURATION = 0.5;
 const HIDE_RANGE = 1.0;
@@ -663,7 +694,7 @@ window.addEventListener('pointermove', e => {
   if (!dragging) return;
   const dx = e.clientX - lastDragX;
   lastDragX = e.clientX;
-  player.angle += dx * 0.0035;
+  player.angleTarget += dx * DRAG_SENS; // 只改目標角，實際視角在 update 中低通平滑跟上
 });
 
 // ---------- game state ----------
@@ -675,6 +706,9 @@ function reset() {
   placeCabinets();
   const start = cellCenter(0, 0);
   player.x = start.x; player.y = start.y; player.angle = 0;
+  player.angleTarget = 0;
+  turnVel = 0; moveVel = 0;
+  acc = 0;
   player.hiding = false;
   player.jumpT = -Infinity;
   hideOverlayEl.style.display = 'none';
@@ -743,6 +777,9 @@ function update(dt) {
     return;
   }
 
+  // 相機臨界阻尼追隨目標角：低通濾波、無過衝、無漂移
+  player.angle += (player.angleTarget - player.angle) * (1 - Math.exp(-LOOK_DAMP * dt));
+
   nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
   if (player.hiding) {
     interactPromptEl.style.display = 'none';
@@ -759,14 +796,20 @@ function update(dt) {
   }
 
   if (!player.hiding) {
-    if (keys['arrowleft'] || keys['a']) player.angle -= TURN_SPEED * dt;
-    if (keys['arrowright'] || keys['d']) player.angle += TURN_SPEED * dt;
+    let turnAxis = 0;
+    if (keys['arrowleft'] || keys['a']) turnAxis -= 1;
+    if (keys['arrowright'] || keys['d']) turnAxis += 1;
+    // 平滑阻尼轉向：角速度低通，起步/停止皆平緩
+    turnVel += (turnAxis * TURN_SPEED - turnVel) * (1 - Math.exp(-10 * dt));
+    player.angleTarget += turnVel * dt;
 
     let move = 0;
     if (keys['arrowup'] || keys['w']) move += 1;
     if (keys['arrowdown'] || keys['s']) move -= 1;
-    if (move !== 0) {
-      const dirX = Math.cos(player.angle) * move, dirY = Math.sin(player.angle) * move;
+    // 平緩加速度曲線：避免瞬間起步/急停的視覺跳動
+    moveVel += (move - moveVel) * (1 - Math.exp(-9 * dt));
+    if (Math.abs(moveVel) > 0.02) {
+      const dirX = Math.cos(player.angle) * moveVel, dirY = Math.sin(player.angle) * moveVel;
       const step = PLAYER_SPEED * dt;
       moveWithCollision(player, player.x + dirX * step, player.y + dirY * step);
     }
@@ -916,7 +959,7 @@ const DREAD_RANGE = 4;
 function drawScene() {
   const w = canvas.width, h = canvas.height;
   const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
-  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
+  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.035 : 0; // 跳躍位移調小（防頭暈）
 
   const dyingT = dying ? clamp((elapsed - deathTime) / DEATH_ANIM_DURATION, 0, 1) : 0;
   const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
@@ -927,22 +970,16 @@ function drawScene() {
   ctx.save();
   ctx.translate(shakeX, shakeY);
 
-  const horizon = h / 2 - jumpBob;
+  const horizon = h / 2; // 地平線固定（跳躍位移只套用在牆列，背景不上下晃）
 
-  // ceiling
-  const ceilGrad = ctx.createLinearGradient(0, 0, 0, horizon);
-  ceilGrad.addColorStop(0, '#131007');
-  ceilGrad.addColorStop(1, '#1e1a0e');
+  // ceiling（烘焙漸層）
   ctx.fillStyle = ceilGrad;
   ctx.fillRect(0, 0, w, horizon);
   // flickering fluorescent tube strip
   ctx.fillStyle = `rgba(240,230,160,${0.1 + flicker * 0.16})`;
-  ctx.fillRect(0, horizon * 0.15, w, 4);
+  ctx.fillRect(0, horizon * 0.15 - jumpBob, w, 4);
 
-  // floor
-  const floorGrad = ctx.createLinearGradient(0, horizon, 0, h);
-  floorGrad.addColorStop(0, '#2c2411');
-  floorGrad.addColorStop(1, '#493c1a');
+  // floor（烘焙漸層）
   ctx.fillStyle = floorGrad;
   ctx.fillRect(0, horizon, w, h - horizon);
 
@@ -965,30 +1002,34 @@ function drawScene() {
     }
   }
 
-  const RAY_COUNT = Math.max(120, Math.min(w, 400));
+  // 畫質：列取樣密度提高至接近全解析度（原上限 400 列在高解析畫布會糊成粗條）
+  const RAY_COUNT = Math.max(240, Math.min(w, 1100));
   const colWidth = w / RAY_COUNT;
   const zbuffer = new Array(RAY_COUNT);
 
   for (let i = 0; i < RAY_COUNT; i++) {
     const rayAngle = player.angle - FOV / 2 + (i / RAY_COUNT) * FOV;
     const hit = castRay(rayAngle);
-    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle);
+    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle); // fisheye 矯正
     zbuffer[i] = correctedDist;
     const lineHeight = h / correctedDist;
-    const y0 = horizon - lineHeight / 2;
+    const y0 = horizon - lineHeight / 2 - jumpBob;
+    // 列邊界取整，消除轉向時的欄位縫隙抖動/撕裂感
+    const x0 = Math.floor(i * colWidth);
+    const cw = Math.max(1, Math.floor((i + 1) * colWidth) - x0);
 
     const seed = (wallSeed[hit.gy] && wallSeed[hit.gy][hit.gx]) || 0.5;
     const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.15, 1);
     let baseR = 110 + seed * 45, baseG = 92 + seed * 35, baseB = 50 + seed * 20;
     if (hit.side === 1) { baseR *= 0.75; baseG *= 0.75; baseB *= 0.75; }
-    const lightMul = distShade * (0.78 + flicker * 0.25);
+    const lightMul = distShade * (0.86 + flicker * 0.14); // 降低亮度調變幅度（防閃爍暈）
     ctx.fillStyle = `rgb(${Math.floor(baseR * lightMul)},${Math.floor(baseG * lightMul)},${Math.floor(baseB * lightMul)})`;
-    ctx.fillRect(i * colWidth, y0, colWidth + 1, lineHeight);
+    ctx.fillRect(x0, y0, cw, lineHeight);
 
     // damp stain speckle for backrooms grime
     if (seed > 0.82) {
       ctx.fillStyle = `rgba(20,15,5,${0.25 * distShade})`;
-      ctx.fillRect(i * colWidth, y0 + lineHeight * 0.55, colWidth + 1, lineHeight * 0.35);
+      ctx.fillRect(x0, y0 + lineHeight * 0.55, cw, lineHeight * 0.35);
     }
   }
 
@@ -1009,19 +1050,14 @@ function drawScene() {
     ctx.stroke();
   }
 
-  // depth fog (darken far)
-  const fogGrad = ctx.createLinearGradient(0, horizon - h * 0.05, 0, horizon + h * 0.4);
-  fogGrad.addColorStop(0, 'rgba(5,4,3,0)');
-  fogGrad.addColorStop(1, 'rgba(5,4,3,0.3)');
+  // depth fog（烘焙漸層）
   ctx.fillStyle = fogGrad;
   ctx.fillRect(0, 0, w, h);
 
-  // red dread vignette — 防頭暈：固定不脈動，只隨距離平滑加深
-  const vign = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.28, w / 2, h / 2, Math.max(w, h) * 0.75);
-  vign.addColorStop(0, 'rgba(120,0,0,0)');
-  vign.addColorStop(1, `rgba(150,0,0,${0.12 + dread * 0.3})`);
-  ctx.fillStyle = vign;
-  ctx.fillRect(0, 0, w, h);
+  // red dread vignette — 防頭暈：固定不脈動，只隨距離平滑加深（離屏烘焙）
+  ctx.globalAlpha = clamp(0.12 + dread * 0.3, 0, 1);
+  ctx.drawImage(vignetteCanvas, 0, 0);
+  ctx.globalAlpha = 1;
 
   ctx.restore();
   updateDreadAudio(dread, chaserDist);
@@ -1216,6 +1252,9 @@ function drawSprite(entity, zbuffer, RAY_COUNT, colWidth, kind) {
   }
 }
 
+// 固定時間步進（accumulator）：更新節奏穩定，不因掉幀產生跳動
+const STEP = 1 / 60;
+let acc = 0;
 function loop(now) {
   const dt = Math.min(0.05, (now - lastFrameTime) / 1000);
   lastFrameTime = now;
@@ -1223,7 +1262,8 @@ function loop(now) {
   flicker = 0.93 + 0.07 * Math.sin(now * 0.0011);
   shakeMag *= Math.pow(0.0001, dt); // 短促衰減（約 0.25 秒內消失）
   if (shakeMag < 0.2) shakeMag = 0;
-  update(dt);
+  acc += dt;
+  while (acc >= STEP) { update(STEP); acc -= STEP; }
   drawScene();
   if (running) requestAnimationFrame(loop);
 }

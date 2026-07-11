@@ -1,6 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
-<!-- 本次調整：防頭暈（移除持續 screen shake、每幀隨機閃爍與脈動紅暈，shake 只在受擊/被抓短促出現）；阿嬤加入「蓄力❗→衝刺」讀招、被球棒打會滑倒躺平＋暈眩星星＋起身氣噗噗、追丟時東張西望困惑 -->
+<!-- 專業AI升級 v5 -->
+<!-- 本次調整：防頭暈第二輪——視角改臨界阻尼低通（滑鼠/觸控/鍵盤轉向皆平滑、無過衝）、降低轉向速度與拖曳靈敏度、移動加減速平緩化、跳躍位移調小；畫質——raycasting 列取樣密度提高至近全解析度、列邊界取整消除轉向撕裂、牆面亮度調變幅度減半。保留：事件式短促 shake、緩慢呼吸閃爍、距離紅暈、阿嬤蓄力衝刺/滑倒/東張西望 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -540,7 +540,7 @@ function bfsPath(startR, startC, goalR, goalC) {
 }
 
 // ---------- entities ----------
-const player = { x: 0, y: 0, angle: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: -Infinity };
+const player = { x: 0, y: 0, angle: 0, angleTarget: 0, r: 0.28, hiding: false, hidingCabinet: null, lastKnownCell: null, jumpT: -Infinity };
 const chaser = { x: 0, y: 0, r: 0.32, speed: 1.0, stunnedUntil: 0, searching: false, searchCabinet: null, searchUntil: 0, pathTimer: 0, cachedPath: null, charge: 'none', chargeT: 0, dashDx: 0, dashDy: 0, nextChargeOk: 0, confusedUntil: 0, angryUntil: 0 };
 const SEARCH_RANGE = 1.4;
 const weapon = { x: 0, y: 0, collected: false };
@@ -554,7 +554,12 @@ let swingFlashUntil = -Infinity;
 let closeCalls = 0, wasInDanger = false;
 
 const PLAYER_SPEED = 2.6;
-const TURN_SPEED = 2.6;
+// 防頭暈：降低轉向速度與拖曳靈敏度，所有視角變化都經過臨界阻尼低通濾波（無過衝）
+const TURN_SPEED = 2.1;
+const DRAG_SENS = 0.0022;
+const LOOK_DAMP = 12;  // 相機追隨目標角的阻尼係數
+let turnVel = 0;       // 鍵盤轉向角速度（平滑起步/停止）
+let moveVel = 0;       // 前後移動速度比例（平緩加減速，避免瞬間起步/急停）
 let VIEW_DIST = 9;
 const JUMP_DURATION = 0.5;
 const HIDE_RANGE = 1.0;
@@ -851,7 +856,7 @@ window.addEventListener('pointermove', e => {
   if (!dragging || e.pointerId !== dragPointerId) return;
   const dx = e.clientX - lastDragX;
   lastDragX = e.clientX;
-  player.angle += dx * 0.0035;
+  player.angleTarget += dx * DRAG_SENS; // 只改目標角，實際視角在 update 中低通平滑跟上
 });
 
 function jump() {
@@ -1083,6 +1088,8 @@ function startLevel(idx) {
   else if (!startCell.S) player.angle = Math.PI / 2;
   else if (!startCell.N) player.angle = -Math.PI / 2;
   else player.angle = Math.PI;
+  player.angleTarget = player.angle;
+  turnVel = 0; moveVel = 0;
   player.hiding = false; player.hidingCabinet = null;
   player.jumpT = -Infinity;
   hideOverlayEl.style.display = 'none';
@@ -1181,6 +1188,9 @@ function updatePlay(dt) {
   else if (elapsed < SAFE_TIME) { hintOverlayEl.style.display = 'block'; hintOverlayEl.innerHTML = '⚠️ 恐怖阿嬤快出動了，撿起球棒或找好躲藏點！'; }
   else { hintOverlayEl.style.display = 'none'; }
 
+  // 相機臨界阻尼追隨目標角：低通濾波、無過衝、無漂移
+  player.angle += (player.angleTarget - player.angle) * (1 - Math.exp(-LOOK_DAMP * dt));
+
   nearCabinet = cabinets.find(cb => Math.hypot(player.x - cb.x, player.y - cb.y) < HIDE_RANGE) || null;
   if (player.hiding) {
     interactPromptEl.style.display = 'none';
@@ -1198,15 +1208,21 @@ function updatePlay(dt) {
 
   let moving = false;
   if (!player.hiding) {
-    if (keys['arrowleft'] || keys['a']) player.angle -= TURN_SPEED * dt;
-    if (keys['arrowright'] || keys['d']) player.angle += TURN_SPEED * dt;
+    let turnAxis = 0;
+    if (keys['arrowleft'] || keys['a']) turnAxis -= 1;
+    if (keys['arrowright'] || keys['d']) turnAxis += 1;
+    // 平滑阻尼轉向：角速度低通，起步/停止皆平緩、無跳動
+    turnVel += (turnAxis * TURN_SPEED - turnVel) * (1 - Math.exp(-10 * dt));
+    player.angleTarget += turnVel * dt;
 
     let move = 0;
     if (keys['arrowup'] || keys['w']) move += 1;
     if (keys['arrowdown'] || keys['s']) move -= 1;
-    if (move !== 0) {
-      moving = true;
-      const dirX = Math.cos(player.angle) * move, dirY = Math.sin(player.angle) * move;
+    // 平緩加速度曲線：避免瞬間起步/急停造成的視覺跳動
+    moveVel += (move - moveVel) * (1 - Math.exp(-9 * dt));
+    if (Math.abs(moveVel) > 0.02) {
+      moving = Math.abs(moveVel) > 0.25;
+      const dirX = Math.cos(player.angle) * moveVel, dirY = Math.sin(player.angle) * moveVel;
       const step = PLAYER_SPEED * dt;
       moveWithCollision(player, player.x + dirX * step, player.y + dirY * step);
     }
@@ -1371,7 +1387,7 @@ function castRay(rayAngle) {
 function drawScene() {
   const w = canvas.width, h = canvas.height;
   const jumpPhase = clamp((elapsed - player.jumpT) / JUMP_DURATION, 0, 1);
-  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.06 : 0;
+  const jumpBob = jumpPhase < 1 ? Math.sin(jumpPhase * Math.PI) * h * 0.035 : 0; // 跳躍位移調小（防頭暈）
 
   const dyingT = dying ? clamp((elapsed - deathTime) / DEATH_ANIM_DURATION, 0, 1) : 0;
   const chaserDist = dying ? 0.2 : (player.hiding ? Infinity : Math.hypot(chaser.x - player.x, chaser.y - player.y));
@@ -1389,29 +1405,33 @@ function drawScene() {
   ctx.fillStyle = `rgba(240,230,160,${0.02 + flicker * 0.05})`;
   ctx.fillRect(0, horizon * 0.15 - jumpBob, w, 4);
 
-  const RAY_COUNT = Math.max(110, Math.min(w, 300));
+  // 畫質：提高列取樣密度到接近全解析度（原本上限 300 列在高解析畫布會糊成粗條）
+  const RAY_COUNT = Math.max(240, Math.min(w, 1100));
   const colWidth = w / RAY_COUNT;
   const zbuffer = new Array(RAY_COUNT);
 
   for (let i = 0; i < RAY_COUNT; i++) {
     const rayAngle = player.angle - FOV / 2 + (i / RAY_COUNT) * FOV;
     const hit = castRay(rayAngle);
-    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle);
+    const correctedDist = hit.dist * Math.cos(rayAngle - player.angle); // fisheye 矯正
     zbuffer[i] = correctedDist;
     const lineHeight = h / correctedDist;
     const y0 = horizon - lineHeight / 2 - jumpBob;
+    // 列邊界取整，消除轉向時的欄位縫隙抖動/撕裂感
+    const x0 = Math.floor(i * colWidth);
+    const cw = Math.max(1, Math.floor((i + 1) * colWidth) - x0);
 
     const seed = (wallSeed[hit.gy] && wallSeed[hit.gy][hit.gx]) || 0.5;
     const distShade = clamp(1 - correctedDist / VIEW_DIST, 0.12, 1);
     let baseR = 110 + seed * 45, baseG = 92 + seed * 35, baseB = 50 + seed * 20;
     if (hit.side === 1) { baseR *= 0.75; baseG *= 0.75; baseB *= 0.75; }
-    const lightMul = distShade * (0.78 + flicker * 0.25);
+    const lightMul = distShade * (0.86 + flicker * 0.14); // 降低亮度調變幅度（防閃爍暈）
     ctx.fillStyle = `rgb(${Math.floor(baseR * lightMul)},${Math.floor(baseG * lightMul)},${Math.floor(baseB * lightMul)})`;
-    ctx.fillRect(i * colWidth, y0, colWidth + 1, lineHeight);
+    ctx.fillRect(x0, y0, cw, lineHeight);
 
     if (seed > 0.82) {
       ctx.fillStyle = `rgba(20,15,5,${0.25 * distShade})`;
-      ctx.fillRect(i * colWidth, y0 + lineHeight * 0.55, colWidth + 1, lineHeight * 0.35);
+      ctx.fillRect(x0, y0 + lineHeight * 0.55, cw, lineHeight * 0.35);
     }
   }
 
