@@ -442,7 +442,7 @@ async function bumpCount(name) {
 // 頁面先用快照瞬間顯示所有數字，15 秒後可見卡片自動切換成即時查詢——又快又即時。
 const statsReady = (async () => {
   try {
-    const r = await fetch('stats.json?ts=' + Date.now(), { cache: 'no-store' });
+    const r = await fetch('stats.json', { cache: 'no-cache' });
     if (!r.ok) return;
     const s = await r.json();
     const at = Date.now() - 30000; // 標記為 30 秒前的資料：先用快照，很快就會被即時數字取代
@@ -673,7 +673,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') closePlayer(
 /* ===== 資料載入 ===== */
 async function loadManifest() {
   try {
-    const r = await fetch('manifest.json?ts=' + Date.now(), { cache: 'no-store' });
+    // no-cache = 跟伺服器確認有沒有更新（沒變就回 304 不重傳，比每次整份重載快很多）
+    const r = await fetch('manifest.json', { cache: 'no-cache' });
     if (r.ok) {
       const m = await r.json();
       return { games: m['pro/games'] || [], videos: m['pro/videos'] || [] };
@@ -725,8 +726,20 @@ async function hotSort() {
   if (changed) render(document.getElementById('search').value);
 }
 
+// 先用上次存在本機的清單「秒開畫面」，背景再抓最新清單更新（有新作品時自動補上）
+try {
+  const cached = localStorage.getItem('manifest-cache-pro');
+  if (cached) { DATA = JSON.parse(cached); render(''); }
+} catch (e) {}
 // 熱門排序延後 4 秒再跑：先讓看得到的卡片查完數字，避免一開頁就塞爆計數服務
-loadManifest().then(m => { DATA = m || { games: [], videos: [] }; render(''); setTimeout(hotSort, 4000); });
+loadManifest().then(m => {
+  if (m && ((m.games || []).length || (m.videos || []).length)) {
+    DATA = m;
+    try { localStorage.setItem('manifest-cache-pro', JSON.stringify(m)); } catch (e) {}
+    render(document.getElementById('search').value);
+  }
+  setTimeout(hotSort, 4000);
+});
 </script>
 </body>
 </html>
