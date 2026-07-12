@@ -14,8 +14,17 @@ function keyFor(cat, file) {
   return cat.startsWith('pro/') ? 'pro-' + slug : slug;
 }
 
-function snippet(key) {
+function snippet(key, isVideo) {
   // 用協定相對網址（//...）避免檔案內出現 http 字面；fetch 失敗一律靜默不影響作品
+  // 動畫：打開就算一次遊玩；遊戲：第一次操作才算遊玩
+  const playPart = isVideo
+    ? '  ping(K+"-p"); ping("site-total-plays");'
+    : [
+        '  var done=false;',
+        '  function once(){ if(done)return; done=true; ping(K+"-p"); ping("site-total-plays");',
+        '    window.removeEventListener("pointerdown",once); window.removeEventListener("keydown",once); }',
+        '  window.addEventListener("pointerdown",once,{once:false}); window.addEventListener("keydown",once,{once:false});',
+      ].join('\n');
   return [
     '<script>/* ' + MARK + ' */',
     '(function(){',
@@ -23,10 +32,7 @@ function snippet(key) {
     '  var NS="ai-future-camp", K=' + JSON.stringify(key) + ';',
     '  function ping(n){ try{ var p=fetch("//abacus.jasoncameron.dev/hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }',
     '  ping(K+"-v");',
-    '  var done=false;',
-    '  function once(){ if(done)return; done=true; ping(K+"-p"); ping("site-total-plays");',
-    '    window.removeEventListener("pointerdown",once); window.removeEventListener("keydown",once); }',
-    '  window.addEventListener("pointerdown",once,{once:false}); window.addEventListener("keydown",once,{once:false});',
+    playPart,
     '})();',
     '</script>',
   ].join('\n');
@@ -39,8 +45,11 @@ for (const cat of ['games', 'videos', 'pro/games', 'pro/videos']) {
   for (const f of fs.readdirSync(dir).filter(f => /\.html?$/i.test(f))) {
     const fp = path.join(dir, f);
     let s = fs.readFileSync(fp, 'utf8');
+    // 已有舊信標就先移除再重植（規則可能更新）
+    s = s.replace(new RegExp('<script>/\\* ' + MARK + ' \\*/[\\s\\S]*?</script>\\n?', 'g'), '');
     if (s.includes(MARK)) { skipped++; continue; }
-    const snip = snippet(keyFor(cat, f));
+    const isVideo = /(^|\/)videos$/.test(cat);
+    const snip = snippet(keyFor(cat, f), isVideo);
     // 插在最後一個 </body> 之前；沒有就 </html> 之前；再沒有就直接附加
     if (/<\/body>/i.test(s)) {
       s = s.replace(/([\s\S]*)<\/body>/i, (m, pre) => pre + snip + '\n</body>');

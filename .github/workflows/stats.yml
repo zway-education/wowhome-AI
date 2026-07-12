@@ -1,0 +1,41 @@
+name: Refresh stats snapshot
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'  # 每 10 分鐘更新一次統計快照
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stats
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Fetch all counters into stats.json
+        run: node scripts/fetch-stats.js
+
+      - name: Commit snapshot
+        run: |
+          git config user.name "gallery-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add stats.json
+          if ! git diff --cached --quiet; then
+            git commit -m "更新統計快照 [skip ci]"
+            for i in 1 2 3 4; do
+              git push && break
+              git pull --rebase origin main
+            done
+          fi

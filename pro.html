@@ -438,8 +438,29 @@ async function bumpCount(name) {
   }
 }
 
+// 統計快照：GitHub Actions 每 10 分鐘把全部計數器抓成 stats.json。
+// 頁面先用快照瞬間顯示所有數字，15 秒後可見卡片自動切換成即時查詢——又快又即時。
+const statsReady = (async () => {
+  try {
+    const r = await fetch('stats.json?ts=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return;
+    const s = await r.json();
+    const at = Date.now() - 30000; // 標記為 30 秒前的資料：先用快照，很快就會被即時數字取代
+    for (const [k, w] of Object.entries(s.works || {})) {
+      for (const [name, val] of [[k + '-v', w.v], [k + '-p', w.p], [k + '-love', w.love], [k + '-love-c', 0], [k + '-like', w.like], [k + '-like-c', 0]]) {
+        if (!(name in countCache)) { countCache[name] = val; countCacheAt[name] = at; }
+      }
+    }
+    if (typeof s.total === 'number' && !('site-total-plays' in countCache)) {
+      countCache['site-total-plays'] = s.total; countCacheAt['site-total-plays'] = at;
+      document.getElementById('tplays').textContent = s.total;
+      document.getElementById('tplaysWrap').style.display = '';
+    }
+  } catch (e) {}
+})();
+
 // 頁面頂部的總遊玩次數
-readCount('site-total-plays').then(n => {
+statsReady.then(() => readCount('site-total-plays')).then(n => {
   if (n !== null) {
     document.getElementById('tplays').textContent = n;
     document.getElementById('tplaysWrap').style.display = '';
@@ -461,6 +482,7 @@ async function fillNums(el, force) {
   if (!key) return;
   if (el.dataset.done && !force) return;
   el.dataset.done = '1';
+  await statsReady; // 先等快照載好，卡片數字直接秒開
   if (force) {
     ['-v','-p','-love','-love-c','-like','-like-c'].forEach(sfx => { delete countCache[key + sfx]; delete countCacheAt[key + sfx]; });
   }
@@ -629,6 +651,7 @@ function openPlayer(title, src, key, isGame) {
   if (key) {
     bumpCount(key + '-v');
     bumpCache(key + '-v');
+    if (!isGame) { bumpCount(key + '-p'); bumpCache(key + '-p'); } // 動畫：打開播放就算一次遊玩
     refreshCardNums(key);
   }
   bumpCount('site-total-plays');
