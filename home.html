@@ -439,20 +439,20 @@ async function fillNums(el, force) {
     // 強制刷新：清掉這張卡片相關的快取，抓最新數字
     ['-v','-p','-love','-love-c','-like','-like-c'].forEach(sfx => { delete countCache[key + sfx]; delete countCacheAt[key + sfx]; });
   }
-  const [views, plays, love, loveC, like, likeC] = await Promise.all([
-    readCount(key + '-v'), readCount(key + '-p'),
+  if (!el.innerHTML) el.innerHTML = '<span style="opacity:.5">統計載入中…</span>'; // 佔位，避免看起來沒有統計
+  // 兩段式：先查瀏覽/遊玩（2個查詢，很快亮出來），評分票數隨後補上
+  const [views, plays] = await Promise.all([readCount(key + '-v'), readCount(key + '-p')]);
+  if (views === null && plays === null) { el.innerHTML = ''; return; } // 統計服務連不上才隱藏
+  const paint = (nl, ng) => {
+    el.innerHTML = numSpan('v', '瀏覽', views || 0) + numSpan('p', '遊玩', plays || 0) +
+      numSpan('love', '非常好玩', nl) + numSpan('like', '好玩', ng);
+  };
+  paint(0, 0);
+  const [love, loveC, like, likeC] = await Promise.all([
     readCount(key + '-love'), readCount(key + '-love-c'),
     readCount(key + '-like'), readCount(key + '-like-c'),
   ]);
-  if (views === null && plays === null) return; // 統計服務連不上才隱藏
-  const netLove = Math.max(0, (love || 0) - (loveC || 0));
-  const netLike = Math.max(0, (like || 0) - (likeC || 0));
-  const parts = [];
-  parts.push(numSpan('v', '瀏覽', views || 0));
-  parts.push(numSpan('p', '遊玩', plays || 0));
-  parts.push(numSpan('love', '非常好玩', netLove));
-  parts.push(numSpan('like', '好玩', netLike));
-  el.innerHTML = parts.join('');
+  paint(Math.max(0, (love || 0) - (loveC || 0)), Math.max(0, (like || 0) - (likeC || 0)));
 }
 
 // 卡片捲進畫面才查詢次數，避免一次發幾十個請求
