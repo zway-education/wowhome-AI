@@ -178,6 +178,7 @@ function startMusic(){
   ensureAudio();
   const totalDur = playSeq(melody, 'square', 0.16, 1);
   playSeq(bassline, 'triangle', 0.18, 0.5);
+  startDrums();
   setTimeout(()=>{ if(!ended){ playSeq(melody,'square',0.16,1); playSeq(bassline,'triangle',0.18,0.5);} }, (totalDur-actx.currentTime)*1000-50);
 }
 function sfxMarch(){
@@ -209,6 +210,84 @@ function sfxWin(){
   const t = actx.currentTime;
   [523.25,659.25,783.99,1046.5].forEach((f,i)=>playTone(f, t+i*0.09, 0.18, 'square', 0.2));
 }
+
+// ---------- 打鼓聲：進行曲鼓點（大鼓+小鼓，Web Audio 合成） ----------
+function drumKick(startAt, vol){
+  const dur = 0.16;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, startAt);
+  osc.frequency.exponentialRampToValueAtTime(48, startAt+dur*0.85);
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0008, startAt+dur);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.02);
+}
+function drumSnare(startAt, vol){
+  const dur = 0.14;
+  const bufSize = Math.floor(actx.sampleRate*dur);
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let j=0;j<bufSize;j++){ data[j] = (Math.random()*2-1) * (1-j/bufSize); }
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const filt = actx.createBiquadFilter();
+  filt.type='highpass'; filt.frequency.value=1400;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0006, startAt+dur);
+  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.start(startAt); src.stop(startAt+dur+0.02);
+  // 疊一顆音頭鼓身補上厚度
+  const osc = actx.createOscillator();
+  const g2 = actx.createGain();
+  osc.type='triangle'; osc.frequency.value = 190;
+  g2.gain.setValueAtTime(vol*0.6, startAt);
+  g2.gain.exponentialRampToValueAtTime(0.0006, startAt+0.06);
+  osc.connect(g2); g2.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+0.08);
+}
+function drumHat(startAt, vol){
+  const dur = 0.05;
+  const bufSize = Math.floor(actx.sampleRate*dur);
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let j=0;j<bufSize;j++){ data[j] = (Math.random()*2-1) * (1-j/bufSize); }
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const filt = actx.createBiquadFilter();
+  filt.type='highpass'; filt.frequency.value=6000;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0006, startAt+dur);
+  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.start(startAt); src.stop(startAt+dur+0.01);
+}
+// 進行曲鼓組節奏：一小節 8 拍＝ 大鼓-鈸-小鼓-鈸-大鼓-大鼓-小鼓-鈸
+const DRUM_BEAT = TEMPO*2; // 每鼓拍秒數
+const DRUM_PATTERN = ['kick','hat','snare','hat','kick','kick','snare','hat'];
+let drumTimer=null;
+function scheduleDrumBar(startAt, vol){
+  DRUM_PATTERN.forEach((hit,i)=>{
+    const t = startAt + i*DRUM_BEAT;
+    if(hit==='kick') drumKick(t, vol);
+    else if(hit==='snare') drumSnare(t, vol*0.9);
+    else drumHat(t, vol*0.5);
+  });
+  return startAt + DRUM_PATTERN.length*DRUM_BEAT;
+}
+function startDrums(){
+  let next = actx.currentTime + 0.05;
+  function loop(){
+    if(ended){ return; }
+    next = scheduleDrumBar(next, 0.24);
+    const waitMs = (next - actx.currentTime)*1000 - 120;
+    drumTimer = setTimeout(loop, Math.max(20,waitMs));
+  }
+  loop();
+}
+function stopDrums(){ if(drumTimer){ clearTimeout(drumTimer); drumTimer=null; } }
 
 // ---------- 背景：戰場草原 ----------
 function drawGround(t){
@@ -647,6 +726,7 @@ document.getElementById('replayBtn').addEventListener('click', function(e){
   e.stopPropagation();
   musicStarted=false;
   running=false;
+  stopDrums();
   if(!muted) startMusic();
   beginPlayback();
 });
