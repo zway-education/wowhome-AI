@@ -140,6 +140,54 @@ function chime() {
   });
 }
 
+// ---------- 背景音樂：輕鬆大廳琴音琶音循環，零外部資源 ----------
+let bgMusic = null;
+const BG_CHORDS = [
+  [261.63, 329.63, 392.00, 493.88],   // C大七
+  [220.00, 261.63, 329.63, 415.30],   // A小七
+  [174.61, 220.00, 261.63, 329.63],   // F大七
+  [196.00, 246.94, 293.66, 369.99],   // G大七
+];
+function startBgMusic() {
+  if (!audioCtx || bgMusic) return;
+  const t = audioCtx.currentTime;
+  const master = audioCtx.createGain();
+  master.gain.setValueAtTime(0.0001, t);
+  master.gain.exponentialRampToValueAtTime(0.11, t + 1.5);
+  master.connect(audioCtx.destination);
+  let chordIdx = 0, noteIdx = 0, timer = null;
+  function pluckNote(freq, when, vol) {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(freq, when);
+    g.gain.setValueAtTime(0.0001, when);
+    g.gain.exponentialRampToValueAtTime(vol, when + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, when + 1.7);
+    osc.connect(g).connect(master);
+    osc.start(when); osc.stop(when + 1.8);
+  }
+  function step() {
+    if (!bgMusic) return;
+    const chord = BG_CHORDS[chordIdx % BG_CHORDS.length];
+    const freq = chord[noteIdx % chord.length];
+    pluckNote(freq, audioCtx.currentTime + 0.02, 0.16);
+    noteIdx++;
+    if (noteIdx % chord.length === 0) chordIdx++;
+    bgMusic.timer = setTimeout(step, 480);
+  }
+  bgMusic = { master, timer: null };
+  step();
+}
+function stopBgMusic() {
+  if (!bgMusic || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  clearTimeout(bgMusic.timer);
+  bgMusic.master.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  const node = bgMusic;
+  bgMusic = null;
+  setTimeout(() => node.master.disconnect(), 700);
+}
+
 // ---------- 緩動 ----------
 const easeOut = t => 1 - Math.pow(1 - t, 3);
 const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -561,15 +609,18 @@ startBtn.addEventListener('click', () => {
   startBtn.style.display = 'none';
   soundBtn.style.display = 'block';
   soundBtn.textContent = '🔊';
+  startBgMusic();
   play();
 });
 soundBtn.addEventListener('click', () => {
   soundOn = !soundOn;
   soundBtn.textContent = soundOn ? '🔊' : '🔇';
-  if (!soundOn) speechSynthesis.cancel();
+  if (!soundOn) { speechSynthesis.cancel(); stopBgMusic(); }
+  else startBgMusic();
 });
 replayBtn.addEventListener('click', () => {
   soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn) startBgMusic();
   play();
 });
 
