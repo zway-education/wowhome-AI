@@ -84,6 +84,59 @@ function noiseBurst(dur=1.2, vol=0.16, delay=0, freq=900, q=0.7){
 }
 function note(freq, t, dur=0.35, vol=0.11){ beep(freq, dur, 'triangle', vol, 0, t); }
 
+// 觀眾聲浪：長時間濾波噪音當底噪，音量曲線隨劇情起伏（起場輕、對峙時緊張、進球爆發）
+function crowdSwell(){
+  const ac = audio();
+  const t0 = ac.currentTime;
+  const dur = T.total + 1;
+  const bufSize = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  let last = 0;
+  for(let i=0;i<bufSize;i++){ const w = Math.random()*2-1; last = (last*0.9)+(w*0.1); data[i]=last; }
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const filt = ac.createBiquadFilter(); filt.type='bandpass'; filt.frequency.value=650; filt.Q.value=0.5;
+  const g = ac.createGain();
+  const vAt = (sec, v) => g.gain.linearRampToValueAtTime(v, t0+sec);
+  g.gain.setValueAtTime(0.05, t0);
+  vAt(T.introEnd, 0.06);
+  vAt(T.standoffEnd - 0.3, 0.1);        // 對峙後段觀眾屏息期待，聲量微升
+  vAt(T.kick - 0.05, 0.04);             // 射門瞬間觀眾安靜一拍
+  vAt(T.goal - 0.1, 0.06);
+  vAt(T.goal + 0.6, 0.34);              // 進球爆發歡呼
+  vAt(T.celebEnd, 0.16);
+  vAt(T.total, 0.05);
+  src.connect(filt).connect(g).connect(masterGain);
+  src.start(t0); src.stop(t0+dur);
+}
+
+// 踢球聲：低頻悶擊（腳觸球）+ 短促噪音（皮革摩擦感），比單純方波更有重量
+function kickThud(delay=0){
+  const ac = audio();
+  const t0 = ac.currentTime + delay;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = 'triangle';
+  o.frequency.setValueAtTime(140, t0);
+  o.frequency.exponentialRampToValueAtTime(50, t0+0.09);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(0.28, t0+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+0.14);
+  o.connect(g).connect(masterGain);
+  o.start(t0); o.stop(t0+0.16);
+
+  const dur = 0.07;
+  const bufSize = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let i=0;i<bufSize;i++) data[i] = (Math.random()*2-1) * (1 - i/bufSize);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const filt = ac.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=1800;
+  const ng = ac.createGain(); ng.gain.setValueAtTime(0.22, t0);
+  ng.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  src.connect(filt).connect(ng).connect(masterGain);
+  src.start(t0); src.stop(t0+dur+0.02);
+}
+
 function applyMuteState(){
   const ac = audio();
   masterGain.gain.setTargetAtTime(muted ? 0 : 1, ac.currentTime, 0.01);
@@ -437,10 +490,10 @@ function render(t, dt){
 }
 
 function scheduleSounds(t){
-  if(t>0.05 && !fired.crowdAmb){ fired.crowdAmb=true; noiseBurst(15, 0.06, 0, 700, 0.6); }
+  if(t>0.05 && !fired.crowdAmb){ fired.crowdAmb=true; crowdSwell(); }
   if(t>T.standoffStart+0.1 && !fired.whistle){ fired.whistle=true; beep(1300,0.16,'square',0.11); }
   if(t>T.standoffEnd-0.6 && !fired.tension){ fired.tension=true; beep(220,0.9,'sine',0.05,60); }
-  if(t>T.kick-0.03 && !fired.kick){ fired.kick=true; beep(170,0.08,'square',0.2,-40); }
+  if(t>T.kick-0.03 && !fired.kick){ fired.kick=true; kickThud(); }
   if(t>T.kick+0.85 && !fired.curl){ fired.curl=true; beep(950,0.65,'sine',0.05,-560); }
   if(t>T.goal && !fired.roar){ fired.roar=true; noiseBurst(2.4,0.24,0,1100,0.6); beep(660,0.3,'triangle',0.13,320); }
   if(t>T.goal+0.15 && !fired.chant){
