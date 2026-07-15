@@ -312,6 +312,26 @@ function glowText(text, x, y, size, color, glow, alpha, weight) {
 }
 
 // ========== 場景：極寒要塞地圖 ==========
+// 建築群＋窗戶燈光是靜態圖案,離屏快取一次即可,避免每幀重複跑雙層迴圈 fillRect
+let bldgCacheCanvas = null;
+function getBldgCache(baseY) {
+  if (bldgCacheCanvas) return bldgCacheCanvas;
+  bldgCacheCanvas = document.createElement('canvas');
+  bldgCacheCanvas.width = GAME_W;
+  bldgCacheCanvas.height = GAME_H;
+  const g = bldgCacheCanvas.getContext('2d');
+  const bldgs = [[120, 150, 90], [230, 210, 60], [560, 130, 110], [700, 190, 70], [820, 160, 95]];
+  for (const [bx, bh, bw] of bldgs) {
+    g.fillStyle = '#060f1a';
+    g.fillRect(bx, baseY - bh, bw, bh + 40);
+    g.fillStyle = 'rgba(56,225,255,0.5)';
+    for (let wy = baseY - bh + 14; wy < baseY - 12; wy += 22)
+      for (let wx = bx + 8; wx < bx + bw - 8; wx += 20)
+        if ((wx * 3 + wy) % 7 < 4) g.fillRect(wx, wy, 7, 10);
+  }
+  return bldgCacheCanvas;
+}
+
 function drawMap(t, reveal, pan) {
   // 夜空漸層
   const sky = ctx.createLinearGradient(0, 0, 0, GAME_H);
@@ -370,18 +390,9 @@ function drawMap(t, reveal, pan) {
   ctx.save();
   ctx.translate(-pan * 0.7, 0);
   const baseY = GAME_H * 0.78;
+  // 主堡建築群＋窗戶燈光（靜態,離屏快取一次,每幀只 drawImage,避免逐幀 160+ 次 fillRect）
+  ctx.drawImage(getBldgCache(baseY), 0, 0);
   ctx.fillStyle = '#060f1a';
-  // 主堡建築群
-  const bldgs = [[120, 150, 90], [230, 210, 60], [560, 130, 110], [700, 190, 70], [820, 160, 95]];
-  for (const [bx, bh, bw] of bldgs) {
-    ctx.fillRect(bx, baseY - bh, bw, bh + 40);
-    // 窗戶燈光
-    ctx.fillStyle = 'rgba(56,225,255,0.5)';
-    for (let wy = baseY - bh + 14; wy < baseY - 12; wy += 22)
-      for (let wx = bx + 8; wx < bx + bw - 8; wx += 20)
-        if ((wx * 3 + wy) % 7 < 4) ctx.fillRect(wx, wy, 7, 10);
-    ctx.fillStyle = '#060f1a';
-  }
   // 吊塔
   ctx.strokeStyle = '#08131f'; ctx.lineWidth = 6;
   ctx.beginPath(); ctx.moveTo(400, baseY); ctx.lineTo(400, baseY - 180);
