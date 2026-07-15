@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="author" content="AI未來創作營隊">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>梅西世紀任意球</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d2b1a;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"Microsoft JhengHei","PingFang TC",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #ui{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);pointer-events:none}
+  .btn{position:absolute;pointer-events:auto;cursor:pointer;border:none;border-radius:999px;
+    font-weight:bold;font-family:inherit;display:flex;align-items:center;justify-content:center;
+    box-shadow:0 4px 14px rgba(0,0,0,.35);transition:transform .15s}
+  .btn:active{transform:scale(0.92)}
+  #muteBtn{width:48px;height:48px;top:14px;right:14px;background:rgba(10,20,15,.6);color:#fff;font-size:20px;border:2px solid rgba(255,255,255,.4)}
+  #replayBtn{left:50%;top:62%;transform:translate(-50%,0);width:180px;height:54px;background:linear-gradient(92deg,#ffcf5c,#ffa72e,#ff7e3d);color:#2b1500;font-size:20px;display:none}
+  #hint{position:absolute;left:50%;top:14px;transform:translateX(-50%);color:#fff;font-size:14px;
+    background:rgba(0,0,0,.35);padding:6px 14px;border-radius:999px;opacity:.9}
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="ui">
+  <button id="muteBtn">🔇</button>
+  <div id="hint">點聲音鈕開啟音效</div>
+  <button id="replayBtn">重新播放 ▶</button>
+</div>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('scene');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ===== 音效：Web Audio 合成，預設靜音 =====
+let AC = null, muted = true;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+function beep(freq=440, dur=0.15, type='sine', vol=0.15, slide=0, delay=0){
+  if(muted) return;
+  const ac = audio();
+  const t0 = ac.currentTime + delay;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+Math.min(0.02,dur*0.2));
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t0); o.stop(t0+dur+0.02);
+}
+function crowdNoise(dur=1.2, vol=0.12, delay=0){
+  if(muted) return;
+  const ac = audio();
+  const t0 = ac.currentTime + delay;
+  const bufSize = Math.floor(ac.sampleRate * dur);
+  const buf = ac.createBuffer(1, bufSize, ac.sampleRate);
+  const data = buf.getChannelData(0);
+  let last = 0;
+  for(let i=0;i<bufSize;i++){ const w = Math.random()*2-1; last = (last*0.95)+(w*0.05); data[i]=last; }
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+dur*0.3);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  const filt = ac.createBiquadFilter(); filt.type='bandpass'; filt.frequency.value=900; filt.Q.value=0.7;
+  src.connect(filt).connect(g).connect(ac.destination);
+  src.start(t0); src.stop(t0+dur+0.05);
+}
+function playMelodyNote(freq, t, dur=0.35){ beep(freq, dur, 'triangle', 0.09, 0, t); }
+
+document.getElementById('muteBtn').addEventListener('click', ()=>{
+  muted = !muted;
+  if(!muted) audio();
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  document.getElementById('hint').style.display = muted ? 'block' : 'none';
+});
+
+// ===== 動畫時間軸（總長約 15 秒） =====
+const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
+const easeInCubic  = t => t*t*t;
+const easeOutBack  = t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2);
+const clamp01 = t => Math.max(0, Math.min(1, t));
+
+const T_TITLE_END   = 2.6;
+const T_SETUP_END   = 5.2;
+const T_KICK        = 6.0;
+const T_FLIGHT_END  = 8.6;
+const T_GOAL        = 8.7;
+const T_CELEB_END   = 14.5;
+const T_TOTAL       = 15.0;
+
+let elapsed = 0;
+let done = false;
+let soundFlags = {crowdStart:false, whistle:false, kick:false, flightSlide:false, goal:false, cheer:false, melody:false};
+
+const parts = [];
+function burst(x,y,color,n=14,speed=220,life=0.7){
+  for(let i=0;i<n;i++){
+    const a = Math.random()*Math.PI*2, s = speed*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life,maxLife:life,color});
+  }
+}
+function updateParts(dt){
+  for(const p of parts){ p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=380*dt; p.life-=dt; }
+  for(let i=parts.length-1;i>=0;i--) if(parts[i].life<=0) parts.splice(i,1);
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life/p.maxLife);
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x,p.y,4,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// 觀眾（前景剪影用小色塊排列）
+const crowd = [];
+(function initCrowd(){
+  const colors = ['#0d2b1a','#123a24','#0a2416','#173f28'];
+  for(let i=0;i<70;i++){
+    crowd.push({x: (i*13.7)%GAME_W + (Math.random()*6-3), y: 60+Math.random()*22,
+      c: colors[(i)%colors.length], ph: Math.random()*Math.PI*2});
+  }
+})();
+
+function drawField(t, camShake){
+  ctx.save();
+  ctx.translate((Math.random()*2-1)*camShake, (Math.random()*2-1)*camShake);
+
+  // 天空/看台漸層
+  const sky = ctx.createLinearGradient(0,0,0,140);
+  sky.addColorStop(0,'#1a3a2a'); sky.addColorStop(1,'#0d2b1a');
+  ctx.fillStyle = sky; ctx.fillRect(0,0,GAME_W,140);
+
+  // 觀眾席晃動剪影
+  for(const p of crowd){
+    const bob = Math.sin(t*3 + p.ph) * 2;
+    ctx.fillStyle = p.c;
+    ctx.fillRect(p.x, p.y + bob, 10, 14);
+  }
+  // 燈光
+  for(let i=0;i<4;i++){
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath(); ctx.arc(120+i*260, 40, 26, 0, Math.PI*2); ctx.fill();
+  }
+
+  // 草地
+  const grass = ctx.createLinearGradient(0,140,0,GAME_H);
+  grass.addColorStop(0,'#1f7a3d'); grass.addColorStop(1,'#155c2c');
+  ctx.fillStyle = grass; ctx.fillRect(0,140,GAME_W,GAME_H-140);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  for(let i=0;i<10;i++) ctx.fillRect(0,150+i*40,GAME_W,20);
+
+  // 球門
+  const goalX = GAME_W*0.5, goalY = 170, goalW = 260, goalH = 110;
+  ctx.strokeStyle = '#f4f4f4'; ctx.lineWidth = 5;
+  ctx.strokeRect(goalX-goalW/2, goalY, goalW, goalH);
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1;
+  for(let i=1;i<8;i++){ ctx.beginPath(); ctx.moveTo(goalX-goalW/2, goalY+i*(goalH/8)); ctx.lineTo(goalX+goalW/2, goalY+i*(goalH/8)); ctx.stroke(); }
+  for(let i=1;i<10;i++){ ctx.beginPath(); ctx.moveTo(goalX-goalW/2+i*(goalW/10), goalY); ctx.lineTo(goalX-goalW/2+i*(goalW/10), goalY+goalH); ctx.stroke(); }
+
+  // 禁區弧線 + 罰球點
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.arc(GAME_W*0.5, 460, 90, Math.PI*1.15, Math.PI*1.85); ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawWall(t, kicked){
+  const wallY = 300;
+  const positions = [-40,-10,20,50];
+  ctx.save();
+  for(let i=0;i<positions.length;i++){
+    const x = GAME_W*0.5 + positions[i]*2.2;
+    const jumpT = kicked ? clamp01((t - (T_KICK+0.15+i*0.03))*4) : 0;
+    const jump = Math.sin(jumpT*Math.PI) * 55 * (jumpT>0&&jumpT<1?1:0);
+    drawPlayerFigure(x, wallY - jump, '#274b8f', '#f4f4f4', 1, false);
+  }
+  ctx.restore();
+}
+
+function drawPlayerFigure(x, y, shirt, shortsColor, scale, isMessi){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 46, 16, 5, 0,0,Math.PI*2); ctx.fill();
+  // legs
+  ctx.fillStyle = '#e8c39e';
+  ctx.fillRect(-8,20,6,22); ctx.fillRect(2,20,6,22);
+  ctx.fillStyle = shortsColor;
+  ctx.fillRect(-10,10,20,14);
+  // torso
+  ctx.fillStyle = shirt;
+  ctx.beginPath(); ctx.moveTo(-12,-14); ctx.lineTo(12,-14); ctx.lineTo(11,14); ctx.lineTo(-11,14); ctx.closePath(); ctx.fill();
+  if(isMessi){
+    ctx.fillStyle = '#8ecdf7';
+    ctx.fillRect(-12,-14,24,4);
+    ctx.fillStyle='#c8102e';
+    ctx.fillRect(-2,-14,4,28);
+  }
+  // arms
+  ctx.fillStyle = '#e8c39e';
+  ctx.fillRect(-16,-10,5,20); ctx.fillRect(11,-10,5,20);
+  // head
+  ctx.fillStyle = '#e8c39e';
+  ctx.beginPath(); ctx.arc(0,-24,10,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#2b1c12';
+  ctx.beginPath(); ctx.arc(0,-27,10,Math.PI,0); ctx.fill();
+  ctx.restore();
+}
+
+function drawKeeper(x,y,dive){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.rotate(dive*0.9);
+  ctx.fillStyle = '#ffcd75';
+  ctx.fillRect(-10,-14,20,28);
+  ctx.fillStyle = '#e8c39e';
+  ctx.beginPath(); ctx.arc(0,-22,9,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#e8c39e';
+  ctx.fillRect(-24,-10,16,6); ctx.fillRect(8,-10,16,6);
+  ctx.restore();
+}
+
+function drawBall(x,y,rot,r=9){
+  ctx.save();
+  ctx.translate(x,y); ctx.rotate(rot);
+  ctx.fillStyle = '#f4f4f4';
+  ctx.beginPath(); ctx.arc(0,0,r,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#222';
+  for(let i=0;i<5;i++){
+    const a = i*(Math.PI*2/5) - Math.PI/2;
+    ctx.beginPath(); ctx.arc(Math.cos(a)*r*0.5, Math.sin(a)*r*0.5, r*0.24, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawTitleCard(t){
+  const p = clamp01(t/1.0);
+  const alpha = t < T_TITLE_END-0.6 ? easeOutCubic(p) : clamp01((T_TITLE_END - t)/0.6);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0,alpha);
+  ctx.fillStyle = 'rgba(5,15,10,0.55)';
+  ctx.fillRect(0, GAME_H*0.5-70, GAME_W, 140);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#ffd447';
+  ctx.font = 'bold 46px sans-serif';
+  ctx.fillText('梅西 世紀任意球', GAME_W/2, GAME_H*0.5-8);
+  ctx.fillStyle = '#f4f4f4';
+  ctx.font = '20px sans-serif';
+  ctx.fillText('致敬動畫｜原創演出', GAME_W/2, GAME_H*0.5+28);
+  ctx.restore();
+}
+
+function drawEndCard(t){
+  const p = clamp01((t - T_CELEB_END)/1.0);
+  ctx.save();
+  ctx.globalAlpha = p;
+  ctx.fillStyle = 'rgba(5,15,10,0.6)';
+  ctx.fillRect(0,0,GAME_W,GAME_H);
+  ctx.textAlign='center';
+  ctx.fillStyle = '#ffd447';
+  ctx.font = 'bold 36px sans-serif';
+  ctx.fillText('GOAL!', GAME_W/2, GAME_H*0.42);
+  ctx.fillStyle = '#f4f4f4';
+  ctx.font = '20px sans-serif';
+  ctx.fillText('致敬每一顆彎進死角的任意球', GAME_W/2, GAME_H*0.42+40);
+  ctx.restore();
+}
+
+function render(t, dt){
+  updateParts(dt);
+  const shake = t>T_GOAL && t<T_GOAL+0.4 ? 5*(1-(t-T_GOAL)/0.4) : 0;
+  drawField(t, shake);
+
+  // 球員 / 球 / 動作
+  const ballStartX = GAME_W*0.5 - 70, ballStartY = 330;
+  const goalCenterX = GAME_W*0.5 + 55, goalCenterY = 205;
+
+  if(t < T_KICK){
+    // 助跑準備：梅西走位站定，稍微後退
+    const setupP = clamp01((t-1.6)/(T_SETUP_END-1.6));
+    const runX = ballStartX - 60 - easeOutCubic(setupP)*20;
+    const runY = ballStartY + 40;
+    drawBall(ballStartX, ballStartY, t*2);
+    drawWall(t, false);
+    drawKeeper(goalCenterX+10, goalY_center(), 0);
+    drawPlayerFigure(runX, runY, '#75c9ff', '#0d2b6b', 1.15, true);
+  } else if(t < T_FLIGHT_END){
+    const kt = clamp01((t-T_KICK)/1.0);
+    const approachX = ballStartX - 60 + easeInCubic(kt)*60;
+    drawWall(t, true);
+    if(kt < 1){
+      drawPlayerFigure(approachX, ballStartY+40 - kt*8, '#75c9ff', '#0d2b6b', 1.15, true);
+      drawBall(ballStartX, ballStartY, t*4);
+      drawKeeper(goalCenterX+10, goalY_center(), 0);
+    } else {
+      // 飛行曲線：從球起點彎向死角
+      const ft = clamp01((t - (T_KICK+1.0)) / (T_FLIGHT_END-(T_KICK+1.0)));
+      const fe = easeOutCubic(ft);
+      const curveOut = Math.sin(fe*Math.PI) * 90;
+      const bx = ballStartX + (goalCenterX-30 - ballStartX)*fe + curveOut*0.6;
+      const by = ballStartY + (goalCenterY - ballStartY)*fe - Math.sin(fe*Math.PI)*70;
+      drawKeeper(goalCenterX+10, goalY_center(), Math.min(1, ft*1.6));
+      drawBall(bx, by, t*8);
+      // 拖尾粒子
+      if(Math.random()<0.7) parts.push({x:bx,y:by,vx:(Math.random()*40-20),vy:(Math.random()*40-20),life:0.25,maxLife:0.25,color:'rgba(255,255,255,0.6)'});
+    }
+  } else {
+    // 進球慶祝
+    const ct = t - T_GOAL;
+    drawKeeper(goalCenterX+30, goalY_center()+10, 1);
+    drawBall(goalCenterX-30+Math.min(ct*10,30), goalCenterY, t*10, 8);
+    const jump = Math.max(0, Math.sin(clamp01(ct/1.2)*Math.PI))*40;
+    drawPlayerFigure(GAME_W*0.42, ballStartY+40-jump, '#75c9ff', '#0d2b6b', 1.25, true);
+    if(!soundFlags.goal && ct>0){ soundFlags.goal=true; burst(goalCenterX-30, goalCenterY, '#ffd447', 26, 260, 0.9); }
+  }
+  drawParts();
+
+  if(t < T_TITLE_END) drawTitleCard(t);
+  if(t > T_CELEB_END) drawEndCard(t);
+}
+function goalY_center(){ return 205; }
+
+function scheduleSounds(t){
+  if(t>0.05 && !soundFlags.crowdStart){ soundFlags.crowdStart=true; crowdNoise(15, 0.05, 0); }
+  if(t>4.6 && !soundFlags.whistle){ soundFlags.whistle=true; beep(1200,0.18,'square',0.1); }
+  if(t>T_KICK-0.05 && !soundFlags.kick){ soundFlags.kick=true; beep(180,0.08,'square',0.18,-40); }
+  if(t>T_KICK+0.9 && !soundFlags.flightSlide){ soundFlags.flightSlide=true; beep(900,0.6,'sine',0.05,-500); }
+  if(t>T_GOAL && !soundFlags.cheer){ soundFlags.cheer=true; crowdNoise(2.2,0.22,0); beep(660,0.3,'triangle',0.12,300); }
+  if(t>T_GOAL+0.15 && !soundFlags.melody){
+    soundFlags.melody = true;
+    const notes = [523,659,784,1047];
+    notes.forEach((f,i)=>playMelodyNote(f, i*0.18));
+  }
+}
+
+let last = null;
+function frame(now){
+  if(last===null) last = now;
+  const dt = Math.min((now-last)/1000, 0.05);
+  last = now;
+  if(!done){
+    elapsed += dt;
+    scheduleSounds(elapsed);
+    if(elapsed >= T_TOTAL){
+      done = true;
+      document.getElementById('replayBtn').style.display = 'flex';
+    }
+  }
+  ctx.fillStyle = '#0d2b1a';
+  ctx.fillRect(0,0,GAME_W,GAME_H);
+  render(Math.min(elapsed, T_TOTAL), dt);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+document.getElementById('replayBtn').addEventListener('click', ()=>{
+  elapsed = 0; done = false;
+  soundFlags = {crowdStart:false, whistle:false, kick:false, flightSlide:false, goal:false, cheer:false, melody:false};
+  parts.length = 0;
+  document.getElementById('replayBtn').style.display = 'none';
+});
+</script>
+</body>
+</html>
