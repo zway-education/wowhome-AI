@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="Claude">
+<title>恐怖校園追逐 遊戲介紹</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #050403;
+    font-family: 'Courier New', monospace;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(40,20,20,0.7); border: 1px solid rgba(180,60,60,0.7);
+    color: #d7ffb0; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 18px; right: 68px; z-index: 20;
+    color: #cdeab9; font-size: 14px; text-shadow: 0 0 4px #000;
+    animation: hintFade 3.2s ease forwards;
+    pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: #4a0000; color: #ffb0b0;
+    border: 1px solid #a00000; border-radius: 6px; cursor: pointer;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音效</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 音效（預設靜音,合成、零外部資源）----------
+let audioCtx = null, soundOn = false;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn && !audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+});
+function thump(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.frequency.setValueAtTime(90, t);
+  osc.frequency.exponentialRampToValueAtTime(36, t + 0.18);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.26);
+}
+function sting() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime, dur = 0.5;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'bandpass';
+  f.frequency.setValueAtTime(1800, t);
+  f.frequency.exponentialRampToValueAtTime(400, t + dur);
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(0.4, t);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100].forEach((fq, i) => {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(fq, t + i * 0.07);
+    g.gain.setValueAtTime(0.001, t + i * 0.07);
+    g.gain.exponentialRampToValueAtTime(0.2, t + i * 0.07 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.07 + 0.2);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t + i * 0.07); osc.stop(t + i * 0.07 + 0.22);
+  });
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 場景繪製工具 ----------
+// 假 3D 走廊：以消失點畫牆面梯形,腐朽紅棕色調
+function drawCorridor(camZ, flicker, brightness) {
+  const cx = GAME_W / 2, cy = GAME_H / 2;
+  ctx.fillStyle = '#131007';
+  ctx.fillRect(0, 0, GAME_W, cy);
+  ctx.fillStyle = '#2c2411';
+  ctx.fillRect(0, cy, GAME_W, cy);
+
+  const SEGS = 9;
+  for (let i = SEGS; i >= 1; i--) {
+    const z0 = i + (camZ % 1), z1 = z0 - 1;
+    const s0 = 1 / z0, s1 = 1 / Math.max(z1, 0.12);
+    const hw0 = GAME_W * 0.62 * s0, hh0 = GAME_H * 0.62 * s0;
+    const hw1 = GAME_W * 0.62 * s1, hh1 = GAME_H * 0.62 * s1;
+    const seed = ((Math.floor(camZ) + i) * 73) % 17 / 17;
+    const shade = clamp(1 - z0 / 10, 0.1, 1) * brightness * (0.8 + flicker * 0.2);
+    const r = Math.floor((105 + seed * 45) * shade);
+    const g = Math.floor((85 + seed * 35) * shade);
+    const b = Math.floor((48 + seed * 20) * shade);
+    // 左牆
+    ctx.fillStyle = `rgb(${r},${g},${b})`;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw0, cy - hh0); ctx.lineTo(cx - hw1, cy - hh1);
+    ctx.lineTo(cx - hw1, cy + hh1); ctx.lineTo(cx - hw0, cy + hh0);
+    ctx.closePath(); ctx.fill();
+    // 右牆
+    ctx.fillStyle = `rgb(${Math.floor(r*0.85)},${Math.floor(g*0.85)},${Math.floor(b*0.85)})`;
+    ctx.beginPath();
+    ctx.moveTo(cx + hw0, cy - hh0); ctx.lineTo(cx + hw1, cy - hh1);
+    ctx.lineTo(cx + hw1, cy + hh1); ctx.lineTo(cx + hw0, cy + hh0);
+    ctx.closePath(); ctx.fill();
+    // 地板段
+    ctx.fillStyle = `rgba(${Math.floor(70*shade)},${Math.floor(58*shade)},${Math.floor(26*shade)},1)`;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw0, cy + hh0); ctx.lineTo(cx - hw1, cy + hh1);
+    ctx.lineTo(cx + hw1, cy + hh1); ctx.lineTo(cx + hw0, cy + hh0);
+    ctx.closePath(); ctx.fill();
+    // 天花板段＋日光燈
+    ctx.fillStyle = `rgba(${Math.floor(38*shade)},${Math.floor(33*shade)},${Math.floor(17*shade)},1)`;
+    ctx.beginPath();
+    ctx.moveTo(cx - hw0, cy - hh0); ctx.lineTo(cx - hw1, cy - hh1);
+    ctx.lineTo(cx + hw1, cy - hh1); ctx.lineTo(cx + hw0, cy - hh0);
+    ctx.closePath(); ctx.fill();
+    if (i % 2 === 0) {
+      ctx.fillStyle = `rgba(240,230,160,${0.12 * flicker * brightness})`;
+      ctx.fillRect(cx - hw1 * 0.3, cy - (hh0 + hh1) / 2, hw1 * 0.6, 3);
+    }
+  }
+}
+
+// 恐怖阿嬤（駝背、紅眼、抽動）
+function drawGranny(x, y, size, t, alpha) {
+  const tw = Math.sin(t * 14) * size * 0.012;
+  ctx.save();
+  ctx.translate(x + tw, y);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#1c0404';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.2, size * 0.05);
+  ctx.quadraticCurveTo(-size * 0.3, -size * 0.28, -size * 0.06, -size * 0.4);
+  ctx.quadraticCurveTo(size * 0.02, -size * 0.46, size * 0.1, -size * 0.38);
+  ctx.quadraticCurveTo(size * 0.3, -size * 0.3, size * 0.24, size * 0.05);
+  ctx.lineTo(size * 0.3, size * 0.5);
+  ctx.lineTo(-size * 0.28, size * 0.5);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = '#1c0404';
+  ctx.lineWidth = Math.max(1.5, size * 0.03);
+  ctx.beginPath();
+  ctx.moveTo(size * 0.2, -size * 0.1);
+  ctx.lineTo(size * 0.42, size * 0.05 + tw * 4);
+  ctx.lineTo(size * 0.5, -size * 0.02 + tw * 4);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(-size * 0.02, -size * 0.5, size * 0.1, 0, Math.PI * 2);
+  ctx.fillStyle = '#968a6e'; ctx.fill();
+  const glow = 0.5 + 0.5 * Math.sin(t * 9);
+  ctx.fillStyle = `rgb(255,${Math.floor(15 + glow * 30)},0)`;
+  ctx.beginPath();
+  ctx.arc(-size * 0.055, -size * 0.505, size * 0.017, 0, Math.PI * 2);
+  ctx.arc(size * 0.01, -size * 0.505, size * 0.017, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
+
+// 玩家小人（逃跑姿勢）
+function drawRunner(x, y, size, t, color) {
+  const leg = Math.sin(t * 12) * size * 0.3;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.strokeStyle = color; ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(2.5, size * 0.09);
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0, -size * 0.75, size * 0.18, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(0, -size * 0.55); ctx.lineTo(0, 0); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.4); ctx.lineTo(-size * 0.3, -size * 0.15 - leg * 0.3);
+  ctx.moveTo(0, -size * 0.4); ctx.lineTo(size * 0.3, -size * 0.15 + leg * 0.3);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, 0); ctx.lineTo(-size * 0.22, size * 0.42 + leg);
+  ctx.moveTo(0, 0); ctx.lineTo(size * 0.22, size * 0.42 - leg);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 球棒
+function drawBat(x, y, size, angle) {
+  ctx.save();
+  ctx.translate(x, y); ctx.rotate(angle);
+  ctx.fillStyle = '#c9a26a';
+  ctx.fillRect(-size * 0.05, -size, size * 0.1, size);
+  ctx.fillStyle = '#5a3a1a';
+  ctx.fillRect(-size * 0.05, -size * 0.08, size * 0.1, size * 0.16);
+  ctx.restore();
+}
+
+// 櫃子
+function drawCabinet(x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#3c2814';
+  ctx.fillRect(-size * 0.32, -size, size * 0.64, size);
+  ctx.strokeStyle = '#140e06';
+  ctx.lineWidth = Math.max(1.5, size * 0.02);
+  ctx.strokeRect(-size * 0.32, -size, size * 0.64, size);
+  ctx.beginPath(); ctx.moveTo(0, -size); ctx.lineTo(0, 0); ctx.stroke();
+  for (let i = 1; i <= 4; i++) {
+    ctx.fillStyle = 'rgba(10,7,3,0.7)';
+    ctx.fillRect(-size * 0.26, -size + i * size * 0.18, size * 0.2, size * 0.05);
+    ctx.fillRect(size * 0.06, -size + i * size * 0.18, size * 0.2, size * 0.05);
+  }
+  ctx.restore();
+}
+
+// 血手印＋噴濺（程序繪製,固定種子）
+function drawBloodPrint(x, y, size, alpha) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(0.28);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = '#8f0e0e';
+  // 掌心
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.12, size * 0.34, size * 0.4, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 五指
+  const fingers = [
+    [-0.34, -0.32, 0.09, 0.34, -0.5],
+    [-0.16, -0.48, 0.095, 0.4, -0.18],
+    [0.03, -0.52, 0.1, 0.42, 0],
+    [0.22, -0.46, 0.09, 0.38, 0.2],
+    [0.44, -0.05, 0.085, 0.3, 0.9],
+  ];
+  for (const [fx, fy, fw, fh, rot] of fingers) {
+    ctx.save();
+    ctx.translate(fx * size, fy * size);
+    ctx.rotate(rot);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, fw * size, fh * size, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  // 噴濺點（固定偽隨機）
+  let s = 7;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 0; i < 26; i++) {
+    const a = rnd() * Math.PI * 2, d = size * (0.45 + rnd() * 0.75);
+    ctx.beginPath();
+    ctx.arc(Math.cos(a) * d, Math.sin(a) * d, size * (0.015 + rnd() * 0.045), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // 血液下滴
+  for (let i = 0; i < 3; i++) {
+    const dx = (rnd() - 0.5) * size * 0.5;
+    ctx.fillRect(dx, size * 0.3, size * 0.035, size * (0.35 + rnd() * 0.5));
+  }
+  ctx.restore();
+}
+
+// 字幕
+function subtitle(text, alpha, big) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = (big ? 'bold 30px' : 'bold 24px') + " 'Courier New', monospace";
+  const y = GAME_H - 56;
+  ctx.fillStyle = 'rgba(0,0,0,0.65)';
+  const w = ctx.measureText(text).width + 44;
+  ctx.fillRect(GAME_W / 2 - w / 2, y - 30, w, 46);
+  ctx.fillStyle = '#cdeab9';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+
+function redVignette(strength, t) {
+  const p = 0.5 + 0.5 * Math.sin(t * 3);
+  const v = ctx.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.3, GAME_W/2, GAME_H/2, GAME_W*0.72);
+  v.addColorStop(0, 'rgba(120,0,0,0)');
+  v.addColorStop(1, `rgba(150,0,0,${strength * (0.4 + p * 0.6)})`);
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+// ---------- 時間軸（總長約 34 秒,三幕結構）----------
+// 第一幕 0-7s 開場標題；第二幕 7-26s 玩法介紹（追逐/球棒/櫃子）；第三幕 26-34s 高潮+CTA
+// 內部時間軸以 34 秒編排,播放時壓縮為 30 秒實際片長
+const TIMELINE = 34, DURATION = 30, TIME_SCALE = TIMELINE / DURATION;
+let startTime = null, playing = false;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  const flicker = 0.85 + Math.random() * 0.15;
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 7) {
+    // ===== 第一幕：黑暗走廊 + 標題浮現 =====
+    const p = t / 7;
+    drawCorridor(t * 0.6, flicker, 0.5 + p * 0.3);
+    redVignette(0.25, t);
+    const tp = clamp((t - 1) / 1.6, 0, 1);
+    // 標題後方的血手印,比標題稍晚重擊浮現
+    const bp = clamp((t - 1.8) / 0.5, 0, 1);
+    if (bp > 0) drawBloodPrint(GAME_W * 0.66, GAME_H * 0.36, 130 * (1.6 - easeOut(bp) * 0.6), easeOut(bp) * 0.85);
+    if (t > 1.8) cue('bloodSlam', () => thump(0.5));
+    ctx.save();
+    ctx.globalAlpha = easeOut(tp);
+    ctx.textAlign = 'center';
+    ctx.font = `bold ${58 + (1 - easeOut(tp)) * 30}px 'Courier New', monospace`;
+    ctx.fillStyle = '#ff3b3b';
+    ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 24;
+    ctx.fillText('恐怖校園追逐', GAME_W / 2, GAME_H * 0.42);
+    ctx.shadowBlur = 0;
+    if (t > 3.2) {
+      ctx.globalAlpha = clamp((t - 3.2) / 0.8, 0, 1);
+      ctx.font = "22px 'Courier New', monospace";
+      ctx.fillStyle = '#7fdb6b';
+      ctx.fillText('第一人稱 3D 後室迷宮逃脫', GAME_W / 2, GAME_H * 0.52);
+    }
+    ctx.restore();
+    if (t > 1) cue('act1', () => thump(0.3));
+    if (t > 4.6) subtitle('深夜的校園,妳不是一個人……', clamp((t - 4.6) / 0.6, 0, 1) * clamp((7 - t) / 0.5, 0, 1));
+    if (t > 4.6) cue('thump2', () => thump(0.35));
+  } else if (t < 14) {
+    // ===== 第二幕A：走廊追逐 =====
+    const p = (t - 7) / 7;
+    drawCorridor(4 + t * 1.4, flicker, 0.85);
+    // 阿嬤從深處逼近
+    const gz = 1 - easeInOut(clamp(p * 1.25, 0, 1));
+    const gs = 90 + (1 - gz) * 330;
+    drawGranny(GAME_W / 2, GAME_H / 2 + gs * 0.32, gs, t, clamp(p * 3, 0, 1));
+    redVignette(0.15 + (1 - gz) * 0.3, t);
+    if (t < 10.5) subtitle('恐怖阿嬤會沿著迷宮追殺妳', clamp((t - 7.4) / 0.6, 0, 1), false);
+    else subtitle('她愈來愈快……', clamp((t - 10.6) / 0.5, 0, 1) * clamp((14 - t) / 0.5, 0, 1), false);
+    cue('chaseThump', () => thump(0.4));
+    if (t > 10.5) cue('chaseSting', () => sting());
+  } else if (t < 20) {
+    // ===== 第二幕B：球棒反擊 =====
+    drawCorridor(24, flicker, 0.9);
+    const p = (t - 14) / 6;
+    // 阿嬤在中景
+    drawGranny(GAME_W * 0.62, GAME_H * 0.62, 240, t, 1);
+    // 球棒揮擊
+    const swing = t > 16.4 && t < 17.0 ? easeOut((t - 16.4) / 0.6) : 0;
+    const idleAngle = Math.PI / 5 + Math.sin(t * 2) * 0.05;
+    drawBat(GAME_W * 0.33, GAME_H * 0.72, 130, idleAngle + swing * Math.PI * 0.9);
+    if (swing > 0 && swing < 1) {
+      ctx.strokeStyle = `rgba(255,255,255,${(1 - swing) * 0.8})`;
+      ctx.lineWidth = 7;
+      ctx.beginPath();
+      ctx.arc(GAME_W * 0.36, GAME_H * 0.7, 150, -Math.PI * 0.7, -Math.PI * 0.7 + swing * Math.PI, false);
+      ctx.stroke();
+    }
+    if (t > 16.9) {
+      const dz = clamp((t - 16.9) / 0.4, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = clamp(1 - (t - 17.6), 0, 1);
+      ctx.fillStyle = '#fff';
+      ctx.font = "bold 40px 'Courier New', monospace";
+      ctx.textAlign = 'center';
+      ctx.fillText('暈 2.5 秒！', GAME_W * 0.62, GAME_H * 0.28 - dz * 20);
+      ctx.restore();
+    }
+    if (t < 16.4) subtitle('撿起地圖中的球棒反擊——', clamp((t - 14.4) / 0.6, 0, 1), false);
+    else subtitle('揮擊可將她擊暈 2.5 秒！', 1, false);
+    if (t > 16.4) cue('batHit', () => { thump(0.5); chime(); });
+    redVignette(0.12, t);
+  } else if (t < 26) {
+    // ===== 第二幕C：躲櫃子 =====
+    drawCorridor(30, flicker, 0.8);
+    const p = (t - 20) / 6;
+    drawCabinet(GAME_W * 0.38, GAME_H * 0.78, 300);
+    // 玩家跑進櫃子
+    const runP = easeInOut(clamp(p * 2, 0, 1));
+    if (runP < 1) drawRunner(GAME_W * (0.78 - runP * 0.4), GAME_H * 0.72, 110, t, '#7cff6b');
+    // 阿嬤走過翻找
+    if (t > 22.3) {
+      const gp = easeInOut(clamp((t - 22.3) / 2.4, 0, 1));
+      drawGranny(GAME_W * (1.05 - gp * 0.5), GAME_H * 0.66, 260, t, 1);
+    }
+    // 百葉窗視角暗示
+    if (t > 22) {
+      ctx.save();
+      ctx.globalAlpha = clamp((t - 22) / 0.8, 0, 1) * 0.55;
+      for (let y = 0; y < GAME_H; y += 26) {
+        ctx.fillStyle = 'rgba(8,6,3,0.85)';
+        ctx.fillRect(0, y, GAME_W, 12);
+      }
+      ctx.restore();
+    }
+    if (t < 22.6) subtitle('危急時,躲進校園裡上百個櫃子', clamp((t - 20.4) / 0.6, 0, 1), false);
+    else subtitle('小心——她有時會翻找櫃子……', 1, false);
+    if (t > 22.6) cue('searchSting', () => sting());
+    redVignette(0.2 + (t > 22.6 ? 0.15 : 0), t);
+  } else {
+    // ===== 第三幕：逃生門高潮 + CTA =====
+    const p = (t - 26) / 8;
+    drawCorridor(36 + p * 5, flicker, 0.75);
+    // 逃生門發光
+    const glow = 0.6 + 0.4 * Math.sin(t * 3);
+    const ds = 60 + easeOut(clamp(p * 1.4, 0, 1)) * 240;
+    ctx.save();
+    ctx.translate(GAME_W / 2, GAME_H / 2);
+    ctx.fillStyle = `rgba(30,60,30,1)`;
+    ctx.fillRect(-ds * 0.28, -ds * 0.9, ds * 0.56, ds * 0.9);
+    ctx.strokeStyle = `rgba(120,255,140,${glow})`;
+    ctx.lineWidth = Math.max(2, ds * 0.03);
+    ctx.strokeRect(-ds * 0.28, -ds * 0.9, ds * 0.56, ds * 0.9);
+    ctx.fillStyle = `rgba(120,255,140,${0.25 * glow})`;
+    ctx.fillRect(-ds * 0.28, -ds * 0.9, ds * 0.56, ds * 0.9);
+    ctx.fillStyle = '#c8ffd2';
+    ctx.font = `bold ${Math.max(14, ds * 0.11)}px 'Courier New', monospace`;
+    ctx.textAlign = 'center';
+    ctx.fillText('逃生門', 0, -ds);
+    ctx.restore();
+    cue('finalChime', () => chime());
+    if (t < 29.5) {
+      subtitle('找到逃生門,活著離開恐怖校園！', clamp((t - 26.3) / 0.6, 0, 1), false);
+    } else {
+      const cta = clamp((t - 29.5) / 0.8, 0, 1);
+      drawBloodPrint(GAME_W * 0.64, GAME_H * 0.3, 100, easeOut(cta) * 0.8);
+      ctx.save();
+      ctx.globalAlpha = easeOut(cta);
+      ctx.textAlign = 'center';
+      ctx.font = "bold 44px 'Courier New', monospace";
+      ctx.fillStyle = '#ff3b3b';
+      ctx.shadowColor = '#ff0000'; ctx.shadowBlur = 20;
+      ctx.fillText('恐怖校園追逐', GAME_W / 2, GAME_H * 0.36);
+      ctx.shadowBlur = 0;
+      ctx.font = "24px 'Courier New', monospace";
+      ctx.fillStyle = '#7fdb6b';
+      ctx.fillText('鍵盤＋觸控雙支援 · 立即遊玩', GAME_W / 2, GAME_H * 0.46);
+      ctx.restore();
+      cue('ctaThump', () => thump(0.4));
+    }
+    redVignette(0.18, t);
+  }
+
+  // 全程輕微暗角
+  const edge = ctx.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.35, GAME_W/2, GAME_H/2, GAME_W*0.75);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000 * TIME_SCALE;
+  if (t >= TIMELINE) {
+    draw(TIMELINE - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  playing = true;
+  replayBtn.style.display = 'none';
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+</script>
+</body>
+</html>
