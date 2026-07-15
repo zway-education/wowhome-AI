@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="Claude">
+<title>飯店入住體驗 遊戲介紹</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #16332C;
+    font-family: -apple-system, "Noto Sans TC", "PingFang TC", sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #startBtn {
+    position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    z-index: 30; padding: 16px 40px; font-size: 20px; border-radius: 10px;
+    background: #C9A15A; color: #16332C; border: 2px solid #a97f38;
+    font-weight: 700; cursor: pointer; box-shadow: 0 6px 18px rgba(0,0,0,.4);
+    font-family: inherit;
+  }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(22,51,44,0.8); border: 1px solid #C9A15A;
+    color: #f4ecd8; font-size: 20px; cursor: pointer; display: none;
+  }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: #B5493D; color: #fff;
+    border: 1px solid #8a3128; border-radius: 8px; cursor: pointer;
+    font-family: inherit; font-weight: 700;
+  }
+</style>
+</head>
+<body>
+<button id="startBtn">▶ 開始播放（女聲配音・120秒）</button>
+<button id="soundBtn">🔊</button>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const startBtn = document.getElementById('startBtn');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 色票（沿用遊戲本體配色）----------
+const INK = '#16332C', BRASS = '#C9A15A', BRASS_DEEP = '#a97f38', ACCENT = '#B5493D';
+
+// ---------- 女聲配音（Web Speech API，零外部資源）----------
+let soundOn = false, voices = [], femaleVoice = null;
+function loadVoices() {
+  voices = speechSynthesis.getVoices();
+  const zh = voices.filter(v => /zh|中文/i.test(v.lang + v.name));
+  femaleVoice =
+    zh.find(v => /female|女|Mei|Ting|Yating|Xiaoxiao|Hanhan|Zhiyu/i.test(v.name)) ||
+    zh[0] || voices[0] || null;
+}
+loadVoices();
+if (speechSynthesis.onvoiceschanged !== undefined) speechSynthesis.onvoiceschanged = loadVoices;
+
+let spokenCues = {};
+function speak(text, id) {
+  if (!soundOn || spokenCues[id]) return;
+  spokenCues[id] = true;
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-TW';
+    u.rate = 1.0; u.pitch = 1.15; u.volume = 1;
+    if (femaleVoice) u.voice = femaleVoice;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+// ---------- 音效（合成鈴聲/水聲/歡呼，零外部資源）----------
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+}
+function beep(freq, dur, type, vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = type || 'sine';
+  osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol || 0.2, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + dur + 0.05);
+}
+function ding() { beep(1319, .5, 'sine', .16); setTimeout(() => beep(1976, .7, 'sine', .1), 60); }
+function splash() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime, dur = 0.6, n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1400;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(0.25, t);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100, 1320].forEach((fq, i) => {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(fq, t + i * 0.09);
+    g.gain.setValueAtTime(0.0001, t + i * 0.09);
+    g.gain.exponentialRampToValueAtTime(0.2, t + i * 0.09 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.09 + 0.3);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t + i * 0.09); osc.stop(t + i * 0.09 + 0.32);
+  });
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 場景繪製工具 ----------
+function bgGradient(top, bottom) {
+  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  g.addColorStop(0, top); g.addColorStop(1, bottom);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+function floorTiles(y0, h, c1, c2) {
+  const tile = 46;
+  for (let x = -tile; x < GAME_W + tile; x += tile) {
+    for (let row = 0; row * tile < h; row++) {
+      ctx.fillStyle = ((Math.floor(x / tile) + row) % 2 === 0) ? c1 : c2;
+      ctx.fillRect(x, y0 + row * tile, tile, tile);
+    }
+  }
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+// 房客（長髮＋五官＋行李箱），走路搖擺
+function drawGuest(x, y, size, t, hue, hasBag) {
+  const bob = Math.sin(t * 8) * size * 0.04;
+  const sway = Math.sin(t * 3) * size * 0.03;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  // 影子
+  ctx.fillStyle = 'rgba(0,0,0,0.25)';
+  ctx.beginPath(); ctx.ellipse(0, size * 0.02, size * 0.28, size * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+  // 行李箱
+  if (hasBag) {
+    ctx.fillStyle = ACCENT;
+    roundRect(size * 0.22, -size * 0.28, size * 0.22, size * 0.32, 4);
+    ctx.fill();
+    ctx.strokeStyle = '#7a2e25'; ctx.lineWidth = 2; ctx.stroke();
+  }
+  // 長髮（垂在身後，隨走路飄動）
+  ctx.fillStyle = '#3a2a18';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.15, -size * 0.6);
+  ctx.quadraticCurveTo(-size * 0.26 + sway, -size * 0.3, -size * 0.22 + sway * 1.4, size * 0.02);
+  ctx.quadraticCurveTo(-size * 0.16, size * 0.06, -size * 0.1, size * 0.0);
+  ctx.quadraticCurveTo(-size * 0.14, -size * 0.28, -size * 0.05, -size * 0.5);
+  ctx.closePath(); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(size * 0.15, -size * 0.6);
+  ctx.quadraticCurveTo(size * 0.26 + sway, -size * 0.3, size * 0.22 + sway * 1.4, size * 0.02);
+  ctx.quadraticCurveTo(size * 0.16, size * 0.06, size * 0.1, size * 0.0);
+  ctx.quadraticCurveTo(size * 0.14, -size * 0.28, size * 0.05, -size * 0.5);
+  ctx.closePath(); ctx.fill();
+  // 身體
+  ctx.fillStyle = hue;
+  roundRect(-size * 0.16, -size * 0.42, size * 0.32, size * 0.42, size * 0.1);
+  ctx.fill();
+  // 頭（臉）
+  ctx.fillStyle = '#eccca0';
+  ctx.beginPath(); ctx.arc(0, -size * 0.52, size * 0.16, 0, Math.PI * 2); ctx.fill();
+  // 髮頂＋瀏海
+  ctx.fillStyle = '#3a2a18';
+  ctx.beginPath(); ctx.arc(0, -size * 0.58, size * 0.165, Math.PI, Math.PI * 2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.16, -size * 0.52);
+  ctx.quadraticCurveTo(0, -size * 0.44, size * 0.16, -size * 0.52);
+  ctx.quadraticCurveTo(0, -size * 0.5, -size * 0.16, -size * 0.52);
+  ctx.closePath(); ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#2a1c10';
+  ctx.beginPath(); ctx.arc(-size * 0.06, -size * 0.51, size * 0.017, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size * 0.06, -size * 0.51, size * 0.017, 0, Math.PI * 2); ctx.fill();
+  // 嘴巴（微笑）
+  ctx.strokeStyle = '#a65b3f';
+  ctx.lineWidth = Math.max(1, size * 0.012);
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.47, size * 0.035, 0.15 * Math.PI, 0.85 * Math.PI);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawDesk(x, y, w) {
+  ctx.fillStyle = BRASS_DEEP;
+  roundRect(x - w / 2, y - 30, w, 30, 6); ctx.fill();
+  ctx.fillStyle = BRASS;
+  roundRect(x - w / 2, y - 34, w, 10, 4); ctx.fill();
+  // 服務鈴
+  ctx.fillStyle = '#f4ecd8';
+  ctx.beginPath(); ctx.ellipse(x + w * 0.32, y - 42, 9, 7, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#c99a3a';
+  ctx.beginPath(); ctx.arc(x + w * 0.32, y - 47, 2.5, 0, Math.PI * 2); ctx.fill();
+}
+function drawBed(x, y, w, h) {
+  ctx.fillStyle = '#e9e1cc';
+  roundRect(x, y, w, h, 10); ctx.fill();
+  ctx.fillStyle = BRASS;
+  roundRect(x, y, w, h * 0.32, 8); ctx.fill();
+  ctx.fillStyle = '#6d4c2b';
+  ctx.fillRect(x - 8, y, 10, h);
+  ctx.fillRect(x + w - 2, y, 10, h);
+}
+function drawPool(cx, cy, rx, ry, t) {
+  ctx.fillStyle = '#0d6b7a';
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#e9e1cc'; ctx.lineWidth = 8;
+  ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2); ctx.stroke();
+  for (let i = 0; i < 4; i++) {
+    ctx.strokeStyle = `rgba(255,255,255,${0.15 + 0.1 * Math.sin(t * 2 + i)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx * (0.3 + i * 0.18), ry * (0.3 + i * 0.18), 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+}
+function drawTable(x, y, r) {
+  ctx.fillStyle = '#f4ecd8';
+  ctx.beginPath(); ctx.ellipse(x, y, r, r * 0.55, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = BRASS_DEEP; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = ACCENT;
+  ctx.beginPath(); ctx.arc(x - r * 0.3, y - r * 0.08, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#e0c15a';
+  ctx.beginPath(); ctx.arc(x + r * 0.25, y, 5, 0, Math.PI * 2); ctx.fill();
+}
+// 金色行李吊牌（星星閃爍）
+function drawTag(x, y, t, seed) {
+  const s = 1 + Math.sin(t * 4 + seed) * 0.15;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(Math.sin(t * 2 + seed) * 0.2);
+  ctx.scale(s, s);
+  ctx.fillStyle = BRASS;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + i * (Math.PI * 2 / 5);
+    const a2 = a + Math.PI / 5;
+    ctx.lineTo(Math.cos(a) * 9, Math.sin(a) * 9);
+    ctx.lineTo(Math.cos(a2) * 4, Math.sin(a2) * 4);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function star(x, y, r, fill) {
+  ctx.save(); ctx.translate(x, y); ctx.fillStyle = fill;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a = -Math.PI / 2 + i * (Math.PI * 2 / 5);
+    const a2 = a + Math.PI / 5;
+    ctx.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    ctx.lineTo(Math.cos(a2) * r * 0.42, Math.sin(a2) * r * 0.42);
+  }
+  ctx.closePath(); ctx.fill(); ctx.restore();
+}
+
+function subtitle(text, alpha) {
+  if (!text || alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = "bold 24px 'Noto Sans TC', sans-serif";
+  const y = GAME_H - 54;
+  const w = ctx.measureText(text).width + 48;
+  ctx.fillStyle = 'rgba(22,51,44,0.75)';
+  roundRect(GAME_W / 2 - w / 2, y - 32, w, 48, 10); ctx.fill();
+  ctx.fillStyle = '#f4ecd8';
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+function taskBadge(num, label, x, y, alpha, done) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = done ? BRASS : 'rgba(244,236,216,0.9)';
+  ctx.beginPath(); ctx.arc(x, y, 14, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = INK;
+  ctx.font = 'bold 15px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(num, x, y + 1);
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillStyle = '#f4ecd8';
+  ctx.font = '16px "Noto Sans TC", sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText(label, x + 22, y + 5);
+  ctx.restore();
+}
+
+// ---------- 時間軸（總長 120 秒，五幕結構＋女聲旁白）----------
+const DURATION = 120;
+let startTime = null, playing = false;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function titleCard(text, sub, alpha, scale) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${52 * (scale || 1)}px "Noto Sans TC", sans-serif`;
+  ctx.fillStyle = BRASS;
+  ctx.shadowColor = 'rgba(0,0,0,0.5)'; ctx.shadowBlur = 12;
+  ctx.fillText(text, GAME_W / 2, GAME_H * 0.42);
+  ctx.shadowBlur = 0;
+  if (sub) {
+    ctx.font = '22px "Noto Sans TC", sans-serif';
+    ctx.fillStyle = '#f4ecd8';
+    ctx.fillText(sub, GAME_W / 2, GAME_H * 0.42 + 42);
+  }
+  ctx.restore();
+}
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 10) {
+    // ===== 第一幕：開場標題（大廳剪影）=====
+    bgGradient('#1d4238', '#0f231e');
+    floorTiles(GAME_H * 0.62, GAME_H * 0.4, 'rgba(201,161,90,0.12)', 'rgba(0,0,0,0.08)');
+    drawGuest(GAME_W * 0.28, GAME_H * 0.78, 130, t, '#3d6ea5', true);
+    drawGuest(GAME_W * 0.74, GAME_H * 0.8, 120, t + 1, '#7aa874', true);
+    const tp = clamp((t - 0.6) / 1.4, 0, 1);
+    titleCard('飯店入住體驗', t > 2.4 ? '等角視角・雙人合作・限時挑戰' : '', easeOut(tp));
+    if (t > 4.4) subtitle('歡迎光臨！今天我們要辦理入住手續', clamp((t - 4.4) / 0.8, 0, 1) * clamp((10 - t) / 0.6, 0, 1));
+    if (t > 0.6) cue('open', () => { ensureAudio(); chime(); speak('歡迎光臨，這裡是飯店入住體驗。等角視角導覽，帶你完成四項入住任務，一起蒐集金色行李吊牌，挑戰三星滿分評價！', 'open'); });
+  } else if (t < 30) {
+    // ===== 第二幕：任務一 櫃檯辦理入住 =====
+    bgGradient('#234a3f', '#122822');
+    floorTiles(GAME_H * 0.55, GAME_H * 0.45, 'rgba(201,161,90,0.14)', 'rgba(0,0,0,0.1)');
+    const p = (t - 10) / 20;
+    drawDesk(GAME_W * 0.55, GAME_H * 0.62, 220);
+    const walk = easeInOut(clamp(p * 2.2, 0, 1));
+    drawGuest(GAME_W * (0.15 + walk * 0.38), GAME_H * 0.72, 130, t, '#3d6ea5', true);
+    taskBadge(1, '到櫃檯辦理入住', 40, 40, 1, walk >= 1);
+    if (t > 13.6 && walk >= 1) cue('deskRing', () => ding());
+    if (t < 15) subtitle('走到金色圓圈，按互動鍵開始任務', clamp((t - 10.6) / 0.8, 0, 1));
+    else if (t < 22) subtitle('第一站：櫃檯辦理入住，拿到房卡！', 1);
+    else subtitle('順路撿起會發光的金色行李吊牌', clamp((28 - t) / 0.8, 0, 1));
+    if (t > 11) cue('t1', () => speak('第一項任務：走到大廳金色圓圈，按下互動鍵，向櫃檯辦理入住手續，拿到屬於你的房卡。', 't1'));
+  } else if (t < 50) {
+    // ===== 第三幕：任務二 房間放行李 =====
+    bgGradient('#2c3a4e', '#161f2c');
+    floorTiles(GAME_H * 0.55, GAME_H * 0.45, 'rgba(201,161,90,0.1)', 'rgba(0,0,0,0.1)');
+    const p = (t - 30) / 20;
+    drawBed(GAME_W * 0.5, GAME_H * 0.5, 220, 90);
+    const walk = easeInOut(clamp(p * 2.2, 0, 1));
+    drawGuest(GAME_W * (0.15 + walk * 0.45), GAME_H * 0.72, 130, t, '#7aa874', walk < 1);
+    taskBadge(2, '到房間放行李', 40, 40, 1, walk >= 1);
+    if (t < 35) subtitle('沿著走廊找到你的客房', clamp((t - 30.6) / 0.8, 0, 1));
+    else if (t < 44) subtitle('第二站：把行李放上床，安頓好行囊', 1);
+    else subtitle('雙人模式可以分頭完成任務，更快通關！', clamp((48 - t) / 0.8, 0, 1));
+    if (t > 31) cue('t2', () => speak('第二項任務：走進西北邊的客房，把行李放上床，安頓好今晚的住宿。雙人合作模式可以分頭完成，速度更快。', 't2'));
+  } else if (t < 72) {
+    // ===== 第四幕：任務三 泳池 =====
+    bgGradient('#1c4a52', '#0d2a30');
+    drawPool(GAME_W * 0.52, GAME_H * 0.56, 190, 100, t);
+    const p = (t - 50) / 22;
+    const walk = easeInOut(clamp(p * 2.2, 0, 1));
+    drawGuest(GAME_W * (0.15 + walk * 0.3), GAME_H * 0.78, 120, t, '#3d6ea5', false);
+    taskBadge(3, '逛泳池', 40, 40, 1, walk >= 1);
+    if (t > 55 && walk >= 1) cue('splash1', () => splash());
+    if (t < 55) subtitle('繞去露天泳池走走，享受度假氣氛', clamp((t - 50.6) / 0.8, 0, 1));
+    else if (t < 65) subtitle('第三站：泳池濺起水花，畫面超療癒', 1);
+    else subtitle('別忘了沿路蒐集金色行李吊牌，共 8 枚', clamp((70 - t) / 0.8, 0, 1));
+    if (t > 51) cue('t3', () => speak('第三項任務：繞去露天泳池走一圈，感受度假的悠閒氣氛，水花特效超療癒。', 't3'));
+  } else if (t < 92) {
+    // ===== 第五幕：任務四 餐廳 =====
+    bgGradient('#3a2c22', '#1c140f');
+    floorTiles(GAME_H * 0.55, GAME_H * 0.45, 'rgba(201,161,90,0.16)', 'rgba(0,0,0,0.08)');
+    drawTable(GAME_W * 0.4, GAME_H * 0.58, 70);
+    drawTable(GAME_W * 0.65, GAME_H * 0.68, 55);
+    const p = (t - 72) / 20;
+    const walk = easeInOut(clamp(p * 2.2, 0, 1));
+    drawGuest(GAME_W * (0.1 + walk * 0.28), GAME_H * 0.8, 120, t, '#7aa874', false);
+    taskBadge(4, '上餐廳', 40, 40, 1, walk >= 1);
+    if (t < 77) subtitle('最後一站，前往餐廳享用美食', clamp((t - 72.6) / 0.8, 0, 1));
+    else if (t < 87) subtitle('第四站：吃得好飽，四項任務全部達成！', 1);
+    else subtitle('櫃檯、房間、泳池、餐廳，一次走遍', clamp((90 - t) / 0.8, 0, 1));
+    if (t > 73) cue('t4', () => speak('第四項任務：前往餐廳享用美食，吃得好飽。完成四項任務後，就能結算你的入住評價。', 't4'));
+  } else if (t < 108) {
+    // ===== 第六幕：吊牌蒐集 + 三星評價 =====
+    bgGradient('#16332C', '#0c1e19');
+    const p = (t - 92) / 16;
+    for (let i = 0; i < 8; i++) {
+      const ang = (i / 8) * Math.PI * 2;
+      const rr = 150 + Math.sin(t + i) * 6;
+      drawTag(GAME_W / 2 + Math.cos(ang) * rr, GAME_H * 0.4 + Math.sin(ang) * rr * 0.5, t, i);
+    }
+    ctx.save();
+    ctx.globalAlpha = clamp((t - 92.6) / 0.8, 0, 1);
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 30px "Noto Sans TC", sans-serif';
+    ctx.fillStyle = '#f4ecd8';
+    ctx.fillText('蒐集 8 枚金色行李吊牌', GAME_W / 2, GAME_H * 0.42);
+    ctx.restore();
+    const starsP = clamp((t - 98) / 2, 0, 1);
+    const starCount = Math.floor(starsP * 3 + 0.99);
+    for (let i = 0; i < 3; i++) {
+      const sx = GAME_W / 2 + (i - 1) * 60, sy = GAME_H * 0.58;
+      const on = i < starCount && starsP > 0;
+      star(sx, sy, 26, on ? BRASS : 'rgba(244,236,216,0.25)');
+      if (on) cue('star' + i, () => chime());
+    }
+    if (t < 99) subtitle('沿路撿滿吊牌，爭取三星滿分評價', clamp((t - 92.6) / 0.8, 0, 1));
+    else subtitle('三星滿分！你是模範房客', 1);
+    if (t > 93) cue('t5', () => speak('沿路蒐集齊全部八枚金色行李吊牌，就能挑戰三星滿分評價，成為飯店最受歡迎的模範房客！', 't5'));
+  } else {
+    // ===== 第七幕：CTA 收尾 =====
+    bgGradient('#1d4238', '#0f231e');
+    floorTiles(GAME_H * 0.62, GAME_H * 0.4, 'rgba(201,161,90,0.12)', 'rgba(0,0,0,0.08)');
+    drawGuest(GAME_W * 0.32, GAME_H * 0.78, 130, t, '#3d6ea5', false);
+    drawGuest(GAME_W * 0.68, GAME_H * 0.78, 130, t + 1, '#7aa874', false);
+    const cta = clamp((t - 108.4) / 1, 0, 1);
+    titleCard('飯店入住體驗', '單人限時挑戰・雙人合作模式・鍵盤與觸控雙支援', easeOut(cta));
+    if (t > 112) subtitle('立即遊玩，體驗滿分入住服務！', clamp((t - 112) / 0.8, 0, 1));
+    if (t > 108.4) cue('ctaChime', () => chime());
+    if (t > 109) cue('t6', () => speak('飯店入住體驗，支援單人限時挑戰與雙人合作模式，電腦鍵盤和手機觸控都能玩，現在就立即遊玩吧！', 't6'));
+  }
+
+  // 全程柔和暗角
+  const edge = ctx.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.35, GAME_W/2, GAME_H/2, GAME_W*0.75);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, 'rgba(0,0,0,0.35)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000;
+  if (t >= DURATION) {
+    draw(DURATION - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  spokenCues = {};
+  playing = true;
+  replayBtn.style.display = 'none';
+  speechSynthesis.cancel();
+  requestAnimationFrame(loop);
+}
+
+startBtn.addEventListener('click', () => {
+  soundOn = true;
+  ensureAudio();
+  loadVoices();
+  startBtn.style.display = 'none';
+  soundBtn.style.display = 'block';
+  soundBtn.textContent = '🔊';
+  play();
+});
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (!soundOn) speechSynthesis.cancel();
+});
+replayBtn.addEventListener('click', () => {
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  play();
+});
+
+draw(0);
+</script>
+</body>
+</html>
