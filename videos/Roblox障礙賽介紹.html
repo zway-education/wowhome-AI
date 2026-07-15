@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>Roblox障礙賽 遊戲介紹</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0a1830;
+    font-family: 'Arial Black', 'Microsoft JhengHei', sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(20,30,50,0.7); border: 1px solid rgba(120,180,255,0.7);
+    color: #eaffb0; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 18px; right: 68px; z-index: 20;
+    color: #eafff0; font-size: 14px; text-shadow: 0 0 4px #000;
+    animation: hintFade 3.2s ease forwards;
+    pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: #ffd23f; color: #33210a;
+    border: 1px solid #b98900; border-radius: 8px; cursor: pointer;
+    font-family: inherit; font-weight: bold;
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音效</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 音效（預設靜音，合成、零外部資源）----------
+let audioCtx = null, soundOn = false;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn && !audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+});
+function blip(freq, dur, vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + dur + 0.02);
+}
+function jumpSfx() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(320, t);
+  osc.frequency.exponentialRampToValueAtTime(760, t + 0.15);
+  g.gain.setValueAtTime(0.28, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.2);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100, 1320].forEach((fq, i) => {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(fq, t + i * 0.06);
+    g.gain.setValueAtTime(0.001, t + i * 0.06);
+    g.gain.exponentialRampToValueAtTime(0.22, t + i * 0.06 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.06 + 0.22);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t + i * 0.06); osc.stop(t + i * 0.06 + 0.24);
+  });
+}
+function thud(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.frequency.setValueAtTime(140, t);
+  osc.frequency.exponentialRampToValueAtTime(50, t + 0.12);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.18);
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 場景繪製工具 ----------
+function drawSky(p) {
+  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  g.addColorStop(0, '#5fb6ff');
+  g.addColorStop(0.55, '#a7e0ff');
+  g.addColorStop(1, '#d6f3ff');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  // 遠山雲朵（緩慢視差）
+  ctx.save();
+  ctx.globalAlpha = 0.85;
+  for (let i = 0; i < 6; i++) {
+    const cx = ((i * 220 - p * 40) % (GAME_W + 200)) - 100;
+    const cy = 60 + (i % 3) * 50;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, 55, 20, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + 35, cy + 6, 40, 16, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx - 32, cy + 8, 36, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawGround(offsetX) {
+  ctx.fillStyle = '#57cc63';
+  ctx.fillRect(0, GAME_H - 60, GAME_W, 60);
+  ctx.fillStyle = '#3aa845';
+  ctx.fillRect(0, GAME_H - 60, GAME_W, 12);
+}
+
+function drawPlatform(x, y, w, h, top, side) {
+  ctx.fillStyle = side;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = top;
+  ctx.fillRect(x, y, w, 8);
+}
+
+function drawSpike(x, y, size) {
+  ctx.fillStyle = '#d5d9de';
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x + size * 0.5, y - size);
+  ctx.lineTo(x + size, y);
+  ctx.closePath();
+  ctx.fill();
+  ctx.strokeStyle = '#8a8f96';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// 機器磚塊角色（跑/跳姿勢）
+function drawAvatar(x, y, size, t, phase) {
+  ctx.save();
+  ctx.translate(x, y);
+  const runCycle = t * 10;
+  let legL = Math.sin(runCycle) * 24, legR = -Math.sin(runCycle) * 24;
+  let armL = -Math.sin(runCycle) * 22, armR = Math.sin(runCycle) * 22;
+  let bob = Math.abs(Math.sin(runCycle)) * 4;
+  if (phase === 'jump') { legL = -18; legR = 22; armL = -100; armR = 100; bob = 0; }
+  const s = size / 52;
+  ctx.scale(s, s);
+  ctx.translate(0, -bob / s);
+
+  // 陰影
+  ctx.fillStyle = 'rgba(0,0,0,0.22)';
+  ctx.beginPath();
+  ctx.ellipse(0, 6, 20, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // 腿
+  ctx.strokeStyle = '#555a63'; ctx.lineWidth = 10; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-8, -30); ctx.lineTo(-8 + legL * 0.3, 0);
+  ctx.moveTo(8, -30); ctx.lineTo(8 + legR * 0.3, 0);
+  ctx.stroke();
+
+  // 手臂
+  ctx.strokeStyle = '#2277ff'; ctx.lineWidth = 9;
+  ctx.beginPath();
+  ctx.moveTo(-14, -60); ctx.lineTo(-14 + Math.sin((armL) * Math.PI / 180) * 20, -60 + 26);
+  ctx.moveTo(14, -60); ctx.lineTo(14 + Math.sin((armR) * Math.PI / 180) * 20, -60 + 26);
+  ctx.stroke();
+
+  // 身體
+  ctx.fillStyle = '#3ba3ff';
+  ctx.beginPath();
+  ctx.roundRect(-18, -70, 36, 40, 6);
+  ctx.fill();
+
+  // 頭
+  ctx.fillStyle = '#ffce7a';
+  ctx.beginPath();
+  ctx.roundRect(-16, -100, 32, 30, 5);
+  ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.beginPath();
+  ctx.arc(-6, -88, 2.6, 0, Math.PI * 2);
+  ctx.arc(6, -88, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+}
+
+function drawFlag(x, y, h, wave) {
+  ctx.fillStyle = '#555';
+  ctx.fillRect(x, y - h, 6, h);
+  ctx.save();
+  ctx.translate(x + 6, y - h);
+  ctx.fillStyle = '#ff3b3b';
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(46 + Math.sin(wave) * 4, 12);
+  ctx.lineTo(0, 24);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function drawStar(x, y, r, rot, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  ctx.fillStyle = '#ffd23f';
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    const a1 = (i * 2 * Math.PI) / 5 - Math.PI / 2;
+    const a2 = a1 + Math.PI / 5;
+    ctx.lineTo(Math.cos(a1) * r, Math.sin(a1) * r);
+    ctx.lineTo(Math.cos(a2) * r * 0.45, Math.sin(a2) * r * 0.45);
+  }
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function subtitle(text, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = "bold 24px 'Microsoft JhengHei', sans-serif";
+  const y = GAME_H - 56;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  const w = ctx.measureText(text).width + 44;
+  ctx.fillRect(GAME_W / 2 - w / 2, y - 30, w, 46);
+  ctx.fillStyle = '#fffef0';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+
+function titleCard(text1, text2, alpha, big) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${big ? 58 : 44}px 'Arial Black', sans-serif`;
+  ctx.fillStyle = '#ff3b3b';
+  ctx.shadowColor = '#fff'; ctx.shadowBlur = 14;
+  ctx.lineWidth = 8;
+  ctx.strokeStyle = '#ffffff';
+  ctx.strokeText(text1, GAME_W / 2, GAME_H * 0.4);
+  ctx.fillText(text1, GAME_W / 2, GAME_H * 0.4);
+  ctx.shadowBlur = 0;
+  if (text2) {
+    ctx.font = "22px 'Microsoft JhengHei', sans-serif";
+    ctx.fillStyle = '#0a3d1f';
+    ctx.fillText(text2, GAME_W / 2, GAME_H * 0.4 + 44);
+  }
+  ctx.restore();
+}
+
+// ---------- 時間軸（總長 16 秒，三幕結構）----------
+const DURATION = 16;
+let startTime = null, playing = false;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 3) {
+    // ===== 第一幕：開場標題 =====
+    const p = clamp(t / 1.2, 0, 1);
+    drawSky(t);
+    drawGround(0);
+    const gx = GAME_W * 0.5 - 26;
+    drawAvatar(gx, GAME_H - 60, 90, t, 'run');
+    if (t > 0.1) cue('titleChime', () => chime());
+    titleCard('Roblox 障礙賽', 'Roblox Obstacle Course', easeOut(p), true);
+    if (t > 1.6) subtitle('跳過尖刺、踩穩平臺，一路衝到終點旗！', clamp((t - 1.6) / 0.6, 0, 1));
+  } else if (t < 6.5) {
+    // ===== 第二幕A：跳躍教學 + 尖刺 =====
+    drawSky(t);
+    drawGround(0);
+    drawPlatform(60, GAME_H - 60, 260, 60, '#e2b26f', '#c9975a');
+    drawSpike(340, GAME_H - 60, 44);
+    drawSpike(400, GAME_H - 60, 44);
+    drawPlatform(470, GAME_H - 60, 430, 60, '#e2b26f', '#c9975a');
+    const p = (t - 3) / 3.5;
+    const jumpT = clamp(p * 2.4, 0, 1);
+    const arc = Math.sin(Math.PI * clamp(jumpT, 0, 1)) * 70;
+    const runX = 120 + p * 700;
+    const phase = (jumpT > 0.05 && jumpT < 0.95) ? 'jump' : 'run';
+    if (phase === 'jump') cue('jump1_' + Math.floor(t * 2), () => {});
+    if (jumpT > 0.02 && jumpT < 0.08) cue('jumpSfx1', () => jumpSfx());
+    drawAvatar(runX, GAME_H - 60 - arc, 90, t, phase);
+    if (t < 4.6) subtitle('方向鍵／WASD 移動，空白鍵跳躍', clamp((t - 3.2) / 0.5, 0, 1));
+    else subtitle('平板：左半螢幕移動、右半螢幕跳躍', clamp((t - 4.6) / 0.5, 0, 1));
+  } else if (t < 10) {
+    // ===== 第二幕B：移動平臺 =====
+    drawSky(t);
+    drawGround(0);
+    const p = (t - 6.5) / 3.5;
+    const platY1 = GAME_H - 160 + Math.sin(t * 2) * 40;
+    const platY2 = GAME_H - 220 + Math.sin(t * 2 + 2) * 40;
+    drawPlatform(120, platY1, 130, 26, '#e2b26f', '#c9975a');
+    drawPlatform(420, platY2, 130, 26, '#e2b26f', '#c9975a');
+    drawPlatform(680, GAME_H - 60, 260, 60, '#e2b26f', '#c9975a');
+
+    let ax, ay, phase = 'jump';
+    if (p < 0.35) {
+      const lp = easeInOut(p / 0.35);
+      ax = 130 + lp * 60; ay = (GAME_H - 60) + lp * (platY1 - (GAME_H - 60)) - Math.sin(Math.PI * lp) * 40;
+    } else if (p < 0.7) {
+      const lp = easeInOut((p - 0.35) / 0.35);
+      ax = 190 + lp * 240; ay = platY1 + lp * (platY2 - platY1) - Math.sin(Math.PI * lp) * 50;
+    } else {
+      const lp = easeInOut((p - 0.7) / 0.3);
+      ax = 430 + lp * 350; ay = platY2 + lp * ((GAME_H - 60) - platY2) - Math.sin(Math.PI * lp) * 40;
+      if (lp > 0.9) phase = 'run';
+    }
+    if (Math.floor(t * 3) % 5 === 0) cue('platJump' + Math.floor(t * 3), () => jumpSfx());
+    drawAvatar(ax, ay, 90, t, phase);
+    subtitle('踩準時機，跳上會移動的浮空平臺！', clamp((t - 6.9) / 0.6, 0, 1) * clamp((10 - t) / 0.5, 0, 1));
+  } else if (t < 13) {
+    // ===== 第二幕C：終點衝刺 =====
+    drawSky(t);
+    drawGround(0);
+    drawFlag(700, GAME_H - 60, 150, t * 4);
+    drawStar(760, GAME_H - 60 - 190, 26, t * 2, 1);
+    const p = (t - 10) / 3;
+    const runX = 100 + p * 560;
+    drawAvatar(runX, GAME_H - 60, 90, t, 'run');
+    if (p > 0.85) cue('finishChime', () => chime());
+    subtitle('抵達終點旗，過關成功！', clamp((t - 10.3) / 0.6, 0, 1));
+  } else {
+    // ===== 第三幕：CTA =====
+    drawSky(t);
+    drawGround(0);
+    const p = (t - 13) / 3;
+    // 慶祝彩帶
+    ctx.save();
+    let seed = 11;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
+    for (let i = 0; i < 40; i++) {
+      const cx = rnd() * GAME_W;
+      const cy = ((rnd() * GAME_H + p * 260 * (0.5 + rnd())) % (GAME_H + 40)) - 40;
+      ctx.fillStyle = ['#ff5252', '#ffb300', '#4fc3f7', '#69f0ae', '#e040fb'][i % 5];
+      ctx.save();
+      ctx.translate(cx, cy);
+      ctx.rotate(t * 4 + i);
+      ctx.fillRect(-4, -4, 8, 8);
+      ctx.restore();
+    }
+    ctx.restore();
+    drawAvatar(GAME_W * 0.5 - 26, GAME_H - 60, 100, t, 'jump');
+    titleCard('Roblox 障礙賽', null, 1, true);
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.font = "bold 24px 'Microsoft JhengHei', sans-serif";
+    ctx.fillStyle = '#0a3d1f';
+    ctx.globalAlpha = clamp((t - 13.5) / 0.6, 0, 1);
+    ctx.fillText('鍵盤＋觸控雙支援 · 立即挑戰過關！', GAME_W / 2, GAME_H * 0.4 + 46);
+    ctx.restore();
+    cue('ctaThud', () => thud(0.4));
+  }
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000;
+  if (t >= DURATION) {
+    draw(DURATION - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  playing = true;
+  replayBtn.style.display = 'none';
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+
+window.__render = draw;
+window.__DURATION = DURATION;
+</script>
+<script>/* AI-CAMP-STATS-BEACON */
+(function(){
+  try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */
+  var NS="ai-future-camp", K="t-roblox-obstacle-intro";
+  function ping(n){ try{ var p=fetch("//abacus.jasoncameron.dev/hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }
+  ping(K+"-v");
+  ping(K+"-p"); ping("site-total-plays");
+})();
+</script>
+</body>
+</html>
