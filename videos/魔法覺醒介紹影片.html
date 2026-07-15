@@ -215,6 +215,7 @@ soundBtn.addEventListener('click', () => {
     try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (!soundOn && 'speechSynthesis' in window) speechSynthesis.cancel();
 });
 function beep(freq, dur, type, vol, sweep) {
   if (!soundOn || !audioCtx) return;
@@ -241,6 +242,34 @@ function chime() {
     osc.connect(g).connect(audioCtx.destination);
     osc.start(t + i * 0.08); osc.stop(t + i * 0.08 + 0.32);
   });
+}
+
+/* ================= 女聲旁白（Web Speech API,系統內建語音合成,零外部資源）================= */
+let femaleVoice = null, voicesReady = false;
+function pickFemaleVoice() {
+  if (!('speechSynthesis' in window)) return;
+  const voices = speechSynthesis.getVoices();
+  if (!voices.length) return;
+  voicesReady = true;
+  const zhVoices = voices.filter(v => /zh|cmn|yue/i.test(v.lang));
+  const pool = zhVoices.length ? zhVoices : voices;
+  femaleVoice =
+    pool.find(v => /female|女|yating|mei|ting|xiaoxiao|huihui|meijia|shanshan/i.test(v.name)) ||
+    pool.find(v => !/male|男/i.test(v.name)) ||
+    pool[0] || null;
+}
+if ('speechSynthesis' in window) {
+  pickFemaleVoice();
+  speechSynthesis.onvoiceschanged = pickFemaleVoice;
+}
+function speak(text) {
+  if (!soundOn || !('speechSynthesis' in window)) return;
+  if (!voicesReady) pickFemaleVoice();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = (femaleVoice && femaleVoice.lang) || 'zh-TW';
+  if (femaleVoice) u.voice = femaleVoice;
+  u.pitch = 1.15; u.rate = 1.02; u.volume = 1;
+  speechSynthesis.speak(u);
 }
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -515,6 +544,7 @@ function draw(t) {
     setLayer(screenTitle, true); setLayer(screenCTA, false);
     hud.classList.remove('show'); skillBar.classList.remove('show');
     if (t > 0.2) cue('titleChime', () => chime());
+    if (t > 0.3) cue('narrateTitle', () => speak('魔法覺醒！選一位角色，展開專屬的魔法冒險。'));
     const sel = clamp(Math.floor((t / 4) * CHARACTERS.length), 0, CHARACTERS.length - 1);
     [...charRow.children].forEach((el, i) => el.classList.toggle('sel', i === sel));
   } else if (t < 22) {
@@ -522,6 +552,7 @@ function draw(t) {
     setLayer(screenTitle, false); setLayer(screenCTA, false);
     hud.classList.add('show'); skillBar.classList.add('show');
     if (t < 4.3) cue('buildSkill', () => { buildSkillBar(MAGIC); magicLabel.textContent = MAGIC.icon + ' ' + MAGIC.name; });
+    if (t > 4.4) cue('narrateCombat', () => speak('小炎選擇了烈焰魔法，火球自動鎖定最近的敵人，一擊灼燒！'));
     drawStageBg(STAGE);
 
     const segT = t - 4;
@@ -539,6 +570,8 @@ function draw(t) {
       spawnEnemyAt(760, GAME_H / 2, true);
       wave = 3; waveLabel.textContent = '第 3 波（BOSS）';
     });
+    if (segT > 9.2 && segT < 13) cue('narrateWave', () => speak('打倒整波敵人，就能晉級下一關！'));
+    if (segT > 13.4) cue('narrateBoss', () => speak('森林領主登場，準備迎接一場魔法大戰！'));
 
     const px = 220, py = GAME_H / 2;
     const nearest = enemies[0];
@@ -596,6 +629,7 @@ function draw(t) {
     for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, 0, en.icon, en.hp, en.maxHp);
     const p = clamp((t - 22) / 2, 0, 1);
     if (p > 0.05) cue('ctaChime', () => chime());
+    if (p > 0.1) cue('narrateCTA', () => speak('六大元素魔法，十二隻夥伴寵物，鍵盤觸控都能玩，快來體驗魔法覺醒吧！'));
     screenCTA.style.opacity = easeOut(p);
   }
 
@@ -620,6 +654,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 function play() {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
   startTime = null;
   firedCues = {};
   enemies = []; bullets = []; particles = [];
