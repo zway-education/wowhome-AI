@@ -35,9 +35,49 @@
     border: 1px solid #c9a15a; border-radius: 6px; cursor: pointer;
     font-family: inherit;
   }
+  #cover {
+    position: fixed; inset: 0; z-index: 30;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center, #16281a 0%, #060b08 75%);
+    cursor: pointer;
+  }
+  #cover .badge {
+    color: #c9a15a; font-size: 14px; letter-spacing: 4px; margin-bottom: 14px;
+    text-shadow: 0 0 8px rgba(0,0,0,0.8);
+  }
+  #cover h1 {
+    color: #e7e2d2; font-size: clamp(28px, 6vw, 48px); margin: 0 0 10px;
+    text-shadow: 0 0 12px rgba(0,0,0,0.9), 0 0 24px rgba(239,138,61,0.35);
+    text-align: center;
+  }
+  #cover p {
+    color: #9fae9c; font-size: clamp(13px, 2.4vw, 17px); margin: 0 0 30px;
+    text-align: center; padding: 0 20px;
+  }
+  #cover .playBtn {
+    width: 78px; height: 78px; border-radius: 50%;
+    background: rgba(201,161,90,0.15); border: 2px solid #c9a15a;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 24px rgba(201,161,90,0.35);
+    transition: transform 0.15s ease;
+  }
+  #cover:active .playBtn { transform: scale(0.94); }
+  #cover .playBtn::after {
+    content: ''; width: 0; height: 0; margin-left: 6px;
+    border-top: 16px solid transparent; border-bottom: 16px solid transparent;
+    border-left: 26px solid #ffd27a;
+  }
+  #cover .tap { color: #6f7d6c; font-size: 13px; margin-top: 18px; }
 </style>
 </head>
 <body>
+<div id="cover">
+  <div class="badge">教學影片</div>
+  <h1>夜襲：邪教據點</h1>
+  <p>月夜潛行教學：怎麼移動、怎麼避開視線錐、怎麼繞背偷襲</p>
+  <div class="playBtn"></div>
+  <div class="tap">點擊開始播放（含字幕與音效）</div>
+</div>
 <button id="soundBtn">🔇</button>
 <div id="soundHint">點聲音鈕開啟音效 🎧 建議戴耳機</div>
 <button id="replayBtn">重新播放</button>
@@ -50,6 +90,7 @@ const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const soundBtn = document.getElementById('soundBtn');
 const replayBtn = document.getElementById('replayBtn');
+const cover = document.getElementById('cover');
 
 function resize() {
   const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
@@ -227,6 +268,28 @@ function makeRadialSprite(size, rgb, a0) {
   return cv;
 }
 const fireGlowCv = makeRadialSprite(256, '255,180,90', 1);
+function makeConeSprite(rgb) {
+  const cv = document.createElement('canvas');
+  cv.width = 256; cv.height = 256;
+  const c = cv.getContext('2d');
+  const g = c.createRadialGradient(128, 128, 6, 128, 128, 126);
+  g.addColorStop(0, 'rgba(' + rgb + ',0.28)'); g.addColorStop(1, 'rgba(' + rgb + ',0)');
+  c.fillStyle = g;
+  c.beginPath();
+  c.moveTo(128, 128);
+  c.arc(128, 128, 126, -0.62, 0.62);
+  c.closePath(); c.fill();
+  return cv;
+}
+const coneCalm = makeConeSprite('201,161,90');
+const coneAlert = makeConeSprite('226,73,63');
+function drawCone(x, y, face, alertMode) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(face);
+  ctx.drawImage(alertMode ? coneAlert : coneCalm, -20, -128, 256, 256);
+  ctx.restore();
+}
 function drawFire() {
   const t = bgTime;
   const flick = Math.sin(t * 14) * 3 + Math.sin(t * 7) * 2;
@@ -459,50 +522,136 @@ function textOutline(text, x, y, size, color) {
   ctx.fillText(text, x, y);
 }
 
+// ---------- 教學字幕 ----------
+const SUBTITLES = [
+  { s: 0.0, e: 2.2, text: '教學：怎麼玩《夜襲：邪教據點》' },
+  { s: 2.2, e: 5.6, text: '電腦按 WASD／方向鍵移動，手機用左下角搖桿' },
+  { s: 5.6, e: 9.4, text: '每個信徒前方有「視線錐」，走進去就會被發現、被追擊' },
+  { s: 9.4, e: 13.6, text: '繞到信徒背後靠近，趁他沒發現時偷襲最安全' },
+  { s: 13.6, e: 17.0, text: '按空白鍵／E 鍵，或手機右下角攻擊鈕出擊' },
+  { s: 17.0, e: 19.4, text: '背後偷襲＝一擊必殺！正面硬打只會扣血還會驚動全場' },
+  { s: 19.4, e: 22.2, text: '清空全部信徒後，祭壇會發出金光' },
+  { s: 22.2, e: 25.4, text: '靠近祭壇按攻擊鍵搶戰利品，再盡快撤退' },
+  { s: 25.4, e: 28.4, text: '目標：撐過三個夜晚獲勝，被抓到 3 次就遊戲結束' },
+  { s: 28.4, e: 32.0, text: '學會了嗎？快去試試看能不能無聲通關三夜！' },
+];
+function drawSubtitle(t) {
+  const cur = SUBTITLES.find(s => t >= s.s && t < s.e);
+  if (!cur) return;
+  const fadeIn = clamp((t - cur.s) / 0.3, 0, 1);
+  const fadeOut = clamp((cur.e - t) / 0.3, 0, 1);
+  const a = Math.min(fadeIn, fadeOut);
+  ctx.globalAlpha = a;
+  ctx.font = 'bold 20px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.textAlign = 'center';
+  const w = ctx.measureText(cur.text).width;
+  const boxY = GAME_H - 62;
+  ctx.fillStyle = 'rgba(0,0,0,0.6)';
+  roundRect(GAME_W / 2 - w / 2 - 18, boxY - 24, w + 36, 40, 8);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,0.9)';
+  ctx.strokeText(cur.text, GAME_W / 2, boxY - 4);
+  ctx.fillText(cur.text, GAME_W / 2, boxY - 4);
+  ctx.globalAlpha = 1;
+}
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+function drawKeycap(x, y, s, label) {
+  ctx.fillStyle = 'rgba(20,30,20,0.85)';
+  ctx.strokeStyle = PAL.amber; ctx.lineWidth = 2;
+  roundRect(x, y, s, s, 7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = PAL.ink; ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + s / 2, y + s / 2 + 1);
+}
+function drawMoveHint(a) {
+  ctx.save(); ctx.globalAlpha = a;
+  const bx = 40, by = GAME_H - 150, s = 30, g = 6;
+  drawKeycap(bx + s + g, by, s, 'W');
+  drawKeycap(bx, by + s + g, s, 'A');
+  drawKeycap(bx + s + g, by + s + g, s, 'S');
+  drawKeycap(bx + (s + g) * 2, by + s + g, s, 'D');
+  ctx.fillStyle = PAL.dim; ctx.font = '13px sans-serif'; ctx.textAlign = 'left';
+  ctx.fillText('移動', bx, by - 10);
+  ctx.restore();
+}
+function drawAttackHint(a) {
+  ctx.save(); ctx.globalAlpha = a;
+  const bx = GAME_W - 130, by = GAME_H - 150;
+  ctx.fillStyle = 'rgba(20,30,20,0.85)';
+  ctx.strokeStyle = PAL.bad; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(bx + 40, by + 40, 34, 0, 6.29); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = PAL.ink; ctx.font = 'bold 15px sans-serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('攻擊', bx + 40, by + 40);
+  ctx.fillStyle = PAL.dim; ctx.font = '13px sans-serif';
+  ctx.fillText('Space / E', bx + 40, by + 90);
+  ctx.restore();
+}
+
 // 時間軸（秒）：
-// 0.0-2.5  遠景空拍：森林營地全景，緩緩推進 + 標題淡入
-// 2.5-5.0  跟拍玩家從林邊潛行接近柵欄
-// 5.0-8.0  視角切近：玩家繞到信徒背後
-// 8.0-9.2  偷襲一擊，信徒倒地，衝擊定格
-// 9.2-11.0 鏡頭轉向祭壇金光，警示鐘聲
-//11.0-13.0 標題卡 + 玩法重點文字
-//13.0-15.5 CTA 淡入收尾
-const TOTAL = 15.5;
+// 0.0-2.2   標題卡：教學開場
+// 2.2-5.6   移動教學：WASD/方向鍵、搖桿提示
+// 5.6-9.4   視線錐教學：玩家繞過紅色警戒範圍
+// 9.4-13.6  繞背接近信徒
+//13.6-17.0  攻擊按鍵提示 + 揮擊
+//17.0-19.4  偷襲必殺結果 + 對比說明
+//19.4-22.2  據點清空、祭壇發光
+//22.2-25.4  搶奪戰利品
+//25.4-28.4  勝利條件說明
+//28.4-32.0  結尾 CTA
+const TOTAL = 32.0;
 
 function scene(t) {
   bgTime = t;
   let camX = CAMP.x, camY = CAMP.y, camZoom = 1;
-  let vignette = 0.35;
 
-  if (t < 2.5) {
-    const p = easeInOut(clamp(t / 2.5, 0, 1));
-    camZoom = lerp(0.72, 0.92, p);
+  if (t < 2.2) {
+    const p = easeInOut(clamp(t / 2.2, 0, 1));
+    camZoom = lerp(0.72, 0.85, p);
     camY = lerp(CAMP.y - 20, CAMP.y, p);
-  } else if (t < 5.0) {
-    const p = easeInOut(clamp((t - 2.5) / 2.5, 0, 1));
-    player.x = lerp(90, CAMP.x - 190, p);
-    player.y = lerp(470, CAMP.y + 150, p);
+  } else if (t < 5.6) {
+    const p = easeInOut(clamp((t - 2.2) / 3.4, 0, 1));
+    player.x = lerp(90, CAMP.x - 220, p);
+    player.y = lerp(470, CAMP.y + 170, p);
     player.face = Math.atan2(CAMP.y - player.y, CAMP.x - player.x);
-    camX = lerp(CAMP.x - 60, CAMP.x - 20, p);
-    camY = lerp(CAMP.y + 60, CAMP.y + 20, p);
-    camZoom = lerp(0.95, 1.15, p);
-  } else if (t < 8.0) {
-    const p = easeInOut(clamp((t - 5.0) / 3.0, 0, 1));
+    camX = lerp(CAMP.x - 60, CAMP.x - 80, p);
+    camY = lerp(CAMP.y + 60, CAMP.y + 40, p);
+    camZoom = lerp(0.88, 1.0, p);
+  } else if (t < 9.4) {
+    const p = easeInOut(clamp((t - 5.6) / 3.8, 0, 1));
+    const guard = cultActors[1];
+    // 玩家沿著視線錐外緣繞一圈，示範避開偵測
+    const arc = lerp(-0.6, 1.3, p);
+    player.x = guard.x + Math.cos(guard.face + arc) * 130;
+    player.y = guard.y + Math.sin(guard.face + arc) * 100;
+    player.face = Math.atan2(guard.y - player.y, guard.x - player.x);
+    camX = guard.x; camY = guard.y - 10; camZoom = 1.25;
+  } else if (t < 13.6) {
+    const p = easeInOut(clamp((t - 9.4) / 4.2, 0, 1));
     const target = cultActors[0];
     const approachAng = target.face + Math.PI; // 從背後靠近
-    player.x = lerp(CAMP.x - 190, target.x + Math.cos(approachAng) * 40, p);
-    player.y = lerp(CAMP.y + 150, target.y + Math.sin(approachAng) * 40, p);
+    const guard = cultActors[1];
+    player.x = lerp(guard.x + Math.cos(guard.face + 1.3) * 130, target.x + Math.cos(approachAng) * 44, p);
+    player.y = lerp(guard.y + Math.sin(guard.face + 1.3) * 100, target.y + Math.sin(approachAng) * 44, p);
     player.face = Math.atan2(target.y - player.y, target.x - player.x);
-    camX = lerp(CAMP.x - 20, target.x - 10, p);
-    camY = lerp(CAMP.y + 20, target.y - 10, p);
-    camZoom = lerp(1.15, 1.7, p);
+    camX = lerp(guard.x, target.x - 10, p);
+    camY = lerp(guard.y - 10, target.y - 10, p);
+    camZoom = lerp(1.25, 1.7, p);
     if (p > 0.97 && !window._stepSfx) { window._stepSfx = true; sfx.step(); }
-  } else if (t < 9.2) {
-    const p = clamp((t - 8.0) / 1.2, 0, 1);
+  } else if (t < 17.0) {
     const target = cultActors[0];
     camX = target.x - 10; camY = target.y - 10; camZoom = 1.7;
-    player.swing = p < 0.6 ? p / 0.6 : 0;
-    if (p > 0.15 && !targetKilled) {
+    const p = clamp((t - 15.0) / 1.2, 0, 1);
+    player.swing = p > 0 && p < 0.6 ? p / 0.6 : 0;
+    if (t > 15.15 && !targetKilled) {
       targetKilled = true;
       target.dead = true;
       burst(target.x, target.y - 8, '#d8cfb8', 14, 190, 60);
@@ -511,16 +660,29 @@ function scene(t) {
       sfx.swing();
       setTimeout(() => sfx.takedown(), 90);
     }
-  } else if (t < 11.0) {
-    const p = easeInOut(clamp((t - 9.2) / 1.8, 0, 1));
+  } else if (t < 19.4) {
+    const target = cultActors[0];
+    camX = target.x - 10; camY = target.y - 10; camZoom = 1.5;
+  } else if (t < 22.2) {
+    const p = easeInOut(clamp((t - 19.4) / 2.8, 0, 1));
     camX = lerp(cultActors[0].x, TOTEM.x, p);
     camY = lerp(cultActors[0].y, TOTEM.y, p);
-    camZoom = lerp(1.7, 1.3, p);
+    camZoom = lerp(1.5, 1.3, p);
     if (p > 0.05 && !window._gongSfx) { window._gongSfx = true; sfx.gong(); }
-  } else if (t < 13.0) {
-    const p = clamp((t - 11.0) / 2.0, 0, 1);
-    camX = TOTEM.x; camY = TOTEM.y - 10; camZoom = lerp(1.3, 1.05, p);
-    titleT = p;
+  } else if (t < 25.4) {
+    const p = easeInOut(clamp((t - 22.2) / 3.2, 0, 1));
+    player.x = lerp(player.x, TOTEM.x + 26, p);
+    player.y = lerp(player.y, TOTEM.y + 20, p);
+    player.face = Math.atan2(TOTEM.y - player.y, TOTEM.x - player.x);
+    camX = TOTEM.x; camY = TOTEM.y - 10; camZoom = 1.3;
+    if (p > 0.85 && !window._lootSfx) {
+      window._lootSfx = true;
+      burst(TOTEM.x, TOTEM.y - 20, PAL.fireHot, 20, 200, 100);
+      sfx.loot(); shake = Math.max(shake, 5);
+    }
+  } else if (t < 28.4) {
+    camX = TOTEM.x; camY = TOTEM.y - 10; camZoom = lerp(1.3, 1.1, clamp((t - 25.4) / 3.0, 0, 1));
+    titleT = clamp((t - 25.4) / 1.5, 0, 1);
   } else {
     camX = TOTEM.x; camY = TOTEM.y - 10; camZoom = 1.05;
     titleT = 1;
@@ -531,13 +693,20 @@ function scene(t) {
     shake = Math.max(0, shake - 0.5);
   }
 
-  drawWorld(camX, camY, camZoom, vignette);
+  drawWorld(camX, camY, camZoom);
 
   // 前景角色（跟世界同一變換，手動再畫一次以疊在地景上層）
   ctx.save();
   ctx.translate(GAME_W / 2, GAME_H / 2);
   ctx.scale(camZoom, camZoom);
   ctx.translate(-camX, -camY);
+  // 5.6-13.6s：畫出示範用的視線錐
+  if (t >= 5.6 && t < 13.6) {
+    const guard = cultActors[1];
+    drawCone(guard.x, guard.y, guard.face, false);
+    const target = cultActors[0];
+    if (!target.dead) drawCone(target.x, target.y, target.face, false);
+  }
   for (const c of cultActors) {
     if (c.dead) {
       drawFigure(c.x, c.y, c.face, { color: PAL.cult, trim: PAL.cultTrim, dead: true });
@@ -545,9 +714,7 @@ function scene(t) {
       drawFigure(c.x, c.y, c.face, { color: PAL.cult, trim: PAL.cultTrim, eyes: true, ph: c.ph });
     }
   }
-  if (t < 9.2 || t >= 9.2) {
-    drawFigure(player.x, player.y, player.face, { color: PAL.player, trim: PAL.playerTrim, walk: t < 8.0, walkT: t, swing: player.swing });
-  }
+  drawFigure(player.x, player.y, player.face, { color: PAL.player, trim: PAL.playerTrim, walk: t < 13.6, walkT: t, swing: player.swing });
   updateParts(0.016); drawParts();
   ctx.restore();
 
@@ -564,33 +731,45 @@ function scene(t) {
     flashWhite = Math.max(0, flashWhite - 0.03);
   }
 
-  // 標題淡入（0-2.5s）
-  if (t < 3.2) {
-    const a = t < 2.5 ? clamp(t / 1.4, 0, 1) : clamp(1 - (t - 2.5) / 0.7, 0, 1);
+  // 開場標題（0-2.8s）
+  if (t < 2.8) {
+    const a = t < 2.2 ? clamp(t / 1.2, 0, 1) : clamp(1 - (t - 2.2) / 0.6, 0, 1);
     ctx.globalAlpha = a;
-    textOutline('夜襲：邪教據點', GAME_W / 2, GAME_H * 0.28, 46, PAL.ink);
-    ctx.font = '18px sans-serif'; ctx.fillStyle = PAL.dim; ctx.textAlign = 'center';
-    ctx.fillText('月夜潛行 · 繞背偷襲 · 搶奪祭壇戰利品', GAME_W / 2, GAME_H * 0.28 + 34);
+    textOutline('夜襲：邪教據點', GAME_W / 2, GAME_H * 0.24, 40, PAL.ink);
+    ctx.font = '17px sans-serif'; ctx.fillStyle = PAL.dim; ctx.textAlign = 'center';
+    ctx.fillText('新手教學：操作方式與獲勝條件', GAME_W / 2, GAME_H * 0.24 + 30);
     ctx.globalAlpha = 1;
   }
 
-  // 結尾標題卡（11-15.5s）
+  // 操作提示：移動（2.2-5.6s）、攻擊（13.6-17.0s）
+  if (t >= 2.2 && t < 5.6) {
+    const a = Math.min(clamp((t - 2.2) / 0.4, 0, 1), clamp((5.6 - t) / 0.4, 0, 1));
+    drawMoveHint(a);
+  }
+  if (t >= 13.6 && t < 17.0) {
+    const a = Math.min(clamp((t - 13.6) / 0.4, 0, 1), clamp((17.0 - t) / 0.4, 0, 1));
+    drawAttackHint(a);
+  }
+
+  // 結尾標題卡（25.4-32.0s）
   if (titleT > 0) {
     ctx.globalAlpha = clamp(titleT, 0, 1);
     ctx.fillStyle = 'rgba(6,11,8,0.55)';
-    ctx.fillRect(0, GAME_H * 0.62, GAME_W, GAME_H * 0.38);
-    textOutline('夜襲：邪教據點', GAME_W / 2, GAME_H * 0.72, 40, PAL.fireHot);
-    ctx.font = 'bold 17px sans-serif'; ctx.fillStyle = PAL.ink; ctx.textAlign = 'center';
-    ctx.fillText('避開視線錐 · 繞背一擊必殺 · 撐過三個夜晚', GAME_W / 2, GAME_H * 0.72 + 32);
-    if (t >= 13.0) {
-      const p2 = clamp((t - 13.0) / 1.5, 0, 1);
+    ctx.fillRect(0, GAME_H * 0.6, GAME_W, GAME_H * 0.28);
+    textOutline('夜襲：邪教據點', GAME_W / 2, GAME_H * 0.69, 36, PAL.fireHot);
+    ctx.font = 'bold 16px sans-serif'; ctx.fillStyle = PAL.ink; ctx.textAlign = 'center';
+    ctx.fillText('避開視線錐 · 繞背一擊必殺 · 撐過三個夜晚', GAME_W / 2, GAME_H * 0.69 + 30);
+    if (t >= 28.4) {
+      const p2 = clamp((t - 28.4) / 1.2, 0, 1);
       ctx.globalAlpha = p2 * clamp(titleT, 0, 1);
       ctx.fillStyle = PAL.amber;
-      ctx.font = 'bold 22px sans-serif';
-      ctx.fillText('▶ 立即遊玩', GAME_W / 2, GAME_H * 0.72 + 68);
+      ctx.font = 'bold 20px sans-serif';
+      ctx.fillText('▶ 立即遊玩', GAME_W / 2, GAME_H * 0.69 + 62);
     }
     ctx.globalAlpha = 1;
   }
+
+  drawSubtitle(t);
 }
 
 let startTime = null;
@@ -606,7 +785,18 @@ function frame(now) {
   scene(t);
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+
+// 封面：先畫一張靜態預覽（營地全景），點擊後才開始播放
+bgTime = 0;
+scene(0);
+
+function startPlayback() {
+  cover.style.display = 'none';
+  audio(); setMuted(false); soundBtn.textContent = '🔊';
+  startTime = null;
+  requestAnimationFrame(frame);
+}
+cover.addEventListener('click', startPlayback, { once: true });
 
 replayBtn.addEventListener('click', () => {
   audio();
@@ -614,7 +804,7 @@ replayBtn.addEventListener('click', () => {
   targetKilled = false; flashWhite = 0; titleT = 0; shake = 0;
   cultActors[0].dead = false;
   parts.length = 0;
-  window._stepSfx = false; window._gongSfx = false;
+  window._stepSfx = false; window._gongSfx = false; window._lootSfx = false;
   player = { x: 90, y: 470, face: -1.1, swing: 0 };
   replayBtn.style.display = 'none';
   requestAnimationFrame(frame);
