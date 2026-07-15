@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="Claude">
+<title>鬼屋大戰：幽靈 VS 老師 遊戲介紹</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0a0715;
+    font-family: 'Segoe UI', 'PingFang TC', sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(30,20,50,0.7); border: 1px solid rgba(154,107,255,0.7);
+    color: #ffe08a; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 18px; right: 68px; z-index: 20;
+    color: #ffe08a; font-size: 14px; text-shadow: 0 0 4px #000;
+    animation: hintFade 3.2s ease forwards;
+    pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: #4f2f7a; color: #ffe08a;
+    border: 1px solid #9a6bff; border-radius: 8px; cursor: pointer;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音效</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 音效（預設靜音,合成、零外部資源）----------
+let audioCtx = null, soundOn = false;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn && !audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+});
+function beep(freq, dur, type, vol, slide) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type || 'square';
+  o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
+  g.gain.setValueAtTime(vol || 0.15, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g).connect(audioCtx.destination);
+  o.start(t); o.stop(t + dur);
+}
+function hitNoise(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime, dur = 0.18;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.setValueAtTime(2200, t);
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol || 0.35, t);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100, 1320].forEach((fq, i) => {
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'triangle';
+    o.frequency.setValueAtTime(fq, t + i * 0.08);
+    g.gain.setValueAtTime(0.001, t + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.2, t + i * 0.08 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.22);
+    o.connect(g).connect(audioCtx.destination);
+    o.start(t + i * 0.08); o.stop(t + i * 0.08 + 0.24);
+  });
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 場景：鬼屋室內 ----------
+function drawHouse(t, flicker, shakeAmt) {
+  ctx.save();
+  ctx.translate((Math.random() * 2 - 1) * shakeAmt, (Math.random() * 2 - 1) * shakeAmt);
+  const sky = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  sky.addColorStop(0, '#1a1030');
+  sky.addColorStop(1, '#0a0715');
+  ctx.fillStyle = sky;
+  ctx.fillRect(-20, -20, GAME_W + 40, GAME_H + 40);
+
+  // 滿月
+  ctx.fillStyle = `rgba(255,230,180,${0.85 * flicker})`;
+  ctx.beginPath(); ctx.arc(GAME_W * 0.85, GAME_H * 0.16, 34, 0, Math.PI * 2); ctx.fill();
+
+  // 地板
+  const floorY = GAME_H * 0.78;
+  ctx.fillStyle = '#241735';
+  ctx.fillRect(0, floorY, GAME_W, GAME_H - floorY);
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)'; ctx.lineWidth = 2;
+  for (let x = -40; x < GAME_W + 40; x += 70) {
+    ctx.beginPath(); ctx.moveTo(x, floorY); ctx.lineTo(x - 30, GAME_H); ctx.stroke();
+  }
+
+  // 窗戶 + 蜘蛛網
+  for (const wx of [GAME_W * 0.14, GAME_W * 0.5]) {
+    ctx.fillStyle = `rgba(154,107,255,${0.18 * flicker})`;
+    ctx.fillRect(wx - 48, GAME_H * 0.2, 96, 130);
+    ctx.strokeStyle = 'rgba(20,10,35,0.9)'; ctx.lineWidth = 4;
+    ctx.strokeRect(wx - 48, GAME_H * 0.2, 96, 130);
+    ctx.beginPath(); ctx.moveTo(wx, GAME_H * 0.2); ctx.lineTo(wx, GAME_H * 0.33); ctx.stroke();
+  }
+  // 角落蜘蛛網
+  ctx.strokeStyle = 'rgba(220,210,255,0.35)'; ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  for (let i = 0; i < 5; i++) {
+    ctx.moveTo(0, 0); ctx.lineTo(60 * Math.cos(i * 0.35), 60 * Math.sin(i * 0.35));
+  }
+  for (let r = 15; r <= 55; r += 14) {
+    ctx.moveTo(r, 0);
+    for (let i = 1; i <= 5; i++) ctx.lineTo(r * Math.cos(i * 0.35), r * Math.sin(i * 0.35));
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- 幽靈角色 ----------
+function drawGhost(x, y, size, t, facing, hurt, alpha) {
+  const bob = Math.sin(t * 3) * size * 0.06;
+  const wob = Math.sin(t * 6) * size * 0.05;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.scale(facing, 1);
+  ctx.globalAlpha = alpha;
+  if (hurt > 0) { ctx.filter = 'brightness(1.8)'; }
+  ctx.fillStyle = '#eaf6ff';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.42, size * 0.1);
+  ctx.quadraticCurveTo(-size * 0.5, -size * 0.55, 0, -size * 0.58);
+  ctx.quadraticCurveTo(size * 0.5, -size * 0.55, size * 0.42, size * 0.1);
+  ctx.lineTo(size * 0.42, size * 0.42 + wob);
+  ctx.quadraticCurveTo(size * 0.28, size * 0.3 - wob, size * 0.14, size * 0.42 + wob);
+  ctx.quadraticCurveTo(0, size * 0.3 - wob, -size * 0.14, size * 0.42 + wob);
+  ctx.quadraticCurveTo(-size * 0.28, size * 0.3 - wob, -size * 0.42, size * 0.42 + wob);
+  ctx.closePath();
+  ctx.fill();
+  // 陰影漸層
+  ctx.fillStyle = 'rgba(140,180,255,0.25)';
+  ctx.beginPath(); ctx.ellipse(size * 0.05, -size * 0.05, size * 0.36, size * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#1a1030';
+  ctx.beginPath(); ctx.arc(-size * 0.14, -size * 0.18, size * 0.075, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size * 0.14, -size * 0.18, size * 0.075, 0, Math.PI * 2); ctx.fill();
+  // 嘴巴（威嚇 O 型）
+  ctx.beginPath(); ctx.ellipse(0, size * 0.02, size * 0.08, size * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- 老師角色 ----------
+function drawTeacher(x, y, size, t, facing, hurt, alpha) {
+  const bob = Math.sin(t * 2.4 + 1) * size * 0.03;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.scale(facing, 1);
+  ctx.globalAlpha = alpha;
+  if (hurt > 0) { ctx.filter = 'brightness(1.8)'; }
+  // 身體（套裝）
+  ctx.fillStyle = '#4f2f7a';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.3, size * 0.5);
+  ctx.quadraticCurveTo(-size * 0.34, -size * 0.05, -size * 0.16, -size * 0.18);
+  ctx.lineTo(size * 0.16, -size * 0.18);
+  ctx.quadraticCurveTo(size * 0.34, -size * 0.05, size * 0.3, size * 0.5);
+  ctx.closePath(); ctx.fill();
+  // 手臂
+  ctx.strokeStyle = '#4f2f7a'; ctx.lineWidth = size * 0.12; ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.18, -size * 0.05); ctx.lineTo(-size * 0.42, size * 0.18);
+  ctx.moveTo(size * 0.18, -size * 0.05); ctx.lineTo(size * 0.4, -size * 0.32);
+  ctx.stroke();
+  // 教鞭
+  ctx.strokeStyle = '#d8b46a'; ctx.lineWidth = size * 0.035;
+  ctx.beginPath(); ctx.moveTo(size * 0.4, -size * 0.32); ctx.lineTo(size * 0.72, -size * 0.5); ctx.stroke();
+  // 頭
+  ctx.fillStyle = '#ffd9b0';
+  ctx.beginPath(); ctx.arc(0, -size * 0.36, size * 0.2, 0, Math.PI * 2); ctx.fill();
+  // 髮髻
+  ctx.fillStyle = '#3a2a20';
+  ctx.beginPath(); ctx.arc(0, -size * 0.56, size * 0.15, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(0, -size * 0.68, size * 0.09, 0, Math.PI * 2); ctx.fill();
+  // 眼鏡
+  ctx.strokeStyle = '#1a1030'; ctx.lineWidth = size * 0.02;
+  ctx.beginPath(); ctx.arc(-size * 0.06, -size * 0.36, size * 0.06, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(size * 0.08, -size * 0.36, size * 0.06, 0, Math.PI * 2); ctx.stroke();
+  // 生氣眉毛
+  ctx.beginPath(); ctx.moveTo(-size * 0.12, -size * 0.44); ctx.lineTo(-size * 0.01, -size * 0.4); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.12, -size * 0.44); ctx.lineTo(size * 0.01, -size * 0.4); ctx.stroke();
+  ctx.restore();
+}
+
+function shockwave(x, y, r, alpha, color) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 5;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+function hpBar(x, y, w, h, pct, label, color, alignLeft) {
+  ctx.save();
+  ctx.fillStyle = 'rgba(10,7,21,0.7)';
+  ctx.fillRect(x, y, w, h);
+  ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 2;
+  ctx.strokeRect(x, y, w, h);
+  const fw = w * clamp(pct, 0, 1);
+  ctx.fillStyle = color;
+  ctx.fillRect(alignLeft ? x : x + w - fw, y, fw, h);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 14px sans-serif';
+  ctx.textAlign = alignLeft ? 'left' : 'right';
+  ctx.fillText(label, alignLeft ? x : x + w, y - 6);
+  ctx.restore();
+}
+
+// 飄字
+function popText(text, x, y, alpha, color, scale) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = color;
+  ctx.font = `bold ${Math.floor(26 * scale)}px sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.shadowColor = 'rgba(0,0,0,0.6)'; ctx.shadowBlur = 6;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// 字幕
+function subtitle(text, alpha, big) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = (big ? 'bold 30px' : 'bold 22px') + " 'PingFang TC', sans-serif";
+  const y = GAME_H - 50;
+  ctx.fillStyle = 'rgba(10,7,21,0.7)';
+  const w = ctx.measureText(text).width + 44;
+  ctx.fillRect(GAME_W / 2 - w / 2, y - 30, w, 46);
+  ctx.fillStyle = '#ffe08a';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+
+function titleText(text, sub, alpha, glowScale) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `bold ${58 + (1 - alpha) * 24 * glowScale}px 'PingFang TC', sans-serif`;
+  const grad = ctx.createLinearGradient(GAME_W * 0.2, 0, GAME_W * 0.8, 0);
+  grad.addColorStop(0, '#38e1ff'); grad.addColorStop(0.5, '#9a6bff'); grad.addColorStop(1, '#ff6cc7');
+  ctx.fillStyle = grad;
+  ctx.shadowColor = '#9a6bff'; ctx.shadowBlur = 26;
+  ctx.fillText(text, GAME_W / 2, GAME_H * 0.42);
+  ctx.shadowBlur = 0;
+  if (sub) {
+    ctx.font = "22px 'PingFang TC', sans-serif";
+    ctx.fillStyle = '#ffe08a';
+    ctx.fillText(sub, GAME_W / 2, GAME_H * 0.52);
+  }
+  ctx.restore();
+}
+
+// ---------- 時間軸（三幕結構,片長 24 秒）----------
+const TIMELINE = 24, DURATION = 24, TIME_SCALE = TIMELINE / DURATION;
+let startTime = null, playing = false;
+let firedCues = {};
+let ghostHp = 100, teacherHp = 100, shake = 0;
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  const flicker = 0.9 + Math.random() * 0.1;
+  shake *= Math.pow(0.001, 1 / 60);
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 5) {
+    // ===== 第一幕：鬼屋登場 + 標題 =====
+    drawHouse(t, flicker, 0);
+    const gz = clamp((t - 0.6) / 1.2, 0, 1);
+    const tz = clamp((t - 1.1) / 1.2, 0, 1);
+    if (gz > 0) drawGhost(GAME_W * 0.22, GAME_H * 0.68 - easeOutBack(gz) * 0 + (1 - easeOutBack(gz)) * 40, 150, t, 1, 0, easeOut(gz));
+    if (tz > 0) drawTeacher(GAME_W * 0.78, GAME_H * 0.7 + (1 - easeOutBack(tz)) * 40, 170, t, -1, 0, easeOut(tz));
+    if (t > 0.6) cue('ghostIn', () => beep(320, 0.18, 'sine', 0.12, 120));
+    if (t > 1.1) cue('teacherIn', () => beep(180, 0.15, 'square', 0.1, -60));
+    const tp = clamp((t - 2.0) / 1.4, 0, 1);
+    titleText('鬼屋大戰', '幽靈 VS 老師', easeOut(tp), 1);
+    if (t > 3.6) subtitle('深夜鬼屋，一場師生對決正要開打……', clamp((t - 3.6) / 0.6, 0, 1));
+  } else if (t < 9) {
+    // ===== 第二幕A：幽靈攻擊 =====
+    drawHouse(t, flicker, shake);
+    hpBar(30, 30, 300, 22, ghostHp / 100, '👻 幽靈', '#38e1ff', true);
+    hpBar(GAME_W - 330, 30, 300, 22, teacherHp / 100, '👩‍🏫 老師', '#ff6cc7', false);
+    const atkP = clamp((t - 6.2) / 0.5, 0, 1);
+    const lunge = t > 6.2 && t < 6.9 ? Math.sin(atkP * Math.PI) * 40 : 0;
+    drawGhost(GAME_W * 0.28 + lunge, GAME_H * 0.68, 150, t, 1, 0, 1);
+    drawTeacher(GAME_W * 0.72, GAME_H * 0.7, 170, t, -1, t > 6.6 && t < 7.1 ? 1 : 0, 1);
+    if (t > 6.6) {
+      cue('ghostHit', () => { hitNoise(0.3); shake = 5; teacherHp = 78; });
+      shockwave(GAME_W * 0.6, GAME_H * 0.56, clamp((t - 6.6) * 260, 0, 60), clamp(1 - (t - 6.6) * 2.5, 0, 1), '#38e1ff');
+      popText('-22', GAME_W * 0.66, GAME_H * 0.42 - clamp((t - 6.6) * 60, 0, 30), clamp(1 - (t - 6.6), 0, 1), '#38e1ff', 1.1);
+    }
+    if (t < 6.4) subtitle('👻 幽靈：A / D 移動　SPACE 攻擊', clamp((t - 5.2) / 0.6, 0, 1));
+    else subtitle('近身偷襲，老師先中一擊！', clamp((t - 6.7) / 0.5, 0, 1) * clamp((9 - t) / 0.5, 0, 1));
+  } else if (t < 13) {
+    // ===== 第二幕B：老師反擊 =====
+    drawHouse(t, flicker, shake);
+    hpBar(30, 30, 300, 22, ghostHp / 100, '👻 幽靈', '#38e1ff', true);
+    hpBar(GAME_W - 330, 30, 300, 22, teacherHp / 100, '👩‍🏫 老師', '#ff6cc7', false);
+    const atkP = clamp((t - 10.4) / 0.5, 0, 1);
+    const lunge = t > 10.4 && t < 11.1 ? Math.sin(atkP * Math.PI) * -40 : 0;
+    drawTeacher(GAME_W * 0.72 + lunge, GAME_H * 0.7, 170, t, -1, 0, 1);
+    drawGhost(GAME_W * 0.28, GAME_H * 0.68, 150, t, 1, t > 10.8 && t < 11.3 ? 1 : 0, 1);
+    if (t > 10.8) {
+      cue('teacherHit', () => { hitNoise(0.3); shake = 6; ghostHp = 60; });
+      shockwave(GAME_W * 0.38, GAME_H * 0.56, clamp((t - 10.8) * 260, 0, 60), clamp(1 - (t - 10.8) * 2.5, 0, 1), '#ff6cc7');
+      popText('-18', GAME_W * 0.32, GAME_H * 0.42 - clamp((t - 10.8) * 60, 0, 30), clamp(1 - (t - 10.8), 0, 1), '#ff6cc7', 1.1);
+    }
+    if (t < 10.6) subtitle('👩‍🏫 老師：← / → 移動　ENTER 揮教鞭', clamp((t - 9.2) / 0.6, 0, 1));
+    else subtitle('教鞭一揮，幽靈也吃痛！', clamp((t - 10.9) / 0.5, 0, 1) * clamp((13 - t) / 0.5, 0, 1));
+  } else if (t < 18) {
+    // ===== 第二幕C：連續交鋒到 KO =====
+    drawHouse(t, flicker, shake);
+    hpBar(30, 30, 300, 22, ghostHp / 100, '👻 幽靈', '#38e1ff', true);
+    hpBar(GAME_W - 330, 30, 300, 22, teacherHp / 100, '👩‍🏫 老師', '#ff6cc7', false);
+    const swap = Math.floor((t - 13) / 1.1) % 2;
+    const hitAt = 13 + Math.floor((t - 13) / 1.1) * 1.1 + 0.5;
+    drawGhost(GAME_W * 0.28 + (swap === 0 && t < hitAt ? (t - (hitAt - 0.5)) * 60 : 0), GAME_H * 0.68, 150, t, 1, swap === 1 && Math.abs(t - hitAt) < 0.25 ? 1 : 0, 1);
+    drawTeacher(GAME_W * 0.72 - (swap === 1 && t < hitAt ? (t - (hitAt - 0.5)) * -60 : 0), GAME_H * 0.7, 170, t, -1, swap === 0 && Math.abs(t - hitAt) < 0.25 ? 1 : 0, 1);
+    if (Math.abs(t - hitAt) < 0.05) {
+      cue('rally' + Math.floor((t - 13) / 1.1), () => {
+        hitNoise(0.3); shake = 5;
+        if (swap === 0) teacherHp = Math.max(15, teacherHp - 20);
+        else ghostHp = Math.max(0, ghostHp - 20);
+      });
+    }
+    subtitle('拼到最後一口氣——誰先擊倒對方？', clamp((t - 13.3) / 0.6, 0, 1) * clamp((18 - t) / 0.5, 0, 1));
+    if (t > 17.4) ghostHp = 0;
+  } else {
+    // ===== 第三幕：KO + CTA =====
+    drawHouse(t, flicker, shake);
+    hpBar(30, 30, 300, 22, ghostHp / 100, '👻 幽靈', '#38e1ff', true);
+    hpBar(GAME_W - 330, 30, 300, 22, teacherHp / 100, '👩‍🏫 老師', '#ff6cc7', false);
+    const fall = clamp((t - 18) / 0.8, 0, 1);
+    drawGhost(GAME_W * 0.28, GAME_H * 0.68 + easeOut(fall) * 60, 150, t, 1, 0, clamp(1 - fall * 0.4, 0.5, 1));
+    drawTeacher(GAME_W * 0.72, GAME_H * 0.7 - Math.sin(t * 3) * 6, 170, t, -1, 0, 1);
+    if (t > 18) cue('koSlam', () => { hitNoise(0.4); shake = 10; });
+    if (t < 18.6) {
+      popText('K.O.!', GAME_W / 2, GAME_H * 0.3, clamp((t - 18) / 0.3, 0, 1), '#ffe08a', 2);
+    }
+    if (t < 20.4) {
+      subtitle('👩‍🏫 老師獲勝！鬼屋恢復平靜……', clamp((t - 18.6) / 0.6, 0, 1));
+    } else {
+      const cta = clamp((t - 20.4) / 0.9, 0, 1);
+      titleText('鬼屋大戰：幽靈 VS 老師', null, easeOut(cta), 0.6);
+      ctx.save();
+      ctx.globalAlpha = easeOut(cta);
+      ctx.textAlign = 'center';
+      ctx.font = "24px 'PingFang TC', sans-serif";
+      ctx.fillStyle = '#ffe08a';
+      ctx.fillText('雙人對戰 · 鍵盤操作 · 立即開打', GAME_W / 2, GAME_H * 0.54);
+      ctx.restore();
+      cue('finalChime', () => chime());
+    }
+  }
+
+  // 全程輕微暗角
+  const edge = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.35, GAME_W / 2, GAME_H / 2, GAME_W * 0.75);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, 'rgba(0,0,0,0.45)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000 * TIME_SCALE;
+  if (t >= TIMELINE) {
+    draw(TIMELINE - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  ghostHp = 100; teacherHp = 100; shake = 0;
+  playing = true;
+  replayBtn.style.display = 'none';
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+</script>
+</body>
+</html>
