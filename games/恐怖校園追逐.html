@@ -255,7 +255,8 @@
     深夜的學校有長走廊、教室、保健室和圖書室，找到另一端的<b>逃生門</b>離開！
     你手上有一支<b>球棒</b>,揮擊可擊暈恐怖阿嬤,危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
     走廊是環狀的，被追時繞另一條路！阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了,趕快閃進轉角！
-    用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br><br>
+    用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br>
+    🎧 <b>建議戴耳機</b>：3D 環繞音效,耳語、腳步與阿嬤的聲音會從真實方位傳來。<br><br>
     <b>電腦</b>：方向鍵/WASD 移動、點畫面鎖定滑鼠後移動滑鼠看方向（Esc 解鎖）、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
     <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
   </div>
@@ -921,37 +922,101 @@ function stopAmbient() {
   ambientNodes.lfo.stop(t + 0.5);
   ambientNodes = null;
 }
-// 隨機驚嚇聲：遠處哀嚎或木板吱嘎
+// ---- 3D 環繞（holophonic）音效工具：HRTF 定位,戴耳機聲音會繞著頭移動 ----
+function makePanner(x, z) {
+  const p = audioCtx.createPanner();
+  p.panningModel = 'HRTF';
+  p.distanceModel = 'inverse';
+  p.refDistance = 0.5;
+  p.positionX.value = x; p.positionY.value = 0; p.positionZ.value = z;
+  return p;
+}
+// 依（相對玩家的）方向角與距離擺放音源：前方為 -Z,右方為 +X
+function panPos(relAngle, dist) {
+  return { x: Math.sin(relAngle) * dist, z: -Math.cos(relAngle) * dist };
+}
+
+// 隨機 3D 驚嚇聲：耳語繞頭一圈 / 腳步從背後走過 / 耳邊呼吸
 function randomScare() {
   if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
-  if (Math.random() < 0.5) {
-    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
-    const vib = audioCtx.createOscillator(), vibG = audioCtx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(340, t);
-    osc.frequency.exponentialRampToValueAtTime(180, t + 1.6);
-    vib.frequency.setValueAtTime(5.5, t);
-    vibG.gain.setValueAtTime(14, t);
-    vib.connect(vibG).connect(osc.frequency);
-    g.gain.setValueAtTime(0.001, t);
-    g.gain.exponentialRampToValueAtTime(0.04, t + 0.4);
-    g.gain.exponentialRampToValueAtTime(0.001, t + 1.7);
-    osc.connect(g).connect(audioCtx.destination);
-    osc.start(t); vib.start(t); osc.stop(t + 1.8); vib.stop(t + 1.8);
-  } else {
-    const dur = 0.7, n = Math.floor(audioCtx.sampleRate * dur);
+  const pick = Math.random();
+  if (pick < 0.34) {
+    // 氣音耳語,4 秒繞頭一圈
+    const dur = 4, n = Math.floor(audioCtx.sampleRate * dur);
     const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
     const d = buf.getChannelData(0);
-    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    let env = 0;
+    for (let i = 0; i < n; i++) {
+      // 斷續的氣音節奏,像聽不清的低語
+      if (i % 2000 === 0) env = Math.random() < 0.6 ? 0.4 + Math.random() * 0.6 : 0.05;
+      d[i] = (Math.random() * 2 - 1) * env;
+    }
     const src = audioCtx.createBufferSource(); src.buffer = buf;
     const f = audioCtx.createBiquadFilter();
-    f.type = 'bandpass'; f.Q.value = 18;
-    f.frequency.setValueAtTime(300, t);
-    f.frequency.exponentialRampToValueAtTime(900, t + dur);
-    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.09, t);
-    src.connect(f).connect(g).connect(audioCtx.destination);
+    f.type = 'bandpass'; f.Q.value = 2.5;
+    f.frequency.setValueAtTime(2400, t);
+    const p = makePanner(1.2, 0.4);
+    const startA = Math.random() * Math.PI * 2;
+    for (let k = 0; k <= 16; k++) {
+      const a = startA + (k / 16) * Math.PI * 2;
+      const pos = panPos(a, 1.1);
+      p.positionX.linearRampToValueAtTime(pos.x, t + (k / 16) * dur);
+      p.positionZ.linearRampToValueAtTime(pos.z, t + (k / 16) * dur);
+    }
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.14, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
     src.start(t);
+  } else if (pick < 0.67) {
+    // 腳步聲從左後方走到右後方
+    const steps = 5 + Math.floor(Math.random() * 3);
+    const side = Math.random() < 0.5 ? 1 : -1;
+    for (let i = 0; i < steps; i++) {
+      const when = t + i * (0.42 + Math.random() * 0.08);
+      const prog = i / (steps - 1);
+      const a = Math.PI + side * (0.7 - prog * 1.4); // 背後掃過
+      const pos = panPos(a, 1.6);
+      const n2 = Math.floor(audioCtx.sampleRate * 0.09);
+      const buf = audioCtx.createBuffer(1, n2, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let j = 0; j < n2; j++) d[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / n2, 4);
+      const src = audioCtx.createBufferSource(); src.buffer = buf;
+      const f = audioCtx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.setValueAtTime(420, when);
+      const p = makePanner(pos.x, pos.z);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.5, when);
+      src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
+      src.start(when);
+    }
+  } else {
+    // 貼著單側耳朵的呼吸聲（三口氣,越來越近）
+    const side = Math.random() < 0.5 ? 1 : -1;
+    for (let b = 0; b < 3; b++) {
+      const when = t + b * 1.4;
+      const dur = 1.1, n2 = Math.floor(audioCtx.sampleRate * dur);
+      const buf = audioCtx.createBuffer(1, n2, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let j = 0; j < n2; j++) {
+        const ph = j / n2;
+        const env = Math.sin(ph * Math.PI) * (ph < 0.5 ? 1 : 0.7);
+        d[j] = (Math.random() * 2 - 1) * env;
+      }
+      const src = audioCtx.createBufferSource(); src.buffer = buf;
+      const f = audioCtx.createBiquadFilter();
+      f.type = 'bandpass'; f.Q.value = 1.2;
+      f.frequency.setValueAtTime(700, when);
+      const p = makePanner(side * (0.7 - b * 0.18), 0.15);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.001, when);
+      g.gain.exponentialRampToValueAtTime(0.1 + b * 0.05, when + dur * 0.4);
+      g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+      src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
+      src.start(when);
+    }
   }
 }
 
@@ -1022,6 +1087,14 @@ function playWinFanfare() {
   });
 }
 
+// 阿嬤相對玩家的方位（給 3D 定位用）；她不在時回傳正前方遠處
+function chaserRelPos(maxDist) {
+  if (typeof chaser === 'undefined') return { x: 0, z: -1.5 };
+  const rel = Math.atan2(chaser.y - player.y, chaser.x - player.x) - player.angle;
+  const d = clamp(Math.hypot(chaser.x - player.x, chaser.y - player.y) * 0.35, 0.4, maxDist || 3);
+  return panPos(rel, d);
+}
+
 function playThump(vol) {
   if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
@@ -1031,7 +1104,9 @@ function playThump(vol) {
   osc.frequency.exponentialRampToValueAtTime(38, t + 0.16);
   gain.gain.setValueAtTime(vol, t);
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-  osc.connect(gain).connect(audioCtx.destination);
+  const pos = chaserRelPos(2.5);
+  const p = makePanner(pos.x, pos.z);
+  osc.connect(gain).connect(p).connect(audioCtx.destination);
   osc.start(t);
   osc.stop(t + 0.24);
 }
@@ -1052,7 +1127,9 @@ function playScream() {
   filter.frequency.exponentialRampToValueAtTime(500, t + dur);
   const gain = audioCtx.createGain();
   gain.gain.setValueAtTime(0.55, t);
-  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  const pos = chaserRelPos(1.2);
+  const p = makePanner(pos.x, pos.z);
+  noise.connect(filter).connect(gain).connect(p).connect(audioCtx.destination);
   noise.start(t);
 }
 
