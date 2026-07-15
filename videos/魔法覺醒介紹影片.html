@@ -142,6 +142,13 @@
 
   <div id="skillBar"></div>
 
+  <div class="ui-layer" id="screenStory">
+    <div class="panel" style="max-width:min(92vw,560px);">
+      <div class="title-grad" style="font-size:20px; letter-spacing:4px;">很久很久以前……</div>
+      <p class="subtitle" id="storyText" style="font-size:17px; line-height:2; min-height:88px;"></p>
+    </div>
+  </div>
+
   <div class="ui-layer" id="screenTitle">
     <div class="panel" style="max-width:min(94vw,620px);">
       <div class="title-grad">魔法覺醒</div>
@@ -183,6 +190,8 @@ const canvas = document.getElementById('stage');
 const ctx = canvas.getContext('2d');
 const soundBtn = document.getElementById('soundBtn');
 const replayBtn = document.getElementById('replayBtn');
+const screenStory = document.getElementById('screenStory');
+const storyText = document.getElementById('storyText');
 const screenTitle = document.getElementById('screenTitle');
 const screenCTA = document.getElementById('screenCTA');
 const screenPets = document.getElementById('screenPets');
@@ -627,39 +636,135 @@ function stepSim() {
 }
 
 /* ================= 時間軸（總長 36 秒,場景切換依真實遊戲畫面呈現）================= */
-const TIMELINE = 36;
+/* TIMELINE 由下方各幕實際旁白長度動態計算,定義見 drawGameplay 之後 */
 let startTime = null, playing = false;
 let firedCues = {};
 function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
 function setLayer(el, on) { el.classList.toggle('show', on); if (!on) el.style.opacity = ''; }
 
-function draw(t) {
-  ctx.clearRect(0, 0, GAME_W, GAME_H);
-  stepSim();
+/* ================= 第零幕：故事開場（六元素沉睡＋覺醒的呼喚）================= */
+const STORY_STARS = Array.from({ length: 70 }, (_, i) => ({
+  x: (i * 137) % GAME_W, y: (i * 251) % GAME_H, r: 0.6 + (i % 3) * 0.5, ph: i * 0.7,
+}));
+const STORY_LINES = [
+  '六種元素之力，沉睡在世界的各個角落……',
+  '直到有一天，呼喚聲響起——',
+  '魔法覺醒的時刻，到了！',
+];
+// 每句時長依旁白實際長度估算,確保字幕跟得上語音進度
+const storyDurs = cumulativeStarts(STORY_LINES.map(line => Math.max(1.6, estDur(line))));
+const STORY_STARTS = storyDurs.starts;
+const STORY_DUR = storyDurs.total + 0.4;
+function drawStoryBg(t) {
+  const g = ctx.createRadialGradient(GAME_W / 2, GAME_H * 0.4, 20, GAME_W / 2, GAME_H * 0.5, GAME_W * 0.8);
+  g.addColorStop(0, '#141c38'); g.addColorStop(1, '#05070f');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, GAME_H);
+  for (const s of STORY_STARS) {
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * 1.1 + s.ph));
+    ctx.fillStyle = `rgba(220,235,255,${tw * 0.8})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill();
+  }
+  // 中央甦醒的魔法水晶：六色光芒緩緩旋轉脈動
+  const cx = GAME_W / 2, cy = GAME_H * 0.34;
+  const pulse = 0.75 + Math.sin(t * 2.2) * 0.25;
+  const crystalColors = MAGICS.map(m => m.color);
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(t * 0.3);
+  crystalColors.forEach((c, i) => {
+    const a = (i / crystalColors.length) * Math.PI * 2;
+    const rr = 70 * pulse;
+    const ray = ctx.createRadialGradient(0, 0, 2, Math.cos(a) * rr, Math.sin(a) * rr, rr);
+    ray.addColorStop(0, c); ray.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = ray;
+    ctx.beginPath(); ctx.arc(Math.cos(a) * rr * 0.5, Math.sin(a) * rr * 0.5, rr * 0.6, 0, 7); ctx.fill();
+  });
+  ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = 1;
+  const core = ctx.createRadialGradient(cx, cy, 1, cx, cy, 34 * pulse);
+  core.addColorStop(0, '#ffffff'); core.addColorStop(0.5, '#9adfff'); core.addColorStop(1, 'rgba(150,220,255,0)');
+  ctx.fillStyle = core;
+  ctx.beginPath(); ctx.arc(cx, cy, 34 * pulse, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function storyAct(t) {
+  hideAll(); setLayer(screenStory, true);
+  hud.classList.remove('show'); skillBar.classList.remove('show');
+  drawStoryBg(t);
+  if (t > 0.2) cue('storyChime', () => chime());
+  const phase = phaseIndex(STORY_STARTS, t);
+  storyText.textContent = STORY_LINES[phase];
+  cue('storyLine' + phase, () => speak(STORY_LINES[phase]));
+}
 
-  const hideAll = () => {
-    setLayer(screenTitle, false); setLayer(screenCTA, false);
-    setLayer(screenPets, false); setLayer(screenStage, false);
-  };
+function hideAll() {
+  setLayer(screenStory, false);
+  setLayer(screenTitle, false); setLayer(screenCTA, false);
+  setLayer(screenPets, false); setLayer(screenStage, false);
+}
 
-  if (t < 4) {
+/* ================= 依旁白實際長度估算每段時長,確保字幕/畫面跟得上語音 ================= */
+function estDur(text) {
+  const len = text.replace(/[，。！？·、\s]/g, '').length;
+  return Math.max(1.3, len / 6.2 + 0.4);
+}
+function phaseIndex(starts, elapsed) {
+  let idx = 0;
+  for (let i = 0; i < starts.length; i++) if (elapsed >= starts[i]) idx = i;
+  return idx;
+}
+function cumulativeStarts(durs) {
+  const starts = []; let acc = 0;
+  durs.forEach(d => { starts.push(acc); acc += d; });
+  return { starts, total: acc };
+}
+
+const TITLE_DUR = Math.max(4, estDur('魔法覺醒！選一位角色，展開專屬的魔法冒險。') + 1);
+const COMBAT_DUR = 12;
+const PETS_START = TITLE_DUR + COMBAT_DUR;
+
+const PET_TYPE_SEQUENCE = ['attack', 'heal', 'guard'];
+const PET_PHASE_LINES = {
+  attack: '冒險路上還能帶著寵物夥伴一起戰鬥！攻擊系寵物能追加額外傷害！',
+  heal: '治癒系寵物會持續恢復你的生命值！',
+  guard: '守護系寵物能幫忙抵擋敵人攻擊！',
+};
+const petDurs = cumulativeStarts(PET_TYPE_SEQUENCE.map(ty => Math.max(2.4, estDur(PET_PHASE_LINES[ty]))));
+const PET_PHASE_STARTS = petDurs.starts;
+const PETS_DUR = petDurs.total + 0.5;
+
+const STAGES_START = PETS_START + PETS_DUR;
+const STAGE_LINES = STAGES.map((st, i) => (i === 0 ? '四大關卡等你來挑戰！' : '') + '第 ' + (i + 1) + ' 關：' + st.name + '，首領是' + st.bossName + '！');
+const stageDurs = cumulativeStarts(STAGE_LINES.map(line => Math.max(1.8, estDur(line))));
+const STAGE_STARTS = stageDurs.starts;
+const STAGES_DUR = stageDurs.total + 0.5;
+
+const CTA_START = STAGES_START + STAGES_DUR;
+const CTA_LINE = '六大元素魔法，十二隻夥伴寵物，四大關卡，快來體驗魔法覺醒吧！';
+const CTA_DUR = Math.max(4.5, estDur(CTA_LINE) + 1.6);
+const GAMEPLAY_DUR = CTA_START + CTA_DUR;
+const TIMELINE = STORY_DUR + GAMEPLAY_DUR;
+
+function drawGameplay(t) {
+  if (t < TITLE_DUR) {
     /* ---- 第一幕：選角畫面（與遊戲標題畫面同款 DOM/CSS） ---- */
     drawStageBg(STAGE);
     hideAll(); setLayer(screenTitle, true);
     hud.classList.remove('show'); skillBar.classList.remove('show');
     if (t > 0.2) cue('titleChime', () => chime());
     if (t > 0.3) cue('narrateTitle', () => speak('魔法覺醒！選一位角色，展開專屬的魔法冒險。'));
-    const sel = clamp(Math.floor((t / 4) * CHARACTERS.length), 0, CHARACTERS.length - 1);
+    const sel = clamp(Math.floor((t / TITLE_DUR) * CHARACTERS.length), 0, CHARACTERS.length - 1);
     [...charRow.children].forEach((el, i) => el.classList.toggle('sel', i === sel));
-  } else if (t < 16) {
+  } else if (t < PETS_START) {
     /* ---- 第二幕：真實戰鬥畫面重現（森林關卡,小炎主角）---- */
     hideAll();
     hud.classList.add('show'); skillBar.classList.add('show');
-    if (t < 4.3) cue('buildSkill', () => { buildSkillBar(MAGIC); magicLabel.textContent = MAGIC.icon + ' ' + MAGIC.name; });
-    if (t > 4.4) cue('narrateCombat', () => speak('小炎選擇了烈焰魔法，火球自動鎖定最近的敵人，一擊灼燒！'));
+    if (t < TITLE_DUR + 0.3) cue('buildSkill', () => { buildSkillBar(MAGIC); magicLabel.textContent = MAGIC.icon + ' ' + MAGIC.name; });
+    if (t > TITLE_DUR + 0.4) cue('narrateCombat', () => speak('小炎選擇了烈焰魔法，火球自動鎖定最近的敵人，一擊灼燒！'));
     drawStageBg(STAGE);
 
-    const segT = t - 4;
+    const segT = t - TITLE_DUR;
     // 敵人波次腳本（壓縮至 12 秒內：小怪 → 小怪 → BOSS）
     if (segT > 0.6 && enemies.length === 0) cue('wave1', () => {
       for (let i = 0; i < 4; i++) spawnEnemyAt(680 + (i % 2) * 90, 140 + i * 90, false);
@@ -675,7 +780,6 @@ function draw(t) {
       wave = 3; waveLabel.textContent = '第 3 波（BOSS）';
     });
     if (segT > 5.6 && segT < 9) cue('narrateWave', () => speak('打倒整波敵人，就能晉級下一關！'));
-    if (segT > 9.4) cue('narrateBoss', () => speak('森林領主登場，準備迎接一場魔法大戰！'));
 
     const px = 220, py = GAME_H / 2;
     const nearest = enemies[0];
@@ -742,36 +846,30 @@ function draw(t) {
     else if (segT < 12) subtitle('血量過半時會有「天神降臨」神聖庇護！');
 
     if (segT > 9 && segT < 9.3) cue('bossRoar', () => beep(90, 0.4, 'sawtooth', 0.3, 40));
-  } else if (t < 23) {
-    /* ---- 第三幕：寵物圖鑑（同款寵物選單 DOM/CSS） ---- */
+  } else if (t < STAGES_START) {
+    /* ---- 第三幕：寵物圖鑑（同款寵物選單 DOM/CSS）,每段時長依旁白長度自動抓 ---- */
     hideAll(); setLayer(screenPets, true);
     hud.classList.remove('show'); skillBar.classList.remove('show');
     drawStageBg(STAGE); drawGrid();
-    const segT = t - 16;
-    if (segT > 0.1) cue('narratePetsIntro', () => speak('冒險路上還能帶著寵物夥伴一起戰鬥！'));
-    const TYPES = ['attack', 'heal', 'guard'];
-    const phase = clamp(Math.floor(segT / 2.3), 0, 2);
-    const curType = TYPES[phase];
+    const segT = t - PETS_START;
+    const phase = phaseIndex(PET_PHASE_STARTS, segT);
+    const curType = PET_TYPE_SEQUENCE[phase];
     [...petRow.children].forEach(el => el.classList.toggle('sel', el.dataset.type === curType));
     petTypeDesc.textContent = PET_TYPE_LABEL[curType];
-    cue('petPhase' + phase, () => {
-      chime();
-      speak(curType === 'attack' ? '攻擊系寵物能追加額外傷害！' : curType === 'heal' ? '治癒系寵物會持續恢復生命值！' : '守護系寵物能幫忙抵擋傷害！');
-    });
-  } else if (t < 30) {
-    /* ---- 第四幕：四大關卡巡覽 ---- */
+    cue('petPhase' + phase, () => { chime(); speak(PET_PHASE_LINES[curType]); });
+  } else if (t < CTA_START) {
+    /* ---- 第四幕：四大關卡巡覽,每關時長依旁白長度自動抓 ---- */
     hideAll(); setLayer(screenStage, true);
     hud.classList.remove('show'); skillBar.classList.remove('show');
-    const segT = t - 23;
-    if (segT > 0.1) cue('narrateStagesIntro', () => speak('四大關卡等你來挑戰！'));
-    const idx = clamp(Math.floor(segT / 1.75), 0, STAGES.length - 1);
+    const segT = t - STAGES_START;
+    const idx = phaseIndex(STAGE_STARTS, segT);
     const st = STAGES[idx];
     drawStageBg(st); drawGrid();
     const bob = Math.sin(t * 2.4) * 6;
     drawEnemy(GAME_W / 2, GAME_H * 0.74 + bob, 86, 'boss', 0, st.bossIcon, 1, 1, st.bossColor);
     stageName.textContent = st.name;
     stageBoss.textContent = '關卡首領：' + st.bossName;
-    cue('stageChime' + idx, () => { chime(); speak('第 ' + (idx + 1) + ' 關：' + st.name + '，首領是' + st.bossName + '！'); });
+    cue('stageChime' + idx, () => { chime(); speak(STAGE_LINES[idx]); });
     subtitle('第 ' + (idx + 1) + ' / ' + STAGES.length + ' 關卡：' + st.name, 1, 36);
   } else {
     /* ---- 第五幕：結算 CTA（同款結束畫面樣式）---- */
@@ -780,9 +878,9 @@ function draw(t) {
     drawStageBg(STAGE);
     drawGrid();
     for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, 0, en.icon, en.hp, en.maxHp, STAGE.bossColor);
-    const p = clamp((t - 30) / 2, 0, 1);
+    const p = clamp((t - CTA_START) / 1.2, 0, 1);
     if (p > 0.05) cue('ctaChime', () => chime());
-    if (p > 0.1) cue('narrateCTA', () => speak('六大元素魔法，十二隻夥伴寵物，四大關卡，快來體驗魔法覺醒吧！'));
+    if (p > 0.1) cue('narrateCTA', () => speak(CTA_LINE));
     screenCTA.style.opacity = String(easeOut(p));
   }
 
@@ -791,6 +889,13 @@ function draw(t) {
   edge.addColorStop(1, 'rgba(0,0,0,0.35)');
   ctx.fillStyle = edge;
   ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+  stepSim();
+  if (t < STORY_DUR) storyAct(t);
+  else drawGameplay(t - STORY_DUR);
 }
 
 function loop(now) {
