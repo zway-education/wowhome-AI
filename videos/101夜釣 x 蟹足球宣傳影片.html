@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>101夜釣 x 蟹足球 宣傳影片</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #0b1730;
+    font-family: "Trebuchet MS","PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(11,23,48,0.7); border: 1px solid rgba(255,183,39,0.6);
+    color: #f3ecd9; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 18px; right: 68px; z-index: 20;
+    color: #f3ecd9; font-size: 14px; text-shadow: 0 0 4px #000;
+    animation: hintFade 3.2s ease forwards;
+    pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: linear-gradient(92deg,#ffb627,#ff6b5e);
+    color: #0b1730; border: none; border-radius: 10px; cursor: pointer;
+    font-family: inherit; font-weight: 800;
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音樂</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+/* ---------- 音樂（合成、零外部資源） ----------
+   俏皮街機風配樂：鼓機 + 彈跳貝斯 + 大調琶音主旋律 */
+let audioCtx = null, soundOn = false, musicStarted = false, musicTimer = null;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn) {
+    if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx && !musicStarted) { musicStarted = true; startMusic(); }
+  } else if (audioCtx) {
+    audioCtx.suspend();
+  }
+});
+
+function kick(t, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.frequency.setValueAtTime(150, t);
+  osc.frequency.exponentialRampToValueAtTime(50, t + 0.1);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.2);
+}
+function clap(t, vol) {
+  const n = Math.floor(audioCtx.sampleRate * 0.08);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 1.5);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1600;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, t);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+function note(t, freq, dur, vol, type) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = type || 'square';
+  osc.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.015);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + dur + 0.02);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [988, 1244, 1568].forEach((fq, i) => note(t + i * 0.07, fq, 0.22, 0.15, 'triangle'));
+}
+
+// 大調琶音主旋律（G大調）＋彈跳貝斯，每 0.22 秒一拍
+const SCALE = [392.0, 440.0, 493.9, 587.3, 659.3, 784.0, 880.0, 987.8]; // G A B D E G A B
+const MELODY_PATTERN = [0,2,4,7,4,2, 1,3,5,7,5,3, 0,2,4,6,4,2, 2,4,6,7,6,4];
+const BASS_PATTERN = [0,0,3,3,4,4,2,2];
+function startMusic() {
+  const beat = 0.22;
+  let step = 0;
+  const startAt = audioCtx.currentTime + 0.05;
+  function schedule() {
+    if (!soundOn) return;
+    const t = startAt + step * beat;
+    const bar = step % 8;
+    if (step % 4 === 0) kick(t, 0.45);
+    if (step % 4 === 2) clap(t, 0.3);
+    const mi = MELODY_PATTERN[step % MELODY_PATTERN.length];
+    note(t, SCALE[mi], beat * 0.9, 0.15, 'square');
+    const bi = BASS_PATTERN[bar];
+    note(t, SCALE[bi] / 2, beat * 0.85, 0.18, 'sawtooth');
+    step++;
+  }
+  musicTimer = setInterval(schedule, beat * 1000);
+  schedule();
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 場景繪製 ----------
+function drawNightCity(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  g.addColorStop(0, '#050b1e'); g.addColorStop(0.55, '#0b1730'); g.addColorStop(1, '#122048');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, GAME_W, GAME_H);
+  // 星星
+  let s = 5;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 0; i < 60; i++) {
+    const x = rnd() * GAME_W, y = rnd() * GAME_H * 0.5;
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * 2 + i));
+    ctx.fillStyle = `rgba(255,255,255,${0.5 * tw})`;
+    ctx.fillRect(x, y, 2, 2);
+  }
+  // 遠方大樓剪影
+  ctx.fillStyle = '#0a1226';
+  for (let i = 0; i < 8; i++) {
+    const bw = 60 + (i % 3) * 20, bx = i * 130 - 40;
+    const bh = 90 + (i % 4) * 40;
+    ctx.fillRect(bx, GAME_H * 0.62 - bh, bw, bh);
+    ctx.fillStyle = 'rgba(255,183,39,0.15)';
+    for (let wy = 0; wy < bh; wy += 18) ctx.fillRect(bx + 8, GAME_H*0.62 - bh + wy, 8, 8);
+    ctx.fillStyle = '#0a1226';
+  }
+}
+function drawTower(x, w) {
+  // 101 主塔（簡化竹節造型）
+  ctx.save();
+  ctx.translate(x, 0);
+  const segs = 6;
+  const topY = GAME_H * 0.06, baseY = GAME_H * 0.68;
+  for (let i = 0; i < segs; i++) {
+    const segH = (baseY - topY) / segs;
+    const y0 = topY + i * segH;
+    const flare = (segs - i) * 3;
+    const gw = w + flare;
+    ctx.fillStyle = i % 2 === 0 ? '#16254d' : '#1c2f5e';
+    ctx.fillRect(-gw/2, y0, gw, segH - 4);
+    ctx.fillStyle = 'rgba(255,183,39,0.55)';
+    for (let wx = -gw/2 + 6; wx < gw/2 - 6; wx += 14) ctx.fillRect(wx, y0 + 6, 5, 5);
+  }
+  ctx.restore();
+}
+function drawFishingLine(x, topY, len, hookGlow) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(243,236,217,0.7)'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(x, topY); ctx.lineTo(x, topY + len); ctx.stroke();
+  const g = ctx.createRadialGradient(x, topY+len, 0, x, topY+len, 14);
+  g.addColorStop(0, `rgba(255,215,122,${hookGlow})`); g.addColorStop(1, 'rgba(255,215,122,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, topY+len, 14, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ffd77a';
+  ctx.beginPath(); ctx.arc(x, topY+len, 4, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawFish(x, y, t, color, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  const wig = Math.sin(t * 6 + x) * 0.15;
+  ctx.rotate(wig);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, size, size*0.45, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-size*0.9, 0); ctx.lineTo(-size*1.4, -size*0.4); ctx.lineTo(-size*1.4, size*0.4);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#0b1730';
+  ctx.beginPath(); ctx.arc(size*0.55, -size*0.08, size*0.1, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawField(t) {
+  const g = ctx.createLinearGradient(0, GAME_H*0.3, 0, GAME_H);
+  g.addColorStop(0, '#0e2e28'); g.addColorStop(1, '#0a1f1c');
+  ctx.fillStyle = g; ctx.fillRect(0, GAME_H*0.3, GAME_W, GAME_H*0.7);
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(GAME_W/2, GAME_H*0.3); ctx.lineTo(GAME_W/2, GAME_H); ctx.stroke();
+  ctx.beginPath(); ctx.arc(GAME_W/2, GAME_H*0.68, 55, 0, Math.PI*2); ctx.stroke();
+  // 球門
+  ctx.strokeStyle = 'rgba(243,236,217,0.85)'; ctx.lineWidth = 4;
+  ctx.strokeRect(GAME_W*0.88, GAME_H*0.5, GAME_W*0.08, GAME_H*0.22);
+}
+function drawCrab(x, y, size, t, color) {
+  ctx.save();
+  ctx.translate(x, y);
+  const legPhase = Math.sin(t * 10);
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.ellipse(0, 0, size, size*0.72, 0, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = color; ctx.lineWidth = Math.max(2, size*0.1); ctx.lineCap = 'round';
+  for (let i = -1; i <= 1; i += 2) {
+    for (let j = 0; j < 3; j++) {
+      ctx.beginPath();
+      ctx.moveTo(i*size*0.6, -size*0.1 + j*size*0.25);
+      ctx.lineTo(i*size*(1.3 + legPhase*0.1*i), size*0.05 + j*size*0.3);
+      ctx.stroke();
+    }
+  }
+  // 大螯
+  ctx.fillStyle = color;
+  ctx.beginPath(); ctx.ellipse(-size*1.15, -size*0.3, size*0.32, size*0.22, 0.3, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(size*1.15, -size*0.3, size*0.32, size*0.22, -0.3, 0, Math.PI*2); ctx.fill();
+  // 眼睛
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-size*0.25, -size*0.55, size*0.14, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size*0.25, -size*0.55, size*0.14, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#0b1730';
+  ctx.beginPath(); ctx.arc(-size*0.25, -size*0.55, size*0.06, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size*0.25, -size*0.55, size*0.06, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawBall(x, y, size) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.fillStyle = '#f3ecd9';
+  ctx.beginPath(); ctx.arc(0, 0, size, 0, Math.PI*2); ctx.fill();
+  ctx.strokeStyle = '#0b1730'; ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.moveTo(-size*0.5, -size*0.3); ctx.lineTo(size*0.5, -size*0.3);
+  ctx.lineTo(0, size*0.5); ctx.closePath(); ctx.stroke();
+  ctx.restore();
+}
+function scorePop(text, alpha, scale) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `900 ${Math.floor(40*scale)}px "Arial Black", sans-serif`;
+  ctx.fillStyle = '#ffd77a';
+  ctx.shadowColor = 'rgba(255,183,39,0.6)'; ctx.shadowBlur = 18;
+  ctx.fillText(text, GAME_W*0.5, GAME_H*0.28);
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+function subtitle(text, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = "bold 24px 'Trebuchet MS','PingFang TC','Microsoft JhengHei',sans-serif";
+  const y = GAME_H - 56;
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  const w = ctx.measureText(text).width + 44;
+  ctx.fillRect(GAME_W / 2 - w / 2, y - 30, w, 46);
+  ctx.fillStyle = '#f3ecd9';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+function titleLogo(alpha, scale, line1, line2) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `900 ${Math.floor(46 * scale)}px "Arial Black","PingFang TC","Microsoft JhengHei",sans-serif`;
+  const grad = ctx.createLinearGradient(GAME_W*0.2, 0, GAME_W*0.8, 0);
+  grad.addColorStop(0, '#ffb627'); grad.addColorStop(0.55, '#ff6b5e'); grad.addColorStop(1, '#2ec4b6');
+  ctx.fillStyle = grad;
+  ctx.shadowColor = 'rgba(255,140,50,0.5)'; ctx.shadowBlur = 22;
+  ctx.fillText(line1, GAME_W / 2, GAME_H * (line2 ? 0.36 : 0.42));
+  if (line2) {
+    ctx.font = `900 ${Math.floor(38 * scale)}px "Arial Black","PingFang TC","Microsoft JhengHei",sans-serif`;
+    ctx.fillText(line2, GAME_W / 2, GAME_H * 0.48);
+  }
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+
+// ---------- 時間軸（總長 30 秒，三幕結構）----------
+const DURATION = 30;
+let startTime = null, playing = false;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 6) {
+    // ===== 第一幕：街機招牌標題浮現 =====
+    drawNightCity(t);
+    drawTower(GAME_W*0.5, 70);
+    const p = clamp(t / 1.4, 0, 1);
+    titleLogo(easeOut(p), 0.7 + easeOut(p) * 0.3, '101 夜釣戰隊', '× 蟹將盃足球');
+    if (t > 2.4) {
+      const sp = clamp((t - 2.4) / 0.8, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = sp;
+      ctx.textAlign = 'center';
+      ctx.font = "20px 'Trebuchet MS','PingFang TC','Microsoft JhengHei',sans-serif";
+      ctx.fillStyle = '#8fa0c9';
+      ctx.fillText('AI未來創作營隊 出品 · 雙人街機雙關卡', GAME_W / 2, GAME_H * 0.56);
+      ctx.restore();
+    }
+    if (t > 3.8) subtitle('一台機台，兩款瘋狂玩法！', clamp((t - 3.8) / 0.6, 0, 1));
+    if (t > 0.2) cue('act1chime', () => chime());
+  } else if (t < 14) {
+    // ===== 第二幕A：大樓夜釣 =====
+    const p = (t - 6) / 8;
+    drawNightCity(t);
+    drawTower(GAME_W*0.18, 50);
+    const lineLen = GAME_H * 0.15 + Math.sin(t*1.6) * GAME_H * 0.28 * clamp(p*3,0,1) + GAME_H*0.15;
+    drawFishingLine(GAME_W*0.5, GAME_H*0.05, clamp(lineLen, GAME_H*0.1, GAME_H*0.85), 0.7 + 0.3*Math.sin(t*4));
+    // 魚群
+    const fishColors = ['#ff6b5e','#2ec4b6','#ffd77a'];
+    for (let i = 0; i < 5; i++) {
+      const fx = ((GAME_W*0.15*i + t*40*(i%2?1:-1)) % (GAME_W+100)) - 50;
+      const fy = GAME_H*0.62 + Math.sin(t*2+i)*14;
+      drawFish(fx, fy, t, fishColors[i%3], 16 + (i%2)*4);
+    }
+    if (t < 10) subtitle('左右移動釣線瞄準魚群', clamp((t - 6.3) / 0.6, 0, 1));
+    else subtitle('拋線垂降，卡進魚群鬆手收線捕獲！', clamp((t - 10.2) / 0.6, 0, 1));
+    if (t > 11.8 && t < 13.2) {
+      scorePop('上鉤！+120', clamp((t-11.8)/0.3,0,1)*clamp((13.2-t)/0.3,0,1), 1 + Math.sin((t-11.8)*6)*0.05);
+      cue('catchChime', () => chime());
+    }
+    cue('fishBeat', () => chime());
+  } else if (t < 22) {
+    // ===== 第二幕B：螃蟹足球 =====
+    const p = (t - 14) / 8;
+    drawField(t);
+    const ballX = GAME_W*(0.3 + 0.5*clamp(p*2,0,1));
+    const ballY = GAME_H*0.68 + Math.sin(p*10)*6;
+    const crabX = ballX - 60 - Math.sin(t*3)*6;
+    drawCrab(crabX, GAME_H*0.68, 34, t, '#ff6b5e');
+    drawCrab(GAME_W*0.86, GAME_H*0.62, 34, t, '#2ec4b6');
+    drawBall(ballX, ballY, 12);
+    if (t < 18) subtitle('方向鍵移動紅蟹，靠近球自動盤帶', clamp((t - 14.3) / 0.6, 0, 1));
+    else subtitle('按空白鍵射門，比對手多進球獲勝！', clamp((t - 18.2) / 0.6, 0, 1));
+    if (t > 19.6 && t < 21) {
+      scorePop('射門得分！', clamp((t-19.6)/0.3,0,1)*clamp((21-t)/0.3,0,1), 1 + Math.sin((t-19.6)*6)*0.05);
+      cue('goalChime', () => chime());
+    }
+    cue('crabBeat', () => chime());
+  } else {
+    // ===== 第三幕：雙關卡合體 CTA =====
+    const p = (t - 22) / 8;
+    drawNightCity(t);
+    drawTower(GAME_W*0.5, 60);
+    if (t < 25) {
+      const wp = clamp((t - 22.3) / 0.6, 0, 1);
+      ctx.save();
+      ctx.globalAlpha = wp;
+      ctx.textAlign = 'center';
+      ctx.font = "900 40px 'Arial Black',sans-serif";
+      const grad = ctx.createLinearGradient(GAME_W*0.3,0,GAME_W*0.7,0);
+      grad.addColorStop(0, '#ffb627'); grad.addColorStop(1, '#2ec4b6');
+      ctx.fillStyle = grad;
+      ctx.fillText('60 秒挑戰，看誰分數更高！', GAME_W / 2, GAME_H * 0.32);
+      ctx.restore();
+      cue('finalChime', () => chime());
+    } else {
+      const cta = clamp((t - 25) / 1, 0, 1);
+      titleLogo(easeOut(cta), 0.85 + easeOut(cta) * 0.15, '101 夜釣戰隊', '× 蟹將盃足球');
+      ctx.save();
+      ctx.globalAlpha = easeOut(cta);
+      ctx.textAlign = 'center';
+      ctx.font = "bold 22px 'Trebuchet MS','PingFang TC','Microsoft JhengHei',sans-serif";
+      ctx.fillStyle = '#f3ecd9';
+      ctx.fillText('滑鼠／觸控＋鍵盤雙支援 · 立即開玩', GAME_W / 2, GAME_H * 0.58);
+      ctx.restore();
+      cue('ctaChime', () => chime());
+    }
+  }
+
+  // 全程輕微暗角
+  const edge = ctx.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.35, GAME_W/2, GAME_H/2, GAME_W*0.75);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, 'rgba(0,0,0,0.4)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000;
+  if (t >= DURATION) {
+    draw(DURATION - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    if (musicTimer) { clearInterval(musicTimer); musicTimer = null; musicStarted = false; }
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  playing = true;
+  replayBtn.style.display = 'none';
+  if (soundOn && audioCtx && !musicStarted) { musicStarted = true; startMusic(); }
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+</script>
+</body>
+</html>
