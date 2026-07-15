@@ -64,6 +64,7 @@ addEventListener('resize', resize); resize();
 
 // ---------- 音效（預設靜音,合成、零外部資源）----------
 let audioCtx = null, soundOn = false;
+let ambientNodes = null, nextScareAt = 0;
 soundBtn.addEventListener('click', () => {
   soundOn = !soundOn;
   soundBtn.textContent = soundOn ? '🔊' : '🔇';
@@ -71,7 +72,75 @@ soundBtn.addEventListener('click', () => {
     try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (soundOn) startAmbient(); else stopAmbient();
 });
+
+// 恐怖環境音：低頻嗡鳴＋緩慢顫音,營造持續壓迫感
+function startAmbient() {
+  if (!audioCtx || ambientNodes) return;
+  const t = audioCtx.currentTime;
+  const drone = audioCtx.createOscillator();
+  drone.type = 'sawtooth';
+  drone.frequency.setValueAtTime(48, t);
+  const droneFilter = audioCtx.createBiquadFilter();
+  droneFilter.type = 'lowpass';
+  droneFilter.frequency.setValueAtTime(140, t);
+  const droneGain = audioCtx.createGain();
+  droneGain.gain.setValueAtTime(0.001, t);
+  droneGain.gain.exponentialRampToValueAtTime(0.06, t + 1.5);
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.setValueAtTime(0.17, t);
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.setValueAtTime(9, t);
+  lfo.connect(lfoGain).connect(drone.frequency);
+  drone.connect(droneFilter).connect(droneGain).connect(audioCtx.destination);
+  drone.start(t); lfo.start(t);
+  ambientNodes = { drone, lfo, droneGain };
+  nextScareAt = 0;
+}
+function stopAmbient() {
+  if (!ambientNodes) return;
+  const t = audioCtx.currentTime;
+  ambientNodes.droneGain.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  ambientNodes.drone.stop(t + 0.5);
+  ambientNodes.lfo.stop(t + 0.5);
+  ambientNodes = null;
+}
+// 隨機驚嚇聲：遠處哀嚎或吱嘎聲
+function randomScare() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  if (Math.random() < 0.5) {
+    // 遠處哀嚎（顫音下滑）
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    const vib = audioCtx.createOscillator(), vibG = audioCtx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(340, t);
+    osc.frequency.exponentialRampToValueAtTime(180, t + 1.6);
+    vib.frequency.setValueAtTime(5.5, t);
+    vibG.gain.setValueAtTime(14, t);
+    vib.connect(vibG).connect(osc.frequency);
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.4);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.7);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t); vib.start(t); osc.stop(t + 1.8); vib.stop(t + 1.8);
+  } else {
+    // 木板吱嘎（窄帶噪音上滑）
+    const dur = 0.7, n = Math.floor(audioCtx.sampleRate * dur);
+    const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = audioCtx.createBufferSource(); src.buffer = buf;
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 18;
+    f.frequency.setValueAtTime(300, t);
+    f.frequency.exponentialRampToValueAtTime(900, t + dur);
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.12, t);
+    src.connect(f).connect(g).connect(audioCtx.destination);
+    src.start(t);
+  }
+}
 function thump(vol) {
   if (!soundOn || !audioCtx) return;
   const t = audioCtx.currentTime;
@@ -120,7 +189,7 @@ const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---------- 場景繪製工具 ----------
-// 假 3D 走廊：以消失點畫牆面梯形,腐朽紅棕色調
+// 假 3D 校園走廊：以消失點畫牆面梯形,左牆教室門/佈告欄、右牆夜窗/置物櫃
 function drawCorridor(camZ, flicker, brightness) {
   const cx = GAME_W / 2, cy = GAME_H / 2;
   ctx.fillStyle = '#131007';
@@ -128,41 +197,85 @@ function drawCorridor(camZ, flicker, brightness) {
   ctx.fillStyle = '#2c2411';
   ctx.fillRect(0, cy, GAME_W, cy);
 
+  // 沿牆面在垂直參數 v(0=天花板,1=地板) 與深度插值出座標
+  const wallPt = (sideSign, hw, hh, v) => ({ x: cx + sideSign * hw, y: cy - hh + v * hh * 2 });
+  const quad = (p1, p2, p3, p4) => {
+    ctx.beginPath();
+    ctx.moveTo(p1.x, p1.y); ctx.lineTo(p2.x, p2.y);
+    ctx.lineTo(p3.x, p3.y); ctx.lineTo(p4.x, p4.y);
+    ctx.closePath(); ctx.fill();
+  };
+
   const SEGS = 9;
   for (let i = SEGS; i >= 1; i--) {
     const z0 = i + (camZ % 1), z1 = z0 - 1;
     const s0 = 1 / z0, s1 = 1 / Math.max(z1, 0.12);
     const hw0 = GAME_W * 0.62 * s0, hh0 = GAME_H * 0.62 * s0;
     const hw1 = GAME_W * 0.62 * s1, hh1 = GAME_H * 0.62 * s1;
-    const seed = ((Math.floor(camZ) + i) * 73) % 17 / 17;
+    const cellId = Math.floor(camZ) + i;
+    const seed = (cellId * 73) % 17 / 17;
     const shade = clamp(1 - z0 / 10, 0.1, 1) * brightness * (0.8 + flicker * 0.2);
     const r = Math.floor((105 + seed * 45) * shade);
     const g = Math.floor((85 + seed * 35) * shade);
     const b = Math.floor((48 + seed * 20) * shade);
-    // 左牆
+    // 左牆（石膏牆面）
     ctx.fillStyle = `rgb(${r},${g},${b})`;
-    ctx.beginPath();
-    ctx.moveTo(cx - hw0, cy - hh0); ctx.lineTo(cx - hw1, cy - hh1);
-    ctx.lineTo(cx - hw1, cy + hh1); ctx.lineTo(cx - hw0, cy + hh0);
-    ctx.closePath(); ctx.fill();
+    quad(wallPt(-1, hw0, hh0, 0), wallPt(-1, hw1, hh1, 0), wallPt(-1, hw1, hh1, 1), wallPt(-1, hw0, hh0, 1));
     // 右牆
     ctx.fillStyle = `rgb(${Math.floor(r*0.85)},${Math.floor(g*0.85)},${Math.floor(b*0.85)})`;
-    ctx.beginPath();
-    ctx.moveTo(cx + hw0, cy - hh0); ctx.lineTo(cx + hw1, cy - hh1);
-    ctx.lineTo(cx + hw1, cy + hh1); ctx.lineTo(cx + hw0, cy + hh0);
-    ctx.closePath(); ctx.fill();
+    quad(wallPt(1, hw0, hh0, 0), wallPt(1, hw1, hh1, 0), wallPt(1, hw1, hh1, 1), wallPt(1, hw0, hh0, 1));
+
+    // === 校園裝飾：依 cellId 輪替 ===
+    const deco = cellId % 4;
+    // 沿深度方向內縮的中段位置（避免貼到梯形邊緣）
+    const midHw = (hw0 + hw1) / 2, midHh = (hh0 + hh1) / 2;
+    const lerpHw = k => hw0 + (hw1 - hw0) * k, lerpHh = k => hh0 + (hh1 - hh0) * k;
+    if (deco === 0) {
+      // 左牆教室門（深木色門板＋小窗）
+      ctx.fillStyle = `rgba(${Math.floor(60*shade)},${Math.floor(38*shade)},${Math.floor(18*shade)},1)`;
+      quad(wallPt(-1, lerpHw(0.25), lerpHh(0.25), 0.25), wallPt(-1, lerpHw(0.75), lerpHh(0.75), 0.25),
+           wallPt(-1, lerpHw(0.75), lerpHh(0.75), 1), wallPt(-1, lerpHw(0.25), lerpHh(0.25), 1));
+      ctx.fillStyle = `rgba(${Math.floor(20*shade)},${Math.floor(24*shade)},${Math.floor(30*shade)},1)`;
+      quad(wallPt(-1, lerpHw(0.4), lerpHh(0.4), 0.33), wallPt(-1, lerpHw(0.6), lerpHh(0.6), 0.33),
+           wallPt(-1, lerpHw(0.6), lerpHh(0.6), 0.5), wallPt(-1, lerpHw(0.4), lerpHh(0.4), 0.5));
+    } else if (deco === 1) {
+      // 右牆夜窗（黑玻璃、微藍,格線）
+      ctx.fillStyle = `rgba(${Math.floor(10*shade)},${Math.floor(14*shade)},${Math.floor(26*shade)},1)`;
+      quad(wallPt(1, lerpHw(0.2), lerpHh(0.2), 0.2), wallPt(1, lerpHw(0.8), lerpHh(0.8), 0.2),
+           wallPt(1, lerpHw(0.8), lerpHh(0.8), 0.62), wallPt(1, lerpHw(0.2), lerpHh(0.2), 0.62));
+      ctx.strokeStyle = `rgba(${Math.floor(70*shade)},${Math.floor(60*shade)},${Math.floor(40*shade)},1)`;
+      ctx.lineWidth = Math.max(1, midHh * 0.02);
+      const wTop = wallPt(1, lerpHw(0.5), lerpHh(0.5), 0.2), wBot = wallPt(1, lerpHw(0.5), lerpHh(0.5), 0.62);
+      ctx.beginPath(); ctx.moveTo(wTop.x, wTop.y); ctx.lineTo(wBot.x, wBot.y); ctx.stroke();
+    } else if (deco === 2) {
+      // 左牆佈告欄（軟木色＋幾張歪斜紙片）
+      ctx.fillStyle = `rgba(${Math.floor(96*shade)},${Math.floor(66*shade)},${Math.floor(30*shade)},1)`;
+      quad(wallPt(-1, lerpHw(0.25), lerpHh(0.25), 0.28), wallPt(-1, lerpHw(0.75), lerpHh(0.75), 0.28),
+           wallPt(-1, lerpHw(0.75), lerpHh(0.75), 0.6), wallPt(-1, lerpHw(0.25), lerpHh(0.25), 0.6));
+      ctx.fillStyle = `rgba(${Math.floor(170*shade)},${Math.floor(165*shade)},${Math.floor(140*shade)},1)`;
+      quad(wallPt(-1, lerpHw(0.35), lerpHh(0.35), 0.34), wallPt(-1, lerpHw(0.48), lerpHh(0.48), 0.36),
+           wallPt(-1, lerpHw(0.48), lerpHh(0.48), 0.5), wallPt(-1, lerpHw(0.35), lerpHh(0.35), 0.48));
+      quad(wallPt(-1, lerpHw(0.55), lerpHh(0.55), 0.35), wallPt(-1, lerpHw(0.66), lerpHh(0.66), 0.33),
+           wallPt(-1, lerpHw(0.66), lerpHh(0.66), 0.47), wallPt(-1, lerpHw(0.55), lerpHh(0.55), 0.49));
+    } else {
+      // 右牆成排置物櫃（金屬灰綠,直條分格）
+      ctx.fillStyle = `rgba(${Math.floor(52*shade)},${Math.floor(58*shade)},${Math.floor(46*shade)},1)`;
+      quad(wallPt(1, lerpHw(0.1), lerpHh(0.1), 0.22), wallPt(1, lerpHw(0.9), lerpHh(0.9), 0.22),
+           wallPt(1, lerpHw(0.9), lerpHh(0.9), 1), wallPt(1, lerpHw(0.1), lerpHh(0.1), 1));
+      ctx.strokeStyle = `rgba(${Math.floor(20*shade)},${Math.floor(22*shade)},${Math.floor(18*shade)},1)`;
+      ctx.lineWidth = Math.max(1, midHh * 0.015);
+      for (const k of [0.3, 0.5, 0.7]) {
+        const lTop = wallPt(1, lerpHw(k), lerpHh(k), 0.22), lBot = wallPt(1, lerpHw(k), lerpHh(k), 1);
+        ctx.beginPath(); ctx.moveTo(lTop.x, lTop.y); ctx.lineTo(lBot.x, lBot.y); ctx.stroke();
+      }
+    }
+
     // 地板段
     ctx.fillStyle = `rgba(${Math.floor(70*shade)},${Math.floor(58*shade)},${Math.floor(26*shade)},1)`;
-    ctx.beginPath();
-    ctx.moveTo(cx - hw0, cy + hh0); ctx.lineTo(cx - hw1, cy + hh1);
-    ctx.lineTo(cx + hw1, cy + hh1); ctx.lineTo(cx + hw0, cy + hh0);
-    ctx.closePath(); ctx.fill();
+    quad(wallPt(-1, hw0, hh0, 1), wallPt(-1, hw1, hh1, 1), wallPt(1, hw1, hh1, 1), wallPt(1, hw0, hh0, 1));
     // 天花板段＋日光燈
     ctx.fillStyle = `rgba(${Math.floor(38*shade)},${Math.floor(33*shade)},${Math.floor(17*shade)},1)`;
-    ctx.beginPath();
-    ctx.moveTo(cx - hw0, cy - hh0); ctx.lineTo(cx - hw1, cy - hh1);
-    ctx.lineTo(cx + hw1, cy - hh1); ctx.lineTo(cx + hw0, cy - hh0);
-    ctx.closePath(); ctx.fill();
+    quad(wallPt(-1, hw0, hh0, 0), wallPt(-1, hw1, hh1, 0), wallPt(1, hw1, hh1, 0), wallPt(1, hw0, hh0, 0));
     if (i % 2 === 0) {
       ctx.fillStyle = `rgba(240,230,160,${0.12 * flicker * brightness})`;
       ctx.fillRect(cx - hw1 * 0.3, cy - (hh0 + hh1) / 2, hw1 * 0.6, 3);
@@ -170,13 +283,17 @@ function drawCorridor(camZ, flicker, brightness) {
   }
 }
 
-// 恐怖阿嬤（駝背、紅眼、抽動）
+// 恐怖阿嬤（駝背歪頭、長髮遮臉、黑洞嘴、瘦長爪手、劇烈抽搐）
 function drawGranny(x, y, size, t, alpha) {
-  const tw = Math.sin(t * 14) * size * 0.012;
+  // 不規則抽搐：偶爾猛烈跳動
+  const jerk = Math.sin(t * 23) > 0.92 ? (Math.random() - 0.5) * size * 0.08 : 0;
+  const tw = Math.sin(t * 14) * size * 0.012 + jerk;
+  const headTilt = 0.32 + Math.sin(t * 0.9) * 0.1; // 詭異歪頭
   ctx.save();
-  ctx.translate(x + tw, y);
+  ctx.translate(x + tw, y + Math.abs(jerk) * 0.5);
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = '#1c0404';
+  // 身軀（駝背斗篷）
+  ctx.fillStyle = '#170303';
   ctx.beginPath();
   ctx.moveTo(-size * 0.2, size * 0.05);
   ctx.quadraticCurveTo(-size * 0.3, -size * 0.28, -size * 0.06, -size * 0.4);
@@ -185,22 +302,57 @@ function drawGranny(x, y, size, t, alpha) {
   ctx.lineTo(size * 0.3, size * 0.5);
   ctx.lineTo(-size * 0.28, size * 0.5);
   ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = '#1c0404';
-  ctx.lineWidth = Math.max(1.5, size * 0.03);
+  // 兩隻瘦長爪手,五指張開向前抓
+  ctx.strokeStyle = '#241010';
+  ctx.lineWidth = Math.max(1.2, size * 0.022);
+  ctx.lineCap = 'round';
+  for (const dir of [1, -1]) {
+    const hx = dir * size * 0.34, hy = -size * 0.05 + tw * 3 * dir;
+    ctx.beginPath();
+    ctx.moveTo(dir * size * 0.16, -size * 0.12);
+    ctx.lineTo(hx, hy);
+    ctx.stroke();
+    for (let f = 0; f < 5; f++) {
+      const fa = (f - 2) * 0.3 + dir * 0.5 + Math.sin(t * 10 + f) * 0.06;
+      ctx.beginPath();
+      ctx.moveTo(hx, hy);
+      ctx.lineTo(hx + Math.cos(fa) * size * 0.13 * dir, hy + Math.sin(fa) * size * 0.13);
+      ctx.stroke();
+    }
+  }
+  // 歪斜的頭
+  ctx.save();
+  ctx.translate(-size * 0.02, -size * 0.5);
+  ctx.rotate(headTilt);
   ctx.beginPath();
-  ctx.moveTo(size * 0.2, -size * 0.1);
-  ctx.lineTo(size * 0.42, size * 0.05 + tw * 4);
-  ctx.lineTo(size * 0.5, -size * 0.02 + tw * 4);
-  ctx.stroke();
+  ctx.ellipse(0, 0, size * 0.095, size * 0.115, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#8f8266'; ctx.fill();
+  // 黑洞嘴（無聲尖叫,緩慢開合）
+  const mouth = 0.5 + 0.5 * Math.sin(t * 1.7);
   ctx.beginPath();
-  ctx.arc(-size * 0.02, -size * 0.5, size * 0.1, 0, Math.PI * 2);
-  ctx.fillStyle = '#968a6e'; ctx.fill();
+  ctx.ellipse(0, size * 0.05, size * 0.032, size * (0.02 + mouth * 0.05), 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#000'; ctx.fill();
+  // 紅眼（一亮一暗,更不對稱詭異）
   const glow = 0.5 + 0.5 * Math.sin(t * 9);
   ctx.fillStyle = `rgb(255,${Math.floor(15 + glow * 30)},0)`;
   ctx.beginPath();
-  ctx.arc(-size * 0.055, -size * 0.505, size * 0.017, 0, Math.PI * 2);
-  ctx.arc(size * 0.01, -size * 0.505, size * 0.017, 0, Math.PI * 2);
+  ctx.arc(-size * 0.035, -size * 0.02, size * 0.018, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = `rgb(255,${Math.floor(15 + (1 - glow) * 30)},0)`;
+  ctx.beginPath();
+  ctx.arc(size * 0.03, -size * 0.025, size * 0.014, 0, Math.PI * 2);
+  ctx.fill();
+  // 長髮垂落遮半臉
+  ctx.strokeStyle = '#0a0a0a';
+  ctx.lineWidth = Math.max(1, size * 0.012);
+  for (let h = 0; h < 7; h++) {
+    const hx0 = -size * 0.09 + h * size * 0.028;
+    ctx.beginPath();
+    ctx.moveTo(hx0, -size * 0.1);
+    ctx.quadraticCurveTo(hx0 + Math.sin(t * 2 + h) * size * 0.02, size * 0.12, hx0 + Math.sin(t * 1.3 + h * 2) * size * 0.035, size * 0.3);
+    ctx.stroke();
+  }
+  ctx.restore();
   ctx.restore();
 }
 
@@ -254,47 +406,100 @@ function drawCabinet(x, y, size) {
   ctx.restore();
 }
 
-// 血手印＋噴濺（程序繪製,固定種子）
-function drawBloodPrint(x, y, size, alpha) {
+// 血手印＋流血（程序繪製,固定種子；bleedT 為浮現後經過秒數,血會持續往下流）
+function drawBloodPrint(x, y, size, alpha, bleedT) {
+  bleedT = bleedT || 0;
+  let s = 7;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(0.28);
   ctx.globalAlpha = alpha;
-  ctx.fillStyle = '#8f0e0e';
-  // 掌心
-  ctx.beginPath();
-  ctx.ellipse(0, size * 0.12, size * 0.34, size * 0.4, 0, 0, Math.PI * 2);
-  ctx.fill();
-  // 五指
+
   const fingers = [
-    [-0.34, -0.32, 0.09, 0.34, -0.5],
-    [-0.16, -0.48, 0.095, 0.4, -0.18],
-    [0.03, -0.52, 0.1, 0.42, 0],
-    [0.22, -0.46, 0.09, 0.38, 0.2],
-    [0.44, -0.05, 0.085, 0.3, 0.9],
+    [-0.34, -0.32, 0.085, 0.34, -0.5],
+    [-0.16, -0.48, 0.09, 0.4, -0.18],
+    [0.03, -0.52, 0.095, 0.42, 0],
+    [0.22, -0.46, 0.085, 0.38, 0.2],
+    [0.44, -0.05, 0.08, 0.3, 0.9],
   ];
-  for (const [fx, fy, fw, fh, rot] of fingers) {
+  // 兩層疊印：外層深乾涸血、內層鮮血,邊緣斑駁
+  const layers = [
+    { c: '#5e0808', k: 1.12 },
+    { c: '#9e1010', k: 1.0 },
+  ];
+  for (const { c, k } of layers) {
+    ctx.fillStyle = c;
+    // 掌心（不規則邊緣：多個橢圓堆疊）
+    for (let i = 0; i < 7; i++) {
+      const ox = (rnd() - 0.5) * size * 0.1, oy = (rnd() - 0.5) * size * 0.12;
+      ctx.beginPath();
+      ctx.ellipse(ox, size * 0.12 + oy, size * 0.3 * k * (0.8 + rnd() * 0.3), size * 0.34 * k * (0.85 + rnd() * 0.25), rnd() * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (const [fx, fy, fw, fh, rot] of fingers) {
+      ctx.save();
+      ctx.translate(fx * size, fy * size);
+      ctx.rotate(rot);
+      // 指節分兩段,末端略窄,更像真手指壓印
+      ctx.beginPath();
+      ctx.ellipse(0, fh * size * 0.28, fw * size * k, fh * size * 0.62 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(0, -fh * size * 0.5, fw * size * 0.82 * k, fh * size * 0.42 * k, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+  // 掌心留白掌紋（壓印中間常缺墨）
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  for (let i = 0; i < 4; i++) {
     ctx.save();
-    ctx.translate(fx * size, fy * size);
-    ctx.rotate(rot);
+    ctx.translate((rnd() - 0.5) * size * 0.3, size * 0.1 + (rnd() - 0.5) * size * 0.3);
+    ctx.rotate(rnd() * Math.PI);
     ctx.beginPath();
-    ctx.ellipse(0, 0, fw * size, fh * size, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, 0, size * (0.04 + rnd() * 0.08), size * 0.015, 0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
   }
-  // 噴濺點（固定偽隨機）
-  let s = 7;
-  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  // 噴濺點
+  ctx.fillStyle = '#8f0e0e';
   for (let i = 0; i < 26; i++) {
     const a = rnd() * Math.PI * 2, d = size * (0.45 + rnd() * 0.75);
     ctx.beginPath();
-    ctx.arc(Math.cos(a) * d, Math.sin(a) * d, size * (0.015 + rnd() * 0.045), 0, Math.PI * 2);
+    ctx.arc(Math.cos(a) * d, Math.sin(a) * d, size * (0.012 + rnd() * 0.04), 0, Math.PI * 2);
     ctx.fill();
   }
-  // 血液下滴
-  for (let i = 0; i < 3; i++) {
-    const dx = (rnd() - 0.5) * size * 0.5;
-    ctx.fillRect(dx, size * 0.3, size * 0.035, size * (0.35 + rnd() * 0.5));
+  ctx.restore();
+
+  // 流血：不隨手印旋轉,垂直往下流,長度隨時間增加、末端有血珠
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.globalAlpha = alpha;
+  for (let i = 0; i < 5; i++) {
+    const dx = (rnd() - 0.5) * size * 0.72;
+    const startY = size * (0.05 + rnd() * 0.3);
+    const speed = 0.25 + rnd() * 0.45;                 // 每條流速不同
+    const len = size * Math.min(0.15 + bleedT * speed, 1.5 + rnd() * 0.6);
+    const w = size * (0.022 + rnd() * 0.02);
+    const grad = ctx.createLinearGradient(0, startY, 0, startY + len);
+    grad.addColorStop(0, '#9e1010');
+    grad.addColorStop(0.7, '#7a0b0b');
+    grad.addColorStop(1, '#b31414');
+    ctx.fillStyle = grad;
+    // 蜿蜒血痕
+    ctx.beginPath();
+    ctx.moveTo(dx - w / 2, startY);
+    ctx.quadraticCurveTo(dx - w / 2 + Math.sin(i * 3) * size * 0.03, startY + len * 0.5, dx - w / 2, startY + len);
+    ctx.lineTo(dx + w / 2, startY + len);
+    ctx.quadraticCurveTo(dx + w / 2 + Math.sin(i * 3) * size * 0.03, startY + len * 0.5, dx + w / 2, startY);
+    ctx.closePath();
+    ctx.fill();
+    // 末端血珠（將滴未滴,微微膨縮）
+    const bead = 1 + Math.sin(bleedT * 5 + i * 2) * 0.15;
+    ctx.beginPath();
+    ctx.ellipse(dx, startY + len, w * 1.1 * bead, w * 1.5 * bead, 0, 0, Math.PI * 2);
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -344,7 +549,7 @@ function draw(t) {
     const tp = clamp((t - 1) / 1.6, 0, 1);
     // 標題後方的血手印,比標題稍晚重擊浮現
     const bp = clamp((t - 1.8) / 0.5, 0, 1);
-    if (bp > 0) drawBloodPrint(GAME_W * 0.66, GAME_H * 0.36, 130 * (1.6 - easeOut(bp) * 0.6), easeOut(bp) * 0.85);
+    if (bp > 0) drawBloodPrint(GAME_W * 0.66, GAME_H * 0.36, 130 * (1.6 - easeOut(bp) * 0.6), easeOut(bp) * 0.85, Math.max(0, t - 2.3));
     if (t > 1.8) cue('bloodSlam', () => thump(0.5));
     ctx.save();
     ctx.globalAlpha = easeOut(tp);
@@ -358,7 +563,7 @@ function draw(t) {
       ctx.globalAlpha = clamp((t - 3.2) / 0.8, 0, 1);
       ctx.font = "22px 'Courier New', monospace";
       ctx.fillStyle = '#7fdb6b';
-      ctx.fillText('第一人稱 3D 後室迷宮逃脫', GAME_W / 2, GAME_H * 0.52);
+      ctx.fillText('第一人稱 3D 校園迷宮逃脫', GAME_W / 2, GAME_H * 0.52);
     }
     ctx.restore();
     if (t > 1) cue('act1', () => thump(0.3));
@@ -377,6 +582,23 @@ function draw(t) {
     else subtitle('她愈來愈快……', clamp((t - 10.6) / 0.5, 0, 1) * clamp((14 - t) / 0.5, 0, 1), false);
     cue('chaseThump', () => thump(0.4));
     if (t > 10.5) cue('chaseSting', () => sting());
+    // 突臉 jump scare：13.1~13.8 秒她瞬間貼到鏡頭前
+    if (t > 13.1 && t < 13.8) {
+      const jp = (t - 13.1) / 0.7;
+      const js = 430 + easeOut(clamp(jp * 2.5, 0, 1)) * 230;
+      // 抖動鏡頭
+      ctx.save();
+      ctx.translate((Math.random() - 0.5) * 18, (Math.random() - 0.5) * 18);
+      drawGranny(GAME_W / 2, GAME_H * 0.78, js, t * 3, 1);
+      ctx.restore();
+      ctx.fillStyle = `rgba(120,0,0,${0.25 + Math.random() * 0.15})`;
+      ctx.fillRect(0, 0, GAME_W, GAME_H);
+      if (jp < 0.12) {
+        ctx.fillStyle = `rgba(255,255,255,${(1 - jp / 0.12) * 0.85})`;
+        ctx.fillRect(0, 0, GAME_W, GAME_H);
+      }
+      cue('jumpScare', () => { sting(); thump(0.6); });
+    }
   } else if (t < 20) {
     // ===== 第二幕B：球棒反擊 =====
     drawCorridor(24, flicker, 0.9);
@@ -461,7 +683,7 @@ function draw(t) {
       subtitle('找到逃生門,活著離開恐怖校園！', clamp((t - 26.3) / 0.6, 0, 1), false);
     } else {
       const cta = clamp((t - 29.5) / 0.8, 0, 1);
-      drawBloodPrint(GAME_W * 0.64, GAME_H * 0.3, 100, easeOut(cta) * 0.8);
+      drawBloodPrint(GAME_W * 0.64, GAME_H * 0.3, 100, easeOut(cta) * 0.8, Math.max(0, t - 30));
       ctx.save();
       ctx.globalAlpha = easeOut(cta);
       ctx.textAlign = 'center';
@@ -491,6 +713,11 @@ function loop(now) {
   if (!playing) return;
   if (startTime === null) startTime = now;
   const t = (now - startTime) / 1000 * TIME_SCALE;
+  // 不定時恐怖環境驚嚇聲（4～9 秒一次）
+  if (soundOn && t > nextScareAt) {
+    if (nextScareAt > 0) randomScare();
+    nextScareAt = t + 4 + Math.random() * 5;
+  }
   if (t >= TIMELINE) {
     draw(TIMELINE - 0.01);
     playing = false;
