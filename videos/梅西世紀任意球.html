@@ -23,8 +23,8 @@
 <body>
 <canvas id="scene"></canvas>
 <div id="ui">
-  <button id="muteBtn">🔇</button>
-  <div id="hint">點聲音鈕開啟音效</div>
+  <button id="muteBtn">🔊</button>
+  <div id="hint" style="display:none">點畫面任意處開啟音效</div>
   <button id="replayBtn">重新播放 ▶</button>
 </div>
 <script>
@@ -44,8 +44,8 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 
-// ===== 音效：Web Audio 合成，預設靜音（用 master gain 控制音量，不吃掉音效排程）=====
-let AC = null, masterGain = null, muted = true;
+// ===== 音效：Web Audio 合成，預設開啟（首次互動自動解鎖，用 master gain 控制音量，不吃掉音效排程）=====
+let AC = null, masterGain = null, muted = false;
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
@@ -86,15 +86,30 @@ function crowdNoise(dur=1.2, vol=0.16, delay=0){
 }
 function playMelodyNote(freq, t, dur=0.35){ beep(freq, dur, 'triangle', 0.11, 0, t); }
 
-document.getElementById('muteBtn').addEventListener('click', ()=>{
+function applyMuteState(){
+  const ac = audio();
+  masterGain.gain.setTargetAtTime(muted ? 0 : 1, ac.currentTime, 0.01);
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+}
+
+document.getElementById('muteBtn').addEventListener('click', (e)=>{
+  e.stopPropagation();
   muted = !muted;
   const ac = audio();
   if(ac.state === 'suspended') ac.resume();
-  masterGain.gain.setTargetAtTime(muted ? 0 : 1, ac.currentTime, 0.01);
+  applyMuteState();
   if(!muted) beep(880, 0.12, 'sine', 0.15);   // 立即回饋音，確認聲音已開啟
-  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
-  document.getElementById('hint').style.display = muted ? 'block' : 'none';
 });
+
+// 瀏覽器政策要求真人互動才能出聲：首次任意點擊/觸控/按鍵自動解鎖，不必特地點喇叭鈕
+let unlocked = false;
+function unlockAudio(){
+  if(unlocked) return; unlocked = true;
+  const ac = audio();
+  if(ac.state === 'suspended') ac.resume();
+  applyMuteState();
+}
+for(const ev of ['pointerdown','keydown','touchstart']) addEventListener(ev, unlockAudio, { once:true });
 
 // ===== 動畫時間軸（總長約 15 秒） =====
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
