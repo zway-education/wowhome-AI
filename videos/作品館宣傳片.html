@@ -1,0 +1,328 @@
+<meta name="author" content="Oscar">
+<title>AI未來創作營隊 · 作品館宣傳片</title>
+<style>
+  :root{
+    --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7;
+    --gold1:#ffcf5c; --gold2:#ffa72e;
+    --bg:#070b14; --paper:#f3efe6; --ink:#12161f;
+  }
+  @media (prefers-color-scheme: dark){ :root{ --paper:#0a0d16; --ink:#eae4d4; } }
+  :root[data-theme="dark"]{ --paper:#0a0d16; --ink:#eae4d4; }
+  :root[data-theme="light"]{ --paper:#f3efe6; --ink:#12161f; }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px;
+    background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    padding:28px 16px;
+  }
+  .masthead{ text-align:center; max-width:640px; }
+  h1{ font-weight:900; font-size:clamp(20px,3.6vw,32px); margin:0 0 6px; letter-spacing:-0.01em; }
+  .sub{ font-size:13px; letter-spacing:0.05em; opacity:0.6; margin:0; }
+  .stage-wrap{
+    width:min(620px,94vw); aspect-ratio:9/16; border-radius:20px; overflow:hidden;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,0.55);
+    border:1px solid rgba(128,128,128,0.25); background:#070b14; position:relative;
+  }
+  canvas{ display:block; width:100%; height:100%; }
+  .controls{ display:flex; align-items:center; gap:14px; width:min(620px,94vw); justify-content:space-between; }
+  .caption{ font-size:13px; opacity:0.75; }
+  button{
+    font:inherit; font-size:13px; font-weight:600; padding:9px 18px; border-radius:999px;
+    border:1px solid var(--blue); background:transparent; color:var(--blue); cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  button:hover{ background:var(--blue); color:#fff; }
+  button:focus-visible{ outline:2px solid var(--gold1); outline-offset:2px; }
+</style>
+
+<div class="masthead">
+  <h1>🤖 AI未來創作營隊 · 作品館宣傳片</h1>
+  <p class="sub">10 秒 · 自動循環 · wowhome-ai.vercel.app</p>
+</div>
+
+<div class="stage-wrap">
+  <canvas id="stage" width="540" height="960"></canvas>
+</div>
+
+<div class="controls">
+  <span class="caption" id="caption">開場中…</span>
+  <button id="replay">重播 ↻</button>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const capEl = document.getElementById('caption');
+  const replayBtn = document.getElementById('replay');
+
+  const DURATION = 10000;
+  const T_LOGO   = 0.16;   // 0-1.6s  logo + 標題浮現
+  const T_STATS  = 0.36;   // 1.6-3.6s 數字統計
+  const T_SHOW   = 0.80;   // 3.6-8.0s 作品輪播
+  // 8.0-10s CTA 收尾
+
+  let startTime = null;
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const easeOut=t=>1-Math.pow(1-t,3);
+  const easeIn=t=>t*t*t;
+  const easeInOut=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+  const easeOutBack=t=>{ const c1=1.70158,c3=c1+1; return 1+c3*Math.pow(t-1,3)+c1*Math.pow(t-1,2); };
+
+  const BRAND = ['#38e1ff','#4f7cff','#9a6bff','#ff6cc7'];
+
+  const TITLES = ["101夜釣 x 蟹足球","孫悟空大戰哪吒","寶可夢對戰","貓咪大戰爭","名偵探柯南拆彈行動",
+    "大谷翔平：全壘打瞬間","C羅招牌動作","恐怖校園追逐","冰火大戰3D","跑酷火人3D",
+    "動物森友會進化史","晨山對決·平地築屋","貪食蛇","五行修仙：放置奇緣","魔法覺醒"];
+
+  // 背景星點
+  const stars = Array.from({length:70},(_,i)=>({
+    x:(i*83+17)%W, y:(i*151+9)%H, s:0.5+(i%3)*0.5, tw:i*0.55, hue:BRAND[i%4]
+  }));
+
+  // logo 建置線條動畫用的節點（機器人臉）沿用作品館 logo 造型
+  function drawLogo(cx,cy,size,p){
+    // p: 0..1 出現進度
+    ctx.save();
+    ctx.translate(cx,cy);
+    ctx.scale(size/28,size/28);
+    ctx.globalAlpha = p;
+    const gp = clamp(p*1.3,0,1);
+    // 圓角方塊底（品牌漸層）
+    const g = ctx.createLinearGradient(-14,-14,14,14);
+    g.addColorStop(0,'#38e1ff'); g.addColorStop(0.5,'#4f7cff'); g.addColorStop(1,'#9a6bff');
+    ctx.fillStyle=g;
+    roundRect(-14,-14,28,28,8);
+    ctx.fill();
+    // 天線
+    ctx.strokeStyle='#fff'; ctx.lineWidth=1.8; ctx.lineCap='round';
+    ctx.globalAlpha=p*gp;
+    ctx.beginPath(); ctx.moveTo(0,-12); ctx.lineTo(0,-9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0,-11.8,1.4,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill();
+    // 臉
+    ctx.fillStyle='rgba(255,255,255,0.95)';
+    roundRect(-10,-8.5,20,15,4.5); ctx.fill();
+    const blink = 0.5+0.5*Math.sin(performance.now()/500);
+    ctx.fillStyle='#2f4bd8';
+    ctx.beginPath(); ctx.ellipse(-4,-1,2.1,2.1*Math.max(0.15,blink),0,0,Math.PI*2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(4,-1,2.1,2.1*Math.max(0.15,blink),0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#2f4bd8';
+    roundRect(-4.5,3,9,1.8,0.9); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.75)';
+    roundRect(-6,9,12,3.4,1.7); ctx.fill();
+    ctx.restore();
+  }
+  function roundRect(x,y,w,h,r){
+    ctx.beginPath();
+    ctx.moveTo(x+r,y);
+    ctx.arcTo(x+w,y,x+w,y+h,r);
+    ctx.arcTo(x+w,y+h,x,y+h,r);
+    ctx.arcTo(x,y+h,x,y,r);
+    ctx.arcTo(x,y,x+w,y,r);
+    ctx.closePath();
+  }
+
+  function drawStars(t){
+    ctx.save();
+    stars.forEach(s=>{
+      const a = 0.25+0.45*Math.abs(Math.sin(t*1.8+s.tw));
+      ctx.globalAlpha=a;
+      ctx.fillStyle=s.hue;
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.s*1.6,0,Math.PI*2); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawBrandTitle(cy, p){
+    // 三色漸層標題「AI未來創作營隊」
+    const scale = lerp(0.7,1,easeOutBack(clamp(p,0,1)));
+    ctx.save();
+    ctx.globalAlpha = clamp(p*2,0,1);
+    ctx.translate(W/2, cy);
+    ctx.scale(scale,scale);
+    const g = ctx.createLinearGradient(-160,0,160,0);
+    g.addColorStop(0,'#38e1ff'); g.addColorStop(0.5,'#4f7cff'); g.addColorStop(1,'#9a6bff');
+    ctx.fillStyle=g;
+    ctx.font='900 40px -apple-system, "PingFang TC", sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('AI未來創作營隊', 0, 0);
+    ctx.restore();
+  }
+
+  function drawTagline(cy,p){
+    ctx.save();
+    ctx.globalAlpha = clamp(p*2,0,1);
+    ctx.fillStyle='rgba(240,240,250,0.75)';
+    ctx.font='500 15px -apple-system, "PingFang TC", sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('用 AI 打造的遊戲與動畫作品館', W/2, cy);
+    ctx.restore();
+  }
+
+  function drawStatCard(cx,cy,num,label,color,p,delay){
+    const lp = clamp((p-delay)/(1-delay),0,1);
+    if(lp<=0) return;
+    const rise = easeOut(lp);
+    const y = cy + (1-rise)*30;
+    const alpha = clamp(lp*2,0,1);
+    const shown = Math.round(num*easeOut(clamp(lp*1.4,0,1)));
+    ctx.save();
+    ctx.globalAlpha=alpha;
+    // 卡片底
+    ctx.fillStyle='rgba(255,255,255,0.06)';
+    ctx.strokeStyle=color+'55';
+    ctx.lineWidth=1.5;
+    roundRect(cx-100,y-46,200,92,18);
+    ctx.fill(); ctx.stroke();
+    // 數字
+    ctx.fillStyle=color;
+    ctx.font='900 44px -apple-system, sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(shown+'+', cx, y-8);
+    // 標籤
+    ctx.fillStyle='rgba(240,240,250,0.8)';
+    ctx.font='600 15px -apple-system, "PingFang TC", sans-serif';
+    ctx.fillText(label, cx, y+26);
+    ctx.restore();
+  }
+
+  // 作品輪播卡片（沿垂直方向緩慢上浮，循環）
+  function drawShowcase(p){
+    const rows = 3;
+    const colY = [H*0.32, H*0.5, H*0.68];
+    const speed = [26, -20, 30]; // px/s 不同方向製造層次
+    const localT = p*(T_SHOW-T_STATS)*DURATION/1000; // 秒數（此段內經過秒數，近似）
+    ctx.save();
+    ctx.globalAlpha = clamp(p*3,0,1) * clamp((1-p)*6,0,1);
+    for(let r=0;r<rows;r++){
+      const offset = (localT*speed[r]) % 300;
+      for(let i=-1;i<4;i++){
+        const idx = (r*5+i+15) % TITLES.length;
+        const title = TITLES[idx];
+        const x = W/2 + ((i*300+offset) % (300*5)) - 300;
+        const color = BRAND[(r+i)%4];
+        drawPill(x, colY[r], title, color);
+      }
+    }
+    ctx.restore();
+  }
+  function drawPill(x,y,text,color){
+    ctx.save();
+    ctx.font='700 15px -apple-system, "PingFang TC", sans-serif';
+    const tw = ctx.measureText(text).width;
+    const pw = tw+34, ph=40;
+    ctx.globalAlpha *= clamp(1 - Math.abs(x-W/2)/(W*1.1), 0, 1);
+    ctx.fillStyle='rgba(255,255,255,0.07)';
+    ctx.strokeStyle=color+'88'; ctx.lineWidth=1.4;
+    roundRect(x-pw/2,y-ph/2,pw,ph,ph/2);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle=color;
+    ctx.beginPath(); ctx.arc(x-pw/2+18,y,4,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(245,245,255,0.92)';
+    ctx.textAlign='left'; ctx.textBaseline='middle';
+    ctx.fillText(text, x-pw/2+30, y+1);
+    ctx.restore();
+  }
+
+  function drawCTA(p){
+    const rise = easeOutBack(clamp(p*1.3,0,1));
+    ctx.save();
+    ctx.globalAlpha = clamp(p*2.2,0,1);
+    ctx.translate(W/2, H*0.42 + (1-rise)*24);
+
+    drawLogo(0,-90,54,1);
+
+    const g = ctx.createLinearGradient(-140,0,140,0);
+    g.addColorStop(0,'#38e1ff'); g.addColorStop(0.5,'#ff6cc7'); g.addColorStop(1,'#9a6bff');
+    ctx.fillStyle=g;
+    ctx.font='900 30px -apple-system, "PingFang TC", sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText('立即探索作品館', 0, -18);
+
+    // URL 按鈕
+    ctx.fillStyle='rgba(255,255,255,0.08)';
+    ctx.strokeStyle='#4f7cff';
+    ctx.lineWidth=1.6;
+    roundRect(-142,4,284,46,23);
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#eaf3ff';
+    ctx.font='700 16px -apple-system, monospace';
+    ctx.fillText('wowhome-ai.vercel.app', 0, 27);
+
+    ctx.fillStyle='rgba(230,230,245,0.6)';
+    ctx.font='500 14px -apple-system, "PingFang TC", sans-serif';
+    ctx.fillText('47 件遊戲與動畫 · 每週更新', 0, 70);
+
+    ctx.restore();
+
+    // 慶祝火花
+    if(p>0.15){
+      const cp=(p-0.15)/0.85;
+      ctx.save();
+      for(let i=0;i<28;i++){
+        const a=(i/28)*Math.PI*2;
+        const r=cp*180;
+        const x=W/2+Math.cos(a)*r, y=H*0.42+Math.sin(a)*r*0.6;
+        ctx.globalAlpha=clamp((1-cp)*0.8,0,1);
+        ctx.fillStyle=BRAND[i%4];
+        ctx.fillRect(x-2.5,y-2.5,5,5);
+      }
+      ctx.restore();
+    }
+  }
+
+  function frame(now){
+    if(!startTime) startTime=now;
+    const elapsed=now-startTime;
+    const loopT=(elapsed%DURATION)/DURATION;
+    const t = elapsed/1000;
+
+    // 背景
+    const bg = ctx.createRadialGradient(W/2,H*0.3,0,W/2,H*0.5,H*0.9);
+    bg.addColorStop(0,'#0d1226'); bg.addColorStop(1,'#050710');
+    ctx.fillStyle=bg; ctx.fillRect(0,0,W,H);
+    drawStars(t);
+
+    let cap='';
+    if(loopT<T_LOGO){
+      const p = loopT/T_LOGO;
+      drawLogo(W/2, H*0.4, 88, easeOut(clamp(p*1.6,0,1)));
+      drawBrandTitle(H*0.55, clamp((p-0.35)/0.65,0,1));
+      cap='✨ AI未來創作營隊';
+    } else if(loopT<T_STATS){
+      const p=(loopT-T_LOGO)/(T_STATS-T_LOGO);
+      drawLogo(W/2, H*0.18, 50, 1);
+      drawBrandTitle(H*0.3, 1);
+      drawTagline(H*0.37, 1);
+      drawStatCard(W/2-104, H*0.55, 35, '遊戲作品', '#38e1ff', p, 0);
+      drawStatCard(W/2+104, H*0.55, 12, '動畫影片', '#ff6cc7', p, 0.15);
+      cap='📊 35 款遊戲 · 12 支動畫';
+    } else if(loopT<T_SHOW){
+      const p=(loopT-T_STATS)/(T_SHOW-T_STATS);
+      drawLogo(W/2, H*0.1, 40, 1);
+      drawBrandTitle(H*0.18, 1);
+      ctx.save();
+      ctx.globalAlpha=clamp(1-p*4,0,1);
+      drawTagline(H*0.24,1);
+      ctx.restore();
+      drawShowcase(p);
+      cap='🎮 精選作品輪播中…';
+    } else {
+      const p=(loopT-T_SHOW)/(1-T_SHOW);
+      drawCTA(p);
+      cap='🚀 wowhome-ai.vercel.app';
+    }
+
+    capEl.textContent=cap;
+    requestAnimationFrame(frame);
+  }
+
+  replayBtn.addEventListener('click',()=>{ startTime=null; });
+  requestAnimationFrame(frame);
+})();
+</script>
+

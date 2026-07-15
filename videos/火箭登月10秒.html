@@ -1,0 +1,365 @@
+<meta name="author" content="Oscar">
+<title>火箭登月10秒</title>
+<style>
+  :root{
+    --paper:#f3efe6; --ink:#12161f;
+    --accent:#3a6df0; --accent-2:#ffbf3d; --flame:#ff6a2b;
+  }
+  @media (prefers-color-scheme: dark){ :root{ --paper:#0d0f16; --ink:#eae4d4; } }
+  :root[data-theme="dark"]{ --paper:#0d0f16; --ink:#eae4d4; }
+  :root[data-theme="light"]{ --paper:#f3efe6; --ink:#12161f; }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; min-height:100vh; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; gap:16px;
+    background:var(--paper); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+    padding:28px 16px;
+  }
+  .masthead{ text-align:center; max-width:640px; }
+  h1{ font-weight:900; font-size:clamp(22px,4vw,36px); margin:0 0 6px; letter-spacing:-0.01em; }
+  .sub{ font-size:13px; letter-spacing:0.05em; opacity:0.6; margin:0; }
+  .stage-wrap{
+    width:min(680px,94vw); border-radius:16px; overflow:hidden;
+    box-shadow:0 24px 60px -24px rgba(0,0,0,0.55);
+    border:1px solid rgba(128,128,128,0.25); background:#05060d; position:relative;
+  }
+  canvas{ display:block; width:100%; height:auto; }
+  .controls{ display:flex; align-items:center; gap:14px; width:min(680px,94vw); justify-content:space-between; }
+  .caption{ font-size:13px; opacity:0.75; font-variant-numeric:tabular-nums; }
+  button{
+    font:inherit; font-size:13px; font-weight:600; padding:9px 18px; border-radius:999px;
+    border:1px solid var(--accent); background:transparent; color:var(--accent); cursor:pointer;
+    transition:background .15s,color .15s;
+  }
+  button:hover{ background:var(--accent); color:#fff; }
+  button:focus-visible{ outline:2px solid var(--accent-2); outline-offset:2px; }
+</style>
+
+<div class="masthead">
+  <h1>🚀 火箭登月 · 10 秒</h1>
+  <p class="sub">COUNTDOWN · LIFTOFF · MOON LANDING · 自動循環</p>
+</div>
+
+<div class="stage-wrap">
+  <canvas id="stage" width="600" height="760"></canvas>
+</div>
+
+<div class="controls">
+  <span class="caption" id="caption">準備發射…</span>
+  <button id="replay">重播 ↻</button>
+</div>
+
+<script>
+(function(){
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const W = canvas.width, H = canvas.height;
+  const capEl = document.getElementById('caption');
+  const replayBtn = document.getElementById('replay');
+
+  const DURATION = 10000;
+  // 時間軸（比例）
+  const T_COUNT = 0.30;   // 0-3s 倒數
+  const T_LIFT  = 0.42;   // 3-4.2s 點火升空
+  const T_SPACE = 0.72;   // 4.2-7.2s 穿越大氣→太空
+  const T_APPR  = 0.92;   // 7.2-9.2s 逼近月球
+  // 9.2-10s 登陸插旗
+
+  let startTime = null;
+
+  const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const lerp=(a,b,t)=>a+(b-a)*t;
+  const easeOut=t=>1-Math.pow(1-t,3);
+  const easeIn=t=>t*t*t;
+  const easeInOut=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+
+  // 星星（固定佈局，避免隨機閃爍）
+  const stars = Array.from({length:90},(_,i)=>({
+    x:(i*97+31)%W, y:(i*173+17)%H, s:0.5+(i%3)*0.5, tw:i*0.6
+  }));
+  // 升空煙塵粒子池
+  const smoke=[];
+  // 星塵條紋（太空速度感）
+  const streaks = Array.from({length:40},(_,i)=>({
+    x:(i*61)%W, y:(i*211)%H, len:20+(i%5)*14, sp:1+(i%4)*0.5
+  }));
+  // 插旗慶祝粒子
+  const spark = Array.from({length:36},(_,i)=>({
+    a:(i/36)*Math.PI*2, sp:1+(i%5)*0.35,
+    color:['#ffbf3d','#3a6df0','#ff6a2b','#f3efe6'][i%4]
+  }));
+
+  function skyColor(loopT){
+    // 由地表天藍漸變到太空深黑
+    let g;
+    if(loopT < T_LIFT){
+      g = ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#0a1836'); g.addColorStop(0.55,'#2f5aa8'); g.addColorStop(1,'#88b7e6');
+    } else if(loopT < T_SPACE){
+      const p = easeInOut((loopT-T_LIFT)/(T_SPACE-T_LIFT));
+      g = ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0, mix('#0a1836','#05060d',p));
+      g.addColorStop(0.55, mix('#2f5aa8','#0a1024',p));
+      g.addColorStop(1, mix('#88b7e6','#141b3a',p));
+    } else {
+      g = ctx.createLinearGradient(0,0,0,H);
+      g.addColorStop(0,'#03040a'); g.addColorStop(1,'#0b0f22');
+    }
+    return g;
+  }
+  function mix(a,b,t){
+    const pa=hx(a), pb=hx(b);
+    return `rgb(${Math.round(lerp(pa[0],pb[0],t))},${Math.round(lerp(pa[1],pb[1],t))},${Math.round(lerp(pa[2],pb[2],t))})`;
+  }
+  function hx(h){ return [parseInt(h.slice(1,3),16),parseInt(h.slice(3,5),16),parseInt(h.slice(5,7),16)]; }
+
+  function drawStars(loopT, t){
+    const vis = loopT<T_LIFT ? 0 : clamp((loopT-T_LIFT)/(T_SPACE-T_LIFT),0,1);
+    if(vis<=0) return;
+    ctx.save();
+    stars.forEach(s=>{
+      const a = (0.4+0.5*Math.abs(Math.sin(t*2.2+s.tw)))*vis;
+      ctx.globalAlpha=a;
+      ctx.fillStyle='#fff';
+      ctx.beginPath(); ctx.arc(s.x,s.y,s.s,0,Math.PI*2); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawGround(loopT){
+    // 只有前期看得到發射台地面
+    const gy = 640;
+    const alpha = 1 - clamp((loopT-T_LIFT)/0.12,0,1);
+    if(alpha<=0) return;
+    ctx.save(); ctx.globalAlpha=alpha;
+    ctx.fillStyle='#26314a'; ctx.fillRect(0,gy,W,H-gy);
+    ctx.fillStyle='#1a2236'; ctx.fillRect(0,gy,W,8);
+    // 發射台
+    ctx.fillStyle='#39435c';
+    ctx.fillRect(W/2-70,gy-14,140,14);
+    // 支架
+    ctx.strokeStyle='#4a566f'; ctx.lineWidth=5;
+    ctx.beginPath(); ctx.moveTo(W/2-56,gy-14); ctx.lineTo(W/2-56,gy-120);
+    ctx.moveTo(W/2+56,gy-14); ctx.lineTo(W/2+56,gy-120); ctx.stroke();
+    ctx.restore();
+  }
+
+  function drawMoon(loopT){
+    if(loopT < T_SPACE) return;
+    // 月球從遠方放大靠近
+    let p;
+    if(loopT < T_APPR) p = (loopT-T_SPACE)/(T_APPR-T_SPACE);
+    else p = 1;
+    const r = lerp(30, 260, easeIn(clamp(p,0,1)));
+    const cx = W/2, cy = lerp(150, 640, easeInOut(clamp(p,0,1)));
+    ctx.save();
+    const g = ctx.createRadialGradient(cx-r*0.35,cy-r*0.35,r*0.2, cx,cy,r);
+    g.addColorStop(0,'#f4f1e4'); g.addColorStop(1,'#b9b6a6');
+    ctx.fillStyle=g;
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2); ctx.fill();
+    // 隕石坑
+    ctx.fillStyle='rgba(120,116,100,0.5)';
+    const craters=[[-0.4,-0.2,0.14],[0.3,0.1,0.18],[0.05,0.4,0.1],[-0.2,0.35,0.08],[0.45,-0.35,0.09]];
+    craters.forEach(c=>{
+      ctx.beginPath(); ctx.arc(cx+c[0]*r, cy+c[1]*r, c[2]*r, 0,Math.PI*2); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawRocket(x,y,scale,tilt){
+    ctx.save();
+    ctx.translate(x,y); ctx.rotate(tilt); ctx.scale(scale,scale);
+    // 機身
+    ctx.fillStyle='#eef1f6';
+    ctx.beginPath();
+    ctx.moveTo(0,-56);
+    ctx.quadraticCurveTo(20,-30,20,10);
+    ctx.lineTo(20,42); ctx.lineTo(-20,42); ctx.lineTo(-20,10);
+    ctx.quadraticCurveTo(-20,-30,0,-56);
+    ctx.closePath(); ctx.fill();
+    // 機頭
+    ctx.fillStyle='#ff6a2b';
+    ctx.beginPath();
+    ctx.moveTo(0,-56); ctx.quadraticCurveTo(20,-30,20,-8);
+    ctx.quadraticCurveTo(0,-20,-20,-8); ctx.quadraticCurveTo(-20,-30,0,-56);
+    ctx.closePath(); ctx.fill();
+    // 舷窗
+    ctx.fillStyle='#3a6df0';
+    ctx.beginPath(); ctx.arc(0,4,10,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,0.55)';
+    ctx.beginPath(); ctx.arc(-3,1,4,0,Math.PI*2); ctx.fill();
+    // 尾翼
+    ctx.fillStyle='#ff6a2b';
+    ctx.beginPath(); ctx.moveTo(-20,20); ctx.lineTo(-36,48); ctx.lineTo(-20,42); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(20,20); ctx.lineTo(36,48); ctx.lineTo(20,42); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function drawFlame(x,y,scale,power){
+    if(power<=0) return;
+    ctx.save();
+    ctx.translate(x,y+42*scale);
+    const len = (40+Math.sin(performance.now()/40)*10) * power * scale;
+    const w = 16*scale;
+    const g = ctx.createLinearGradient(0,0,0,len);
+    g.addColorStop(0,'#fff2b0'); g.addColorStop(0.4,'#ffbf3d'); g.addColorStop(1,'rgba(255,106,43,0)');
+    ctx.fillStyle=g;
+    ctx.beginPath();
+    ctx.moveTo(-w,0); ctx.quadraticCurveTo(0,len*0.5,0,len); ctx.quadraticCurveTo(0,len*0.5,w,0);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+
+  function spawnSmoke(x,y,power){
+    for(let i=0;i<power;i++){
+      smoke.push({
+        x:x+(Math.sin(smoke.length*1.3))*30, y:y+40,
+        vx:(smoke.length%2?1:-1)*(0.6+ (smoke.length%3)*0.5),
+        vy:0.4+ (smoke.length%3)*0.3,
+        r:8+(smoke.length%5)*4, life:1
+      });
+    }
+  }
+  function updateSmoke(){
+    for(let i=smoke.length-1;i>=0;i--){
+      const p=smoke[i];
+      p.x+=p.vx; p.y+=p.vy; p.r+=0.6; p.life-=0.018;
+      if(p.life<=0) smoke.splice(i,1);
+    }
+    if(smoke.length>140) smoke.splice(0,smoke.length-140);
+  }
+  function drawSmoke(){
+    ctx.save();
+    smoke.forEach(p=>{
+      ctx.globalAlpha=clamp(p.life,0,1)*0.5;
+      ctx.fillStyle='#d8d3c6';
+      ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2); ctx.fill();
+    });
+    ctx.restore();
+  }
+
+  function drawStreaks(loopT){
+    if(loopT<T_LIFT || loopT>=T_APPR) return;
+    const vis = clamp((loopT-T_LIFT)/0.1,0,1)*clamp((T_APPR-loopT)/0.1,0,1);
+    ctx.save();
+    ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=2;
+    streaks.forEach(s=>{
+      s.y=(s.y+ s.sp*6)%(H+40);
+      ctx.globalAlpha=vis*0.7;
+      ctx.beginPath(); ctx.moveTo(s.x,s.y); ctx.lineTo(s.x,s.y+s.len); ctx.stroke();
+    });
+    ctx.restore();
+  }
+
+  function drawCountdown(loopT){
+    if(loopT>=T_COUNT) return;
+    const seg = loopT/T_COUNT; // 0..1 over 3 numbers
+    const n = 3 - Math.floor(seg*3);
+    const localP = (seg*3)%1;
+    const sc = lerp(1.6,0.9,easeOut(localP));
+    const al = 1-easeIn(localP);
+    ctx.save();
+    ctx.globalAlpha=al;
+    ctx.fillStyle='#ffbf3d';
+    ctx.font='900 '+Math.round(120*sc)+'px -apple-system, sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillText(n, W/2, 300);
+    ctx.restore();
+  }
+
+  function drawLanding(loopT){
+    if(loopT<T_APPR) return;
+    const p=(loopT-T_APPR)/(1-T_APPR);
+    // 旗子（插在月面 y≈600）
+    const fx=W/2+70, fy=600;
+    const raise = easeOut(clamp(p*1.4,0,1));
+    ctx.save();
+    ctx.strokeStyle='#e8e4d6'; ctx.lineWidth=4;
+    ctx.beginPath(); ctx.moveTo(fx,fy); ctx.lineTo(fx,fy-70*raise); ctx.stroke();
+    ctx.fillStyle='#ff6a2b';
+    const flag = raise;
+    ctx.beginPath();
+    ctx.moveTo(fx,fy-70*raise);
+    ctx.lineTo(fx+46*flag, fy-58*raise);
+    ctx.lineTo(fx,fy-46*raise);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+    // 慶祝火花
+    if(p>0.25){
+      const cp=(p-0.25)/0.75;
+      ctx.save();
+      spark.forEach(s=>{
+        const r=cp*110*s.sp;
+        const px=W/2+Math.cos(s.a)*r, py=560+Math.sin(s.a)*r*0.7 - cp*30;
+        ctx.globalAlpha=clamp(1-cp,0,1);
+        ctx.fillStyle=s.color;
+        ctx.fillRect(px-3,py-3,6,6);
+      });
+      ctx.restore();
+    }
+  }
+
+  function frame(now){
+    if(!startTime) startTime=now;
+    const elapsed=now-startTime;
+    const loopT=(elapsed%DURATION)/DURATION;
+    if(loopT<0.005){ smoke.length=0; }
+
+    // 背景
+    ctx.fillStyle=skyColor(loopT);
+    ctx.fillRect(0,0,W,H);
+    drawStars(loopT, elapsed/1000);
+    drawStreaks(loopT);
+    drawMoon(loopT);
+    drawGround(loopT);
+
+    // 火箭位置
+    let rx=W/2, ry, scale=1, tilt=0, flamePow=0, cap='';
+
+    if(loopT<T_COUNT){
+      ry=600; flamePow=0.1+0.2*Math.abs(Math.sin(elapsed/120));
+      drawCountdown(loopT);
+      cap='🔥 引擎預熱 · 倒數中';
+    } else if(loopT<T_LIFT){
+      const p=(loopT-T_COUNT)/(T_LIFT-T_COUNT);
+      ry=lerp(600,560,easeIn(p));
+      flamePow=lerp(0.5,1.4,p);
+      rx=W/2+Math.sin(elapsed/30)*2; // 抖動
+      spawnSmoke(W/2,620,4);
+      cap='🚀 點火升空！';
+    } else if(loopT<T_SPACE){
+      const p=(loopT-T_LIFT)/(T_SPACE-T_LIFT);
+      ry=lerp(560,340,easeInOut(p));
+      flamePow=1.3;
+      if(p<0.4) spawnSmoke(W/2,ry+50,2);
+      cap='🌫️ 穿越大氣層…';
+    } else if(loopT<T_APPR){
+      const p=(loopT-T_SPACE)/(T_APPR-T_SPACE);
+      ry=lerp(340,470,easeInOut(p));
+      scale=lerp(1,0.8,p);
+      tilt=lerp(0,0.25,p);
+      flamePow=lerp(1.2,0.5,p);
+      cap='🌙 逼近月球…';
+    } else {
+      const p=(loopT-T_APPR)/(1-T_APPR);
+      ry=lerp(470,545,easeOut(clamp(p*1.5,0,1)));
+      scale=0.78; tilt=0.25;
+      flamePow=lerp(0.5,0,clamp(p*2,0,1));
+      cap='🏁 登陸成功！人類的一大步！';
+    }
+
+    updateSmoke();
+    drawSmoke();
+    drawFlame(rx,ry,scale,flamePow);
+    drawRocket(rx,ry,scale,tilt);
+    drawLanding(loopT);
+
+    capEl.textContent=cap;
+    requestAnimationFrame(frame);
+  }
+
+  replayBtn.addEventListener('click',()=>{ startTime=null; smoke.length=0; });
+  requestAnimationFrame(frame);
+})();
+</script>
