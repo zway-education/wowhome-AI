@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="Claude">
+<title>魔法覺醒 遊戲介紹</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #070b14;
+    font-family: 'Segoe UI', 'PingFang TC', 'Noto Sans TC', sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 50%;
+    background: rgba(15,20,35,0.7); border: 1px solid rgba(56,225,255,0.5);
+    color: #dfe9ff; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 18px; right: 68px; z-index: 20;
+    color: #dfe9ff; font-size: 14px; text-shadow: 0 0 4px #000;
+    animation: hintFade 3.2s ease forwards;
+    pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 12%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 42px; font-size: 20px; min-height: 48px;
+    background: linear-gradient(92deg,#38e1ff,#4f7cff);
+    color: #04121c; font-weight: 900;
+    border: none; border-radius: 10px; cursor: pointer;
+    font-family: inherit;
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音效 🎧 建議戴耳機</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ---------- 音效（預設靜音,合成、零外部資源）----------
+let audioCtx = null, soundOn = false;
+let ambientNodes = null;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn && !audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (soundOn) startAmbient(); else stopAmbient();
+});
+
+// 夢幻魔法環境音：柔和和弦墊 + 閃爍琶音
+function startAmbient() {
+  if (!audioCtx || ambientNodes) return;
+  const t = audioCtx.currentTime;
+  const master = audioCtx.createGain();
+  master.gain.setValueAtTime(0.001, t);
+  master.gain.exponentialRampToValueAtTime(0.8, t + 1.5);
+  master.connect(audioCtx.destination);
+  const pad = [220, 277.18, 329.63];
+  const padOscs = pad.map(f => {
+    const o = audioCtx.createOscillator();
+    o.type = 'sine'; o.frequency.setValueAtTime(f, t);
+    const g = audioCtx.createGain(); g.gain.setValueAtTime(0.05, t);
+    o.connect(g).connect(master);
+    o.start(t);
+    return { o, g };
+  });
+  const ARP = [523.25, 659.25, 783.99, 987.77, 783.99, 659.25];
+  let idx = 0;
+  function pluck() {
+    if (!ambientNodes) return;
+    const freq = ARP[idx % ARP.length]; idx++;
+    const now = audioCtx.currentTime;
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.type = 'triangle'; o.frequency.setValueAtTime(freq, now);
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(0.09, now + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+    o.connect(g).connect(master);
+    o.start(now); o.stop(now + 0.75);
+    ambientNodes.timer = setTimeout(pluck, 420);
+  }
+  ambientNodes = { padOscs, master, timer: null };
+  setTimeout(pluck, 400);
+}
+function stopAmbient() {
+  if (!ambientNodes) return;
+  const t = audioCtx.currentTime;
+  clearTimeout(ambientNodes.timer);
+  ambientNodes.master.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  ambientNodes.padOscs.forEach(({ o }) => o.stop(t + 0.5));
+  ambientNodes = null;
+}
+function cast(freq, dur, type) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+  o.type = type || 'sawtooth';
+  o.frequency.setValueAtTime(freq, t);
+  o.frequency.exponentialRampToValueAtTime(freq * 1.8, t + dur * 0.5);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.22, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.setValueAtTime(3200, t);
+  o.connect(f).connect(g).connect(audioCtx.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function impact(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const n = Math.floor(audioCtx.sampleRate * 0.3);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'lowpass'; f.frequency.setValueAtTime(1400, t);
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, t);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+function chime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [660, 880, 1100, 1320].forEach((fq, i) => {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(fq, t + i * 0.08);
+    g.gain.setValueAtTime(0.0001, t + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.18, t + i * 0.08 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + i * 0.08 + 0.3);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t + i * 0.08); osc.stop(t + i * 0.08 + 0.32);
+  });
+}
+
+// ---------- 緩動 ----------
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+// ---------- 品牌配色 ----------
+const BRAND = { cyan: '#38e1ff', blue: '#4f7cff', purple: '#9a6bff', pink: '#ff6cc7', gold: '#ffcf5c' };
+
+// ---------- 星空 + 浮動法陣背景 ----------
+const STARS = Array.from({ length: 90 }, () => ({
+  x: Math.random() * GAME_W, y: Math.random() * GAME_H,
+  r: Math.random() * 1.6 + 0.4, ph: Math.random() * Math.PI * 2, sp: 0.6 + Math.random() * 1.2
+}));
+function drawBackground(t, hue) {
+  const g = ctx.createRadialGradient(GAME_W / 2, GAME_H * 0.4, 40, GAME_W / 2, GAME_H * 0.5, GAME_W * 0.8);
+  g.addColorStop(0, hue || '#101a33');
+  g.addColorStop(1, '#050810');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  for (const s of STARS) {
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * s.sp + s.ph));
+    ctx.fillStyle = `rgba(220,235,255,${tw * 0.8})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2); ctx.fill();
+  }
+  // 中央緩慢旋轉法陣
+  ctx.save();
+  ctx.translate(GAME_W / 2, GAME_H / 2);
+  ctx.globalAlpha = 0.12;
+  ctx.rotate(t * 0.06);
+  ctx.strokeStyle = BRAND.cyan;
+  ctx.lineWidth = 1.5;
+  for (const rr of [150, 210, 260]) { ctx.beginPath(); ctx.arc(0, 0, rr, 0, Math.PI * 2); ctx.stroke(); }
+  ctx.rotate(-t * 0.09);
+  ctx.strokeStyle = BRAND.purple;
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2;
+    ctx.beginPath(); ctx.moveTo(Math.cos(a) * 150, Math.sin(a) * 150); ctx.lineTo(Math.cos(a) * 260, Math.sin(a) * 260); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ---------- 角色（多部件小法師：袍子、髮型、法杖光暈）----------
+function drawWizard(x, y, size, color, hairColor, t, faceDir) {
+  faceDir = faceDir || 1;
+  const bob = Math.sin(t * 2.4) * size * 0.04;
+  ctx.save();
+  ctx.translate(x, y + bob);
+  ctx.scale(faceDir, 1);
+  // 光環底座
+  ctx.fillStyle = `rgba(${hexToRgb(color)},0.18)`;
+  ctx.beginPath(); ctx.ellipse(0, size * 0.5, size * 0.42, size * 0.12, 0, 0, Math.PI * 2); ctx.fill();
+  // 袍子
+  const robe = ctx.createLinearGradient(-size * 0.3, -size * 0.1, size * 0.3, size * 0.5);
+  robe.addColorStop(0, color);
+  robe.addColorStop(1, shade(color, -0.35));
+  ctx.fillStyle = robe;
+  ctx.beginPath();
+  ctx.moveTo(-size * 0.22, -size * 0.08);
+  ctx.quadraticCurveTo(-size * 0.34, size * 0.28, -size * 0.36, size * 0.48);
+  ctx.lineTo(size * 0.36, size * 0.48);
+  ctx.quadraticCurveTo(size * 0.34, size * 0.28, size * 0.22, -size * 0.08);
+  ctx.quadraticCurveTo(0, size * 0.02, -size * 0.22, -size * 0.08);
+  ctx.closePath(); ctx.fill();
+  // 袍子花紋
+  ctx.strokeStyle = `rgba(255,255,255,0.4)`;
+  ctx.lineWidth = Math.max(1, size * 0.015);
+  ctx.beginPath(); ctx.moveTo(0, -size * 0.05); ctx.lineTo(0, size * 0.46); ctx.stroke();
+  // 頭
+  ctx.beginPath(); ctx.arc(0, -size * 0.28, size * 0.19, 0, Math.PI * 2);
+  ctx.fillStyle = '#f4d9b8'; ctx.fill();
+  // 頭髮
+  ctx.fillStyle = hairColor;
+  ctx.beginPath();
+  ctx.arc(0, -size * 0.32, size * 0.2, Math.PI, Math.PI * 2.15);
+  ctx.quadraticCurveTo(size * 0.2, -size * 0.1, size * 0.12, -size * 0.05);
+  ctx.quadraticCurveTo(size * 0.02, -size * 0.15, -size * 0.05, -size * 0.05);
+  ctx.quadraticCurveTo(-size * 0.14, -size * 0.1, -size * 0.2, -size * 0.14);
+  ctx.closePath(); ctx.fill();
+  // 臉：眼睛+微笑
+  ctx.fillStyle = '#2a1c14';
+  ctx.beginPath(); ctx.arc(size * 0.06, -size * 0.28, size * 0.02, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(-size * 0.03, -size * 0.28, size * 0.02, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#8a5638'; ctx.lineWidth = size * 0.012;
+  ctx.beginPath(); ctx.arc(size * 0.015, -size * 0.24, size * 0.03, 0.15, Math.PI - 0.15); ctx.stroke();
+  // 法杖 + 頂端光球（跟隨呼吸脈動）
+  const wandPulse = 0.75 + 0.25 * Math.sin(t * 5);
+  ctx.strokeStyle = '#caa46a'; ctx.lineWidth = size * 0.03; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(size * 0.3, size * 0.4); ctx.lineTo(size * 0.4, -size * 0.32); ctx.stroke();
+  const orbGrad = ctx.createRadialGradient(size * 0.4, -size * 0.36, 1, size * 0.4, -size * 0.36, size * 0.14);
+  orbGrad.addColorStop(0, '#fff');
+  orbGrad.addColorStop(0.4, color);
+  orbGrad.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = orbGrad;
+  ctx.beginPath(); ctx.arc(size * 0.4, -size * 0.36, size * 0.14 * wandPulse, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return `${(n >> 16) & 255},${(n >> 8) & 255},${n & 255}`;
+}
+function shade(hex, amt) {
+  const n = parseInt(hex.slice(1), 16);
+  let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  r = clamp(Math.round(r + (amt < 0 ? r : 255 - r) * amt), 0, 255);
+  g = clamp(Math.round(g + (amt < 0 ? g : 255 - g) * amt), 0, 255);
+  b = clamp(Math.round(b + (amt < 0 ? b : 255 - b) * amt), 0, 255);
+  return `rgb(${r},${g},${b})`;
+}
+
+// ---------- 小怪（供魔法擊中）----------
+function drawSlime(x, y, size, color, t, squish) {
+  squish = squish || 0;
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(1 + squish * 0.3, 1 - squish * 0.35);
+  const g = ctx.createRadialGradient(-size * 0.2, -size * 0.3, 2, 0, 0, size);
+  g.addColorStop(0, shade(color, 0.4));
+  g.addColorStop(1, color);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.1, size * 0.5, size * 0.42, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#1a1420';
+  ctx.beginPath(); ctx.arc(-size * 0.12, size * 0.02, size * 0.05, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size * 0.12, size * 0.02, size * 0.05, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- 特效：元素攻擊 ----------
+function fireBall(x, y, r, alpha) {
+  const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+  g.addColorStop(0, '#fff3d0'); g.addColorStop(0.4, '#ff7e3d'); g.addColorStop(1, 'rgba(255,60,20,0)');
+  ctx.fillStyle = g; ctx.globalAlpha = alpha;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+function iceSpike(x, y, size, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y);
+  ctx.fillStyle = BRAND.cyan;
+  ctx.beginPath(); ctx.moveTo(0, -size); ctx.lineTo(size * 0.3, size * 0.4); ctx.lineTo(-size * 0.3, size * 0.4); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.beginPath(); ctx.moveTo(0, -size * 0.8); ctx.lineTo(size * 0.1, size * 0.3); ctx.lineTo(-size * 0.05, size * 0.3); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function lightning(x0, y0, x1, y1, alpha, seed) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#ffe066'; ctx.lineWidth = 3; ctx.shadowColor = '#ffe066'; ctx.shadowBlur = 14;
+  ctx.beginPath(); ctx.moveTo(x0, y0);
+  const segs = 6;
+  let s = seed || 1;
+  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  for (let i = 1; i < segs; i++) {
+    const k = i / segs;
+    const px = x0 + (x1 - x0) * k + (rnd() - 0.5) * 26;
+    const py = y0 + (y1 - y0) * k + (rnd() - 0.5) * 26;
+    ctx.lineTo(px, py);
+  }
+  ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.shadowBlur = 0;
+  ctx.restore();
+}
+function windBlade(x, y, angle, size, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(x, y); ctx.rotate(angle);
+  ctx.strokeStyle = BRAND.purple; ctx.lineWidth = 4; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(0, 0, size, -0.6, 0.6); ctx.stroke();
+  ctx.restore();
+}
+function lightBeam(x0, y0, x1, y1, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  const g = ctx.createLinearGradient(x0, y0, x1, y1);
+  g.addColorStop(0, 'rgba(255,255,255,0.1)'); g.addColorStop(0.5, '#ffd9f6'); g.addColorStop(1, 'rgba(255,217,246,0.1)');
+  ctx.strokeStyle = g; ctx.lineWidth = 7; ctx.shadowColor = '#ffd9f6'; ctx.shadowBlur = 18;
+  ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1); ctx.stroke();
+  ctx.shadowBlur = 0; ctx.restore();
+}
+function darkOrb(x, y, r, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha;
+  const g = ctx.createRadialGradient(x, y, 1, x, y, r);
+  g.addColorStop(0, '#c9a8ff'); g.addColorStop(0.5, BRAND.purple); g.addColorStop(1, 'rgba(30,10,50,0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+}
+function particles(x, y, color, n, spread, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha; ctx.fillStyle = color;
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    const d = spread * (0.5 + 0.5 * Math.sin(i * 12.9));
+    ctx.beginPath(); ctx.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, 2.4, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 字幕
+function subtitle(text, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = "bold 24px 'Segoe UI', 'PingFang TC', sans-serif";
+  const y = GAME_H - 56;
+  ctx.fillStyle = 'rgba(5,8,16,0.65)';
+  const w = ctx.measureText(text).width + 44;
+  ctx.beginPath();
+  ctx.roundRect(GAME_W / 2 - w / 2, y - 32, w, 48, 12);
+  ctx.fill();
+  ctx.fillStyle = '#dfe9ff';
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+
+// ---------- 六大元素定義 ----------
+const ELEMENTS = [
+  { key: 'fire',    name: '烈焰魔法', icon: '🔥', color: '#ff7e3d', hair: '#8a2b1a' },
+  { key: 'ice',     name: '寒冰魔法', icon: '❄️', color: '#38e1ff', hair: '#1c3a52' },
+  { key: 'thunder', name: '雷霆魔法', icon: '⚡', color: '#ffe066', hair: '#7a5c00' },
+  { key: 'wind',    name: '疾風魔法', icon: '🌪️', color: '#7fffb0', hair: '#245c3a' },
+  { key: 'light',   name: '聖光魔法', icon: '✨', color: '#ffd9f6', hair: '#c9a8e0' },
+  { key: 'dark',    name: '暗影魔法', icon: '🌑', color: '#9a6bff', hair: '#181022' },
+];
+
+// ---------- 時間軸（總長約 30 秒,三幕結構）----------
+// 第一幕 0-5s 開場標題；第二幕 5-24s 六元素輪播展示；第三幕 24-30s 高潮+CTA
+const TIMELINE = 30;
+let startTime = null, playing = false;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+
+  if (t < 5) {
+    // ===== 第一幕：星空法陣 + 標題浮現 =====
+    drawBackground(t, '#141c38');
+    const tp = clamp((t - 0.6) / 1.4, 0, 1);
+    // 六色粒子環繞爆發
+    if (t > 0.6) particles(GAME_W / 2, GAME_H * 0.42, BRAND.cyan, 40, 60 + t * 30, clamp(1 - (t - 0.6) / 3, 0, 0.5));
+    if (t > 0.6) cue('titleBurst', () => chime());
+    ctx.save();
+    ctx.globalAlpha = easeOut(tp);
+    ctx.textAlign = 'center';
+    ctx.font = `900 ${58 + (1 - easeOut(tp)) * 30}px 'Segoe UI', 'PingFang TC', sans-serif`;
+    const grad = ctx.createLinearGradient(GAME_W * 0.25, 0, GAME_W * 0.75, 0);
+    grad.addColorStop(0, BRAND.cyan); grad.addColorStop(0.5, BRAND.blue); grad.addColorStop(1, BRAND.purple);
+    ctx.fillStyle = grad;
+    ctx.shadowColor = BRAND.cyan; ctx.shadowBlur = 24;
+    ctx.fillText('魔法覺醒', GAME_W / 2, GAME_H * 0.42);
+    ctx.shadowBlur = 0;
+    if (t > 2.2) {
+      ctx.globalAlpha = clamp((t - 2.2) / 0.8, 0, 1);
+      ctx.font = "22px 'Segoe UI', 'PingFang TC', sans-serif";
+      ctx.fillStyle = '#9db3d8';
+      ctx.fillText('選一位角色，覺醒你的專屬魔法', GAME_W / 2, GAME_H * 0.52);
+    }
+    ctx.restore();
+    if (t > 3.4) subtitle('六大元素，一起冒險吧！', clamp((t - 3.4) / 0.6, 0, 1));
+  } else if (t < 24) {
+    // ===== 第二幕：六元素輪播展示,每個 3.2 秒 =====
+    const segDur = 19 / 6;
+    const seg = Math.floor((t - 5) / segDur);
+    const el = ELEMENTS[clamp(seg, 0, 5)];
+    const lp = (t - 5 - seg * segDur) / segDur; // 0..1 within this element's segment
+    drawBackground(t, shade(el.color, -0.75));
+
+    const wizX = GAME_W * 0.28, wizY = GAME_H * 0.6;
+    const targetX = GAME_W * 0.72, targetY = GAME_H * 0.56;
+
+    // 怪物受擊縮放
+    const hitP = clamp((lp - 0.35) / 0.25, 0, 1);
+    const squish = hitP > 0 && hitP < 1 ? Math.sin(hitP * Math.PI) : 0;
+    drawSlime(targetX, targetY, 60, shade(el.color, -0.2), t, squish);
+
+    drawWizard(wizX, wizY, 130, el.color, el.hair, t, 1);
+
+    // 施法動畫：0.15~0.35 蓄力,0.35 命中
+    const cast_p = clamp((lp - 0.12) / 0.22, 0, 1);
+    if (cast_p > 0 && cast_p < 1) {
+      const cx = wizX + 130 * 0.4, cy = wizY - 130 * 0.36;
+      particles(cx, cy, el.color, 14, 20 + cast_p * 20, 0.7);
+    }
+    if (lp > 0.34 && lp < 0.75) {
+      const hp = clamp((lp - 0.34) / 0.06, 0, 1);
+      const fromX = wizX + 130 * 0.4, fromY = wizY - 130 * 0.36;
+      if (el.key === 'fire') fireBall(fromX + (targetX - fromX) * hp, fromY + (targetY - fromY) * hp, 26, 1);
+      else if (el.key === 'ice') iceSpike(targetX, targetY - 20, 42, clamp((lp - 0.34) / 0.15, 0, 1));
+      else if (el.key === 'thunder') lightning(fromX, fromY, targetX, targetY, 1, Math.floor(t * 20) % 97 + 1);
+      else if (el.key === 'wind') windBlade(fromX + (targetX - fromX) * hp, fromY + (targetY - fromY) * hp, -0.3, 30, 1);
+      else if (el.key === 'light') lightBeam(fromX, fromY, targetX, targetY, 1);
+      else darkOrb(fromX + (targetX - fromX) * hp, fromY + (targetY - fromY) * hp, 28, 1);
+      if (hp > 0.85) { particles(targetX, targetY, el.color, 24, 50, clamp(1 - (lp - 0.4) / 0.35, 0, 0.9)); }
+    }
+    if (lp > 0.36) cue('hit' + seg, () => { impact(0.3); cast(el.key === 'ice' ? 900 : el.key === 'thunder' ? 1400 : 500, 0.25); });
+    if (lp < 0.1) cue('cast' + seg, () => cast(600, 0.2, 'sine'));
+
+    // 角色標籤卡（左上）
+    ctx.save();
+    ctx.globalAlpha = clamp(lp / 0.2, 0, 1) * clamp((1 - lp) / 0.1 + 1, 0, 1);
+    ctx.textAlign = 'left';
+    ctx.font = '32px sans-serif';
+    ctx.fillText(el.icon, 36, 68);
+    ctx.font = "900 26px 'Segoe UI', 'PingFang TC', sans-serif";
+    ctx.fillStyle = el.color;
+    ctx.shadowColor = el.color; ctx.shadowBlur = 10;
+    ctx.fillText(el.name, 80, 66);
+    ctx.shadowBlur = 0;
+    ctx.restore();
+
+    // 元素圖鑑進度點
+    ctx.save();
+    for (let i = 0; i < ELEMENTS.length; i++) {
+      ctx.fillStyle = i === seg ? ELEMENTS[i].color : 'rgba(255,255,255,0.25)';
+      ctx.beginPath(); ctx.arc(GAME_W / 2 - 55 + i * 22, 30, i === seg ? 6 : 4, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+
+    subtitle('六位角色、六種魔法技能，各有絕招', clamp((t - 5.5) / 0.8, 0, 1) * clamp((24 - t) / 0.8, 0, 1));
+  } else {
+    // ===== 第三幕：全員集合 + CTA =====
+    const p = (t - 24) / 6;
+    drawBackground(t, '#181233');
+    // 六位法師呈扇形排開
+    for (let i = 0; i < ELEMENTS.length; i++) {
+      const el = ELEMENTS[i];
+      const spread = easeOut(clamp(p * 1.6, 0, 1));
+      const angle = (i - 2.5) / 5 * 1.1;
+      const rad = 220 * spread;
+      const px = GAME_W / 2 + Math.sin(angle) * rad;
+      const py = GAME_H * 0.62 - Math.cos(angle) * 40 * spread;
+      drawWizard(px, py, 92, el.color, el.hair, t + i, Math.sin(angle) >= 0 ? 1 : -1);
+    }
+    if (p > 0.15) cue('lineup', () => chime());
+    if (t < 27.4) {
+      subtitle('集結你的魔法夥伴，展開冒險！', clamp((t - 24.3) / 0.6, 0, 1));
+    } else {
+      const cta = clamp((t - 27.4) / 0.9, 0, 1);
+      particles(GAME_W / 2, GAME_H * 0.3, BRAND.gold, 30, 40 + cta * 40, easeOut(cta) * 0.6);
+      ctx.save();
+      ctx.globalAlpha = easeOut(cta);
+      ctx.textAlign = 'center';
+      ctx.font = "900 44px 'Segoe UI', 'PingFang TC', sans-serif";
+      const grad = ctx.createLinearGradient(GAME_W * 0.25, 0, GAME_W * 0.75, 0);
+      grad.addColorStop(0, BRAND.cyan); grad.addColorStop(0.5, BRAND.blue); grad.addColorStop(1, BRAND.purple);
+      ctx.fillStyle = grad;
+      ctx.shadowColor = BRAND.cyan; ctx.shadowBlur = 20;
+      ctx.fillText('魔法覺醒', GAME_W / 2, GAME_H * 0.35);
+      ctx.shadowBlur = 0;
+      ctx.font = "22px 'Segoe UI', 'PingFang TC', sans-serif";
+      ctx.fillStyle = '#dfe9ff';
+      ctx.fillText('鍵盤／觸控雙支援 · 立即遊玩', GAME_W / 2, GAME_H * 0.44);
+      ctx.restore();
+      cue('ctaChime', () => chime());
+    }
+  }
+
+  // 全程輕微暗角
+  const edge = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.35, GAME_W / 2, GAME_H / 2, GAME_W * 0.75);
+  edge.addColorStop(0, 'rgba(0,0,0,0)');
+  edge.addColorStop(1, 'rgba(0,0,0,0.4)');
+  ctx.fillStyle = edge;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) startTime = now;
+  const t = (now - startTime) / 1000;
+  if (t >= TIMELINE) {
+    draw(TIMELINE - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  playing = true;
+  replayBtn.style.display = 'none';
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+</script>
+</body>
+</html>
