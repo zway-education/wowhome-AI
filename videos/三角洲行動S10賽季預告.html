@@ -70,6 +70,7 @@ soundBtn.addEventListener('click', () => {
     try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
   }
   if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (soundOn) startMusic(); else stopMusic();
 });
 // 低頻衝擊（標題落下、爆音）
 function boom(vol) {
@@ -701,11 +702,95 @@ function knifeMist(cx, cy, r, t, alpha) {
   ctx.restore();
 }
 
+// ========== 背景音樂：戰術風格合成配樂（零音檔，鼓點＋低音脈衝＋琶音）==========
+let musicGain = null, musicTimer = null, musicNextNoteTime = 0, musicBeat = 0;
+const MUSIC_BPM = 132, MUSIC_STEP = 60 / MUSIC_BPM / 2; // 8分音符步進
+const MUSIC_BASS = [55, 55, 61.74, 55, 58.27, 55, 61.74, 49]; // A1 附近低音行進，戰術感小調
+const MUSIC_ARP = [220, 261.63, 329.63, 261.63, 246.94, 293.66, 349.23, 293.66]; // A小調系琶音
+
+function scheduleKick(time, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(120, time);
+  osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+  g.gain.setValueAtTime(vol, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
+  osc.connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + 0.18);
+}
+function scheduleHat(time, vol, open) {
+  const dur = open ? 0.16 : 0.045;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 6500;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  src.connect(f).connect(g).connect(musicGain);
+  src.start(time);
+}
+function scheduleBass(time, freq, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, time);
+  const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 340; f.Q.value = 1.2;
+  g.gain.setValueAtTime(0.0001, time);
+  g.gain.linearRampToValueAtTime(vol, time + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, time + MUSIC_STEP * 1.8);
+  osc.connect(f).connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + MUSIC_STEP * 2);
+}
+function scheduleArp(time, freq, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, time);
+  g.gain.setValueAtTime(0.0001, time);
+  g.gain.linearRampToValueAtTime(vol, time + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, time + MUSIC_STEP * 0.9);
+  osc.connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + MUSIC_STEP);
+}
+function musicScheduler() {
+  if (!audioCtx) return;
+  while (musicNextNoteTime < audioCtx.currentTime + 0.12) {
+    const step = musicBeat % 8;
+    scheduleKick(musicNextNoteTime, step % 4 === 0 ? 0.24 : (step % 2 === 0 ? 0.1 : 0));
+    scheduleHat(musicNextNoteTime, step % 2 === 1 ? 0.05 : 0.025, step === 6);
+    if (step % 2 === 0) scheduleBass(musicNextNoteTime, MUSIC_BASS[(musicBeat / 2 | 0) % MUSIC_BASS.length], 0.1);
+    scheduleArp(musicNextNoteTime, MUSIC_ARP[musicBeat % MUSIC_ARP.length], 0.045);
+    musicNextNoteTime += MUSIC_STEP;
+    musicBeat++;
+  }
+  musicTimer = setTimeout(musicScheduler, 40);
+}
+function startMusic() {
+  if (!audioCtx || !soundOn || musicTimer) return;
+  if (!musicGain) {
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.5;
+    musicGain.connect(audioCtx.destination);
+  }
+  musicGain.gain.cancelScheduledValues(audioCtx.currentTime);
+  musicGain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+  musicNextNoteTime = audioCtx.currentTime + 0.05;
+  musicBeat = 0;
+  musicScheduler();
+}
+function stopMusic() {
+  if (musicTimer) { clearTimeout(musicTimer); musicTimer = null; }
+  if (musicGain && audioCtx) {
+    musicGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    musicGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.15);
+  }
+}
+
 // ========== 時間軸（總長約 33 秒，三幕結構）==========
 // 第一幕 0-8s：S10 賽季標題登場
 // 第二幕 8-15s 全新地圖 · 15-22s 新幹員液氮 · 22-28s 新刀皮
 // 第三幕 28-33s：高潮 + CTA
-const TIMELINE = 33;
+const TIMELINE = 33, DURATION = 40, TIME_SCALE = TIMELINE / DURATION;
 let startTime = null, playing = false, lastNow = 0;
 let firedCues = {};
 function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
@@ -973,14 +1058,16 @@ function draw(t) {
 function loop(now) {
   if (!playing) return;
   if (startTime === null) { startTime = now; lastNow = now; }
-  const dt = Math.min((now - lastNow) / 1000, 0.05);
+  const dt = Math.min((now - lastNow) / 1000, 0.05) * TIME_SCALE;
   lastNow = now;
-  const t = (now - startTime) / 1000;
+  const realSec = (now - startTime) / 1000;
+  const t = realSec * TIME_SCALE;
   updateParticles(dt, 1);
-  if (t >= TIMELINE) {
+  if (realSec >= DURATION) {
     draw(TIMELINE - 0.01);
     playing = false;
     replayBtn.style.display = 'block';
+    stopMusic();
     return;
   }
   draw(t);
@@ -994,6 +1081,7 @@ function play() {
   shake = 0;
   playing = true;
   replayBtn.style.display = 'none';
+  if (soundOn) { stopMusic(); startMusic(); }
   requestAnimationFrame(loop);
 }
 replayBtn.addEventListener('click', play);
