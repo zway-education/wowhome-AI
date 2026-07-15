@@ -75,28 +75,82 @@ soundBtn.addEventListener('click', () => {
   if (soundOn) startAmbient(); else stopAmbient();
 });
 
+// 恐怖環境音：失諧雙低音墊＋陰森音樂盒旋律
 function startAmbient() {
   if (!audioCtx || ambientNodes) return;
+  const t = audioCtx.currentTime;
   const master = audioCtx.createGain();
-  master.gain.value = 0.16;
+  master.gain.setValueAtTime(0.001, t);
+  master.gain.exponentialRampToValueAtTime(0.9, t + 2);
   master.connect(audioCtx.destination);
 
-  const osc1 = audioCtx.createOscillator();
-  osc1.type = 'sine'; osc1.frequency.value = 48;
-  const osc2 = audioCtx.createOscillator();
-  osc2.type = 'sine'; osc2.frequency.value = 51;
-  const g = audioCtx.createGain(); g.gain.value = 0.5;
-  osc1.connect(g); osc2.connect(g); g.connect(master);
-  osc1.start(); osc2.start();
+  const drone = audioCtx.createOscillator();
+  drone.type = 'sawtooth'; drone.frequency.setValueAtTime(48, t);
+  const drone2 = audioCtx.createOscillator();
+  drone2.type = 'sawtooth'; drone2.frequency.setValueAtTime(48.7, t);
+  const droneFilter = audioCtx.createBiquadFilter();
+  droneFilter.type = 'lowpass'; droneFilter.frequency.setValueAtTime(130, t);
+  const droneGain = audioCtx.createGain();
+  droneGain.gain.setValueAtTime(0.045, t);
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.setValueAtTime(0.17, t);
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.setValueAtTime(7, t);
+  lfo.connect(lfoGain).connect(drone.frequency);
+  drone.connect(droneFilter); drone2.connect(droneFilter);
+  droneFilter.connect(droneGain).connect(master);
+  drone.start(t); drone2.start(t); lfo.start(t);
 
-  ambientNodes = { master, osc1, osc2 };
+  // 音樂盒旋律：A 小調，緩慢、失諧泛音＋回音
+  const MELODY = [
+    [220.0, 1.6], [261.63, 1.6], [246.94, 2.4], [0, 1.2],
+    [220.0, 1.6], [174.61, 1.6], [164.81, 3.2], [0, 2.4],
+    [261.63, 1.6], [246.94, 1.6], [220.0, 2.4], [0, 1.2],
+    [146.83, 1.6], [164.81, 1.6], [220.0, 4.0], [0, 3.2],
+  ];
+  const echo = audioCtx.createDelay(1.2);
+  echo.delayTime.setValueAtTime(0.55, t);
+  const echoFb = audioCtx.createGain();
+  echoFb.gain.setValueAtTime(0.42, t);
+  const echoOut = audioCtx.createGain();
+  echoOut.gain.setValueAtTime(0.5, t);
+  echo.connect(echoFb).connect(echo);
+  echo.connect(echoOut).connect(master);
+  let noteIdx = 0;
+  function pluck(freq, when) {
+    for (const [mult, vol] of [[1, 0.055], [2.01, 0.022], [3.02, 0.009]]) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq * mult, when);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(vol, when + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 2.2);
+      osc.connect(g);
+      g.connect(master);
+      g.connect(echo);
+      osc.start(when);
+      osc.stop(when + 2.3);
+    }
+  }
+  function scheduleNext() {
+    if (!ambientNodes) return;
+    const [freq, dur] = MELODY[noteIdx % MELODY.length];
+    noteIdx++;
+    if (freq > 0) pluck(freq, audioCtx.currentTime + 0.05);
+    ambientNodes.melodyTimer = setTimeout(scheduleNext, dur * 1000);
+  }
+  ambientNodes = { drone, drone2, lfo, master, melodyTimer: null };
+  setTimeout(scheduleNext, 800);
 }
 function stopAmbient() {
   if (!ambientNodes) return;
-  try {
-    ambientNodes.osc1.stop(); ambientNodes.osc2.stop();
-    ambientNodes.master.disconnect();
-  } catch (e) {}
+  const t = audioCtx.currentTime;
+  clearTimeout(ambientNodes.melodyTimer);
+  ambientNodes.master.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  ambientNodes.drone.stop(t + 0.5);
+  ambientNodes.drone2.stop(t + 0.5);
+  ambientNodes.lfo.stop(t + 0.5);
   ambientNodes = null;
 }
 function thump(vol) {
