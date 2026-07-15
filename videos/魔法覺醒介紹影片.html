@@ -57,6 +57,17 @@
     box-shadow:0 8px 24px rgba(56,225,255,0.35);
   }
   .hint{ font-size:12px; color:#7488a8; margin-top:14px; line-height:1.7; }
+  .pet-btn{
+    width:66px; min-height:76px; border-radius:12px;
+    border:2px solid rgba(255,255,255,0.15); background:rgba(255,255,255,0.04);
+    color:#fff; font-size:10px; font-weight:700;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:2px;
+    transition:transform .15s, border-color .15s, background .15s, opacity .2s;
+    opacity:0.4;
+  }
+  .pet-btn.sel{ opacity:1; transform:translateY(-3px) scale(1.06); border-color:#ffcf5c; background:rgba(255,207,92,0.16); box-shadow:0 0 12px rgba(255,207,92,0.45); }
+  .pet-btn .picon{ font-size:24px; }
+  .pet-desc{ color:#dfe9ff; font-size:15px; font-weight:800; margin-top:10px; min-height:20px; }
 
   #hud{
     position:absolute; top:0; left:0; right:0; padding:10px 14px;
@@ -140,10 +151,26 @@
     </div>
   </div>
 
+  <div class="ui-layer" id="screenPets">
+    <div class="panel" style="max-width:min(94vw,640px);">
+      <div class="title-grad" style="font-size:22px;">選擇寵物（最多 2 隻）</div>
+      <p class="subtitle" style="margin-bottom:6px;">十二隻夥伴寵物，各有攻擊／治癒／守護專長</p>
+      <div class="row" id="petRow"></div>
+      <div class="pet-desc" id="petTypeDesc"></div>
+    </div>
+  </div>
+
+  <div class="ui-layer" id="screenStage" style="align-items:flex-start; padding-top:8%;">
+    <div class="panel" style="max-width:min(94vw,460px); padding:16px 24px; background:rgba(10,14,26,0.72); border-color:rgba(255,255,255,0.2);">
+      <div class="title-grad" id="stageName" style="font-size:30px;"></div>
+      <p class="subtitle" id="stageBoss" style="margin:0;"></p>
+    </div>
+  </div>
+
   <div class="ui-layer" id="screenCTA">
     <div class="panel">
       <div class="title-grad" style="font-size:30px;">魔法覺醒</div>
-      <p class="subtitle">六大元素魔法 · 十二隻夥伴寵物<br>鍵盤／觸控雙支援 · 立即遊玩</p>
+      <p class="subtitle">六大元素魔法 · 十二隻夥伴寵物 · 四大關卡<br>鍵盤／觸控雙支援 · 立即遊玩</p>
       <button class="btn">開始冒險</button>
     </div>
   </div>
@@ -158,6 +185,8 @@ const soundBtn = document.getElementById('soundBtn');
 const replayBtn = document.getElementById('replayBtn');
 const screenTitle = document.getElementById('screenTitle');
 const screenCTA = document.getElementById('screenCTA');
+const screenPets = document.getElementById('screenPets');
+const screenStage = document.getElementById('screenStage');
 const hud = document.getElementById('hud');
 const skillBar = document.getElementById('skillBar');
 const hpfill = document.getElementById('hpfill');
@@ -165,6 +194,10 @@ const magicLabel = document.getElementById('magicLabel');
 const scoreLabel = document.getElementById('scoreLabel');
 const waveLabel = document.getElementById('waveLabel');
 const charRow = document.getElementById('charRow');
+const petRow = document.getElementById('petRow');
+const petTypeDesc = document.getElementById('petTypeDesc');
+const stageName = document.getElementById('stageName');
+const stageBoss = document.getElementById('stageBoss');
 
 function resize() {
   const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
@@ -198,12 +231,25 @@ const CHARACTERS = [
   {id:'ying', name:'小影', gender:'boy',  magicKey:'dark',    outfit:'#9a6bff', hair:'#181022'},
 ];
 const PET_POOL = [
-  {id:'p1', icon:'🐉', name:'幼龍',   color:'#ff7e3d'},
-  {id:'p3', icon:'🦊', name:'靈狐',   color:'#38e1ff'},
-  {id:'p7', icon:'🦄', name:'獨角獸', color:'#c58bff'},
+  {id:'p1', icon:'🐉', name:'幼龍',   type:'attack', color:'#ff7e3d'},
+  {id:'p2', icon:'🦉', name:'夜梟',   type:'heal',   color:'#7fffb0'},
+  {id:'p3', icon:'🦊', name:'靈狐',   type:'guard',  color:'#38e1ff'},
+  {id:'p4', icon:'🐺', name:'冰狼',   type:'attack', color:'#8fe3ff'},
+  {id:'p5', icon:'🐇', name:'月兔',   type:'heal',   color:'#ffd9f6'},
+  {id:'p6', icon:'🐢', name:'龜靈',   type:'guard',  color:'#9db3d8'},
+  {id:'p7', icon:'🦄', name:'獨角獸', type:'heal',   color:'#c58bff'},
+  {id:'p8', icon:'🐬', name:'海豚',   type:'attack', color:'#38e1ff'},
+  {id:'p9', icon:'🐲', name:'雷龍',   type:'attack', color:'#ffe066'},
+  {id:'p10',icon:'🐱', name:'黑貓',   type:'guard',  color:'#9a6bff'},
+  {id:'p11',icon:'🦋', name:'魂蝶',   type:'heal',   color:'#ff6cc7'},
+  {id:'p12',icon:'🦅', name:'蒼鷹',   type:'attack', color:'#ffcf5c'},
 ];
+const PET_TYPE_LABEL = { attack:'攻擊系：追加額外傷害', heal:'治癒系：持續恢復生命', guard:'守護系：抵擋敵人攻擊' };
 const STAGES = [
   {name:'新手森林', top:'#1b3a2a', bottom:'#0a1810', bossName:'森林領主', bossColor:'#5d8a4a', bossIcon:'🌳'},
+  {name:'熔岩地窟', top:'#3a1410', bottom:'#160705', bossName:'熔岩魔像', bossColor:'#ff5b3d', bossIcon:'🌋'},
+  {name:'極寒冰原', top:'#0d2438', bottom:'#04101c', bossName:'冰霜巨人', bossColor:'#8fe3ff', bossIcon:'❄️'},
+  {name:'虛空深淵', top:'#1c1030', bottom:'#08040f', bossName:'虛空領主', bossColor:'#c58bff', bossIcon:'🌌'},
 ];
 
 /* ================= 音效（Web Audio 合成,預設靜音）================= */
@@ -379,12 +425,13 @@ function drawCharacter(c, cx, cy, r, gender, outfitColor, hairColor, walkPhase, 
 }
 
 /* ================= 敵人／子彈／粒子：與遊戲本體相同畫法 ================= */
-function drawEnemy(x, y, r, type, hitT, icon, hp, maxHp) {
+function drawEnemy(x, y, r, type, hitT, icon, hp, maxHp, bossColor) {
+  bossColor = bossColor || '#5d8a4a';
   ctx.save();
   ctx.translate(x, y);
   if (type === 'boss') {
-    const bodyColor = hitT > 0 ? '#ffffff' : '#5d8a4a';
-    ctx.shadowColor = '#5d8a4a'; ctx.shadowBlur = 22;
+    const bodyColor = hitT > 0 ? '#ffffff' : bossColor;
+    ctx.shadowColor = bossColor; ctx.shadowBlur = 22;
     ctx.fillStyle = bodyColor;
     ctx.beginPath(); ctx.arc(0, 0, r, 0, 7); ctx.fill();
     ctx.shadowBlur = 0;
@@ -437,18 +484,55 @@ function drawStageBg(stage) {
   ctx.fillStyle = vign; ctx.fillRect(0, 0, GAME_W, GAME_H);
   drawGrid();
 }
-function subtitle(text, alpha) {
+function subtitle(text, alpha, yOffset) {
   ctx.save();
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = alpha === undefined ? 1 : alpha;
   ctx.textAlign = 'center';
   ctx.font = "900 22px 'PingFang TC','Microsoft JhengHei',sans-serif";
-  const y = GAME_H - 140;
+  const y = GAME_H - (yOffset === undefined ? 140 : yOffset);
   ctx.fillStyle = 'rgba(5,8,16,0.6)';
   const w = ctx.measureText(text).width + 40;
   ctx.beginPath(); ctx.roundRect(GAME_W / 2 - w / 2, y - 30, w, 44, 12); ctx.fill();
   ctx.fillStyle = '#dfe9ff';
   ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
   ctx.fillText(text, GAME_W / 2, y - 6);
+  ctx.restore();
+}
+/* 天神降臨橫幅：與遊戲本體 showBanner() 同款樣式（大字白色標題＋灰藍副標） */
+function bannerBig(text, sub, alpha) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, Math.min(1, alpha));
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(5,8,16,0.55)';
+  ctx.fillRect(0, GAME_H * 0.32, GAME_W, 84);
+  ctx.fillStyle = '#fff';
+  ctx.font = '900 34px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.fillText(text, GAME_W / 2, GAME_H * 0.32 + 36);
+  ctx.font = '700 16px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.fillStyle = '#9db3d8';
+  ctx.fillText(sub, GAME_W / 2, GAME_H * 0.32 + 62);
+  ctx.restore();
+}
+/* 神聖庇護光環：與遊戲本體 divineBuffT 光暈同款畫法 */
+function divineAura(x, y, r, t, strength) {
+  ctx.save();
+  const pulse = 0.7 + Math.sin(t * 8) * 0.3;
+  ctx.globalAlpha = 0.35 * strength;
+  const auraR = r * 2.6 + pulse * 6;
+  const aura = ctx.createRadialGradient(x, y, r * 0.5, x, y, auraR);
+  aura.addColorStop(0, 'rgba(255,230,160,0.6)'); aura.addColorStop(1, 'rgba(255,230,160,0)');
+  ctx.fillStyle = aura;
+  ctx.beginPath(); ctx.arc(x, y, auraR, 0, 7); ctx.fill();
+  ctx.restore();
+}
+/* 天神降臨全螢幕金光閃現：與遊戲本體 divineFlashT 同款畫法 */
+function divineFlash(strength) {
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, strength) * 0.65;
+  const flash = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, 0, GAME_W / 2, GAME_H / 2, Math.max(GAME_W, GAME_H) * 0.75);
+  flash.addColorStop(0, 'rgba(255,244,214,0.9)'); flash.addColorStop(1, 'rgba(255,244,214,0)');
+  ctx.fillStyle = flash;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
   ctx.restore();
 }
 
@@ -472,6 +556,20 @@ function buildCharRow() {
   });
 }
 function drawCharacterMain(...args){ drawCharacter(ctx, ...args); }
+
+/* ================= 建立寵物選單（同款十二格寵物圖鑑）================= */
+function buildPetRow() {
+  petRow.innerHTML = '';
+  PET_POOL.forEach((pet) => {
+    const cell = document.createElement('div');
+    cell.className = 'pet-btn';
+    cell.dataset.type = pet.type;
+    const icon = document.createElement('div'); icon.className = 'picon'; icon.textContent = pet.icon;
+    const name = document.createElement('div'); name.textContent = pet.name;
+    cell.appendChild(icon); cell.appendChild(name);
+    petRow.appendChild(cell);
+  });
+}
 
 /* ================= 建立技能列 UI（同款 4 格）================= */
 function buildSkillBar(magic) {
@@ -528,8 +626,8 @@ function stepSim() {
   for (const en of enemies) { if (en.hitT > 0) en.hitT--; }
 }
 
-/* ================= 時間軸（總長 30 秒,場景切換依真實遊戲畫面呈現）================= */
-const TIMELINE = 30;
+/* ================= 時間軸（總長 36 秒,場景切換依真實遊戲畫面呈現）================= */
+const TIMELINE = 36;
 let startTime = null, playing = false;
 let firedCues = {};
 function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
@@ -539,40 +637,45 @@ function draw(t) {
   ctx.clearRect(0, 0, GAME_W, GAME_H);
   stepSim();
 
+  const hideAll = () => {
+    setLayer(screenTitle, false); setLayer(screenCTA, false);
+    setLayer(screenPets, false); setLayer(screenStage, false);
+  };
+
   if (t < 4) {
     /* ---- 第一幕：選角畫面（與遊戲標題畫面同款 DOM/CSS） ---- */
     drawStageBg(STAGE);
-    setLayer(screenTitle, true); setLayer(screenCTA, false);
+    hideAll(); setLayer(screenTitle, true);
     hud.classList.remove('show'); skillBar.classList.remove('show');
     if (t > 0.2) cue('titleChime', () => chime());
     if (t > 0.3) cue('narrateTitle', () => speak('魔法覺醒！選一位角色，展開專屬的魔法冒險。'));
     const sel = clamp(Math.floor((t / 4) * CHARACTERS.length), 0, CHARACTERS.length - 1);
     [...charRow.children].forEach((el, i) => el.classList.toggle('sel', i === sel));
-  } else if (t < 22) {
+  } else if (t < 16) {
     /* ---- 第二幕：真實戰鬥畫面重現（森林關卡,小炎主角）---- */
-    setLayer(screenTitle, false); setLayer(screenCTA, false);
+    hideAll();
     hud.classList.add('show'); skillBar.classList.add('show');
     if (t < 4.3) cue('buildSkill', () => { buildSkillBar(MAGIC); magicLabel.textContent = MAGIC.icon + ' ' + MAGIC.name; });
     if (t > 4.4) cue('narrateCombat', () => speak('小炎選擇了烈焰魔法，火球自動鎖定最近的敵人，一擊灼燒！'));
     drawStageBg(STAGE);
 
     const segT = t - 4;
-    // 敵人波次腳本
+    // 敵人波次腳本（壓縮至 12 秒內：小怪 → 小怪 → BOSS）
     if (segT > 0.6 && enemies.length === 0) cue('wave1', () => {
       for (let i = 0; i < 4; i++) spawnEnemyAt(680 + (i % 2) * 90, 140 + i * 90, false);
       wave = 1; waveLabel.textContent = '第 ' + wave + ' 波';
     });
-    if (segT > 9 && enemies.filter(e => e.type !== 'boss').length === 0 && wave === 1) cue('wave2', () => {
+    if (segT > 5.4 && enemies.filter(e => e.type !== 'boss').length === 0 && wave === 1) cue('wave2', () => {
       for (let i = 0; i < 3; i++) spawnEnemyAt(700 + (i % 2) * 100, 160 + i * 100, false);
       wave = 2; waveLabel.textContent = '第 ' + wave + ' 波';
     });
-    if (segT > 13 && wave < 3) cue('bossWave', () => {
+    if (segT > 9 && wave < 3) cue('bossWave', () => {
       enemies = [];
       spawnEnemyAt(760, GAME_H / 2, true);
       wave = 3; waveLabel.textContent = '第 3 波（BOSS）';
     });
-    if (segT > 9.2 && segT < 13) cue('narrateWave', () => speak('打倒整波敵人，就能晉級下一關！'));
-    if (segT > 13.4) cue('narrateBoss', () => speak('森林領主登場，準備迎接一場魔法大戰！'));
+    if (segT > 5.6 && segT < 9) cue('narrateWave', () => speak('打倒整波敵人，就能晉級下一關！'));
+    if (segT > 9.4) cue('narrateBoss', () => speak('森林領主登場，準備迎接一場魔法大戰！'));
 
     const px = 220, py = GAME_H / 2;
     const nearest = enemies[0];
@@ -599,13 +702,13 @@ function draw(t) {
     drawGrid();
     for (const p of particles) drawParticle(p.x, p.y, p.r, p.color, Math.max(0, p.life / 26));
     for (const b of bullets) drawBullet(b.x, b.y, b.r, b.color);
-    for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, en.hitT, en.icon, en.hp, en.maxHp);
+    for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, en.hitT, en.icon, en.hp, en.maxHp, STAGE.bossColor);
 
     drawCharacterMain(px, py, 34, CHAR.gender, CHAR.outfit, CHAR.hair, t * 1.4, true, MAGIC.color, aimAngle);
 
-    // pets 跟隨環繞
-    PET_POOL.forEach((pet, i) => {
-      const a = t * 1.2 + i * (Math.PI * 2 / PET_POOL.length);
+    // 隨行寵物環繞
+    PET_POOL.slice(0, 3).forEach((pet, i) => {
+      const a = t * 1.2 + i * (Math.PI * 2 / 3);
       const ppx = px + Math.cos(a) * 56, ppy = py + Math.sin(a) * 56 * 0.5 - 30;
       ctx.save();
       ctx.font = '20px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -614,23 +717,72 @@ function draw(t) {
       ctx.restore();
     });
 
-    hpfill.style.width = Math.max(20, 100 - segT * 1.2) + '%';
+    // 血量腳本：戰鬥中緩降,BOSS 登場時剛好掉到半血觸發「天神降臨」
+    const DIVINE_AT = 9;
+    const hpPct = segT < DIVINE_AT
+      ? clamp(100 - segT * 5.6, 50, 100)
+      : Math.min(72, 50 + (segT - DIVINE_AT) * 7);
+    hpfill.style.width = hpPct + '%';
 
-    if (segT < 8.6) subtitle('WASD／拖曳移動,魔法自動鎖定最近敵人');
-    else if (segT < 13) subtitle('打倒整波敵人,晉級下一波！');
-    else subtitle('BOSS 波：' + STAGE.bossName + ' 登場！');
+    if (segT >= DIVINE_AT) {
+      const dt = segT - DIVINE_AT;
+      cue('divineDescent', () => {
+        beep(200, 0.5, 'sine', 0.3, 900);
+        chime();
+        speak('血量掉到一半，天神降臨！攻擊力大幅提升！');
+      });
+      divineFlash(clamp(1 - dt / 0.9, 0, 1));
+      divineAura(px, py, 34, t, clamp(dt / 0.6, 0, 1));
+      bannerBig('天神降臨！', '獲得神聖庇護，攻擊力大幅提升！', clamp(dt / 0.4, 0, 1) * clamp((3 - dt) / 0.6, 0, 1));
+    }
 
-    if (segT > 13 && segT < 13.3) cue('bossRoar', () => beep(90, 0.4, 'sawtooth', 0.3, 40));
+    if (segT < 5.2) subtitle('WASD／拖曳移動，魔法自動鎖定最近敵人');
+    else if (segT < 9) subtitle('打倒整波敵人，晉級下一波！');
+    else if (segT < 9.3) subtitle('BOSS 波：' + STAGE.bossName + ' 登場！');
+    else if (segT < 12) subtitle('血量過半時會有「天神降臨」神聖庇護！');
+
+    if (segT > 9 && segT < 9.3) cue('bossRoar', () => beep(90, 0.4, 'sawtooth', 0.3, 40));
+  } else if (t < 23) {
+    /* ---- 第三幕：寵物圖鑑（同款寵物選單 DOM/CSS） ---- */
+    hideAll(); setLayer(screenPets, true);
+    hud.classList.remove('show'); skillBar.classList.remove('show');
+    drawStageBg(STAGE); drawGrid();
+    const segT = t - 16;
+    if (segT > 0.1) cue('narratePetsIntro', () => speak('冒險路上還能帶著寵物夥伴一起戰鬥！'));
+    const TYPES = ['attack', 'heal', 'guard'];
+    const phase = clamp(Math.floor(segT / 2.3), 0, 2);
+    const curType = TYPES[phase];
+    [...petRow.children].forEach(el => el.classList.toggle('sel', el.dataset.type === curType));
+    petTypeDesc.textContent = PET_TYPE_LABEL[curType];
+    cue('petPhase' + phase, () => {
+      chime();
+      speak(curType === 'attack' ? '攻擊系寵物能追加額外傷害！' : curType === 'heal' ? '治癒系寵物會持續恢復生命值！' : '守護系寵物能幫忙抵擋傷害！');
+    });
+  } else if (t < 30) {
+    /* ---- 第四幕：四大關卡巡覽 ---- */
+    hideAll(); setLayer(screenStage, true);
+    hud.classList.remove('show'); skillBar.classList.remove('show');
+    const segT = t - 23;
+    if (segT > 0.1) cue('narrateStagesIntro', () => speak('四大關卡等你來挑戰！'));
+    const idx = clamp(Math.floor(segT / 1.75), 0, STAGES.length - 1);
+    const st = STAGES[idx];
+    drawStageBg(st); drawGrid();
+    const bob = Math.sin(t * 2.4) * 6;
+    drawEnemy(GAME_W / 2, GAME_H * 0.74 + bob, 86, 'boss', 0, st.bossIcon, 1, 1, st.bossColor);
+    stageName.textContent = st.name;
+    stageBoss.textContent = '關卡首領：' + st.bossName;
+    cue('stageChime' + idx, () => { chime(); speak('第 ' + (idx + 1) + ' 關：' + st.name + '，首領是' + st.bossName + '！'); });
+    subtitle('第 ' + (idx + 1) + ' / ' + STAGES.length + ' 關卡：' + st.name, 1, 36);
   } else {
-    /* ---- 第三幕：結算 CTA（同款結束畫面樣式）---- */
-    setLayer(screenTitle, false); setLayer(screenCTA, true);
+    /* ---- 第五幕：結算 CTA（同款結束畫面樣式）---- */
+    hideAll(); setLayer(screenCTA, true);
     hud.classList.remove('show'); skillBar.classList.remove('show');
     drawStageBg(STAGE);
     drawGrid();
-    for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, 0, en.icon, en.hp, en.maxHp);
-    const p = clamp((t - 22) / 2, 0, 1);
+    for (const en of enemies) drawEnemy(en.x, en.y, en.r, en.type, 0, en.icon, en.hp, en.maxHp, STAGE.bossColor);
+    const p = clamp((t - 30) / 2, 0, 1);
     if (p > 0.05) cue('ctaChime', () => chime());
-    if (p > 0.1) cue('narrateCTA', () => speak('六大元素魔法，十二隻夥伴寵物，鍵盤觸控都能玩，快來體驗魔法覺醒吧！'));
+    if (p > 0.1) cue('narrateCTA', () => speak('六大元素魔法，十二隻夥伴寵物，四大關卡，快來體驗魔法覺醒吧！'));
     screenCTA.style.opacity = String(easeOut(p));
   }
 
@@ -667,6 +819,7 @@ function play() {
   requestAnimationFrame(loop);
 }
 buildCharRow();
+buildPetRow();
 replayBtn.addEventListener('click', play);
 play();
 </script>
