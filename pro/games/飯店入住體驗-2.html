@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5 -->
+<!-- 專業AI升級 v6：四場景烘焙光照（陽光光束/吊燈光池/窗光/vignette）、泳池波光粼粼(additive)、庭園落葉與室內塵埃環境粒子、電視螢光暈；音效新增程序化殘響(ConvolverNode)、分場景環境音（風聲/水聲/大廳低語）與鳥鳴、換場景自動切換音景 -->
+<!-- v5 -->
 <!-- v5 補強：①角色精細化(頭部漸層/輪廓線/高光/髮絲漸層/開心表情第二狀態) ②觸控可玩稽核(雙搖桿已達標，見稽核註記) ③新增手機版大螢幕提醒浮層(sessionStorage一次/純CSS+SVG) -->
 <!-- v2 系列：AMY 與 RUBY 的雙人飯店假期（庭園／大廳／雙人房／頂樓泳池）升級為五日假期關卡制 -->
 <!-- v5 升級摘要：①觸控玩家新增「重來本日」按鈕(原本卡關只能硬撐到結算)
@@ -226,8 +227,9 @@ updateMuteBtn();
 muteBtn.addEventListener('click', e=>{
   e.stopPropagation(); muted=!muted;
   try{ localStorage.setItem('hotel2pro_mute', muted?'1':'0'); }catch(err){}
-  updateMuteBtn(); if(!muted) sfx.blip();
+  updateMuteBtn(); updateAmbient(); if(!muted) sfx.blip();
 });
+let ambGain=null, ambFilter=null, ambSrcGain=null;
 function audio(){
   if(!AC){
     try{
@@ -237,10 +239,47 @@ function audio(){
       comp.attack.value=.003; comp.release.value=.22;
       master = AC.createGain(); master.gain.value=.85;
       master.connect(comp); comp.connect(AC.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（飯店室內空間感），母線並聯送入
+      try{
+        const len = Math.floor(AC.sampleRate*1.3);
+        const ir = AC.createBuffer(2,len,AC.sampleRate);
+        for(let c=0;c<2;c++){ const d=ir.getChannelData(c);
+          for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3); }
+        const conv = AC.createConvolver(); conv.buffer = ir;
+        const rev = AC.createGain(); rev.gain.value=.18;
+        master.connect(rev); rev.connect(conv); conv.connect(comp);
+      }catch(e){}
+      // v6 分場景環境音床：噪聲 → bandpass（頻率/音量依場景切換：風聲/水聲/大廳低語）
+      try{
+        ambGain = AC.createGain(); ambGain.gain.value=0; ambGain.connect(comp);
+        const nlen = AC.sampleRate*2, nbuf = AC.createBuffer(1,nlen,AC.sampleRate), nd = nbuf.getChannelData(0);
+        for(let i=0;i<nlen;i++) nd[i]=Math.random()*2-1;
+        const nsrc = AC.createBufferSource(); nsrc.buffer=nbuf; nsrc.loop=true;
+        ambFilter = AC.createBiquadFilter(); ambFilter.type='bandpass'; ambFilter.frequency.value=500; ambFilter.Q.value=.7;
+        ambSrcGain = AC.createGain(); ambSrcGain.gain.value=1;
+        const lfo = AC.createOscillator(); lfo.frequency.value=.14;
+        const lfoG = AC.createGain(); lfoG.gain.value=.35;
+        lfo.connect(lfoG); lfoG.connect(ambSrcGain.gain); lfo.start();
+        nsrc.connect(ambFilter); ambFilter.connect(ambSrcGain); ambSrcGain.connect(ambGain); nsrc.start();
+      }catch(e){ ambGain=null; }
+      updateAmbient();
     }catch(e){}
   }
   if(AC && AC.state==='suspended') AC.resume();
   return AC;
+}
+// v6 音景切換：依場景調整環境音床（進出場景/開始/結束/靜音時呼叫）
+function updateAmbient(){
+  if(!AC || !ambGain) return;
+  let vol=0, freq=500;
+  if(!muted && S.scene==='play'){
+    if(S.area==='outdoor'){ vol=.045; freq=420; }
+    else if(S.area==='rooftop'){ vol=.06; freq=560; }
+    else if(S.area==='lobby'){ vol=.03; freq=300; }
+    else { vol=.02; freq=260; }
+  }
+  ambGain.gain.setTargetAtTime(vol, AC.currentTime, .6);
+  ambFilter.frequency.setTargetAtTime(freq, AC.currentTime, .6);
 }
 addEventListener('pointerdown', audio); addEventListener('keydown', audio);
 function beep(freq,dur,type,vol,slide){
@@ -275,7 +314,8 @@ const sfx = {
   sleep(){ beep(392,.18,'sine',.1,-60); setTimeout(()=>beep(330,.3,'sine',.08,-40),150); },
   quack(){ beep(340,.1,'sawtooth',.1,-80); setTimeout(()=>beep(300,.08,'sawtooth',.07,-60),90); },
   win(){ [523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.2,'triangle',.11), i*110)); },
-  collectAll(){ [880,1108,1318].forEach((f,i)=>setTimeout(()=>beep(f,.14,'square',.11), i*70)); }
+  collectAll(){ [880,1108,1318].forEach((f,i)=>setTimeout(()=>beep(f,.14,'square',.11), i*70)); },
+  chirp(){ const b=rnd(1800,2600); beep(b,.06,'sine',.028,300); setTimeout(()=>beep(b*1.15,.08,'sine',.022,-200),90); }  // v6 鳥鳴
 };
 
 /* ---------- 世界與場景（沿用 v2 地圖，玩家一眼認得） ---------- */
@@ -561,6 +601,7 @@ function dayComplete(){
 }
 function showEnd(st){
   S.scene='end';
+  updateAmbient();
   const allDone = dayStars.every(s=>s>0);
   $('endBrand').textContent = 'Day '+(S.day+1)+' Complete';
   $('endTitle').textContent = (S.day===4 && allDone) ? '五日假期圓滿結束！' : DAYS[S.day].name+'完成！';
@@ -578,9 +619,11 @@ function showEnd(st){
 function changeArea(to, ex, ey){
   S.area = to;
   players.forEach((p,i)=>{ p.x = ex + i*40; p.y = ey; p.lying=false; p.bathing=false; p.swimming=false; });
+  ambParts.length = 0;   // v6 換場景清空環境粒子（落葉/塵埃形態不同）
   S.doorCooldown = 0.6;
   sfx.door();
   bakeArea();
+  updateAmbient();
   showHint('來到了「'+AREA_LABEL[to]+'」', 1);
 }
 function updateDoors(){
@@ -623,6 +666,7 @@ function enterTitle(){
   $('hud').style.display='none'; $('hintBar').style.display='none';
   restartBtn.style.display='none';
   renderDayGrid();
+  updateAmbient();
 }
 function startDay(i){
   S.day = i; S.time = 0; S.over = false; S.scene='play';
@@ -637,6 +681,7 @@ function startDay(i){
   updateTaskLabels();
   showHint('Day '+(i+1)+'「'+DAYS[i].name+'」：'+DAYS[i].desc);
   sfx.blip();
+  updateAmbient();
 }
 function renderDayGrid(){
   const g = $('daygrid'); g.innerHTML='';
@@ -744,6 +789,43 @@ function bakeArea(){
   else if(S.area==='lobby') bakeLobby(g);
   else if(S.area==='rooftop') bakeRooftop(g);
   else bakeRoom(g);
+  bakeLighting(g);
+}
+/* v6 場景光照層：一次烘焙進靜態層——陽光光束／吊燈光池／窗光＋vignette，主迴圈零成本 */
+function bakeLighting(g){
+  const W = stage.clientWidth, H = stage.clientHeight;
+  g.save();
+  g.globalCompositeOperation='lighter';
+  if(S.area==='outdoor'){
+    const [sx,sy]=toScreen(830,50);
+    const rg=g.createRadialGradient(sx,sy,10,sx,sy,H*0.95);
+    rg.addColorStop(0,'rgba(255,228,150,.22)'); rg.addColorStop(.5,'rgba(255,214,130,.08)'); rg.addColorStop(1,'rgba(255,214,130,0)');
+    g.fillStyle=rg; g.fillRect(0,0,W,H);
+  }else if(S.area==='rooftop'){
+    const [sx,sy]=toScreen(80,46);
+    const rg=g.createRadialGradient(sx,sy,10,sx,sy,H*0.9);
+    rg.addColorStop(0,'rgba(255,232,160,.25)'); rg.addColorStop(.5,'rgba(255,220,140,.09)'); rg.addColorStop(1,'rgba(255,220,140,0)');
+    g.fillStyle=rg; g.fillRect(0,0,W,H);
+  }else if(S.area==='lobby'){
+    [[250,150],[450,120],[650,150]].forEach(([wx,wy])=>{
+      const [sx,sy]=toScreen(wx,wy);
+      const rg=g.createRadialGradient(sx,sy,4,sx,sy,170*scale);
+      rg.addColorStop(0,'rgba(255,224,150,.16)'); rg.addColorStop(1,'rgba(255,224,150,0)');
+      g.fillStyle=rg; g.beginPath(); g.arc(sx,sy,170*scale,0,Math.PI*2); g.fill();
+    });
+  }else{
+    // 雙人房：兩扇窗光斜灑
+    [[230,240],[640,240]].forEach(([wx,wy])=>{
+      const [sx,sy]=toScreen(wx,wy);
+      const rg=g.createRadialGradient(sx,sy-120*scale,10,sx,sy,240*scale);
+      rg.addColorStop(0,'rgba(180,215,255,.14)'); rg.addColorStop(1,'rgba(180,215,255,0)');
+      g.fillStyle=rg; g.beginPath(); g.arc(sx,sy,240*scale,0,Math.PI*2); g.fill();
+    });
+  }
+  g.restore();
+  const vg=g.createRadialGradient(W/2,H*0.5,Math.min(W,H)*0.46,W/2,H*0.55,Math.max(W,H)*0.82);
+  vg.addColorStop(0,'rgba(4,6,14,0)'); vg.addColorStop(1,'rgba(4,6,14,0.44)');
+  g.fillStyle=vg; g.fillRect(0,0,W,H);
 }
 
 /* ---------- 場景靜態層（畫在離屏 g 上） ---------- */
@@ -1017,10 +1099,16 @@ function movePlayer(p, dx, dy, dt){
 }
 function update(dt){
   clock += dt;
-  updateConfetti(dt); updateFloats(dt); updateBubbles(dt);
+  updateConfetti(dt); updateFloats(dt); updateBubbles(dt); updateAmbParts(dt);
   S.shake = Math.max(0, S.shake - dt*14);
   if(S.scene!=='play' || S.over) return;
   S.time += dt;
+  // v6 鳥鳴：戶外場景隨機啁啾
+  chirpT -= dt;
+  if(chirpT<=0){
+    chirpT = 2.5+Math.random()*4;
+    if(S.area==='outdoor'||S.area==='rooftop') sfx.chirp();
+  }
   const ct = fmtTime(S.time);
   if(ct !== update._ct){
     update._ct = ct;
@@ -1132,6 +1220,54 @@ function drawBubbles(){
     ctx.strokeStyle='#eaffff'; ctx.lineWidth=1.4;
     ctx.beginPath(); ctx.arc(sx,sy-20*scale,3*scale,0,Math.PI*2); ctx.stroke();
   });
+  ctx.globalAlpha=1;
+}
+
+/* ---------- v6 環境粒子：庭園落葉／室內與頂樓塵埃光點 ---------- */
+const ambParts=[];
+let chirpT = 3;
+const glowTVCv = (()=>{
+  const c=document.createElement('canvas'); c.width=c.height=128;
+  const g=c.getContext('2d');
+  const rg=g.createRadialGradient(64,64,4,64,64,64);
+  rg.addColorStop(0,'rgba(120,210,255,.5)'); rg.addColorStop(1,'rgba(120,210,255,0)');
+  g.fillStyle=rg; g.fillRect(0,0,128,128);
+  return c;
+})();
+function updateAmbParts(dt){
+  const outdoor = S.area==='outdoor';
+  if(ambParts.length<14 && Math.random()<dt*3){
+    if(outdoor) ambParts.push({kind:'leaf', x:rnd(-20,WORLD.w*0.8), y:-14, vx:rnd(8,26), vy:rnd(20,36), rot:rnd(0,6), vr:rnd(-2.5,2.5)});
+    else ambParts.push({kind:'mote', x:rnd(20,WORLD.w-20), y:rnd(120,WORLD.h-20), ph:rnd(0,6.3), life:rnd(4,8)});
+  }
+  for(let i=ambParts.length-1;i>=0;i--){
+    const a=ambParts[i];
+    if(a.kind==='leaf'){
+      a.x+=(a.vx+Math.sin(a.y*.05)*10)*dt; a.y+=a.vy*dt; a.rot+=a.vr*dt;
+      if(a.y>WORLD.h+16||a.x>WORLD.w+20){ ambParts[i]=ambParts[ambParts.length-1]; ambParts.pop(); }
+    }else{
+      a.ph+=dt; a.x+=Math.sin(a.ph)*6*dt; a.y-=5*dt; a.life-=dt;
+      if(a.life<=0||a.y<80){ ambParts[i]=ambParts[ambParts.length-1]; ambParts.pop(); }
+    }
+  }
+}
+function drawAmbParts(){
+  const sc=scale;
+  for(const a of ambParts){
+    const [ax,ay]=toScreen(a.x,a.y);
+    if(a.kind==='leaf'){
+      ctx.save(); ctx.translate(ax,ay); ctx.rotate(a.rot);
+      ctx.fillStyle='#6fae4e';
+      ctx.beginPath(); ctx.ellipse(0,0,5*sc,2.6*sc,0,0,Math.PI*2); ctx.fill();
+      ctx.fillStyle='rgba(255,255,255,.18)';
+      ctx.fillRect(-3*sc,-1*sc,3*sc,1.2*sc);
+      ctx.restore();
+    }else{
+      ctx.globalAlpha=.16+.14*Math.abs(Math.sin(a.ph*1.8));
+      ctx.fillStyle='#cfe0ff';
+      ctx.fillRect(ax,ay,2.2*sc,2.2*sc);
+    }
+  }
   ctx.globalAlpha=1;
 }
 
@@ -1409,15 +1545,35 @@ function drawDynamic(t){
       ctx.beginPath(); ctx.ellipse(px+pool.w*sc/2, py+pool.h*sc/2, (pool.w*sc/2)*ph+8, (pool.h*sc/2)*ph+6, 0,0,Math.PI*2); ctx.stroke();
     }
     ctx.globalAlpha=1;
+    // v6 波光粼粼：additive 閃爍弧線（假日泳池的陽光反光）
+    ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.lineCap='round';
+    for(let i=0;i<12;i++){
+      const tw=Math.sin(t*2.1+i*1.9);
+      if(tw<=0.15) continue;
+      const gx=pool.x+14+rndSeed(i*3+1)*(pool.w-28), gy=pool.y+14+rndSeed(i*5+2)*(pool.h-28);
+      const [cx2,cy2]=toScreen(gx,gy);
+      ctx.globalAlpha=(tw-0.15)*.55;
+      ctx.strokeStyle='#e8fbff'; ctx.lineWidth=1.6*sc;
+      ctx.beginPath(); ctx.moveTo(cx2-6*sc,cy2); ctx.quadraticCurveTo(cx2,cy2-3.5*sc,cx2+6*sc,cy2); ctx.stroke();
+    }
+    ctx.restore(); ctx.globalAlpha=1;
   }
   if(S.area==='room'){
     const tv = AREAS.room.tv; const [tvx,tvy]=toScreen(tv.x,tv.y);
-    ctx.fillStyle='#1a1f2c'; roundRectPath(ctx,tvx,tvy,tv.w*sc,tv.h*sc,4*sc); ctx.fill();
     const flick = .55+Math.sin(t*6)*.15;
+    // v6 電視螢光暈（烘焙光暈 additive，隨畫面閃爍）
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.globalAlpha=flick*.6;
+    const gw=tv.w*sc*2.4;
+    ctx.drawImage(glowTVCv, tvx+tv.w*sc/2-gw/2, tvy+tv.h*sc/2-gw/2, gw, gw);
+    ctx.restore(); ctx.globalAlpha=1;
+    ctx.fillStyle='#1a1f2c'; roundRectPath(ctx,tvx,tvy,tv.w*sc,tv.h*sc,4*sc); ctx.fill();
     ctx.fillStyle='rgba(80,190,255,'+flick+')';
     ctx.fillRect(tvx+4*sc,tvy+4*sc,tv.w*sc-8*sc,tv.h*sc-8*sc);
     ctx.fillStyle='#3a3244'; ctx.fillRect(tvx+tv.w*sc/2-3*sc,tvy+tv.h*sc,6*sc,8*sc);
   }
+  // v6 環境粒子（庭園落葉/室內塵埃）
+  drawAmbParts();
   // 撿取物
   for(const it of items){
     if(it.taken || it.area!==S.area) continue;
@@ -1574,6 +1730,7 @@ window.__QA = {
 };
 })();
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

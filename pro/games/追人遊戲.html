@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：地城光影（玩家光圈/追兵紅光additive）、磚紋牆面與地板色變、飄浮塵埃層、烘焙vignette、寶石bloom；音效新增程序化殘響(ConvolverNode)、地城低鳴環境層、追兵逼近張力音層、腳步聲 -->
+<!-- v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -289,6 +290,11 @@ function hitsWall(x, y, r) {
   }
   return false;
 }
+function minWallDist(x, y) {
+  let m = Infinity;
+  for (const seg of wallSegments) m = Math.min(m, pointSegDist(x, y, seg[0], seg[1], seg[2], seg[3]));
+  return m;
+}
 function moveWithCollision(e, nx, ny) {
   const okX = !hitsWall(nx, e.y, e.r);
   if (okX) e.x = nx;
@@ -300,7 +306,7 @@ function moveWithCollision(e, nx, ny) {
 }
 
 // ----- Web Audio -----
-let AC = null, BUS = null;
+let AC = null, BUS = null, ambGain = null, tenseGain = null;
 let muted = localStorage.getItem('chase-muted') === '1';
 function audio() {
   if (!AC) {
@@ -314,10 +320,54 @@ function audio() {
       BUS.gain.value = 0.85;
       BUS.connect(comp);
       comp.connect(AC.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（石造地城空間感）
+      try {
+        const len = Math.floor(AC.sampleRate * 1.6);
+        const ir = AC.createBuffer(2, len, AC.sampleRate);
+        for (let c = 0; c < 2; c++) {
+          const d = ir.getChannelData(c);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.8);
+        }
+        const conv = AC.createConvolver(); conv.buffer = ir;
+        const rev = AC.createGain(); rev.gain.value = 0.2;
+        BUS.connect(rev); rev.connect(conv); conv.connect(comp);
+      } catch (e) {}
+      // v6 地城低鳴環境層（噪聲 lowpass + 55Hz 底鳴，慢速起伏）
+      try {
+        ambGain = AC.createGain(); ambGain.gain.value = 0; ambGain.connect(comp);
+        const nlen = AC.sampleRate * 2;
+        const nbuf = AC.createBuffer(1, nlen, AC.sampleRate);
+        const nd = nbuf.getChannelData(0);
+        for (let i = 0; i < nlen; i++) nd[i] = Math.random() * 2 - 1;
+        const nsrc = AC.createBufferSource(); nsrc.buffer = nbuf; nsrc.loop = true;
+        const nlp = AC.createBiquadFilter(); nlp.type = 'lowpass'; nlp.frequency.value = 130;
+        const ng = AC.createGain(); ng.gain.value = 1.1;
+        nsrc.connect(nlp); nlp.connect(ng); ng.connect(ambGain); nsrc.start();
+        const drone = AC.createOscillator(); drone.type = 'sine'; drone.frequency.value = 55;
+        const dg = AC.createGain(); dg.gain.value = 0.22;
+        const lfo = AC.createOscillator(); lfo.frequency.value = 0.09;
+        const lfoG = AC.createGain(); lfoG.gain.value = 0.1;
+        lfo.connect(lfoG); lfoG.connect(dg.gain); lfo.start();
+        drone.connect(dg); dg.connect(ambGain); drone.start();
+        // v6 追兵逼近張力層（顫音鋸齒＋bandpass，音量隨距離在 update 內調節）
+        tenseGain = AC.createGain(); tenseGain.gain.value = 0; tenseGain.connect(comp);
+        const to = AC.createOscillator(); to.type = 'sawtooth'; to.frequency.value = 92;
+        const vib = AC.createOscillator(); vib.frequency.value = 5.2;
+        const vibG = AC.createGain(); vibG.gain.value = 6;
+        vib.connect(vibG); vibG.connect(to.frequency); vib.start();
+        const tbp = AC.createBiquadFilter(); tbp.type = 'bandpass'; tbp.frequency.value = 240; tbp.Q.value = 1.6;
+        to.connect(tbp); tbp.connect(tenseGain); to.start();
+      } catch (e) { ambGain = null; tenseGain = null; }
     } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function updateAmbient() {
+  if (!AC || !ambGain) return;
+  const on = !muted && mode === 'play';
+  ambGain.gain.setTargetAtTime(on ? 0.18 : 0, AC.currentTime, 0.5);
+  if (!on && tenseGain) tenseGain.gain.setTargetAtTime(0, AC.currentTime, 0.2);
 }
 addEventListener('pointerdown', audio, { once: true });
 addEventListener('keydown', audio, { once: true });
@@ -360,7 +410,8 @@ const sfx = {
   roar()   { beep(150, 0.4, 'sawtooth', 0.16, -60); },
   gem(i)   { beep(740 + i * 90, 0.09, 'triangle', 0.12, 260); },
   round()  { [659, 784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.11), i * 90)); },
-  ghost()  { beep(600, 0.35, 'sine', 0.12, -320); setTimeout(() => beep(400, 0.3, 'sine', 0.1, -200), 100); }
+  ghost()  { beep(600, 0.35, 'sine', 0.12, -320); setTimeout(() => beep(400, 0.3, 'sine', 0.1, -200), 100); },
+  step(k)  { beep(k ? 210 : 185, 0.03, 'triangle', 0.03, -30, 0.1); }   // v6 迷宮腳步聲
 };
 const muteBtn = document.getElementById('muteBtn');
 function refreshMute() { muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -368,6 +419,7 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   localStorage.setItem('chase-muted', muted ? '1' : '0');
   refreshMute();
+  updateAmbient();
   if (!muted) beep(660, 0.08, 'square', 0.1);
 });
 refreshMute();
@@ -402,6 +454,7 @@ let shake = 0, freeze = 0, flash = 0;
 let deathTimer = -1;
 let overCooldown = 0;
 let heartTimer = 0;
+let stepPh = 0;   // v6 腳步聲相位
 let items = [];             // {x,y,type,age}
 let itemTimer = 0;
 let secondSpawned = false;
@@ -426,7 +479,8 @@ function makeChaser(name) {
     x: 0, y: 0, r: 16, speed: 115, name,
     fx: -1, fy: 0, runPhase: 0,
     path: null, repathTimer: 0,
-    frozen: 0, active: true
+    frozen: 0, active: true,
+    noDirectT: 0   // v6 解卡後暫停直取玩家，改走格心路徑
   };
 }
 let chasers = [];
@@ -623,9 +677,11 @@ function startGame() {
   titleOverlay.classList.remove('show');
   overOverlay.classList.remove('show');
   sfx.start();
+  updateAmbient();
 }
 function endGame() {
   mode = 'over';
+  updateAmbient();
   overCooldown = 0.5;
   localStorage.setItem('chase-played', '1');
   const score = totalScore();
@@ -678,6 +734,9 @@ function catchPlayer() {
   freeze = 0.15;
   shake = 12;
   flash = 0.35;
+  // v6 環境音 ducking：被抓瞬間環境層退場，凸顯被抓音效
+  if (AC && ambGain) ambGain.gain.setTargetAtTime(0.02, AC.currentTime, 0.05);
+  if (AC && tenseGain) tenseGain.gain.setTargetAtTime(0, AC.currentTime, 0.05);
   burst(player.x, player.y, '#4fc3f7', 26, 320);
   burst(player.x, player.y, '#fff', 12, 240);
   sfx.caught();
@@ -703,6 +762,18 @@ function update(dt) {
   for (const f of floats) { f.y -= 50 * dt; f.life -= dt; }
   for (let i = floats.length - 1; i >= 0; i--) if (floats[i].life <= 0) floats.splice(i, 1);
   for (const it of items) it.age += dt;
+
+  // v6 塵埃飄浮（環境粒子，緩慢上飄＋左右擺）
+  for (const m of motes) {
+    m.ph += dt;
+    m.x += (m.vx + Math.sin(m.ph) * 4) * dt;
+    m.y += m.vy * dt;
+    if (m.y < MAZE_Y - 6 || m.x < MAZE_X - 10 || m.x > MAZE_X + COLS * CELL + 10) {
+      m.x = MAZE_X + Math.random() * COLS * CELL;
+      m.y = MAZE_Y + ROWS * CELL - 4;
+      m.ph = Math.random() * 6.3;
+    }
+  }
 
   if (deathTimer >= 0) {
     deathTimer += dt;
@@ -760,6 +831,9 @@ function update(dt) {
   }
   if (player.moving) {
     player.runPhase += dt * 11;
+    // v6 腳步聲（左右交替、極輕量）
+    const sph = Math.floor(player.runPhase / Math.PI);
+    if (sph !== stepPh) { stepPh = sph; sfx.step(sph & 1); }
     if (player.boost > 0 && Math.random() < dt * 20) {
       burst(player.x - player.fx * 10, player.y + 8, '#ffd54f', 1, 60);
     } else if (Math.random() < dt * 6) {
@@ -816,6 +890,7 @@ function update(dt) {
   const rampSpeed = Math.min(rampCap, rampBase + survive * rampSurv + (round - 1) * rampRound);
   for (const ch of chasers) {
     ch.frozen = Math.max(0, ch.frozen - dt);
+    ch.noDirectT = Math.max(0, ch.noDirectT - dt);
     if (ch.frozen > 0) continue;
     ch.speed = (ch.name === 'GINO' ? rampSpeed : rampSpeed * 0.88) * (player.ghost > 0 ? 0.75 : 1);
     ch.repathTimer -= dt;
@@ -836,7 +911,7 @@ function update(dt) {
       let idx = 1;
       while (idx < ch.path.length - 1 && ch.path[idx][0] === cc.r && ch.path[idx][1] === cc.c) idx++;
       const node = ch.path[idx];
-      if (ch.path.length <= 2 && player.ghost <= 0) { tx = player.x; ty = player.y; }
+      if (ch.path.length <= 2 && player.ghost <= 0 && ch.noDirectT <= 0) { tx = player.x; ty = player.y; }
       else { const t = cellCenter(node[0], node[1]); tx = t.x; ty = t.y; }
     } else if (player.ghost <= 0) { tx = player.x; ty = player.y; }
     const tdx = tx - ch.x, tdy = ty - ch.y;
@@ -844,7 +919,24 @@ function update(dt) {
     if (td > 0.5) {
       const step = Math.min(ch.speed * dt, td);
       const nx = ch.x + tdx / td * step, ny = ch.y + tdy / td * step;
+      const preX = ch.x, preY = ch.y;
       moveWithCollision(ch, nx, ny);
+      // v6 解卡：偵測「有目標卻幾乎沒前進」（牆角楔死），退向格心並暫改走格心路徑
+      if (Math.hypot(ch.x - preX, ch.y - preY) < step * 0.25) ch.stuckT = (ch.stuckT || 0) + dt;
+      else ch.stuckT = 0;
+      if (ch.stuckT > 0.35) {
+        const cen2 = cellCenter(cc.r, cc.c);
+        const cdx = cen2.x - ch.x, cdy = cen2.y - ch.y;
+        const cl = Math.hypot(cdx, cdy);
+        if (cl > 0.5) {
+          const st2 = Math.min(ch.speed * dt * 6, cl);
+          const ux2 = ch.x + cdx / cl * st2, uy2 = ch.y + cdy / cl * st2;
+          if (minWallDist(ux2, uy2) >= minWallDist(ch.x, ch.y) - 0.01) { ch.x = ux2; ch.y = uy2; }
+        }
+        ch.repathTimer = 0;
+        ch.noDirectT = 1.4;
+        ch.stuckT = 0;
+      }
       ch.fx = tdx / td; ch.fy = tdy / td;
       ch.runPhase += dt * 9;
     }
@@ -867,6 +959,11 @@ function update(dt) {
       sfx.heart(nearest < 110);
       heartTimer = nearest < 110 ? 0.35 : 0.62;
     }
+  }
+  // v6 逼近張力音層：追兵越近顫音越大聲（連續層，與心跳互補）
+  if (tenseGain && AC) {
+    const tt = (muted || player.ghost > 0) ? 0 : Math.max(0, Math.min(0.085, (1 - nearest / 260) * 0.085));
+    tenseGain.gain.setTargetAtTime(tt, AC.currentTime, 0.25);
   }
 }
 
@@ -905,6 +1002,15 @@ function renderBGCache() {
         g.fillStyle = 'rgba(255,255,255,0.025)';
         g.fillRect(MAZE_X + c * CELL, MAZE_Y + r * CELL, CELL, CELL);
       }
+      // v6 每格隨機明暗（石板風化感）
+      const shade = Math.random();
+      if (shade < 0.3) {
+        g.fillStyle = 'rgba(0,0,0,' + (0.03 + shade * 0.1).toFixed(3) + ')';
+        g.fillRect(MAZE_X + c * CELL, MAZE_Y + r * CELL, CELL, CELL);
+      } else if (shade > 0.82) {
+        g.fillStyle = 'rgba(160,175,255,0.03)';
+        g.fillRect(MAZE_X + c * CELL, MAZE_Y + r * CELL, CELL, CELL);
+      }
       if ((r * 7 + c * 13) % 11 === 0) {
         g.strokeStyle = 'rgba(0,0,0,0.25)';
         g.lineWidth = 1.5;
@@ -914,6 +1020,13 @@ function renderBGCache() {
         g.lineTo(bx + 9, by + 5);
         g.lineTo(bx + 15, by + 3);
         g.stroke();
+      }
+      // v6 苔蘚／碎石點綴
+      if ((r * 5 + c * 3) % 7 === 0) {
+        g.fillStyle = 'rgba(90,150,110,0.13)';
+        g.beginPath();
+        g.arc(MAZE_X + c * CELL + CELL * (0.2 + ((r + c) % 3) * 0.25), MAZE_Y + r * CELL + CELL * 0.75, 3.5, 0, Math.PI * 2);
+        g.fill();
       }
     }
   }
@@ -952,6 +1065,51 @@ function renderBGCache() {
     g.lineTo(x2, y2 - 2.5);
   }
   g.stroke();
+  // v6 磚縫刻痕：沿牆頂面每 14px 一道垂直細縫，磚砌質感
+  g.strokeStyle = 'rgba(20,22,50,0.5)';
+  g.lineWidth = 1.6;
+  g.beginPath();
+  for (const [x1, y1, x2, y2] of wallSegments) {
+    const len = Math.hypot(x2 - x1, y2 - y1);
+    const ux = (x2 - x1) / len, uy = (y2 - y1) / len;
+    for (let t = 9; t < len - 4; t += 14) {
+      const mx = x1 + ux * t, my = y1 + uy * t;
+      g.moveTo(mx - uy * 3.5, my - ux * 3.5);
+      g.lineTo(mx + uy * 3.5, my + ux * 3.5);
+    }
+  }
+  g.stroke();
+}
+
+// ----- v6 地城光影：光圈／紅光／vignette 一次烘焙 ＋ 飄浮塵埃 -----
+function bakeGlow(size, stops) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+  for (const [t, col] of stops) rg.addColorStop(t, col);
+  g.fillStyle = rg;
+  g.fillRect(0, 0, size, size);
+  return c;
+}
+const lightCv = bakeGlow(256, [[0, 'rgba(140,190,255,0.34)'], [0.5, 'rgba(90,120,220,0.15)'], [1, 'rgba(0,0,0,0)']]);
+const redGlowCv = bakeGlow(192, [[0, 'rgba(255,70,50,0.3)'], [0.6, 'rgba(200,30,30,0.12)'], [1, 'rgba(0,0,0,0)']]);
+const gemLightCv = bakeGlow(96, [[0, 'rgba(105,240,174,0.35)'], [1, 'rgba(0,0,0,0)']]);
+const vigCv = (() => {
+  const c = document.createElement('canvas');
+  c.width = GAME_W; c.height = GAME_H;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.42, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  rg.addColorStop(0, 'rgba(6,6,16,0)');
+  rg.addColorStop(1, 'rgba(6,6,16,0.5)');
+  g.fillStyle = rg;
+  g.fillRect(0, 0, GAME_W, GAME_H);
+  return c;
+})();
+const motes = [];
+for (let i = 0; i < 26; i++) {
+  motes.push({ x: Math.random() * GAME_W, y: MAZE_Y + Math.random() * ROWS * CELL,
+    vx: (Math.random() - 0.5) * 9, vy: -4 - Math.random() * 7, ph: Math.random() * 6.3, sz: 1.5 + Math.random() * 2 });
 }
 
 // ----- 離屏 sprite（光暈一次烘焙，每幀零 shadowBlur / 零漸層重建）-----
@@ -1549,15 +1707,47 @@ function draw() {
   if (shake > 0) ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
 
   ctx.drawImage(bgCanvas, 0, 0, GAME_W, GAME_H);
+
+  // v6 地城光影：玩家光圈、追兵紅光、寶石綠光（additive，照亮地板）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const lr = 128 + Math.sin(elapsed * 2.3) * 6;
+  ctx.drawImage(lightCv, player.x - lr, player.y - lr, lr * 2, lr * 2);
+  for (const ch of chasers) {
+    if (ch.frozen > 0) continue;
+    const rr2 = 96 + Math.sin(elapsed * 5 + ch.x) * 5;
+    ctx.drawImage(redGlowCv, ch.x - rr2, ch.y - rr2, rr2 * 2, rr2 * 2);
+  }
+  for (const g of gems) {
+    const gw = 44 + Math.sin(elapsed * 5 + g.phase) * 6;
+    ctx.drawImage(gemLightCv, g.x - gw, g.y - gw, gw * 2, gw * 2);
+  }
+  ctx.restore();
+
   drawGems();
   drawItems();
   for (const ch of chasers) drawChaser(ch);
   if (deathTimer < 0 || Math.floor(deathTimer * 12) % 2 === 0) drawPlayer();
   drawGemGuide();
   drawParts();
+
+  // v6 飄浮塵埃（半透明光點，地城氛圍）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const m of motes) {
+    ctx.globalAlpha = 0.1 + 0.12 * Math.abs(Math.sin(m.ph * 1.7));
+    ctx.fillStyle = '#aebcff';
+    ctx.fillRect(m.x, m.y, m.sz, m.sz);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+
   drawFloats();
 
   ctx.restore();
+
+  // v6 烘焙 vignette（地城四周漸暗，聚焦迷宮中心）
+  ctx.drawImage(vigCv, 0, 0, GAME_W, GAME_H);
 
   drawDangerVignette();
   drawHUD();
@@ -1594,7 +1784,8 @@ requestAnimationFrame(frame);
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
 window.__test = () => ({ mode, x: player.x, y: player.y, survive, round, gemsLeft: gems.length,
   score: totalScore(), hard, unlocked, bestN, bestH, chasers: chasers.length, items: items.length,
-  parts: parts.length, cap: rampCap, gino2: gino2Round });
+  parts: parts.length, cap: rampCap, gino2: gino2Round,
+  ch: chasers.map(c => ({ x: Math.round(c.x), y: Math.round(c.y), frozen: +c.frozen.toFixed(1), speed: Math.round(c.speed), path: c.path ? c.path.length : -1 })) });
 </script>
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){

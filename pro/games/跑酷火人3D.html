@@ -1,6 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v5：SVG圖示取代表情符號、浮動式虛擬搖桿、死亡/彈跳/破關凍幀(hit-stop)手感、直向裝置提示、檢查點浮字回饋 -->
-<!-- +補強：角色多部件精細化(手腳/輪廓線/高光/三態表情)、觸控防捲動強化、大螢幕提醒浮層 -->
+<!-- 專業AI升級 v6：平臺岩石紋理貼圖、熔岩結殼雙層視差＋隨機噴發、雙層火山剪影視差、火山灰雲與地平線輝光、vignette、終點光柱、腳下火光映地；音效新增程序化殘響(ConvolverNode)、火山隆隆環境音層(含ducking)、熔岩泡泡音 -->
+<!-- v5：SVG圖示、浮動式虛擬搖桿、hit-stop手感、直向提示、檢查點浮字、角色多部件精細化、大螢幕提醒浮層 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -202,9 +202,13 @@ let VW = innerWidth, VH = innerHeight, CX = VW/2, CY = VH*0.42, FOV = VH*0.9;
   });
 })();
 
-/* ===================== 預烘焙：天空與熔岩漸層 ===================== */
+/* ===================== 預烘焙：天空、熔岩漸層、v6 紋理／視差層／暗角 ===================== */
 const skyCv = document.createElement('canvas');
 const lavaGradCv = document.createElement('canvas');
+const farMtCv = document.createElement('canvas');
+const nearMtCv = document.createElement('canvas');
+const vignetteCv = document.createElement('canvas');
+const crustCv = document.createElement('canvas');
 function bakeSky(){
   skyCv.width = VW; skyCv.height = VH;
   const g = skyCv.getContext('2d');
@@ -212,23 +216,52 @@ function bakeSky(){
   grad.addColorStop(0,'#0d0308'); grad.addColorStop(0.35,'#2a0a0c');
   grad.addColorStop(0.62,'#6b1a10'); grad.addColorStop(0.8,'#c8451a'); grad.addColorStop(1,'#ff7e3d');
   g.fillStyle = grad; g.fillRect(0,0,VW,VH);
-  // 星星（上半）
-  for(let i=0;i<60;i++){
-    const x=Math.random()*VW, y=Math.random()*VH*0.3;
-    g.globalAlpha = 0.25+Math.random()*0.5;
+  const hb = VH*0.142;   // 地平線位置（與 3D 投影一致）
+  // 星星（地平線以上才看得到）
+  for(let i=0;i<90;i++){
+    const x=Math.random()*VW, y=Math.random()*hb*0.92;
+    g.globalAlpha = 0.2+Math.random()*0.6;
     g.fillStyle='#ffd9c0'; g.fillRect(x,y,Math.random()<0.2?2:1,Math.random()<0.2?2:1);
   }
   g.globalAlpha=1;
-  // 遠火山剪影兩層（供視差）
-  g.fillStyle='#1c0608';
-  for(let x=-100;x<VW+200;x+=260){
-    const h = 90+((x*7)%60);
-    g.beginPath(); g.moveTo(x-140,VH); g.lineTo(x, VH-h-VH*0.42); g.lineTo(x+140,VH); g.closePath(); g.fill();
-    // 火山口光
-    g.fillStyle='rgba(255,120,40,0.5)';
-    g.fillRect(x-10, VH-h-VH*0.42, 20, 4);
-    g.fillStyle='#1c0608';
+  // v6 火山灰雲：被熔岩由下往上照亮（烘焙 radial-gradient）
+  for(let i=0;i<7;i++){
+    const cx=Math.random()*VW, cy=hb*(0.22+Math.random()*0.62), rw=90+Math.random()*170, rh=10+Math.random()*18;
+    const cg=g.createRadialGradient(cx,cy+rh,2,cx,cy,rw);
+    cg.addColorStop(0,'rgba(255,120,50,0.30)');
+    cg.addColorStop(0.55,'rgba(130,32,20,0.20)');
+    cg.addColorStop(1,'rgba(60,10,14,0)');
+    g.fillStyle=cg;
+    g.beginPath(); g.ellipse(cx,cy,rw,rh,0,0,Math.PI*2); g.fill();
   }
+  // v6 地平線輝光帶（熔岩海環境光暈）
+  const hg=g.createLinearGradient(0,hb-VH*0.09,0,hb+VH*0.02);
+  hg.addColorStop(0,'rgba(255,120,40,0)'); hg.addColorStop(0.85,'rgba(255,150,60,0.4)'); hg.addColorStop(1,'rgba(255,190,90,0.55)');
+  g.fillStyle=hg; g.fillRect(0,hb-VH*0.09,VW,VH*0.11);
+  // v6 遠近雙層火山剪影（各自畫布 → 真雙層視差）
+  function bakeMts(cv, stripH, step, hMin, hVar, color, crater){
+    cv.width=VW; cv.height=Math.ceil(stripH);
+    const m=cv.getContext('2d');
+    for(let x=-160;x<VW+240;x+=step){
+      const h=hMin+(((x*13)%hVar)+hVar)%hVar;
+      m.fillStyle=color;
+      m.beginPath(); m.moveTo(x-step*0.62,cv.height); m.lineTo(x,cv.height-h); m.lineTo(x+step*0.62,cv.height); m.closePath(); m.fill();
+      if(crater){
+        m.fillStyle='rgba(255,170,80,0.28)';
+        m.fillRect(x-16, cv.height-h-4, 32, 6);
+        m.fillStyle='rgba(255,130,45,0.75)';
+        m.fillRect(x-9, cv.height-h, 18, 3.5);
+      }
+    }
+  }
+  bakeMts(farMtCv, Math.max(50,VH*0.20), 210, VH*0.045, VH*0.06, '#160407', false);
+  bakeMts(nearMtCv, Math.max(66,VH*0.26), 300, VH*0.075, VH*0.09, '#20070a', true);
+  // v6 暗角（一次烘焙，主迴圈直接疊，零即時漸層）
+  vignetteCv.width=VW; vignetteCv.height=VH;
+  const vg=vignetteCv.getContext('2d');
+  const vgr=vg.createRadialGradient(VW/2,VH*0.46,Math.min(VW,VH)*0.42,VW/2,VH*0.52,Math.max(VW,VH)*0.78);
+  vgr.addColorStop(0,'rgba(6,2,8,0)'); vgr.addColorStop(1,'rgba(6,2,8,0.46)');
+  vg.fillStyle=vgr; vg.fillRect(0,0,VW,VH);
   // 熔岩漸層條（畫熔岩海用）
   lavaGradCv.width = 4; lavaGradCv.height = 256;
   const lg = lavaGradCv.getContext('2d');
@@ -236,7 +269,59 @@ function bakeSky(){
   lgrad.addColorStop(0,'#8a1e06'); lgrad.addColorStop(0.3,'#c83a0e');
   lgrad.addColorStop(0.7,'#ff6a1c'); lgrad.addColorStop(1,'#ffb04a');
   lg.fillStyle = lgrad; lg.fillRect(0,0,4,256);
+  // v6 熔岩結殼合成層：雙頻率紋理一次烘焙成單張可平鋪大圖，主迴圈只做 1:1 平移 blit（效能優先）
+  const TW=320;
+  crustCv.width = Math.ceil(VW/TW)*TW; crustCv.height = Math.ceil(VH*0.9/TW)*TW;
+  const cc = crustCv.getContext('2d');
+  cc.globalAlpha=0.30;
+  for(let y=0;y<crustCv.height;y+=160) for(let x=0;x<crustCv.width;x+=160) cc.drawImage(lavaTexCv,x,y,160,160);
+  cc.globalAlpha=0.42;
+  for(let y=0;y<crustCv.height;y+=TW) for(let x=0;x<crustCv.width;x+=TW) cc.drawImage(lavaTexCv,x,y,TW,TW);
+  cc.globalAlpha=1;
 }
+/* v6 岩石細節紋理（透明疊層：暗斑＋亮粒＋裂縫，疊在任何平臺底色上都成立） */
+const rockTexCv = document.createElement('canvas');
+(function bakeRockTex(){
+  rockTexCv.width = 128; rockTexCv.height = 128;
+  const g = rockTexCv.getContext('2d');
+  for(let i=0;i<130;i++){
+    g.fillStyle = 'rgba(0,0,0,'+(0.05+Math.random()*0.12).toFixed(2)+')';
+    const r = 2+Math.random()*7;
+    g.beginPath(); g.ellipse(Math.random()*128, Math.random()*128, r, r*0.7, Math.random()*3, 0, 6.29); g.fill();
+  }
+  for(let i=0;i<90;i++){
+    g.fillStyle = 'rgba(255,235,205,'+(0.04+Math.random()*0.08).toFixed(2)+')';
+    g.fillRect(Math.random()*128, Math.random()*128, 1+Math.random()*2, 1+Math.random()*2);
+  }
+  g.strokeStyle='rgba(0,0,0,0.22)'; g.lineWidth=1;
+  for(let i=0;i<11;i++){
+    let x=Math.random()*128, y=Math.random()*128;
+    g.beginPath(); g.moveTo(x,y);
+    for(let k=0;k<4;k++){ x+=(Math.random()*2-1)*18; y+=(Math.random()*2-1)*18; g.lineTo(x,y); }
+    g.stroke();
+  }
+})();
+/* v6 熔岩結殼紋理（雙軸可平鋪：暗殼塊＋亮縫斑） */
+const lavaTexCv = document.createElement('canvas');
+(function bakeLavaTex(){
+  const W=256,H=256; lavaTexCv.width=W; lavaTexCv.height=H;
+  const g=lavaTexCv.getContext('2d');
+  for(let i=0;i<46;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=14+Math.random()*30;
+    const ry=r*(0.5+Math.random()*0.3), rot=Math.random()*3;
+    g.fillStyle='rgba(70,16,4,'+(0.5+Math.random()*0.35).toFixed(2)+')';
+    for(let ox=-W;ox<=W;ox+=W) for(let oy=-H;oy<=H;oy+=H){
+      g.beginPath(); g.ellipse(x+ox,y+oy,r,ry,rot,0,6.29); g.fill();
+    }
+  }
+  for(let i=0;i<70;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=1+Math.random()*3;
+    g.fillStyle='rgba(255,210,110,'+(0.15+Math.random()*0.3).toFixed(2)+')';
+    for(let ox=-W;ox<=W;ox+=W) for(let oy=-H;oy<=H;oy+=H){
+      g.beginPath(); g.arc(x+ox,y+oy,r,0,6.29); g.fill();
+    }
+  }
+})();
 function makeGlow(color,size){
   const c=document.createElement('canvas'); c.width=c.height=size;
   const g=c.getContext('2d');
@@ -260,19 +345,65 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 
-/* ===================== 音效：Web Audio＋壓縮母線 ===================== */
-let AC=null, master=null;
+/* ===================== 音效：Web Audio＋壓縮母線＋v6殘響/環境音 ===================== */
+let AC=null, master=null, busComp=null, revGain=null, ambGain=null;
 let muted = localStorage.getItem('firerun2_mute')==='1';
+function makeImpulse(dur,decay){
+  const rate=AC.sampleRate, len=Math.floor(rate*dur);
+  const buf=AC.createBuffer(2,len,rate);
+  for(let c=0;c<2;c++){
+    const d=buf.getChannelData(c);
+    for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,decay);
+  }
+  return buf;
+}
+/* v6 火山環境音層：低頻隆隆（噪聲+lowpass）＋中頻火山風（bandpass+LFO 起伏） */
+function buildAmbient(){
+  ambGain=AC.createGain(); ambGain.gain.value=0; ambGain.connect(busComp);
+  const len=AC.sampleRate*2, buf=AC.createBuffer(1,len,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i]=Math.random()*2-1;
+  const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
+  const lp=AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value=95; lp.Q.value=0.8;
+  const g=AC.createGain(); g.gain.value=1.7;
+  src.connect(lp); lp.connect(g); g.connect(ambGain); src.start();
+  const src2=AC.createBufferSource(); src2.buffer=buf; src2.loop=true; src2.playbackRate.value=0.71;
+  const bp=AC.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=420; bp.Q.value=1.4;
+  const g2=AC.createGain(); g2.gain.value=0.10;
+  const lfo=AC.createOscillator(); lfo.frequency.value=0.13;
+  const lfoG=AC.createGain(); lfoG.gain.value=0.06;
+  lfo.connect(lfoG); lfoG.connect(g2.gain); lfo.start();
+  src2.connect(bp); bp.connect(g2); g2.connect(ambGain); src2.start();
+}
+function updateAmbient(){
+  if(!ambGain) return;
+  const on = !muted && (gameState==='playing'||gameState==='dead');
+  ambGain.gain.setTargetAtTime(on?0.34:0, AC.currentTime, 0.5);
+}
+/* 主音效時環境音 ducking，事件結束再回復 */
+function duckAmbient(){
+  if(!ambGain||!AC) return;
+  ambGain.gain.cancelScheduledValues(AC.currentTime);
+  ambGain.gain.setTargetAtTime(0.05, AC.currentTime, 0.03);
+  setTimeout(updateAmbient, 550);
+}
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
-    const comp = AC.createDynamicsCompressor();
-    comp.threshold.value=-18; comp.knee.value=24; comp.ratio.value=6;
-    comp.attack.value=0.003; comp.release.value=0.2;
+    busComp = AC.createDynamicsCompressor();
+    busComp.threshold.value=-18; busComp.knee.value=24; busComp.ratio.value=6;
+    busComp.attack.value=0.003; busComp.release.value=0.2;
     master = AC.createGain(); master.gain.value=0.9;
-    master.connect(comp); comp.connect(AC.destination);
+    master.connect(busComp); busComp.connect(AC.destination);
+    /* v6 程序化殘響：generated impulse 的 ConvolverNode（火山洞窟空間感），母線並聯送入 */
+    try{
+      const conv=AC.createConvolver(); conv.buffer=makeImpulse(1.5,2.6);
+      revGain=AC.createGain(); revGain.gain.value=0.22;
+      master.connect(revGain); revGain.connect(conv); conv.connect(busComp);
+    }catch(e){}
+    buildAmbient();
   }
   if(AC.state==='suspended') AC.resume();
+  updateAmbient();
   return AC;
 }
 addEventListener('pointerdown', audio, {once:true});
@@ -306,9 +437,10 @@ const sfx = {
   bounce: ()=>{ beep(330,0.16,'square',0.14,520); setTimeout(()=>beep(660,0.1,'square',0.1,300),60); },
   crumble: ()=>{ noiseBurst(0.18,0.08); beep(160,0.12,'sawtooth',0.06,-60); },
   checkpoint: ()=>{ beep(988,0.08,'square',0.13); setTimeout(()=>beep(1319,0.15,'square',0.13),80); },
-  death: ()=>{ beep(220,0.28,'sawtooth',0.18,-160); noiseBurst(0.35,0.16); },
-  win: ()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'square',0.14),i*110)); },
+  death: ()=>{ duckAmbient(); beep(220,0.28,'sawtooth',0.18,-160); noiseBurst(0.35,0.16); },
+  win: ()=>{ duckAmbient(); [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.2,'square',0.14),i*110)); },
   star: n=>beep(784+n*180,0.18,'square',0.14,120),
+  bubble: ()=>{ beep(82,0.3,'sine',0.05,-40); noiseBurst(0.1,0.025); },
 };
 const muteBtn = document.getElementById('muteBtn');
 function renderMute(){
@@ -316,7 +448,7 @@ function renderMute(){
   document.getElementById('wave2').style.visibility = muted?'hidden':'visible';
   document.getElementById('muteX').style.visibility = muted?'visible':'hidden';
 }
-muteBtn.addEventListener('click', ()=>{ muted=!muted; localStorage.setItem('firerun2_mute',muted?'1':'0'); renderMute(); });
+muteBtn.addEventListener('click', ()=>{ muted=!muted; localStorage.setItem('firerun2_mute',muted?'1':'0'); renderMute(); updateAmbient(); });
 renderMute();
 
 /* 浮字提示（例如「檢查點！」）——比純音效+粒子更明確的一目了然回饋 */
@@ -428,9 +560,20 @@ function quadStroke(a,b,c,d,color,w){
   ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y);
   ctx.closePath(); ctx.stroke();
 }
+/* v6 岩石紋理貼圖：以仿射變換把烘焙紋理映射到投影後的四邊形（clip 修正梯形差） */
+function texQuad(a,b,c,d,alpha){
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.clip();
+  ctx.globalAlpha = ctx.globalAlpha*alpha;
+  const W=rockTexCv.width, H=rockTexCv.height;
+  ctx.transform((b.x-a.x)/W,(b.y-a.y)/W,(d.x-a.x)/H,(d.y-a.y)/H,a.x,a.y);
+  ctx.drawImage(rockTexCv,0,0);
+  ctx.restore();
+}
 /* 立體盒：每面獨立受光（頂最亮、面向鏡頭正面中亮、側面暗）＋熔岩底光
-   outline（選用）：額外描邊正面＋側面輪廓線，讓角色部件更立體、識別度更高 */
-function drawBox3D(x,y,z,hw,h,hd,pal,lavaGlow,outline){
+   outline（選用）：額外描邊正面＋側面輪廓線，讓角色部件更立體、識別度更高
+   tex（選用）：頂面＋正面疊岩石細節紋理（平臺用） */
+function drawBox3D(x,y,z,hw,h,hd,pal,lavaGlow,outline,tex){
   const tFL=project(x-hw,y,z-hd), tFR=project(x+hw,y,z-hd),
         tBL=project(x-hw,y,z+hd), tBR=project(x+hw,y,z+hd),
         bFL=project(x-hw,y-h,z-hd), bFR=project(x+hw,y-h,z-hd),
@@ -455,6 +598,7 @@ function drawBox3D(x,y,z,hw,h,hd,pal,lavaGlow,outline){
   }
   // 頂面
   quad(tFL,tFR,tBR,tBL,pal.top);
+  if(tex && tFL&&tFR&&tBR&&tBL && Math.abs(tFR.x-tFL.x)>56) texQuad(tFL,tFR,tBR,tBL,0.85);
   quadStroke(tFL,tFR,tBR,tBL,pal.edge,1.5);
   if(outline) quadStroke(tFL,tFR,tBR,tBL,outline,1);
   return {tFL,tFR,tBL,tBR};
@@ -553,7 +697,7 @@ const MOVE_ACCEL=2600, MOVE_DECEL=3200, MAX_SPEED=310, AIR_MULT=0.65, COYOTE_MAX
 let curLevel=0, pickedLevel=0;
 let platforms=[], GOAL_Z=1, lavaBlobs=[];
 let gameState='title'; // title | playing | dead | win
-let elapsed=0, shake=0, freeze=0, hintT=0, checkpointIdx=0, deaths=0;
+let elapsed=0, shake=0, freeze=0, hintT=0, checkpointIdx=0, deaths=0, eruptT=2.2;
 const player = {
   x:0,y:0,z:0,vx:0,vy:0,vz:0, grounded:false, coyote:0, groundPlat:null,
   sx:1,sy:1, animT:0, running:false, faceT:0,
@@ -591,6 +735,7 @@ function startGame(i){
   document.getElementById('lvTxt').textContent = LEVELS[i].name;
   document.body.classList.add('playing');
   gameState='playing';
+  updateAmbient();
   if(typeof updateOrientHint==='function') updateOrientHint();
 }
 function die(){
@@ -611,6 +756,7 @@ function winGame(){
   if(gameState!=='playing') return;
   gameState='win';
   sfx.win();
+  updateAmbient();
   freeze=0.08;
   spawnParts3(player.x, player.y+50, player.z, '#38e1ff', 40, 320, 1, 7);
   spawnParts3(player.x, player.y+70, player.z, '#ffcf5c', 30, 280, 1, 6);
@@ -766,6 +912,18 @@ function updatePhysics(dt,t){
   if(!player.grounded && Math.random()<0.5){
     spawnParts3(player.x, player.y+14, player.z, Math.random()<0.5?'#ffcf5c':'#ff5c1c', 1, 40, 0.4, 5);
   }
+  /* v6 熔岩噴發：前方隨機亮斑冒出火柱粒子＋泡泡音，讓熔岩海活起來 */
+  eruptT-=dt;
+  if(eruptT<=0){
+    eruptT=1.8+Math.random()*2.4;
+    const cands=lavaBlobs.filter(b=>b.z>player.z+250 && b.z<player.z+1500 && Math.abs(b.x)<760);
+    if(cands.length){
+      const b=cands[(Math.random()*cands.length)|0];
+      spawnParts3(b.x, LAVA_Y+6, b.z, '#ff6a1c', 10, 260, 0.9, 8);
+      spawnParts3(b.x, LAVA_Y+6, b.z, '#ffcf5c', 5, 200, 0.7, 6);
+      sfx.bubble();
+    }
+  }
 }
 
 /* ===================== 3D 粒子（swap-pop） ===================== */
@@ -822,6 +980,13 @@ function drawPlayer(t){
       ctx.fillStyle='#000';
       ctx.beginPath(); ctx.ellipse(sp.x,sp.y,r,r*0.42,0,0,Math.PI*2); ctx.fill();
       ctx.globalAlpha=1;
+      // v6 火光映地：火人照亮腳下平臺（additive）
+      const gr=Math.max(6, 44*sp.s*(1-Math.min(1,(py-shY)/300)));
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      ctx.globalAlpha=0.45;
+      ctx.drawImage(glowFire, sp.x-gr, sp.y-gr*0.4, gr*2, gr*0.8);
+      ctx.restore();
     }
   }
   const swing = player.running&&player.grounded ? Math.sin(performance.now()/85)*10 : (player.grounded?0:6);
@@ -897,7 +1062,9 @@ function drawPlayer(t){
   const hp=project(px, py+62*sy+bob, pz);
   if(hp){
     const s=hp.s, fl=Math.sin(performance.now()/90);
+    ctx.save(); ctx.globalCompositeOperation='lighter';   // v6 火髮光暈改 additive，發光感更真
     ctx.drawImage(glowFire, hp.x-30*s, hp.y-34*s, 60*s, 60*s);
+    ctx.restore();
     const flame=(ox,h,w,color)=>{
       ctx.fillStyle=color;
       ctx.beginPath();
@@ -921,9 +1088,26 @@ function drawLava(t){
   ctx.drawImage(skyCv, -par, 0);
   if(par>0) ctx.drawImage(skyCv, VW-par, 0);
   else ctx.drawImage(skyCv, -VW-par, 0);
-  // 熔岩海
   const hy = Math.max(40, horizonY);
+  // v6 雙層火山剪影視差（遠慢近快）
+  const p1=((cam.x*0.018)%VW+VW)%VW, p2=((cam.x*0.045)%VW+VW)%VW;
+  ctx.drawImage(farMtCv, -p1, hy-farMtCv.height+6);
+  ctx.drawImage(farMtCv, VW-p1, hy-farMtCv.height+6);
+  ctx.drawImage(nearMtCv, -p2, hy-nearMtCv.height+8);
+  ctx.drawImage(nearMtCv, VW-p2, hy-nearMtCv.height+8);
+  // 熔岩海
   ctx.drawImage(lavaGradCv, 0, hy, VW, VH-hy);
+  // v6 熔岩結殼紋理：預合成大圖 1:1 平移 blit（隨移動流動，效能等同單次全幅疊圖）
+  const bandH=VH-hy, CW=crustCv.width, CH=crustCv.height;
+  const cox=(((cam.x*0.5)%CW)+CW)%CW, coy=(((-cam.z*0.55)%CH)+CH)%CH;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0,hy,VW,bandH); ctx.clip();
+  ctx.drawImage(crustCv, -cox, hy-coy);
+  ctx.drawImage(crustCv, CW-cox, hy-coy);
+  ctx.drawImage(crustCv, -cox, hy-coy+CH);
+  ctx.drawImage(crustCv, CW-cox, hy-coy+CH);
+  if(hy-coy+CH < VH){ ctx.drawImage(crustCv, -cox, hy-coy+CH*2); ctx.drawImage(crustCv, CW-cox, hy-coy+CH*2); }
+  ctx.restore();
   // 熔岩亮斑（投影在 y=LAVA_Y 平面）
   for(const b of lavaBlobs){
     const dz=camDepth(LAVA_Y, b.z);
@@ -972,7 +1156,7 @@ function drawPlatform(p,t){
     ctx.globalAlpha = 1-k*0.5;
   }
   if(p.type==='bounce' && p.pressT>0) h = 30-10*(p.pressT/0.25);
-  const q = drawBox3D(b.x, yy, b.z, b.w, h, b.d, pal, Math.max(0, 1-(b.y-LAVA_Y)/380));
+  const q = drawBox3D(b.x, yy, b.z, b.w, h, b.d, pal, Math.max(0, 1-(b.y-LAVA_Y)/380), null, true);
   ctx.globalAlpha=1;
   // 頂面裝飾
   if(q && q.tFL && q.tBR){
@@ -994,6 +1178,16 @@ function drawPlatform(p,t){
       if(c){
         const r=b.w*1.4*c.s;
         ctx.drawImage(glowCyan, c.x-r, c.y-r*0.4, r*2, r*0.8);
+        // v6 終點光柱（additive bloom）：從遠處就看得到目標
+        const topP=project(b.x, yy+560, b.z);
+        if(topP){
+          ctx.save();
+          ctx.globalCompositeOperation='lighter';
+          ctx.globalAlpha=0.38+0.14*Math.sin(performance.now()/300);
+          const w=Math.max(6, b.w*0.5*c.s);
+          ctx.drawImage(glowCyan, c.x-w, topP.y, w*2, Math.max(4, c.y-topP.y));
+          ctx.restore();
+        }
       }
     }
   }
@@ -1048,6 +1242,9 @@ function render(dt,t){
   }
   ctx.globalAlpha=1;
   ctx.restore();
+
+  // v6 螢幕後製：烘焙暗角（聚焦畫面中心，零即時漸層）
+  ctx.drawImage(vignetteCv, 0, 0);
 
   // 開場提示浮層
   if(gameState==='playing' && hintT<5.5 && curLevel===0){
@@ -1111,6 +1308,7 @@ document.getElementById('selectBtn').addEventListener('click', ()=>{
   document.getElementById('titleScreen').classList.remove('hidden');
   document.body.classList.remove('playing');
   gameState='title';
+  updateAmbient();
   renderLvGrid();
   updateOrientHint();
 });

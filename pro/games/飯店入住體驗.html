@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：等角地磚紋理、暖光光池(吊燈/立燈/餐桌/泳池additive)、泳池波光、腳步塵土、烘焙光束背景；音效新增程序化殘響(ConvolverNode)、音樂盒背景旋律循環、飯店room-tone環境層 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -194,8 +194,10 @@ muteBtn.addEventListener('click', e => {
   muted = !muted;
   try{ localStorage.setItem('pro飯店入住_mute', muted?'1':'0'); }catch(err){}
   updateMuteBtn();
+  if(typeof updateAmbient === 'function') updateAmbient();
   if(!muted) sfx.blip();
 });
+let ambGain = null;
 function audio(){
   if(!AC){
     try{
@@ -205,10 +207,46 @@ function audio(){
       comp.attack.value = .003; comp.release.value = .22;
       master = AC.createGain(); master.gain.value = .85;
       master.connect(comp); comp.connect(AC.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（挑高大廳空間感），母線並聯送入
+      try{
+        const len = Math.floor(AC.sampleRate*1.7);
+        const ir = AC.createBuffer(2, len, AC.sampleRate);
+        for(let c=0;c<2;c++){ const d = ir.getChannelData(c);
+          for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 2.9); }
+        const conv = AC.createConvolver(); conv.buffer = ir;
+        const rev = AC.createGain(); rev.gain.value = .2;
+        master.connect(rev); rev.connect(conv); conv.connect(comp);
+      }catch(e){}
+      // v6 飯店 room-tone 環境層（低頻噪聲，若有似無的空間底噪）
+      try{
+        ambGain = AC.createGain(); ambGain.gain.value = 0; ambGain.connect(comp);
+        const nlen = AC.sampleRate*2, nbuf = AC.createBuffer(1, nlen, AC.sampleRate), nd = nbuf.getChannelData(0);
+        for(let i=0;i<nlen;i++) nd[i] = Math.random()*2-1;
+        const nsrc = AC.createBufferSource(); nsrc.buffer = nbuf; nsrc.loop = true;
+        const lp = AC.createBiquadFilter(); lp.type='lowpass'; lp.frequency.value = 220;
+        nsrc.connect(lp); lp.connect(ambGain); nsrc.start();
+      }catch(e){ ambGain = null; }
+      updateAmbient();
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function updateAmbient(){
+  if(!AC || !ambGain) return;
+  ambGain.gain.setTargetAtTime((!muted && S.scene==='play') ? .05 : 0, AC.currentTime, .6);
+}
+/* v6 音樂盒背景旋律：五聲音階 16 步循環，觸鍵式排程（在 update 內推進），結算/靜音自動停 */
+const MELODY = [523,659,784,0,880,784,659,0,587,659,523,0,784,880,1047,0];
+let melStep = 0, melT = 1.2;
+function tickMelody(dt){
+  if(S.scene!=='play' || S.over || muted) return;
+  melT -= dt;
+  if(melT > 0) return;
+  melT = .42;
+  const f = MELODY[melStep % MELODY.length];
+  melStep++;
+  if(f) beep(f, .5, 'triangle', .034);
 }
 addEventListener('pointerdown', audio);
 addEventListener('keydown', audio);
@@ -336,6 +374,7 @@ function showHint(text){
 /* ---------- 場景切換 ---------- */
 function enterTitle(){
   S.scene = 'title';
+  updateAmbient();
   $('titleOvl').style.display = 'flex'; $('endOvl').style.display = 'none';
   $('hud').style.display = 'none'; compass.style.display = 'none';
   $('btnA').style.display = 'none'; $('btnB').style.display = 'none';
@@ -356,6 +395,8 @@ function enterTitle(){
 function enterPlay(coop, challenge){
   resetGame(coop, challenge);
   S.scene = 'play';
+  melStep = 0; melT = 1.2;
+  updateAmbient();
   $('titleOvl').style.display = 'none'; $('endOvl').style.display = 'none';
   $('hud').style.display = 'block'; compass.style.display = 'block';
   $('btnA').style.display = 'block';
@@ -378,6 +419,7 @@ function calcStarsChallenge(){
 }
 function showEnd(){
   S.scene = 'end';
+  updateAmbient();
   if(S.timeUp){
     // 限時挑戰逾時失敗
     $('stars').textContent = '☆☆☆';
@@ -553,6 +595,22 @@ function bakeBackdrop(){
   const halo = g.createRadialGradient(w/2, -h*.1, 10, w/2, -h*.1, h*.8);
   halo.addColorStop(0,'rgba(255,244,214,.85)'); halo.addColorStop(1,'rgba(255,244,214,0)');
   g.fillStyle = halo; g.fillRect(0,0,w,h);
+  // v6 斜射光束（天窗灑落，烘焙一次零成本）
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  for(let i=0;i<3;i++){
+    const bx = w*(.22+i*.28);
+    const bg2 = g.createLinearGradient(bx, 0, bx-w*.13, h);
+    bg2.addColorStop(0,'rgba(255,246,210,.16)');
+    bg2.addColorStop(.65,'rgba(255,246,210,.045)');
+    bg2.addColorStop(1,'rgba(255,246,210,0)');
+    g.fillStyle = bg2;
+    g.beginPath();
+    g.moveTo(bx-w*.02,0); g.lineTo(bx+w*.055,0);
+    g.lineTo(bx-w*.08,h); g.lineTo(bx-w*.155,h);
+    g.closePath(); g.fill();
+  }
+  g.restore();
   // 角落暗角
   const vig = g.createRadialGradient(w/2,h/2,Math.min(w,h)*.35, w/2,h/2, Math.max(w,h)*.75);
   vig.addColorStop(0,'rgba(0,0,0,0)'); vig.addColorStop(1,'rgba(90,60,20,.18)');
@@ -750,6 +808,63 @@ function drawFloatsAll(){
 const motes = [];
 for(let i=0;i<18;i++) motes.push({x:rnd(-20,20), y:rnd(-20,20), p:rnd(0,6), s:rnd(.5,1)});
 
+/* ---------- v6 腳步塵土（世界座標小煙塵） ---------- */
+const dusts = [];
+function puffDust(wx, wy){
+  if(dusts.length > 40) return;
+  dusts.push({x:wx+rnd(-.15,.15), y:wy+rnd(-.1,.1), life:.5, max:.5, r:rnd(2.5,4.5)});
+}
+function updateDust(dt){
+  for(let i=dusts.length-1;i>=0;i--){
+    const d = dusts[i]; d.life -= dt;
+    if(d.life<=0){ dusts[i]=dusts[dusts.length-1]; dusts.pop(); }
+  }
+}
+function drawDust(){
+  for(const d of dusts){
+    const [sx,sy] = project(d.x,d.y);
+    const k = 1 - d.life/d.max;
+    ctx.globalAlpha = (1-k)*.4;
+    ctx.fillStyle = '#cbb98e';
+    ctx.beginPath(); ctx.arc(sx, sy-2-k*6, d.r*(1+k), 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+/* ---------- v6 暖光光池（烘焙 radial 光暈，additive blit） ---------- */
+const warmGlowCv = (()=>{
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(128,128,6,128,128,128);
+  rg.addColorStop(0,'rgba(255,232,170,.55)'); rg.addColorStop(.55,'rgba(255,214,130,.2)'); rg.addColorStop(1,'rgba(255,214,130,0)');
+  g.fillStyle = rg; g.fillRect(0,0,256,256);
+  return c;
+})();
+const coolGlowCv = (()=>{
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(128,128,6,128,128,128);
+  rg.addColorStop(0,'rgba(150,225,255,.4)'); rg.addColorStop(1,'rgba(150,225,255,0)');
+  g.fillStyle = rg; g.fillRect(0,0,256,256);
+  return c;
+})();
+function blitGlow(img, wx, wy, rw, rh, alpha){
+  const [sx,sy] = project(wx,wy);
+  ctx.globalAlpha = alpha;
+  ctx.drawImage(img, sx-rw, sy-rh, rw*2, rh*2);
+}
+function drawLightPools(t){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const th = .9 + Math.sin(t*1.1)*.06;   // 呼吸微顫
+  blitGlow(warmGlowCv, 0, 0, TILE*6.4, TILE*3.6, .5*th);          // 大廳吊燈
+  blitGlow(warmGlowCv, -12.6, -13.5, TILE*2.6, TILE*1.5, .55*th); // 客房立燈
+  blitGlow(warmGlowCv, -16, 16, TILE*2.4, TILE*1.4, .4*th);       // 餐桌燭光
+  blitGlow(warmGlowCv, -19, 13, TILE*2, TILE*1.2, .35*th);
+  blitGlow(coolGlowCv, 18, -15.5, TILE*4.4, TILE*2.5, .45);       // 泳池水光
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
 /* ---------- 世界更新 ---------- */
 const crumbs = [];
 function moveGuest(p, dx, dy, dt){
@@ -763,7 +878,7 @@ function moveGuest(p, dx, dy, dt){
     p.angle = Math.atan2(dy,dx);
     p.bob += dt*9.5;
     p.stepT -= dt;
-    if(p.stepT <= 0){ p.stepT = .27; sfx.step(p.idx); }
+    if(p.stepT <= 0){ p.stepT = .27; sfx.step(p.idx); puffDust(p.x, p.y); }
   }else p.bob = 0;
   p.squash = Math.max(0, p.squash - dt*2.2);
 }
@@ -824,6 +939,8 @@ function updateTags(){
 }
 
 function update(dt, t){
+  tickMelody(dt);   // v6 音樂盒背景旋律
+  updateDust(dt);   // v6 腳步塵土
   if(S.scene !== 'play' || S.over){
     updateConfetti(dt); updateFloats(dt);
     return;
@@ -891,6 +1008,21 @@ function drawZoneFloors(){
   fillIsoRect(-24,-1.4,49,2.8,'rgba(201,161,90,.3)');
   fillIsoRect(-1.4,-24,2.8,48,'rgba(201,161,90,.3)');
   Object.values(zones).forEach(z => fillIsoRect(z.x,z.y,z.w,z.h,z.color,'rgba(22,51,44,.28)'));
+  // v6 等角地磚縫線：每 2 格一道細線（單一路徑批次 stroke，成本極低）
+  ctx.strokeStyle = 'rgba(60,40,20,.1)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  Object.values(zones).forEach(z => {
+    for(let gx=z.x+2; gx<z.x+z.w; gx+=2){
+      const a = project(gx, z.y), b = project(gx, z.y+z.h);
+      ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]);
+    }
+    for(let gy=z.y+2; gy<z.y+z.h; gy+=2){
+      const a = project(z.x, gy), b = project(z.x+z.w, gy);
+      ctx.moveTo(a[0],a[1]); ctx.lineTo(b[0],b[1]);
+    }
+  });
+  ctx.stroke();
   // 大廳圓形地毯
   const [rx,ry] = project(0,0);
   ctx.beginPath();
@@ -915,6 +1047,21 @@ function drawPoolRipples(t){
     ctx.ellipse(sx, sy-2, TILE*3.4*ph+8, TILE*1.9*ph+4, 0, 0, Math.PI*2);
     ctx.stroke();
   }
+  ctx.globalAlpha = 1;
+  // v6 泳池波光粼粼（additive 閃爍短弧）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.lineCap = 'round';
+  for(let i=0;i<10;i++){
+    const tw = Math.sin(t*2.2 + i*1.83);
+    if(tw <= .2) continue;
+    const wx = pz.x + 2.6 + ((i*47)%83)/83*8.6, wy = pz.y + 4 + ((i*31)%67)/67*7.6;
+    const [sx,sy] = project(wx,wy);
+    ctx.globalAlpha = (tw-.2)*.6;
+    ctx.strokeStyle = '#eaffff'; ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.moveTo(sx-5,sy); ctx.quadraticCurveTo(sx,sy-3,sx+5,sy); ctx.stroke();
+  }
+  ctx.restore();
   ctx.globalAlpha = 1;
   // 濺起的水花（完成泳池任務時）
   if(splashAnim > 0){
@@ -1101,7 +1248,9 @@ function render(t){
   const w = stage.clientWidth, h = stage.clientHeight;
   if(bgCv) ctx.drawImage(bgCv, 0, 0, w, h);
   drawZoneFloors();
+  drawLightPools(t);   // v6 暖光光池（吊燈/立燈/餐桌/泳池）
   drawPoolRipples(t);
+  drawDust();          // v6 腳步塵土
   // 塵埃光點
   ctx.fillStyle = 'rgba(255,244,200,.4)';
   motes.forEach(m => {

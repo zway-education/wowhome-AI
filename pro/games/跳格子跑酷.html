@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：草地透視條紋、烘焙vignette、飛鳥/夜間螢火蟲環境層、里程碑彩帶、金幣閃光；音效新增程序化殘響(ConvolverNode)、隨速度增強的風聲環境層、腳步聲 -->
+<!-- v4 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8" />
@@ -166,7 +167,7 @@ function proj(d) {              // d = 前方幾格（0 = 玩家腳下）
 }
 
 // ----- Web Audio -----
-let AC = null, BUS = null;
+let AC = null, BUS = null, windGain = null;
 let muted = localStorage.getItem('parkour-muted') === '1';
 function audio() {
   if (!AC) {
@@ -180,6 +181,29 @@ function audio() {
       BUS.gain.value = 0.85;
       BUS.connect(comp);
       comp.connect(AC.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（戶外小空間感），BUS 並聯送入
+      try {
+        const len = Math.floor(AC.sampleRate * 1.1);
+        const ir = AC.createBuffer(2, len, AC.sampleRate);
+        for (let c = 0; c < 2; c++) {
+          const d = ir.getChannelData(c);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2);
+        }
+        const conv = AC.createConvolver(); conv.buffer = ir;
+        const rev = AC.createGain(); rev.gain.value = 0.16;
+        BUS.connect(rev); rev.connect(conv); conv.connect(comp);
+      } catch (e) {}
+      // v6 風聲環境層：噪聲 → bandpass，音量隨奔跑速度增強（在 update 內調節）
+      try {
+        const wlen = AC.sampleRate * 2;
+        const wbuf = AC.createBuffer(1, wlen, AC.sampleRate);
+        const wd = wbuf.getChannelData(0);
+        for (let i = 0; i < wlen; i++) wd[i] = Math.random() * 2 - 1;
+        const wsrc = AC.createBufferSource(); wsrc.buffer = wbuf; wsrc.loop = true;
+        const wbp = AC.createBiquadFilter(); wbp.type = 'bandpass'; wbp.frequency.value = 640; wbp.Q.value = 0.6;
+        windGain = AC.createGain(); windGain.gain.value = 0;
+        wsrc.connect(wbp); wbp.connect(windGain); windGain.connect(comp); wsrc.start();
+      } catch (e) { windGain = null; }
     } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
@@ -227,7 +251,8 @@ const sfx = {
   djump() { beep(330, 0.14, 'square', 0.1, 520, 0.04); },
   rescue(){ beep(180, 0.25, 'sine', 0.16, 480); setTimeout(() => beep(660, 0.15, 'square', 0.1, 220), 120); },
   start() { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
-  best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); }
+  best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); },
+  step(k) { beep(k ? 96 : 84, 0.045, 'triangle', 0.045, -20, 0.08); }   // v6 交替腳步聲
 };
 const muteBtn = document.getElementById('muteBtn');
 function refreshMute() { muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -356,6 +381,35 @@ function seedClouds() {
   }
 }
 seedClouds();
+
+// ----- v6 環境生命：飛鳥（白天）與螢火蟲（夜晚）＋烘焙 vignette／螢光 -----
+const birds = [];
+let birdTimer = 3;
+const fireflies = [];
+for (let i = 0; i < 12; i++) {
+  fireflies.push({ x: Math.random() * GAME_W, y: HORIZON_Y - 30 + Math.random() * 160, ph: Math.random() * 6.3, sp: 0.5 + Math.random() * 0.8 });
+}
+const vigCv = document.createElement('canvas');
+(function bakeVig() {
+  vigCv.width = GAME_W; vigCv.height = GAME_H;
+  const g = vigCv.getContext('2d');
+  const vg = g.createRadialGradient(GAME_W / 2, GAME_H * 0.44, GAME_H * 0.5, GAME_W / 2, GAME_H * 0.52, GAME_H * 1.05);
+  vg.addColorStop(0, 'rgba(20,20,40,0)');
+  vg.addColorStop(1, 'rgba(20,20,40,0.34)');
+  g.fillStyle = vg; g.fillRect(0, 0, GAME_W, GAME_H);
+})();
+const fireflyCv = document.createElement('canvas');
+(function bakeFirefly() {
+  fireflyCv.width = fireflyCv.height = 24;
+  const g = fireflyCv.getContext('2d');
+  const rg = g.createRadialGradient(12, 12, 1, 12, 12, 12);
+  rg.addColorStop(0, 'rgba(230,255,150,0.95)');
+  rg.addColorStop(0.35, 'rgba(190,240,90,0.45)');
+  rg.addColorStop(1, 'rgba(190,240,90,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 24, 24);
+})();
+let stepPhase = 0;   // v6 腳步聲相位
+let glintT = 0.6;    // v6 金幣閃光計時
 
 // 粒子與飄字
 const parts = [], floats = [];
@@ -572,6 +626,44 @@ function update(dt) {
     if (c.x < -c.w - 30) { c.x = GAME_W + c.w; c.y = 30 + Math.random() * 110; }
   }
 
+  // v6 飛鳥（白天偶爾飛過）
+  birdTimer -= dt;
+  if (birdTimer <= 0 && birds.length < 6 && (!theme || theme.night < 0.4)) {
+    birdTimer = 5 + Math.random() * 7;
+    const n = 1 + (Math.random() * 3 | 0), by = 34 + Math.random() * 100, sp2 = 34 + Math.random() * 26;
+    for (let i = 0; i < n; i++) birds.push({ x: -30 - i * 22, y: by + (i % 2) * 10, vx: sp2, fl: Math.random() * 6.3 });
+  }
+  for (let i = birds.length - 1; i >= 0; i--) {
+    const b = birds[i];
+    b.x += b.vx * dt; b.fl += dt * 9;
+    if (b.x > GAME_W + 40) birds.splice(i, 1);
+  }
+  // v6 螢火蟲漂移（夜晚才畫）
+  for (const f of fireflies) {
+    f.ph += dt * f.sp;
+    f.x += Math.sin(f.ph * 1.3) * 12 * dt - speed * 1.5 * dt;
+    f.y += Math.cos(f.ph) * 8 * dt;
+    if (f.x < -20) f.x = GAME_W + 10;
+    if (f.y < HORIZON_Y - 60) f.y = HORIZON_Y - 60;
+    if (f.y > GAME_H - 40) f.y = GAME_H - 40;
+  }
+  // v6 風聲隨速度增強（死亡演出與結束畫面靜風）
+  if (windGain && AC) {
+    const wTarget = (muted || mode !== 'play' || deathTimer >= 0) ? 0 : Math.min(0.13, Math.max(0, (speed - 6) * 0.016));
+    windGain.gain.setTargetAtTime(wTarget, AC.currentTime, 0.3);
+  }
+  // v6 金幣閃光（讓場上金幣不時閃一下星光）
+  glintT -= dt;
+  if (glintT <= 0) {
+    glintT = 0.5 + Math.random() * 0.7;
+    const vis = items.filter(it => it.type === 'coin' && it.row - dist > 1 && it.row - dist < 10);
+    if (vis.length) {
+      const it = vis[(Math.random() * vis.length) | 0];
+      const pI = proj(it.row - dist);
+      addFloat(GAME_W / 2 + (Math.random() * 18 - 9), pI.y - (14 + it.h * 0.55) * Math.max(pI.s, 0.2) - 8, '✦', '#fff8d0', 13, 0.45);
+    }
+  }
+
   // 死亡演出：往洞裡沉
   if (deathTimer >= 0) {
     deathTimer += dt;
@@ -629,6 +721,9 @@ function update(dt) {
     }
   } else {
     player.runCycle += dt * (6 + speed * 0.9);
+    // v6 腳步聲：跑步循環每半週期＝踏一步（左右交替音高）
+    const ph = Math.floor(player.runCycle / Math.PI);
+    if (ph !== stepPhase) { stepPhase = ph; if (mode === 'play') sfx.step(ph & 1); }
     // 跑步塵土
     if (Math.random() < dt * 8) {
       const p0 = proj(0);
@@ -697,6 +792,13 @@ function update(dt) {
     addFloat(GAME_W / 2, 200, nextMilestone + ' 格！', '#fff', 40);
     addFloat(GAME_W / 2, 246, '進入第 ' + (nextMilestone / 100 + 1) + ' 關', '#ffd447', 24);
     if (mode === 'play') sfx.mile();
+    // v6 里程碑彩帶：從畫面上方灑下彩色紙片
+    const confC = ['#ffd447', '#f9629e', '#7fe3ff', '#9ed46a', '#ffb25c'];
+    for (let ci = 0; ci < 26; ci++) {
+      parts.push({ x: GAME_W * 0.2 + Math.random() * GAME_W * 0.6, y: 90 + Math.random() * 60,
+        vx: (Math.random() * 2 - 1) * 120, vy: -60 - Math.random() * 140,
+        life: 0.9 + Math.random() * 0.6, color: confC[ci % confC.length], size: 4 + Math.random() * 4 });
+    }
     shake = 4;
     nextMilestone += 100;
   }
@@ -782,6 +884,13 @@ function refreshGrads() {
   const rg = ctx.createLinearGradient(0, HORIZON_Y, 0, GAME_H);
   rg.addColorStop(0, theme.r1); rg.addColorStop(1, theme.r2);
   grad.road = rg;
+  // v6 地平線霧靄帶（快取漸層：柔化天地交界、增加大氣深度）
+  const hz = ctx.createLinearGradient(0, HORIZON_Y - 34, 0, HORIZON_Y + 40);
+  const bot = theme.bot.match(/\d+/g).slice(0, 3);   // theme.bot 為 rgb(...) 字串
+  hz.addColorStop(0, 'rgba(' + bot.join(',') + ',0)');
+  hz.addColorStop(0.5, 'rgba(' + bot.join(',') + ',0.5)');
+  hz.addColorStop(1, 'rgba(' + bot.join(',') + ',0)');
+  grad.haze = hz;
 }
 
 function drawSky() {
@@ -828,6 +937,21 @@ function drawSky() {
   ctx.closePath();
   ctx.fill();
 
+  // v6 飛鳥（簡筆雙翼，拍翅動畫）
+  if (birds.length) {
+    ctx.strokeStyle = theme.night > 0.4 ? 'rgba(200,210,235,0.5)' : 'rgba(50,60,80,0.75)';
+    ctx.lineWidth = 2.4;
+    ctx.lineCap = 'round';
+    for (const b of birds) {
+      const w = 7 + Math.sin(b.fl) * 4;
+      ctx.beginPath();
+      ctx.moveTo(b.x - 8, b.y - w * 0.6);
+      ctx.quadraticCurveTo(b.x - 3, b.y, b.x, b.y);
+      ctx.quadraticCurveTo(b.x + 3, b.y, b.x + 8, b.y - w * 0.6);
+      ctx.stroke();
+    }
+  }
+
   // 雲朵（兩層視差 + 底部陰影）
   for (const c of clouds) {
     const a = c.layer < 1 ? 0.55 : 0.85;
@@ -853,6 +977,16 @@ function drawGround() {
   // 兩側草地（漸層 + 遠淡近深，隨關卡變色）
   ctx.fillStyle = grad.grass;
   ctx.fillRect(0, HORIZON_Y, GAME_W, GAME_H - HORIZON_Y);
+
+  // v6 草地透視條紋：隨里程流動的明暗帶（強化速度與深度感）
+  ctx.fillStyle = 'rgba(255,255,255,0.045)';
+  const gRow0 = Math.floor(dist);
+  for (let row = gRow0 + ((gRow0 % 2 === 0) ? 0 : 1); row < gRow0 + 20; row += 2) {
+    const dNear = row - dist, dFar = dNear + 1;
+    if (dFar < -0.5) continue;
+    const pn = proj(Math.max(dNear, -1)), pf = proj(dFar);
+    ctx.fillRect(0, pf.y, GAME_W, pn.y - pf.y);
+  }
 
   // 道路本體（大梯形）
   ctx.fillStyle = grad.road;
@@ -1449,7 +1583,27 @@ function draw() {
 
   drawSky();
   drawGround();
+
+  // v6 地平線霧靄（柔化交界、遠景更有空氣感）
+  ctx.fillStyle = grad.haze;
+  ctx.fillRect(0, HORIZON_Y - 34, GAME_W, 74);
+
   drawSideProps();
+
+  // v6 螢火蟲（夜晚限定，additive 光點）
+  if (theme.night > 0.05) {
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const f of fireflies) {
+      const tw = 0.35 + 0.65 * Math.abs(Math.sin(f.ph * 2.1));
+      ctx.globalAlpha = theme.night * tw;
+      const sz = 10 + tw * 8;
+      ctx.drawImage(fireflyCv, f.x - sz / 2, f.y - sz / 2, sz, sz);
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
   drawItems();
   drawRunner();
   drawParts();
@@ -1457,6 +1611,9 @@ function draw() {
   drawSpeedLines();
 
   ctx.restore();
+
+  // v6 烘焙 vignette：聚焦畫面中心（一次烘焙，零即時漸層）
+  ctx.drawImage(vigCv, 0, 0, GAME_W, GAME_H);
 
   drawHUD();
 
