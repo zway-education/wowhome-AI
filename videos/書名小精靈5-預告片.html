@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="林頁丞、林頁行">
+<title>書名小精靈5 · 書本預告片</title>
+<style>
+  html,body{margin:0;height:100%;background:#f4ecd8;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"PingFang TC","Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);cursor:pointer}
+  #muteBtn{
+    position:fixed;right:16px;top:16px;width:48px;height:48px;border-radius:50%;
+    background:rgba(60,40,20,.65);border:2px solid rgba(255,255,255,.35);color:#fff;
+    font-size:20px;display:flex;align-items:center;justify-content:center;z-index:10;
+  }
+  #hint{
+    position:fixed;left:50%;bottom:22px;transform:translateX(-50%);
+    color:#fff;font-size:14px;opacity:.9;background:rgba(60,40,20,.55);
+    padding:6px 14px;border-radius:999px;z-index:10;pointer-events:none;transition:opacity .5s;
+  }
+  #replayBtn{
+    position:fixed;left:50%;top:50%;transform:translate(-50%,-50%) scale(0);
+    padding:16px 32px;font-size:20px;font-weight:bold;color:#3a2410;
+    background:linear-gradient(92deg,#ffd76b,#ff9f5c,#ff6cc7);border:none;border-radius:999px;
+    z-index:11;box-shadow:0 8px 30px rgba(255,140,80,.5);transition:transform .35s cubic-bezier(.2,1.6,.4,1);
+  }
+  #replayBtn.show{transform:translate(-50%,-50%) scale(1)}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<button id="muteBtn">🔇</button>
+<div id="hint">點聲音鈕開啟音樂與旁白</div>
+<button id="replayBtn">重新播放</button>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ===== Audio =====
+let AC = null, muted = true;
+function audio(){ if(!AC) AC = new (window.AudioContext||window.webkitAudioContext)(); return AC; }
+function playTone(freq, dur, vol, type){
+  if(muted || !freq) return;
+  const ac = audio();
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
+  g.gain.setValueAtTime(0.0001, ac.currentTime);
+  g.gain.exponentialRampToValueAtTime(vol, ac.currentTime + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + dur);
+  o.connect(g).connect(ac.destination);
+  o.start(); o.stop(ac.currentTime + dur + 0.03);
+}
+function chime(){ playTone(880,0.12,0.11,'sine'); setTimeout(()=>playTone(1318,0.18,0.09,'sine'),90); }
+function sparkle(){ playTone(1600,0.08,0.07,'sine'); setTimeout(()=>playTone(2000,0.1,0.06,'sine'),60); }
+
+// ===== 背景音樂：原創輕快大調馬克筆風配樂（非任何既有作品，Web Audio 即時合成）=====
+const NOTE_DUR = 0.22;
+const MELODY = [523,659,784,659, 587,698,880,698, 523,659,988,880, 784,698,659,0];
+const BASS   = [131,0,0,0, 147,0,0,0, 131,0,0,0, 165,0,0,0];
+let lastBeat = -1;
+function updateMusic(elapsed){
+  const beat = Math.floor(elapsed / NOTE_DUR) % MELODY.length;
+  if(beat === lastBeat) return;
+  lastBeat = beat;
+  playTone(MELODY[beat], NOTE_DUR*0.9, 0.05, 'triangle');
+  playTone(BASS[beat], NOTE_DUR*3.4, 0.045, 'sine');
+}
+
+// ===== 旁白（女聲，Web Speech API，若瀏覽器無語音則僅顯示字幕）=====
+let femaleVoice = null;
+function pickFemaleVoice(){
+  if(!('speechSynthesis' in window)) return;
+  const voices = speechSynthesis.getVoices();
+  femaleVoice =
+    voices.find(v => /zh|TW|CN|Chinese/i.test(v.lang) && /female|女|Mei|Ting|Yating|Zhiwei|Ya-ling/i.test(v.name)) ||
+    voices.find(v => /zh|TW|CN|Chinese/i.test(v.lang)) ||
+    voices.find(v => /female/i.test(v.name)) ||
+    null;
+}
+if('speechSynthesis' in window){
+  pickFemaleVoice();
+  speechSynthesis.onvoiceschanged = pickFemaleVoice;
+}
+function speak(text){
+  if(muted || !('speechSynthesis' in window)) return;
+  try{
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'zh-TW'; u.rate = 1.02; u.pitch = 1.25; u.volume = 0.95;
+    if(femaleVoice) u.voice = femaleVoice;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+const muteBtn = document.getElementById('muteBtn');
+const hint = document.getElementById('hint');
+function setMuted(v){
+  muted = v; muteBtn.textContent = muted ? '🔇' : '🔊';
+  audio();
+  if(muted && 'speechSynthesis' in window) speechSynthesis.cancel();
+}
+muteBtn.addEventListener('click', ()=>{ setMuted(!muted); hint.style.opacity=0; if(!muted) spokenIdx=-1; });
+try { setMuted(false); if(AC && AC.state === 'suspended') AC.resume(); } catch(e) {}
+(function(){ const unlockAudio = () => { if (AC && AC.state === 'suspended') AC.resume(); };
+  addEventListener('pointerdown', unlockAudio, {once:true}); addEventListener('keydown', unlockAudio, {once:true}); })();
+setTimeout(()=>{ hint.style.opacity=0; }, 4000);
+
+// ===== 馬克筆手繪風工具：抖動雙線疊色，模擬麥克筆質感 =====
+const easeOutCubic = t => 1 - Math.pow(1-t,3);
+const easeOutBack = t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2);
+const easeInOutSine = t => -(Math.cos(Math.PI*t)-1)/2;
+function clamp01(t){ return Math.max(0, Math.min(1, t)); }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function jr(seed){ return (Math.sin(seed*12.9898)*43758.5453) % 1; }
+
+function markerStroke(pts, color, width, alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha!==undefined?alpha:0.85;
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap='round'; ctx.lineJoin='round';
+  for(let pass=0; pass<2; pass++){
+    ctx.beginPath();
+    pts.forEach((p,i)=>{
+      const jx = (jr(i*3.1+pass*7.7)-0.5)*width*0.18;
+      const jy = (jr(i*5.3+pass*2.2)-0.5)*width*0.18;
+      if(i===0) ctx.moveTo(p[0]+jx,p[1]+jy); else ctx.lineTo(p[0]+jx,p[1]+jy);
+    });
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+function markerBlob(cx,cy,r,color,alpha){
+  ctx.save();
+  ctx.globalAlpha = alpha!==undefined?alpha:0.9;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  const n = 10;
+  for(let i=0;i<=n;i++){
+    const a = (i/n)*Math.PI*2;
+    const rr = r*(0.92+0.08*jr(i*7.13+cx*0.01));
+    const x = cx+Math.cos(a)*rr, y = cy+Math.sin(a)*rr*0.94;
+    if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+function paperTexture(t){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0,'#fbf4e2'); g.addColorStop(1,'#f2e6c8');
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,GAME_H);
+  ctx.globalAlpha = 0.05;
+  ctx.strokeStyle = '#000';
+  for(let i=0;i<10;i++){
+    ctx.beginPath();
+    const y = 30+i*52;
+    ctx.moveTo(0,y); ctx.lineTo(GAME_W,y+Math.sin(t*0.3+i)*2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ===== 精靈角色（麥克筆塗鴉風的竹籤人小精靈：圓頭＋細竹籤四肢） =====
+const SPRITE_COLORS = ['#ff6cc7','#4f7cff','#38e1ff','#ffa72e'];
+function drawSprite(x,y,s,t,mood,color){
+  ctx.save();
+  ctx.translate(x,y);
+  const accent = color || SPRITE_COLORS[0];
+  const bob = Math.sin(t*3)*4*s;
+  const swing = Math.sin(t*4);
+  ctx.translate(0,bob);
+  // shadow
+  markerBlob(0,58*s,24*s,'#000',0.12);
+  // 竹籤四肢：細直線＋圓點關節（麥克筆手繪筆觸）
+  const skewer = '#c9a24a';
+  const jointColor = '#8a6410';
+  function joint(jx,jy,r){ markerBlob(jx,jy,r,jointColor,0.9); }
+  // 腿（走路/飄浮擺動）
+  markerStroke([[-6*s,20*s],[-10*s-swing*6*s,44*s],[-14*s-swing*4*s,58*s]], skewer, 3*s, 0.95);
+  markerStroke([[6*s,20*s],[10*s+swing*6*s,44*s],[14*s+swing*4*s,58*s]], skewer, 3*s, 0.95);
+  joint(-6*s,20*s,3*s); joint(6*s,20*s,3*s);
+  // 竹籤軀幹（單一直線）
+  markerStroke([[0,-22*s],[0,20*s]], skewer, 4*s, 0.95);
+  // 手臂（隨節奏自然擺動）
+  markerStroke([[0,-8*s],[-18*s,6*s+swing*5*s]], skewer, 3*s, 0.95);
+  markerStroke([[0,-8*s],[18*s,6*s-swing*5*s]], skewer, 3*s, 0.95);
+  joint(0,-8*s,3*s);
+  // 圓頭（塗鴉臉）
+  markerBlob(0,-34*s,17*s,'#fff7e6',0.97);
+  ctx.strokeStyle='#e0b06a'; ctx.globalAlpha=0.7; ctx.lineWidth=2*s;
+  ctx.beginPath(); ctx.arc(0,-34*s,17*s,0,Math.PI*2); ctx.stroke(); ctx.globalAlpha=1;
+  // eyes
+  const blink = (Math.sin(t*1.7)>0.96)?0.2:1;
+  ctx.fillStyle='#3a2410';
+  ctx.save(); ctx.translate(-6*s,-36*s); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,2.6*s,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(6*s,-36*s); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,2.6*s,0,Math.PI*2); ctx.fill(); ctx.restore();
+  // cheeks
+  ctx.globalAlpha=0.5; ctx.fillStyle='#ff6cc7';
+  ctx.beginPath(); ctx.ellipse(-11*s,-30*s,3*s,2*s,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(11*s,-30*s,3*s,2*s,0,0,Math.PI*2); ctx.fill();
+  ctx.globalAlpha=1;
+  // mouth
+  const smile = mood==='happy'?1:0.4;
+  markerStroke([[-6*s,-28*s],[0,(-28+5*smile)*s],[6*s,-28*s]], '#3a2410', 2.2*s, 0.8);
+  // 竹籤小尖頂（頭頂裝飾，呼應「竹籤人」造型）
+  markerStroke([[0,-51*s],[0,-60*s]], skewer, 2.4*s, 0.9);
+  markerBlob(0,-61*s,3*s,accent,0.9);
+  ctx.restore();
+}
+
+// 四隻小精靈一起出場的隊形（每隻用專屬色點區分，彼此步伐略有時間差）
+function drawSpriteGroup(cx,cy,t,scale,mood,spread){
+  const sp = spread!==undefined?spread:64;
+  for(let i=0;i<4;i++){
+    const dx = (i-1.5)*sp*scale;
+    const dy = Math.abs(i-1.5)*5*scale;
+    drawSprite(cx+dx, cy+dy, scale, t+i*0.35, mood, SPRITE_COLORS[i]);
+  }
+}
+
+function drawSparkleTrail(t){
+  ctx.save();
+  for(let i=0;i<10;i++){
+    const seed = i*17.3;
+    const sx = (Math.sin(seed+t*0.6)*0.5+0.5)*GAME_W;
+    const sy = (Math.sin(seed*1.7+t*0.4)*0.5+0.5)*GAME_H*0.7;
+    const a = (Math.sin(t*2.4+seed)*0.5+0.5)*0.6;
+    ctx.globalAlpha = a;
+    ctx.fillStyle = ['#ff6cc7','#38e1ff','#ffd76b'][i%3];
+    ctx.beginPath();
+    const r = 3+2*Math.sin(t*3+seed);
+    ctx.moveTo(sx,sy-r); ctx.lineTo(sx+r*0.4,sy); ctx.lineTo(sx,sy+r); ctx.lineTo(sx-r*0.4,sy);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// letters scattered / assembling for "打亂字母" scene
+const LETTERS = ['書','名','小','精','靈'];
+function drawLetterChaos(t, progress){
+  ctx.save();
+  ctx.font = 'bold 44px sans-serif';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  LETTERS.forEach((ch,i)=>{
+    const seed=i*31.7;
+    const chaosX = GAME_W*0.5 + Math.sin(seed+t*1.3)*260;
+    const chaosY = GAME_H*0.4 + Math.cos(seed*1.4+t*1.1)*130;
+    const targetX = GAME_W*0.5 + (i-2)*70;
+    const targetY = GAME_H*0.42;
+    const p = easeOutBack(clamp01(progress));
+    const x = lerp(chaosX,targetX,p), y = lerp(chaosY,targetY,p);
+    const rot = lerp(Math.sin(seed+t)*0.6,0,p);
+    ctx.save();
+    ctx.translate(x,y); ctx.rotate(rot);
+    markerBlob(0,4,26,'#fff7e6',0.9);
+    ctx.fillStyle=['#ff6cc7','#4f7cff','#ffa72e','#38e1ff','#ff9f5c'][i];
+    ctx.fillText(ch,0,0);
+    ctx.restore();
+  });
+  ctx.restore();
+}
+
+// ===== 字幕 =====
+function drawSubtitle(text, alpha){
+  if(!text) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign='center';
+  ctx.font = 'bold 26px sans-serif';
+  const w = ctx.measureText(text).width + 48;
+  const bx = GAME_W/2 - w/2, by = GAME_H-92, bh=52;
+  ctx.fillStyle = 'rgba(58,36,16,0.72)';
+  roundRect(bx,by,w,bh,16); ctx.fill();
+  ctx.fillStyle = '#fff7e6';
+  ctx.fillText(text, GAME_W/2, by+bh/2+9);
+  ctx.restore();
+}
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r);
+  ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);
+  ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+
+// ===== 開場／片尾卡 =====
+function drawBrandCard(alpha,t){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  paperTexture(t);
+  ctx.textAlign='center';
+  const scale = lerp(0.85,1,easeOutBack(clamp01(t/0.8)));
+  ctx.save(); ctx.translate(GAME_W/2, GAME_H*0.46); ctx.scale(scale,scale);
+  const grad = ctx.createLinearGradient(-200,0,200,0);
+  grad.addColorStop(0,'#ff6cc7'); grad.addColorStop(0.5,'#ffa72e'); grad.addColorStop(1,'#4f7cff');
+  ctx.fillStyle = grad;
+  ctx.font='bold 46px sans-serif';
+  ctx.fillText('書名小精靈 5', 0, 0);
+  ctx.restore();
+  ctx.fillStyle='#8a6410';
+  ctx.font='20px sans-serif';
+  ctx.fillText('書本預告片', GAME_W/2, GAME_H*0.46+48);
+  ctx.font='14px sans-serif';
+  ctx.fillStyle='rgba(58,36,16,.55)';
+  ctx.fillText('AI未來創作營隊　作者：林頁丞、林頁行', GAME_W/2, GAME_H*0.46+80);
+  ctx.restore();
+}
+function drawEndCard(alpha,t){
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  paperTexture(t);
+  ctx.textAlign='center';
+  const grad = ctx.createLinearGradient(GAME_W*0.2,0,GAME_W*0.8,0);
+  grad.addColorStop(0,'#ff6cc7'); grad.addColorStop(0.5,'#ffa72e'); grad.addColorStop(1,'#4f7cff');
+  ctx.fillStyle = grad;
+  const scale = lerp(0.9,1,easeOutBack(clamp01(t/0.6)));
+  ctx.save(); ctx.translate(GAME_W/2, GAME_H*0.4); ctx.scale(scale,scale);
+  ctx.font='bold 48px sans-serif';
+  ctx.fillText('書名小精靈 5', 0, 0);
+  ctx.restore();
+  ctx.fillStyle='#5a3c1a';
+  ctx.font='22px sans-serif';
+  ctx.fillText('即將出版・敬請期待', GAME_W/2, GAME_H*0.4+52);
+  ctx.font='16px sans-serif';
+  ctx.fillStyle='rgba(58,36,16,.6)';
+  ctx.fillText('作者：林頁丞、林頁行', GAME_W/2, GAME_H*0.4+86);
+  ctx.restore();
+}
+
+// ===== 時間軸與旁白台詞 =====
+const T_INTRO = 2.4;
+const BEATS = [
+  { start: T_INTRO,      dur: 5.0, sub: '在文字王國裡，住著四隻愛玩文字遊戲的小精靈。', mood:'happy', scene:'intro' },
+  { start: T_INTRO+5.0,  dur: 5.0, sub: '牠們最愛的任務，就是幫每一本新書找到最閃亮的名字！', mood:'happy', scene:'search' },
+  { start: T_INTRO+10.0, dur: 4.6, sub: '但這次，書名王國的字母全被打亂了……', mood:'worried', scene:'chaos' },
+  { start: T_INTRO+14.6, dur: 4.4, sub: '四隻小精靈能不能同心協力，拼出完美的書名？', mood:'happy', scene:'assemble' },
+];
+const T_ERAS_END = BEATS[BEATS.length-1].start + BEATS[BEATS.length-1].dur;
+const T_END = T_ERAS_END + 3.4;
+
+let startTime = null, playing = true, spokenIdx = -1, shakeT = 0;
+
+function beatAt(elapsed){
+  for(let i=0;i<BEATS.length;i++){
+    const b = BEATS[i];
+    if(elapsed >= b.start && elapsed < b.start+b.dur) return {b, idx:i, localT: elapsed-b.start};
+  }
+  return null;
+}
+
+function drawSceneIntro(t, localT){
+  paperTexture(t);
+  drawSparkleTrail(t);
+  ctx.save();
+  ctx.font='bold 30px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='#8a6410'; ctx.globalAlpha=0.5;
+  ctx.fillText('✦ 文字王國 ✦', GAME_W/2, 70);
+  ctx.restore();
+  markerBlob(GAME_W*0.5, GAME_H*0.72, 110, '#a7de78', 0.5);
+  const bx = GAME_W*0.5 - lerp(140,0,easeOutCubic(clamp01(localT/1.2)));
+  drawSpriteGroup(bx, GAME_H*0.5, t, 1.05, 'happy', 68);
+}
+function drawSceneSearch(t, localT){
+  paperTexture(t);
+  ctx.save();
+  ctx.font='bold 30px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='#8a6410'; ctx.globalAlpha=0.5;
+  ctx.fillText('尋找完美書名', GAME_W/2, 70);
+  ctx.restore();
+  const positions = [[-220,-40],[220,-30],[0,60],[-160,110]];
+  const titles = ['勇氣的森林','星空的秘密','最後一顆糖果','會飛的鞋子'];
+  positions.forEach((p,i)=>{
+    const appear = clamp01((localT - i*0.6)/0.6);
+    if(appear<=0) return;
+    ctx.save();
+    ctx.globalAlpha = appear;
+    const x = GAME_W/2+p[0], y = GAME_H/2+p[1]*0.9 - (1-easeOutBack(appear))*30;
+    markerBlob(x,y,52,'#ffe6bd',0.9);
+    ctx.strokeStyle='#e0b06a'; ctx.lineWidth=3; ctx.strokeRect(x-40,y-26,80,52);
+    ctx.fillStyle='#3a2410'; ctx.font='14px sans-serif'; ctx.textAlign='center';
+    ctx.fillText(titles[i], x, y+4);
+    ctx.restore();
+  });
+  drawSpriteGroup(GAME_W*0.5, GAME_H*0.5+130*Math.sin(t*0.6)*0.3, t, 0.9, 'happy', 62);
+  drawSparkleTrail(t);
+}
+function drawSceneChaos(t, localT){
+  paperTexture(t);
+  if(shakeT>0){ shakeT -= 1/60; ctx.save(); ctx.translate((Math.random()*2-1)*3,(Math.random()*2-1)*3); }
+  ctx.save();
+  ctx.font='bold 30px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='#c0503a'; ctx.globalAlpha=0.6;
+  ctx.fillText('字母大亂飛！', GAME_W/2, 70);
+  ctx.restore();
+  drawLetterChaos(t, 0);
+  drawSpriteGroup(GAME_W*0.5, GAME_H*0.8, t, 0.82, 'worried', 58);
+  if(shakeT>-100) ctx.restore();
+}
+function drawSceneAssemble(t, localT){
+  paperTexture(t);
+  ctx.save();
+  ctx.font='bold 30px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='#4f7cff'; ctx.globalAlpha=0.6;
+  ctx.fillText('拼回完美書名！', GAME_W/2, 70);
+  ctx.restore();
+  const progress = clamp01(localT/2.2);
+  drawLetterChaos(t, progress);
+  drawSparkleTrail(t);
+  const cheer = 1+0.08*Math.sin(t*4)*clamp01((localT-2.2)/1);
+  drawSpriteGroup(GAME_W*0.5, GAME_H*0.8, t, 0.88*cheer, 'happy', 60);
+}
+const SCENES = { intro:drawSceneIntro, search:drawSceneSearch, chaos:drawSceneChaos, assemble:drawSceneAssemble };
+
+function draw(elapsed){
+  ctx.clearRect(0,0,GAME_W,GAME_H);
+
+  if(elapsed < T_INTRO){
+    let alpha = 1;
+    if(elapsed > T_INTRO-0.5) alpha = clamp01((T_INTRO-elapsed)/0.5);
+    drawBrandCard(alpha, elapsed);
+    return;
+  }
+
+  const hit = beatAt(elapsed);
+  if(hit){
+    const { b, idx, localT } = hit;
+    if(idx !== spokenIdx){
+      spokenIdx = idx;
+      chime(); shakeT = b.scene==='chaos' ? 0.4 : 0.15;
+      speak(b.sub);
+    }
+    SCENES[b.scene](elapsed, localT);
+    let subAlpha = clamp01(localT/0.4);
+    if(localT > b.dur-0.4) subAlpha = clamp01((b.dur-localT)/0.4);
+    drawSubtitle(b.sub, subAlpha);
+
+    ctx.save();
+    for(let i=0;i<BEATS.length;i++){
+      const dx = GAME_W/2 - (BEATS.length-1)*11 + i*22;
+      ctx.fillStyle = i===idx ? '#ff6cc7' : 'rgba(90,60,30,.35)';
+      ctx.beginPath(); ctx.arc(dx, GAME_H-18, i===idx?5:3.4, 0, Math.PI*2); ctx.fill();
+    }
+    ctx.restore();
+    return;
+  }
+
+  const t = elapsed - T_ERAS_END;
+  let alpha = clamp01(t/0.6);
+  drawEndCard(alpha, elapsed);
+  if(t > 1.0 && !document.getElementById('replayBtn').classList.contains('show')){
+    document.getElementById('replayBtn').classList.add('show');
+    sparkle(); setTimeout(sparkle,120); setTimeout(sparkle,240);
+  }
+}
+
+function frame(now){
+  if(startTime === null) startTime = now;
+  const elapsed = (now - startTime)/1000;
+  if(playing){
+    const clamped = Math.min(elapsed, T_END);
+    draw(clamped);
+    updateMusic(clamped);
+    if(elapsed < T_END) requestAnimationFrame(frame);
+    else playing = false;
+  }
+}
+requestAnimationFrame(frame);
+
+document.getElementById('replayBtn').addEventListener('click', ()=>{
+  document.getElementById('replayBtn').classList.remove('show');
+  startTime = null; spokenIdx = -1; lastBeat = -1; playing = true;
+  requestAnimationFrame(frame);
+});
+
+canvas.addEventListener('click', ()=>{ audio(); });
+</script>
+<script>/* AI-CAMP-STATS-BEACON */
+(function(){
+  try{ if(window.top!==window.self) return; }catch(e){ return; }
+  var NS="ai-future-camp", K="t-shumingxiaojingling5";
+  function ping(n){ try{ var p=fetch("//abacus.jasoncameron.dev/hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }
+  ping(K+"-v");
+  ping(K+"-p"); ping("site-total-plays");
+})();
+</script>
+</body>
+</html>
