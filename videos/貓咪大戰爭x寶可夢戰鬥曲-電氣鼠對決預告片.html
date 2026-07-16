@@ -1,0 +1,671 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>貓咪大戰爭 x 寶可夢戰鬥曲</title>
+<style>
+  :root{ --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14; font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none;
+  }
+  #stage{ position:fixed; inset:0; display:block; }
+  #ui{ position:fixed; inset:0; pointer-events:none; display:flex; flex-direction:column; justify-content:space-between; }
+  .top{ display:flex; justify-content:space-between; align-items:flex-start; padding: max(12px, env(safe-area-inset-top)) 14px 0 14px; }
+  .title-chip{ background:rgba(7,11,20,.42); border-radius:12px; padding:6px 12px; display:inline-block; }
+  .title{
+    font-weight:800; font-size:clamp(15px,3.2vw,21px); color:#fff;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 18px rgba(56,225,255,.25);
+  }
+  .brand{ font-size:11px; color:#e8f0ff; opacity:.85; margin-top:2px; }
+  button{ pointer-events:auto; border:none; border-radius:14px; cursor:pointer; font-weight:700; font-family:inherit; }
+  #muteBtn{
+    width:44px;height:44px;min-width:44px;min-height:44px;
+    background:rgba(10,16,30,.65); border:1.5px solid rgba(255,255,255,.18);
+    color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center;
+  }
+  .caption-wrap{ display:flex; justify-content:center; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .caption{
+    pointer-events:none; color:#fff; font-weight:700; font-size:clamp(14px,3.6vw,20px);
+    background:rgba(7,11,20,.55); border:1px solid rgba(255,255,255,.12);
+    padding:8px 18px; border-radius:999px; max-width:88vw; text-align:center;
+    opacity:0; transition:opacity .35s ease;
+  }
+  .caption.show{ opacity:1; }
+  #hint{
+    position:absolute; top:56px; left:0; right:0; text-align:center;
+    color:#cfe6ff; font-size:13px; opacity:.85; pointer-events:none; transition:opacity .6s ease;
+  }
+  #replayWrap{
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(5,8,16,.55); pointer-events:none;
+  }
+  #replayWrap.show{ display:flex; pointer-events:auto; }
+  #replayBtn{
+    padding:14px 30px; font-size:17px; color:#0a0f1c;
+    background:linear-gradient(92deg,var(--cyan),var(--blue));
+    box-shadow:0 8px 24px rgba(79,124,255,.45);
+    min-height:52px;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="title-chip">
+      <div class="title">貓咪大戰爭 x 寶可夢戰鬥曲</div>
+      <div class="brand">AI未來創作營隊</div>
+    </div>
+    <button id="muteBtn" aria-label="靜音切換">🔇</button>
+  </div>
+  <div id="hint">點畫面開啟音效與動畫 ▶</div>
+  <div class="caption-wrap"><div class="caption" id="caption"></div></div>
+</div>
+<div id="replayWrap"><button id="replayBtn">🔁 重新播放</button></div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------- 畫布縮放 ----------
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- 音效：Web Audio 原創8bit戰鬥曲（風格致敬，非任何既有樂曲抄寫） ----------
+let actx=null, masterGain=null, muted=true;
+function ensureAudio(){
+  if(actx) return;
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.0;
+  masterGain.connect(actx.destination);
+}
+function setMuted(m){
+  muted = m;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  if(masterGain){
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.linearRampToValueAtTime(muted?0.0:0.22, actx.currentTime+0.08);
+  }
+}
+
+const NOTE = {C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392.00,A4:440.00,B4:493.88,
+  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880.00,B5:987.77,
+  C6:1046.5, R:0};
+const TEMPO = 0.15;
+const melody = [
+  ['E5',1],['G5',1],['C5',1],['E5',1],
+  ['D5',1],['F5',1],['B4',1],['D5',1],
+  ['C5',1],['E5',1],['G5',1],['C6',2],
+  ['B5',1],['G5',1],['E5',1],['G5',1],
+  ['A5',1],['F5',1],['D5',1],['F5',1],
+  ['G5',2],['R',1],['E5',1],
+  ['C5',1],['D5',1],['E5',1],['F5',1],
+  ['G5',1],['A5',1],['B5',1],['C6',3]
+];
+const bassline = [
+  ['C4',2],['G4',2], ['D4',2],['A4',2],
+  ['C4',2],['G4',2], ['E4',2],['C4',2],
+  ['F4',2],['C4',2], ['D4',2],['G4',2],
+  ['C4',4]
+];
+function playTone(freq, startAt, dur, type, vol){
+  if(freq<=0) return;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  const filt = actx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = 2600; filt.Q.value = 0.4;
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.linearRampToValueAtTime(vol, startAt+0.02);
+  g.gain.exponentialRampToValueAtTime(Math.max(vol*0.35,0.0005), startAt+dur*0.55);
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt+dur*0.95);
+  osc.connect(filt); filt.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.03);
+}
+function playSeq(seq, type, vol, offset){
+  let t = actx.currentTime + 0.05;
+  for(const [n,beats] of seq){
+    const dur = beats*TEMPO;
+    if(NOTE[n]) playTone(NOTE[n]*offset, t, dur, type, vol);
+    t += dur;
+  }
+  return t;
+}
+let musicStarted=false;
+function startMusic(){
+  if(musicStarted) return;
+  musicStarted = true;
+  ensureAudio();
+  const totalDur = playSeq(melody, 'sine', 0.22, 1);
+  playSeq(bassline, 'sine', 0.20, 0.5);
+  setTimeout(()=>{ if(!ended){ playSeq(melody,'sine',0.22,1); playSeq(bassline,'sine',0.20,0.5);} }, (totalDur-actx.currentTime)*1000-50);
+}
+function sfxPounce(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  playTone(200, t, 0.1, 'square', 0.18);
+  playTone(120, t+0.02, 0.14, 'sine', 0.16);
+}
+function sfxThunder(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [0,0.06,0.12].forEach((delay,i)=>{
+    const dur=0.09;
+    const bufSize = Math.floor(actx.sampleRate*dur);
+    const buf = actx.createBuffer(1,bufSize,actx.sampleRate);
+    const data = buf.getChannelData(0);
+    for(let j=0;j<bufSize;j++){ data[j]=(Math.random()*2-1)*(1-j/bufSize); }
+    const src = actx.createBufferSource(); src.buffer=buf;
+    const filt = actx.createBiquadFilter(); filt.type='highpass'; filt.frequency.value=1200+i*400;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.24-i*0.05, t+delay);
+    g.gain.exponentialRampToValueAtTime(0.0005, t+delay+dur);
+    src.connect(filt); filt.connect(g); g.connect(masterGain);
+    src.start(t+delay); src.stop(t+delay+dur+0.02);
+  });
+  playTone(880, t, 0.2, 'square', 0.16, 700);
+  playTone(660, t+0.05, 0.16, 'square', 0.14);
+}
+function sfxCrunch(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [0,0.1,0.2].forEach((delay,i)=>{
+    const dur=0.08;
+    const bufSize = Math.floor(actx.sampleRate*dur);
+    const buf = actx.createBuffer(1,bufSize,actx.sampleRate);
+    const data = buf.getChannelData(0);
+    for(let j=0;j<bufSize;j++){ data[j]=(Math.random()*2-1)*(1-j/bufSize); }
+    const src = actx.createBufferSource(); src.buffer=buf;
+    const filt = actx.createBiquadFilter(); filt.type='bandpass'; filt.frequency.value=900-i*150; filt.Q.value=1.2;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.28-i*0.05, t+delay);
+    g.gain.exponentialRampToValueAtTime(0.0005, t+delay+dur);
+    src.connect(filt); filt.connect(g); g.connect(masterGain);
+    src.start(t+delay); src.stop(t+delay+dur+0.02);
+  });
+  playTone(110, t, 0.18, 'sine', 0.16);
+}
+function sfxWin(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [523.25,659.25,783.99,1046.5].forEach((f,i)=>playTone(f, t+i*0.09, 0.16, 'sine', 0.2));
+}
+
+// ---------- 場景：晴朗草原 ----------
+function drawGround(t){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#5ec8ff'); g.addColorStop(0.55,'#a9e4ff'); g.addColorStop(1,'#d9f5d0');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  ctx.fillStyle='#fff6c9';
+  ctx.shadowColor='rgba(255,244,180,.9)'; ctx.shadowBlur=40;
+  ctx.beginPath(); ctx.arc(W*0.85, H*0.16, Math.min(W,H)*0.07, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  function cloud(cx,cy,s,alpha){
+    ctx.save(); ctx.globalAlpha=alpha; ctx.fillStyle='#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(cx,cy,26*s,14*s,0,0,Math.PI*2);
+    ctx.ellipse(cx+22*s,cy-8*s,18*s,12*s,0,0,Math.PI*2);
+    ctx.ellipse(cx-24*s,cy-4*s,16*s,11*s,0,0,Math.PI*2);
+    ctx.fill(); ctx.restore();
+  }
+  for(let i=0;i<4;i++){
+    const cx = ((i*180 + t*12) % (W+160)) - 80;
+    const cy = H*(0.14+i*0.08);
+    cloud(cx, cy, 1+i*0.15, 0.85-i*0.08);
+  }
+
+  const hillY1 = H*0.62;
+  ctx.fillStyle='#9cd68a';
+  ctx.beginPath(); ctx.moveTo(0,hillY1);
+  for(let x=0;x<=W;x+=W/8){ ctx.quadraticCurveTo(x+W/16, hillY1-H*0.05, x+W/8, hillY1); }
+  ctx.lineTo(W,H*0.82); ctx.lineTo(0,H*0.82); ctx.closePath(); ctx.fill();
+
+  const floorY = H*0.82;
+  const fg = ctx.createLinearGradient(0,floorY,0,H);
+  fg.addColorStop(0,'#79d34f'); fg.addColorStop(1,'#4f9e33');
+  ctx.fillStyle=fg; ctx.fillRect(0,floorY,W,H-floorY);
+
+  ctx.strokeStyle='#3f8a2a'; ctx.lineWidth=3;
+  for(let x=0; x<W; x+=14){
+    const wob = Math.sin(t*2 + x*0.3)*2;
+    ctx.beginPath(); ctx.moveTo(x, floorY+2); ctx.lineTo(x+wob, floorY-8); ctx.stroke();
+  }
+  for(let i=0;i<18;i++){
+    const fx = (i*137)%W;
+    const fy = floorY + 14 + (i*53)%(H-floorY-14);
+    ctx.fillStyle = i%3===0 ? '#ffe38a' : '#ffffff';
+    ctx.beginPath(); ctx.arc(fx,fy,2.4,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------- 原創Q版貓咪戰士（多部件繪製，非既有版權圖） ----------
+function drawCat(x,y,scale,facing,phase,pose,palette){
+  ctx.save(); ctx.translate(x,y); ctx.scale(facing*scale, scale);
+  let squashY=1, squashX=1, bob=0, tilt=0;
+  const bounce = Math.sin(phase*6)*3;
+  if(pose==='idle'){ bob=bounce; }
+  if(pose==='charge'){ squashX=1.12; squashY=0.9; bob=bounce*0.5; tilt=-0.05; }
+  if(pose==='pounce'){ squashX=1.2; squashY=0.82; bob=bounce*0.3; tilt=-0.1; }
+  if(pose==='hit'){ squashX=0.85; squashY=1.15; tilt=0.12; }
+  if(pose==='win'){ bob=-Math.abs(Math.sin(phase*8))*14; }
+
+  ctx.translate(0,bob); ctx.rotate(tilt); ctx.scale(squashX,squashY);
+  const body = palette.body, dark=palette.dark, light=palette.light, accent=palette.accent;
+
+  ctx.save(); ctx.globalAlpha=0.32; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,58,34,9,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  const tailWag = Math.sin(phase*5)*0.35;
+  ctx.save(); ctx.translate(-34,-6); ctx.rotate(tailWag);
+  ctx.strokeStyle = body; ctx.lineWidth=10; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(-20,-14,-14,-32); ctx.stroke(); ctx.restore();
+
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(-14,34,11,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(14,34,11,9,0,0,Math.PI*2); ctx.fill();
+
+  ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2);
+  const sphereBody = ctx.createRadialGradient(-13,-10,3,2,14,42);
+  sphereBody.addColorStop(0, light); sphereBody.addColorStop(0.55, body); sphereBody.addColorStop(1, dark);
+  ctx.fillStyle = sphereBody; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.globalAlpha=0.35;
+  const rim = ctx.createRadialGradient(16,20,20,16,20,36);
+  rim.addColorStop(0,'rgba(255,255,255,0)'); rim.addColorStop(1, light);
+  ctx.fillStyle = rim; ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.globalAlpha=0.9;
+  const spec = ctx.createRadialGradient(-13,-12,0,-13,-12,14);
+  spec.addColorStop(0,'rgba(255,255,255,.8)'); spec.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = spec; ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.beginPath(); ctx.ellipse(0,10,18,16,0,0,Math.PI*2);
+  const bellyGrad = ctx.createRadialGradient(-4,2,2,0,8,20);
+  bellyGrad.addColorStop(0,'#ffffff'); bellyGrad.addColorStop(1, light);
+  ctx.fillStyle = bellyGrad; ctx.fill();
+
+  const armSwing = pose==='charge' ? -0.9 : (pose==='hit'? 0.5 : Math.sin(phase*6)*0.15);
+  ctx.save(); ctx.translate(24,2); ctx.rotate(armSwing);
+  ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(10,6,10,8,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(-24,2); ctx.rotate(-armSwing*0.6);
+  ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(-10,6,10,8,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.save(); ctx.translate(0,-30);
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.moveTo(-20,-14); ctx.lineTo(-30,-34); ctx.lineTo(-6,-22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(30,-34); ctx.lineTo(6,-22); ctx.closePath(); ctx.fill();
+  const earShade = ctx.createLinearGradient(-30,-34,-6,-14);
+  earShade.addColorStop(0, light); earShade.addColorStop(1, dark);
+  ctx.fillStyle = earShade;
+  ctx.beginPath(); ctx.moveTo(-20,-14); ctx.lineTo(-30,-34); ctx.lineTo(-6,-22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(30,-34); ctx.lineTo(6,-22); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(-18,-16); ctx.lineTo(-24,-28); ctx.lineTo(-9,-21); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18,-16); ctx.lineTo(24,-28); ctx.lineTo(9,-21); ctx.closePath(); ctx.fill();
+
+  ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2);
+  const sphereHead = ctx.createRadialGradient(-9,-9,2,2,4,30);
+  sphereHead.addColorStop(0, light); sphereHead.addColorStop(0.55, body); sphereHead.addColorStop(1, dark);
+  ctx.fillStyle = sphereHead; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.globalAlpha=0.85;
+  const specHead = ctx.createRadialGradient(-9,-10,0,-9,-10,11);
+  specHead.addColorStop(0,'rgba(255,255,255,.75)'); specHead.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = specHead; ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.strokeStyle = dark; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(0,0,24,Math.PI*1.15,Math.PI*1.35); ctx.stroke();
+
+  const blink = (Math.sin(phase*2.2)>0.965) ? 0.15 : 1;
+  ctx.fillStyle = '#12121a';
+  ctx.save(); ctx.translate(-9,-1); ctx.scale(1,blink); ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(9,-1); ctx.scale(1,blink); ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-10.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.moveTo(-2,5); ctx.lineTo(2,5); ctx.lineTo(0,8); ctx.closePath(); ctx.fill();
+  if(pose==='pounce'){
+    ctx.fillStyle = '#3a1620';
+    ctx.beginPath(); ctx.ellipse(0,13,10,9,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    [-6,-2,2,6].forEach(dx=>{ ctx.beginPath(); ctx.moveTo(dx-2,8); ctx.lineTo(dx+2,8); ctx.lineTo(dx,13); ctx.closePath(); ctx.fill(); });
+    [-6,-2,2,6].forEach(dx=>{ ctx.beginPath(); ctx.moveTo(dx-2,18); ctx.lineTo(dx+2,18); ctx.lineTo(dx,13); ctx.closePath(); ctx.fill(); });
+  } else {
+    ctx.strokeStyle='#3a2a20'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(-4,12,-8,9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(4,12,8,9); ctx.stroke();
+  }
+  ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1;
+  [-1,0,1].forEach(i=>{
+    ctx.beginPath(); ctx.moveTo(-6,4+i*3); ctx.lineTo(-22,2+i*4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,4+i*3); ctx.lineTo(22,2+i*4); ctx.stroke();
+  });
+  ctx.restore(); // 頭
+  ctx.restore(); // 整體
+}
+
+// ---------- 原創Q版電氣鼠戰士（獨立設計，非既有版權圖） ----------
+function drawSpark(x,y,scale,facing,phase,pose,palette){
+  ctx.save(); ctx.translate(x,y); ctx.scale(facing*scale, scale);
+  let squashY=1, squashX=1, bob=0, tilt=0;
+  const bounce = Math.sin(phase*6+1.2)*3;
+  if(pose==='idle'){ bob=bounce; }
+  if(pose==='charge'){ squashX=1.1; squashY=0.92; bob=bounce*0.5; tilt=0.06; }
+  if(pose==='bolt'){ squashX=1.15; squashY=0.85; bob=bounce*0.3; tilt=0.1; }
+  if(pose==='hit'){ squashX=0.85; squashY=1.15; tilt=-0.12; }
+  if(pose==='win'){ bob=-Math.abs(Math.sin(phase*8+0.6))*14; }
+
+  ctx.translate(0,bob); ctx.rotate(tilt); ctx.scale(squashX,squashY);
+  const body = palette.body, dark=palette.dark, light=palette.light, accent=palette.accent, cheek=palette.cheek;
+
+  // 影子
+  ctx.save(); ctx.globalAlpha=0.32; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,54,32,9,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 閃電尾巴
+  const tailWag = Math.sin(phase*5+1)*0.3;
+  ctx.save(); ctx.translate(-30,-4); ctx.rotate(tailWag);
+  ctx.fillStyle = dark;
+  ctx.beginPath();
+  ctx.moveTo(0,0); ctx.lineTo(-8,-14); ctx.lineTo(2,-16); ctx.lineTo(-6,-32); ctx.lineTo(10,-14); ctx.lineTo(0,-12);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // 後腳
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(-13,32,10,8,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(13,32,10,8,0,0,Math.PI*2); ctx.fill();
+
+  // 身體（球體立體感）
+  ctx.beginPath(); ctx.arc(0,6,30,0,Math.PI*2);
+  const sphereBody = ctx.createRadialGradient(-12,-9,3,2,12,40);
+  sphereBody.addColorStop(0, light); sphereBody.addColorStop(0.55, body); sphereBody.addColorStop(1, dark);
+  ctx.fillStyle = sphereBody; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.globalAlpha=0.9;
+  const spec = ctx.createRadialGradient(-12,-11,0,-12,-11,13);
+  spec.addColorStop(0,'rgba(255,255,255,.8)'); spec.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = spec; ctx.beginPath(); ctx.arc(0,6,30,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 肚子
+  ctx.beginPath(); ctx.ellipse(0,10,16,14,0,0,Math.PI*2);
+  const bellyGrad = ctx.createRadialGradient(-3,2,2,0,8,18);
+  bellyGrad.addColorStop(0,'#fff8d8'); bellyGrad.addColorStop(1, light);
+  ctx.fillStyle = bellyGrad; ctx.fill();
+
+  // 背部電條紋
+  ctx.strokeStyle = dark; ctx.lineWidth=4; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-6,-18); ctx.lineTo(4,-6); ctx.lineTo(-4,2); ctx.lineTo(6,14); ctx.stroke();
+
+  // 前腳
+  const armSwing = pose==='charge' ? 0.9 : (pose==='hit'? -0.5 : Math.sin(phase*6+1)*0.15);
+  ctx.save(); ctx.translate(22,2); ctx.rotate(armSwing);
+  ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(9,6,9,7,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(-22,2); ctx.rotate(-armSwing*0.6);
+  ctx.fillStyle = dark; ctx.beginPath(); ctx.ellipse(-9,6,9,7,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 頭
+  ctx.save(); ctx.translate(0,-28);
+
+  // 尖耳朵
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.moveTo(-16,-10); ctx.lineTo(-26,-40); ctx.lineTo(-4,-18); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(16,-10); ctx.lineTo(26,-40); ctx.lineTo(4,-18); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(-18,-16); ctx.lineTo(-24,-36); ctx.lineTo(-10,-20); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18,-16); ctx.lineTo(24,-36); ctx.lineTo(10,-20); ctx.closePath(); ctx.fill();
+
+  // 頭部（球體立體感）
+  ctx.beginPath(); ctx.arc(0,0,22,0,Math.PI*2);
+  const sphereHead = ctx.createRadialGradient(-8,-8,2,2,4,28);
+  sphereHead.addColorStop(0, light); sphereHead.addColorStop(0.55, body); sphereHead.addColorStop(1, dark);
+  ctx.fillStyle = sphereHead; ctx.fill();
+  ctx.save(); ctx.clip(); ctx.globalAlpha=0.85;
+  const specHead = ctx.createRadialGradient(-8,-9,0,-8,-9,10);
+  specHead.addColorStop(0,'rgba(255,255,255,.75)'); specHead.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = specHead; ctx.beginPath(); ctx.arc(0,0,22,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 紅色電力腮
+  ctx.fillStyle = cheek;
+  ctx.beginPath(); ctx.arc(-16,4,5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(16,4,5,0,Math.PI*2); ctx.fill();
+
+  // 眼睛
+  const blink = (Math.sin(phase*2.4+0.7)>0.965) ? 0.15 : 1;
+  ctx.fillStyle = '#12121a';
+  ctx.save(); ctx.translate(-8,-1); ctx.scale(1,blink); ctx.beginPath(); ctx.arc(0,0,4,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(8,-1); ctx.scale(1,blink); ctx.beginPath(); ctx.arc(0,0,4,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-9.5,-2.5,1.1,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(6.5,-2.5,1.1,0,Math.PI*2); ctx.fill();
+
+  // 鼻嘴
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.moveTo(-2,5); ctx.lineTo(2,5); ctx.lineTo(0,7); ctx.closePath(); ctx.fill();
+  if(pose==='bolt'){
+    ctx.fillStyle = '#3a1620';
+    ctx.beginPath(); ctx.ellipse(0,12,8,7,0,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.strokeStyle='#3a2a20'; ctx.lineWidth=1.4;
+    ctx.beginPath(); ctx.moveTo(0,7); ctx.quadraticCurveTo(-4,11,-7,8); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0,7); ctx.quadraticCurveTo(4,11,7,8); ctx.stroke();
+  }
+  ctx.restore(); // 頭
+  ctx.restore(); // 整體
+}
+
+function drawSparkBurst(x,y,t,color){
+  ctx.save();
+  for(let i=0;i<10;i++){
+    const ang = (i/10)*Math.PI*2 + t*2;
+    const r = 10+ t*140;
+    const a = Math.max(0,1-t*1.4);
+    ctx.fillStyle = color.replace('ALPHA', a.toFixed(2));
+    ctx.beginPath();
+    ctx.arc(x+Math.cos(ang)*r, y+Math.sin(ang)*r, 4*(1-t*0.7), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawBolt(x1,y1,x2,y2,t){
+  const alpha = Math.max(0, 1-t*3);
+  if(alpha<=0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#fff7b0';
+  ctx.shadowColor = '#ffe97a'; ctx.shadowBlur = 18;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(x1,y1);
+  const segs = 6;
+  for(let i=1;i<segs;i++){
+    const p = i/segs;
+    const mx = x1+(x2-x1)*p + (Math.sin(t*40+i*3)*14);
+    const my = y1+(y2-y1)*p + (Math.cos(t*37+i*2)*10);
+    ctx.lineTo(mx,my);
+  }
+  ctx.lineTo(x2,y2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- 場景時間軸（三幕：登場→交戰→高潮結尾） ----------
+let startTime=null, ended=false;
+let camShake=0;
+const TOTAL = 30; // 秒
+
+const CAT = {body:'#ffffff', dark:'#e08b2e', light:'#fffdf8', accent:'#ff8a5c'};
+const SPARK = {body:'#ffe066', dark:'#e0a020', light:'#fff9d0', accent:'#7a4a10', cheek:'#ff5a4a'};
+
+const captions = [
+  {t:0.3, d:3.0, text:'貓咪大戰爭 x 寶可夢戰鬥曲 —— 雙戰士登場！'},
+  {t:3.5, d:3.5, text:'白貓戰士蓄力衝拳！'},
+  {t:7.2, d:3.5, text:'電氣鼠戰士蓄力放電！'},
+  {t:11.0, d:4.5, text:'必殺對決——飛撲咬碎 x 十萬伏特！'},
+  {t:16.0, d:4.0, text:'轟！雙方全力碰撞！'},
+  {t:21.0, d:4.0, text:'難分高下，惺惺相惜握手言和！'},
+  {t:26.0, d:4.0, text:'勝利！★ 戰鬥之歌完結 ★'},
+];
+let captionEl = document.getElementById('caption');
+let shownCaption = -1;
+function updateCaption(tt){
+  let idx=-1;
+  for(let i=0;i<captions.length;i++){
+    if(tt>=captions[i].t && tt<captions[i].t+captions[i].d){ idx=i; break; }
+  }
+  if(idx!==shownCaption){
+    shownCaption = idx;
+    if(idx>=0){ captionEl.textContent = captions[idx].text; captionEl.classList.add('show'); }
+    else { captionEl.classList.remove('show'); }
+  }
+}
+
+let collidedBite=false, collidedBolt=false, clashed=false;
+let hitSfxFlags={};
+function sfxOnce(key, fn){ if(hitSfxFlags[key]) return; hitSfxFlags[key]=true; fn(); }
+
+function frame(now){
+  if(startTime===null) startTime = now;
+  const tt = (now-startTime)/1000;
+  ctx.clearRect(0,0,W,H);
+
+  if(camShake>0){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*camShake, (Math.random()-0.5)*camShake);
+    camShake *= 0.85;
+  } else { ctx.save(); }
+
+  drawGround(tt);
+  updateCaption(tt);
+
+  const floorY = H*0.82;
+  const scaleBase = Math.min(W,H)/420;
+  const groundY = floorY - 20*scaleBase;
+
+  // 幕一 0-3.5s：雙方從畫面外滑入
+  // 幕二 3.5-11s：各自蓄力
+  // 幕三 11-16s：飛撲對放電，正面碰撞
+  // 幕四 16-21s：火花四射
+  // 幕五 21-30s：握手言和、勝利結尾
+
+  const enterT = Math.min(1, tt/2.4);
+  const ease = 1-Math.pow(1-enterT,3);
+  const catX = -W*0.4 + ease*(W*0.32-(-W*0.4));
+  const sparkX = W*1.4 + ease*(W*0.68-W*1.4);
+
+  let catPose='idle', sparkPose='idle';
+
+  if(tt>=3.5 && tt<7.2){
+    const p=(tt-3.5)/3.7;
+    catPose = (Math.floor(p*6)%2===0)?'charge':'idle';
+  }
+  if(tt>=7.2 && tt<11.0){
+    const p=(tt-7.2)/3.8;
+    sparkPose = (Math.floor(p*6)%2===0)?'charge':'idle';
+    catPose='charge';
+  }
+  if(tt>=11.0 && tt<13.2){
+    catPose='pounce'; sparkPose='bolt';
+    if(!clashed){ clashed=true; camShake=20; sfxOnce('pounce', sfxPounce); sfxOnce('thunder', sfxThunder); setTimeout(()=>sfxOnce('crunch', sfxCrunch), 140); }
+  }
+  if(tt>=13.2 && tt<16.0){
+    catPose='hit'; sparkPose='hit';
+  }
+  if(tt>=16.0 && tt<21.0){
+    catPose='idle'; sparkPose='idle';
+  }
+  if(tt>=21.0){
+    catPose='win'; sparkPose='win';
+  }
+
+  const catScale = 1.9*scaleBase;
+  const sparkScale = 1.75*scaleBase;
+  drawCat(catX, groundY, catScale, 1, tt, catPose, CAT);
+  drawSpark(sparkX, groundY, sparkScale, -1, tt, sparkPose, SPARK);
+
+  if(clashed && tt>=11.0 && tt<11.9){
+    const midX = (catX+sparkX)/2;
+    drawBolt(catX+40*scaleBase, groundY-70*scaleBase, sparkX-40*scaleBase, groundY-70*scaleBase, tt-11.0);
+    drawSparkBurst(midX, groundY-70*scaleBase, (tt-11.0), 'rgba(255,206,92,ALPHA)');
+    drawSparkBurst(midX, groundY-70*scaleBase, (tt-11.0)*0.7, 'rgba(255,247,176,ALPHA)');
+  }
+
+  ctx.restore();
+
+  if(!ended && tt>=TOTAL){
+    ended=true;
+    document.getElementById('replayWrap').classList.add('show');
+  }
+  if(!ended){ requestAnimationFrame(frame); }
+}
+
+function startAll(){
+  document.getElementById('hint').style.opacity='0';
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(false);
+  startMusic();
+}
+
+let running=false;
+function beginPlayback(){
+  if(running) return;
+  running=true;
+  startTime=null; ended=false; clashed=false; hitSfxFlags={};
+  document.getElementById('replayWrap').classList.remove('show');
+  requestAnimationFrame(frame);
+}
+
+document.body.addEventListener('pointerdown', function firstTap(){
+  startAll();
+  beginPlayback();
+  document.body.removeEventListener('pointerdown', firstTap);
+}, {once:true});
+
+try { startAll(); beginPlayback(); } catch(e) {}
+
+document.getElementById('muteBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(!muted);
+});
+
+document.getElementById('replayBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  musicStarted=false;
+  running=false;
+  if(!muted) startMusic();
+  beginPlayback();
+});
+
+resize();
+drawGround(0);
+drawCat(W*0.32, H*0.82-20, 1.9*Math.min(W,H)/420, 1, 0, 'idle', CAT);
+drawSpark(W*0.68, H*0.82-20, 1.75*Math.min(W,H)/420, -1, 0, 'idle', SPARK);
+
+})();
+</script>
+</body>
+</html>
