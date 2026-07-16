@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>貓咪大戰爭 x 寶可夢戰鬥曲 說明片</title>
+<style>
+  :root{ --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7; }
+  html,body{ margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14; font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none; }
+  #stage{ position:fixed; inset:0; display:block; }
+  #ui{ position:fixed; inset:0; pointer-events:none; display:flex; flex-direction:column; justify-content:space-between; }
+  .top{ display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px; }
+  .title-chip{ background:rgba(7,11,20,.42); border-radius:12px; padding:6px 12px; display:inline-block; }
+  .title{ font-weight:800; font-size:clamp(15px,3vw,20px); color:#fff;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 18px rgba(56,225,255,.25); }
+  .brand{ font-size:11px; color:#e8f0ff; opacity:.85; margin-top:2px; }
+  button{ pointer-events:auto; border:none; border-radius:14px; cursor:pointer; font-weight:700; font-family:inherit; }
+  #muteBtn{ width:44px;height:44px;min-width:44px;min-height:44px; background:rgba(10,16,30,.65);
+    border:1.5px solid rgba(255,255,255,.18); color:#fff; font-size:20px;
+    display:flex; align-items:center; justify-content:center; }
+  .caption-wrap{ display:flex; justify-content:center; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .caption{ background:rgba(7,11,20,.55); border:1px solid rgba(255,255,255,.12); border-radius:14px;
+    padding:10px 18px; color:#fff; font-weight:700; font-size:clamp(14px,2.6vw,19px);
+    max-width:86vw; text-align:center; opacity:0; transform:translateY(8px);
+    transition:opacity .25s ease, transform .25s ease; }
+  .caption.show{ opacity:1; transform:translateY(0); }
+  #startOverlay{ position:fixed; inset:0; background:rgba(4,7,14,.86); display:flex;
+    flex-direction:column; align-items:center; justify-content:center; gap:16px; z-index:10; }
+  #startOverlay .big{ font-weight:800; font-size:clamp(20px,5vw,30px); color:#fff; text-align:center;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  #playBtn{ padding:14px 34px; font-size:17px; color:#04101c;
+    background:linear-gradient(92deg,var(--cyan),var(--blue)); box-shadow:0 8px 24px rgba(56,225,255,.35); }
+  #footer{ position:absolute; bottom:6px; width:100%; text-align:center; font-size:11px; color:#9fb0d0; }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="title-chip">
+      <div class="title">貓咪大戰爭 x 寶可夢戰鬥曲</div>
+      <div class="brand">AI未來創作營隊 · 說明片</div>
+    </div>
+    <button id="muteBtn">🔊</button>
+  </div>
+  <div class="caption-wrap"><div class="caption" id="caption"></div></div>
+</div>
+<div id="startOverlay">
+  <div class="big">貓咪大戰爭 x 寶可夢戰鬥曲<br>說明片</div>
+  <button id="playBtn">▶ 開始播放</button>
+  <div id="footer">AI未來創作營隊</div>
+</div>
+<script>
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W,H,DPR;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ---------- Web Audio：合成兩段原創主題（貓咪進行曲 / 對戰緊張曲）----------
+let actx=null, muted=false, musicGain=null;
+function initAudio(){
+  if(actx) return;
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  musicGain = actx.createGain();
+  musicGain.gain.value = 0.22;
+  musicGain.connect(actx.destination);
+}
+function tone(freq,start,dur,type,vol,detune){
+  const o = actx.createOscillator();
+  const g = actx.createGain();
+  o.type = type||'square';
+  o.frequency.value = freq;
+  if(detune) o.detune.value = detune;
+  g.gain.setValueAtTime(0.0001, actx.currentTime+start);
+  g.gain.linearRampToValueAtTime(vol||0.5, actx.currentTime+start+0.02);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime+start+dur);
+  o.connect(g); g.connect(musicGain);
+  o.start(actx.currentTime+start); o.stop(actx.currentTime+start+dur+0.05);
+}
+function playCatMarch(t0){
+  // 貓咪進行曲：輕快方波旋律
+  const notes=[392,392,523,587,523,392,440,392];
+  notes.forEach((f,i)=> tone(f, t0+i*0.22, 0.2, 'square', 0.35));
+}
+function playPokemonBattle(t0){
+  // 對戰主題：急促上升音型＋低音鼓點，營造緊張感
+  const lead=[330,392,440,494,523,494,440,392];
+  lead.forEach((f,i)=> tone(f, t0+i*0.13, 0.13, 'sawtooth', 0.3));
+  for(let i=0;i<6;i++) tone(110, t0+i*0.26, 0.12, 'square', 0.28);
+}
+function playVictoryJingle(t0){
+  const notes=[523,659,784,1046];
+  notes.forEach((f,i)=> tone(f, t0+i*0.16, 0.35, 'triangle', 0.4));
+}
+
+// ---------- 星空背景（靜態預算漸層＋緩慢星點） ----------
+const stars = Array.from({length:70},()=>({x:Math.random(),y:Math.random(),r:Math.random()*1.6+0.4,tw:Math.random()*Math.PI*2}));
+function drawBG(t){
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#0a1024'); g.addColorStop(1,'#141034');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  stars.forEach(s=>{
+    const a = 0.4+0.5*Math.sin(t*1.5+s.tw);
+    ctx.fillStyle = `rgba(220,230,255,${Math.max(0.1,a).toFixed(2)})`;
+    ctx.beginPath(); ctx.arc(s.x*W, s.y*H, s.r, 0, Math.PI*2); ctx.fill();
+  });
+}
+
+// ---------- 貓咪繪製（簡化多部件、立體感） ----------
+function drawCat(x,y,scale,phase,palette){
+  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale);
+  const bob = Math.sin(phase*4)*3;
+  ctx.translate(0,bob);
+  // 身體
+  const bodyGrad = ctx.createLinearGradient(-20,-10,20,30);
+  bodyGrad.addColorStop(0,palette.light); bodyGrad.addColorStop(1,palette.dark);
+  ctx.fillStyle=bodyGrad;
+  ctx.beginPath(); ctx.ellipse(0,20,20,24,0,0,Math.PI*2); ctx.fill();
+  // 腳（左右擺動）
+  ctx.fillStyle=palette.dark;
+  const legSwing = Math.sin(phase*4)*8;
+  ctx.beginPath(); ctx.ellipse(-10+legSwing*0.3,42,7,8,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10-legSwing*0.3,42,7,8,0,0,Math.PI*2); ctx.fill();
+  // 耳朵
+  ctx.fillStyle=palette.dark;
+  ctx.beginPath(); ctx.moveTo(-16,-18); ctx.lineTo(-24,-36); ctx.lineTo(-4,-24); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(16,-18); ctx.lineTo(24,-36); ctx.lineTo(4,-24); ctx.closePath(); ctx.fill();
+  // 頭
+  const headGrad = ctx.createRadialGradient(-6,-6,2,0,0,22);
+  headGrad.addColorStop(0,palette.light); headGrad.addColorStop(1,palette.body);
+  ctx.fillStyle=headGrad;
+  ctx.beginPath(); ctx.arc(0,-6,20,0,Math.PI*2); ctx.fill();
+  // 眼睛
+  ctx.fillStyle='#1a1a22';
+  ctx.beginPath(); ctx.arc(-7,-8,3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7,-8,3,0,Math.PI*2); ctx.fill();
+  // 鼻嘴
+  ctx.fillStyle=palette.accent;
+  ctx.beginPath(); ctx.moveTo(-2,-1); ctx.lineTo(2,-1); ctx.lineTo(0,2); ctx.closePath(); ctx.fill();
+  // 鬍鬚
+  ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1;
+  [-1,0,1].forEach(i=>{
+    ctx.beginPath(); ctx.moveTo(-5,-2+i*2); ctx.lineTo(-18,-4+i*3); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(5,-2+i*2); ctx.lineTo(18,-4+i*3); ctx.stroke();
+  });
+  ctx.restore();
+}
+
+// ---------- 對戰輪廓（訓練家剪影＋能量球） ----------
+function drawTrainerSilhouette(x,y,scale,facingRight,palette,phase){
+  ctx.save(); ctx.translate(x,y); ctx.scale(facingRight?scale:-scale, scale);
+  ctx.fillStyle = palette;
+  // 身體
+  ctx.beginPath();
+  ctx.moveTo(-10,10); ctx.lineTo(-14,44); ctx.lineTo(-4,44); ctx.lineTo(0,20);
+  ctx.lineTo(4,44); ctx.lineTo(14,44); ctx.lineTo(10,10); ctx.closePath(); ctx.fill();
+  // 手臂（揮動）
+  const armAngle = Math.sin(phase*3)*0.5;
+  ctx.save(); ctx.translate(10,12); ctx.rotate(armAngle);
+  ctx.fillRect(0,-3,18,6);
+  ctx.restore();
+  // 頭
+  ctx.beginPath(); ctx.arc(0,-2,10,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawEnergyBall(x,y,r,t,color){
+  ctx.save();
+  const g = ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0, color); g.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle=g;
+  ctx.beginPath(); ctx.arc(x,y, r*(0.8+0.2*Math.sin(t*8)), 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawNote(x,y,scale,alpha){
+  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale); ctx.globalAlpha=alpha;
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.ellipse(0,10,5,3.6,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.fillRect(4,-18,2,28);
+  ctx.beginPath(); ctx.moveTo(6,-18); ctx.quadraticCurveTo(16,-14,6,-6); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// ---------- 場景時間軸 ----------
+// 0-3.5   開場 Logo
+// 3.5-11  第一幕：貓咪大戰爭介紹（貓咪進行曲）
+// 11-19   第二幕：寶可夢戰鬥曲介紹（對戰主題）
+// 19-25   第三幕：混搭高潮
+// 25-28   結尾
+const TOTAL = 28;
+const CAT_PALETTES = [
+  {body:'#ffffff',dark:'#e08b2e',light:'#fffdf8',accent:'#ff8a5c'},
+  {body:'#3a3f55',dark:'#20232f',light:'#5c6280',accent:'#38e1ff'},
+  {body:'#ff9fc7',dark:'#c65f95',light:'#ffd6ea',accent:'#ff4fa0'},
+];
+
+const captions = [
+  {t:0.3, d:3.0, text:'今天要介紹兩款超經典的作品！'},
+  {t:3.6, d:4.0, text:'貓咪大戰爭：可愛貓咪部隊向前推進的塔防遊戲'},
+  {t:8.0, d:3.2, text:'一直往右走，撞上敵人就開打，戰術超簡單'},
+  {t:11.6, d:4.0, text:'寶可夢戰鬥曲：訓練家對戰時最熱血的背景音樂'},
+  {t:16.0, d:3.2, text:'節奏一下加快，緊張感瞬間拉滿！'},
+  {t:19.5, d:4.0, text:'如果貓咪部隊配上戰鬥曲，會有多熱血？'},
+  {t:24.0, d:3.5, text:'★ 兩種經典，一樣讓人熱血沸騰 ★'},
+];
+let captionEl = document.getElementById('caption');
+let curCaptionIdx = -1;
+function updateCaption(tt){
+  let idx=-1;
+  for(let i=0;i<captions.length;i++){
+    if(tt>=captions[i].t && tt<captions[i].t+captions[i].d){ idx=i; break; }
+  }
+  if(idx!==curCaptionIdx){
+    curCaptionIdx = idx;
+    if(idx>=0){
+      captionEl.textContent = captions[idx].text;
+      captionEl.classList.add('show');
+    } else {
+      captionEl.classList.remove('show');
+    }
+  }
+}
+
+let startTime=null, ended=false;
+let scheduled = {march:false, battle:false, victory:false};
+
+function drawScene1(tt){ // 貓咪大戰爭：三隻貓齊步向右前進
+  const groundY = H*0.72;
+  ctx.fillStyle='rgba(255,255,255,.06)';
+  ctx.fillRect(0,groundY+40,W,4);
+  CAT_PALETTES.forEach((pal,i)=>{
+    const laneY = groundY - i*2;
+    const speed = 60+i*8;
+    const x = ((tt*speed + i*160) % (W+120)) - 60;
+    drawCat(x, laneY, 1.1-i*0.08, tt+i, pal);
+  });
+}
+
+function drawScene2(tt){ // 寶可夢戰鬥曲：兩訓練家對峙＋能量球＋音符
+  const cx = W/2, cy = H*0.58;
+  drawTrainerSilhouette(cx-W*0.22, cy, 1.3, true, '#38e1ff', tt);
+  drawTrainerSilhouette(cx+W*0.22, cy, 1.3, false, '#ff6cc7', tt);
+  drawEnergyBall(cx, cy-30, 22+ (tt%1)*10, tt, 'rgba(255,207,92,.9)');
+  for(let i=0;i<5;i++){
+    const nt = (tt*1.3+i*0.6)%3;
+    const ny = cy - 60 - nt*70;
+    const nx = cx + Math.sin(tt*2+i)*80;
+    const alpha = Math.max(0, 1-nt/3);
+    drawNote(nx, ny, 0.9, alpha);
+  }
+}
+
+function drawScene3(tt){ // 混搭：貓咪部隊衝向對戰舞台
+  drawScene2(tt);
+  const groundY = H*0.9;
+  CAT_PALETTES.forEach((pal,i)=>{
+    const speed = 140+i*20;
+    const x = ((tt*speed + i*200) % (W+120)) - 60;
+    drawCat(x, groundY, 0.85, tt+i, pal);
+  });
+}
+
+function render(ts){
+  if(startTime===null) startTime=ts;
+  const t = (ts-startTime)/1000;
+
+  if(!scheduled.march && t>=3.4 && actx){ playCatMarch(actx.currentTime); scheduled.march=true; }
+  if(!scheduled.battle && t>=11.4 && actx){ playPokemonBattle(actx.currentTime); scheduled.battle=true; }
+  if(!scheduled.victory && t>=24.0 && actx){ playVictoryJingle(actx.currentTime); scheduled.victory=true; }
+
+  drawBG(t);
+
+  if(t<3.5){
+    // 開場 Logo 動畫
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, t/0.6);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    const grad = ctx.createLinearGradient(W*0.2,0,W*0.8,0);
+    grad.addColorStop(0,'#38e1ff'); grad.addColorStop(.5,'#4f7cff'); grad.addColorStop(1,'#9a6bff');
+    ctx.fillStyle=grad;
+    ctx.font = `800 ${Math.min(W*0.09,48)}px sans-serif`;
+    ctx.fillText('貓咪大戰爭', W/2, H/2-30);
+    ctx.fillStyle='#ff6cc7';
+    ctx.font = `800 ${Math.min(W*0.07,34)}px sans-serif`;
+    ctx.fillText('x 寶可夢戰鬥曲', W/2, H/2+30);
+    ctx.restore();
+  } else if(t<11.5){
+    drawScene1(t);
+  } else if(t<19.5){
+    drawScene2(t);
+  } else if(t<25){
+    drawScene3(t);
+  } else {
+    drawScene3(t);
+    ctx.save();
+    ctx.fillStyle='rgba(7,11,20,.35)';
+    ctx.fillRect(0,0,W,H);
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    ctx.fillStyle='#fff';
+    ctx.font=`800 ${Math.min(W*0.08,40)}px sans-serif`;
+    ctx.fillText('感謝觀看！', W/2, H/2);
+    ctx.restore();
+  }
+
+  updateCaption(t);
+
+  if(t < TOTAL){
+    requestAnimationFrame(render);
+  } else if(!ended){
+    ended = true;
+    captionEl.classList.remove('show');
+  }
+}
+
+document.getElementById('playBtn').addEventListener('click', ()=>{
+  initAudio();
+  document.getElementById('startOverlay').style.display='none';
+  requestAnimationFrame(render);
+});
+document.getElementById('muteBtn').addEventListener('click', (e)=>{
+  muted = !muted;
+  e.target.textContent = muted ? '🔇' : '🔊';
+  if(musicGain) musicGain.gain.value = muted ? 0 : 0.22;
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="author" content="Claude">
+<title>三角洲行動 S10 賽季預告</title>
+<style>
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    background: #04070d;
+    font-family: 'Segoe UI', 'PingFang TC', 'Microsoft JhengHei', sans-serif;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+  }
+  canvas { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); }
+  #soundBtn {
+    position: fixed; top: 12px; right: 12px; z-index: 20;
+    width: 48px; height: 48px; border-radius: 10px;
+    background: rgba(10,22,36,0.72); border: 1px solid rgba(56,225,255,0.6);
+    color: #bff3ff; font-size: 20px; cursor: pointer;
+  }
+  #soundHint {
+    position: fixed; top: 20px; right: 70px; z-index: 20;
+    color: #bff3ff; font-size: 14px; text-shadow: 0 0 6px #000;
+    animation: hintFade 3.4s ease forwards; pointer-events: none;
+  }
+  @keyframes hintFade { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+  #replayBtn {
+    position: fixed; left: 50%; bottom: 11%; transform: translateX(-50%);
+    z-index: 20; display: none;
+    padding: 14px 44px; font-size: 20px; min-height: 48px; letter-spacing: 2px;
+    background: linear-gradient(92deg,#0e2a3a,#123a4d);
+    color: #d6f7ff; border: 1px solid #38e1ff; border-radius: 8px; cursor: pointer;
+    font-family: inherit; box-shadow: 0 0 18px rgba(56,225,255,0.35);
+  }
+</style>
+</head>
+<body>
+<button id="soundBtn">🔇</button>
+<div id="soundHint">點聲音鈕開啟音效</div>
+<button id="replayBtn">重新播放</button>
+<canvas id="stage"></canvas>
+
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+const soundBtn = document.getElementById('soundBtn');
+const replayBtn = document.getElementById('replayBtn');
+
+function resize() {
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+// ========== 音效（合成、預設靜音、零外部資源）==========
+let audioCtx = null, soundOn = false;
+soundBtn.addEventListener('click', () => {
+  soundOn = !soundOn;
+  soundBtn.textContent = soundOn ? '🔊' : '🔇';
+  if (soundOn && !audioCtx) {
+    try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {}
+  }
+  if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+  if (soundOn) startMusic(); else stopMusic();
+});
+// 低頻衝擊（標題落下、爆音）
+function boom(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, t);
+  osc.frequency.exponentialRampToValueAtTime(38, t + 0.4);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.55);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.6);
+}
+// 冰霜／碎裂噪音（過濾高頻）
+function frostHit(vol) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime, dur = 0.5;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 1.6);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter();
+  f.type = 'highpass'; f.frequency.value = 2600;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  src.connect(f).connect(g).connect(audioCtx.destination);
+  src.start(t);
+}
+// 金屬刀刃出鞘（上行掃頻）
+function metalSwipe() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(500, t);
+  osc.frequency.exponentialRampToValueAtTime(3200, t + 0.22);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.16, t + 0.05);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+  const f = audioCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 2200; f.Q.value = 3;
+  osc.connect(f).connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.32);
+}
+// 幹員登場能量音（上行琶音）
+function powerChime() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  [523, 659, 784, 1047].forEach((fq, i) => {
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'triangle';
+    osc.frequency.setValueAtTime(fq, t + i * 0.08);
+    g.gain.setValueAtTime(0.0001, t + i * 0.08);
+    g.gain.exponentialRampToValueAtTime(0.16, t + i * 0.08 + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + i * 0.08 + 0.35);
+    osc.connect(g).connect(audioCtx.destination);
+    osc.start(t + i * 0.08); osc.stop(t + i * 0.08 + 0.4);
+  });
+}
+// 開場登場音樂：上揚合成銅管和弦,伴隨低音鋪墊,營造隊伍登場的氣勢
+function entranceFanfare() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  // 低音鋪墊（緩緩鋪開的地毯式低頻）
+  const pad = audioCtx.createOscillator(), padG = audioCtx.createGain();
+  pad.type = 'sawtooth'; pad.frequency.setValueAtTime(55, t);
+  const padF = audioCtx.createBiquadFilter(); padF.type = 'lowpass'; padF.frequency.setValueAtTime(200, t);
+  padF.frequency.linearRampToValueAtTime(900, t + 1.1);
+  padG.gain.setValueAtTime(0.0001, t);
+  padG.gain.linearRampToValueAtTime(0.16, t + 0.5);
+  padG.gain.linearRampToValueAtTime(0.001, t + 1.6);
+  pad.connect(padF).connect(padG).connect(audioCtx.destination);
+  pad.start(t); pad.stop(t + 1.7);
+  // 上揚銅管和弦：三音疊加、逐一進場
+  [220, 277.18, 329.63].forEach((fq, i) => {
+    const start = t + i * 0.12;
+    const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(fq * 0.5, start);
+    osc.frequency.exponentialRampToValueAtTime(fq, start + 0.3);
+    const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.setValueAtTime(400, start);
+    f.frequency.linearRampToValueAtTime(3200, start + 0.35);
+    g.gain.setValueAtTime(0.0001, start);
+    g.gain.linearRampToValueAtTime(0.14, start + 0.28);
+    g.gain.exponentialRampToValueAtTime(0.001, start + 1.3);
+    osc.connect(f).connect(g).connect(audioCtx.destination);
+    osc.start(start); osc.stop(start + 1.35);
+  });
+}
+// 雷達／HUD 提示嗶
+function blip(fq) {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'square';
+  osc.frequency.value = fq || 880;
+  g.gain.setValueAtTime(0.09, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.14);
+}
+// 直升機／低頻環境隆隆（單發脈衝，靠時間軸連續呼叫）
+function rotor() {
+  if (!soundOn || !audioCtx) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sine'; osc.frequency.value = 46;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.06, t + 0.04);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
+  osc.connect(g).connect(audioCtx.destination);
+  osc.start(t); osc.stop(t + 0.18);
+}
+
+// ========== 緩動 ==========
+const easeOut = t => 1 - Math.pow(1 - t, 3);
+const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+const easeInOut = t => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+
+// ========== 全域狀態：震動、粒子 ==========
+let shake = 0;
+const snow = [];
+for (let i = 0; i < 130; i++) {
+  snow.push({ x: Math.random() * GAME_W, y: Math.random() * GAME_H,
+    r: 0.6 + Math.random() * 2.2, vy: 14 + Math.random() * 40,
+    vx: -8 - Math.random() * 20, sway: Math.random() * Math.PI * 2 });
+}
+const frost = []; // 迸發冰晶粒子
+function burstFrost(x, y, n, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = spd * (0.3 + Math.random() * 0.7);
+    frost.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 40,
+      life: 0.7 + Math.random() * 0.5, max: 1.2,
+      size: 2 + Math.random() * 4, spin: Math.random() * Math.PI });
+  }
+}
+function updateParticles(dt, snowIntensity) {
+  for (const f of snow) {
+    f.sway += dt * 2;
+    f.x += (f.vx + Math.sin(f.sway) * 12) * dt;
+    f.y += f.vy * dt;
+    if (f.y > GAME_H + 4) { f.y = -4; f.x = Math.random() * GAME_W; }
+    if (f.x < -4) f.x = GAME_W + 4;
+  }
+  for (let i = frost.length - 1; i >= 0; i--) {
+    const p = frost[i];
+    p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 220 * dt; p.spin += dt * 6;
+    p.life -= dt;
+    if (p.life <= 0) frost.splice(i, 1);
+  }
+  shake *= Math.pow(0.0015, dt);
+}
+function drawSnow(intensity) {
+  ctx.save();
+  for (const f of snow) {
+    ctx.globalAlpha = intensity * (0.25 + f.r / 3);
+    ctx.fillStyle = '#dff6ff';
+    ctx.beginPath(); ctx.arc(f.x, f.y, f.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawFrostParts() {
+  ctx.save();
+  for (const p of frost) {
+    ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
+    ctx.translate(p.x, p.y); ctx.rotate(p.spin);
+    ctx.fillStyle = Math.random() > 0.4 ? '#bff3ff' : '#38e1ff';
+    // 六角冰晶（簡化為三角形碎片）
+    ctx.beginPath();
+    ctx.moveTo(0, -p.size); ctx.lineTo(p.size * 0.8, p.size * 0.6);
+    ctx.lineTo(-p.size * 0.8, p.size * 0.6); ctx.closePath(); ctx.fill();
+    ctx.setTransform(ctx.getTransform()); // noop safety
+    ctx.rotate(-p.spin); ctx.translate(-p.x, -p.y);
+  }
+  ctx.restore();
+}
+
+// ========== HUD 戰術框（四角括號 + 掃描線）==========
+function hudFrame(alpha, label) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.strokeStyle = '#38e1ff';
+  ctx.lineWidth = 2;
+  const m = 26, L = 34;
+  const corners = [[m, m, 1, 1], [GAME_W - m, m, -1, 1], [m, GAME_H - m, 1, -1], [GAME_W - m, GAME_H - m, -1, -1]];
+  for (const [x, y, sx, sy] of corners) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + sy * L); ctx.lineTo(x, y); ctx.lineTo(x + sx * L, y);
+    ctx.stroke();
+  }
+  // 頂部標籤
+  ctx.globalAlpha = alpha * 0.9;
+  ctx.fillStyle = '#38e1ff';
+  ctx.font = 'bold 13px "Consolas", monospace';
+  ctx.textAlign = 'left';
+  ctx.fillText('◢ DELTA FORCE // SEASON 10', m + 6, m + 20);
+  if (label) {
+    ctx.textAlign = 'right';
+    ctx.fillText(label, GAME_W - m - 6, m + 20);
+  }
+  // 底部細掃描線
+  ctx.globalAlpha = alpha * 0.06;
+  ctx.fillStyle = '#38e1ff';
+  for (let y = 40; y < GAME_H; y += 4) ctx.fillRect(0, y, GAME_W, 1);
+  ctx.restore();
+}
+
+// 暗角
+function vignette(strength) {
+  const v = ctx.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.3, GAME_W/2, GAME_H/2, GAME_W*0.75);
+  v.addColorStop(0, 'rgba(0,0,0,0)');
+  v.addColorStop(1, `rgba(0,4,10,${strength})`);
+  ctx.fillStyle = v; ctx.fillRect(0, 0, GAME_W, GAME_H);
+}
+
+// 探照燈光錐
+function searchlight(x, y, angle, len, spread, color, alpha) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.translate(x, y); ctx.rotate(angle);
+  const g = ctx.createLinearGradient(0, 0, 0, len);
+  g.addColorStop(0, `rgba(${color},${alpha})`);
+  g.addColorStop(1, `rgba(${color},0)`);
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-spread, len); ctx.lineTo(spread, len);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// 字幕
+function subtitle(text, alpha) {
+  if (alpha <= 0) return;
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = 'bold 25px "PingFang TC","Microsoft JhengHei",sans-serif';
+  const y = GAME_H - 52;
+  const w = ctx.measureText(text).width + 52;
+  const g = ctx.createLinearGradient(GAME_W/2 - w/2, 0, GAME_W/2 + w/2, 0);
+  g.addColorStop(0, 'rgba(8,20,32,0)');
+  g.addColorStop(0.5, 'rgba(8,20,32,0.72)');
+  g.addColorStop(1, 'rgba(8,20,32,0)');
+  ctx.fillStyle = g; ctx.fillRect(GAME_W/2 - w/2, y - 28, w, 42);
+  ctx.fillStyle = '#38e1ff'; ctx.globalAlpha = alpha * 0.9;
+  ctx.fillRect(GAME_W/2 - w/2, y + 13, w, 2);
+  ctx.fillStyle = '#eaf7ff'; ctx.globalAlpha = alpha;
+  ctx.shadowColor = '#000'; ctx.shadowBlur = 6;
+  ctx.fillText(text, GAME_W / 2, y);
+  ctx.restore();
+}
+
+// 發光標題文字
+function glowText(text, x, y, size, color, glow, alpha, weight) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.textAlign = 'center';
+  ctx.font = `${weight || 'bold'} ${size}px "PingFang TC","Microsoft JhengHei",sans-serif`;
+  ctx.shadowColor = glow; ctx.shadowBlur = 26;
+  ctx.fillStyle = color;
+  ctx.fillText(text, x, y);
+  ctx.shadowBlur = 0;
+  ctx.fillText(text, x, y);
+  ctx.restore();
+}
+
+// ========== 場景：極寒要塞地圖 ==========
+// 建築群＋窗戶燈光是靜態圖案,離屏快取一次即可,避免每幀重複跑雙層迴圈 fillRect
+let bldgCacheCanvas = null;
+function getBldgCache(baseY) {
+  if (bldgCacheCanvas) return bldgCacheCanvas;
+  bldgCacheCanvas = document.createElement('canvas');
+  bldgCacheCanvas.width = GAME_W;
+  bldgCacheCanvas.height = GAME_H;
+  const g = bldgCacheCanvas.getContext('2d');
+  const bldgs = [[120, 150, 90], [230, 210, 60], [560, 130, 110], [700, 190, 70], [820, 160, 95]];
+  for (const [bx, bh, bw] of bldgs) {
+    g.fillStyle = '#060f1a';
+    g.fillRect(bx, baseY - bh, bw, bh + 40);
+    g.fillStyle = 'rgba(56,225,255,0.5)';
+    for (let wy = baseY - bh + 14; wy < baseY - 12; wy += 22)
+      for (let wx = bx + 8; wx < bx + bw - 8; wx += 20)
+        if ((wx * 3 + wy) % 7 < 4) g.fillRect(wx, wy, 7, 10);
+  }
+  return bldgCacheCanvas;
+}
+
+function drawMap(t, reveal, pan) {
+  // 夜空漸層
+  const sky = ctx.createLinearGradient(0, 0, 0, GAME_H);
+  sky.addColorStop(0, '#05101f');
+  sky.addColorStop(0.5, '#0a2036');
+  sky.addColorStop(0.75, '#123049');
+  sky.addColorStop(1, '#0a1826');
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, GAME_W, GAME_H);
+
+  // 極光帶（液氮主題）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let a = 0; a < 3; a++) {
+    ctx.globalAlpha = 0.10 + 0.05 * Math.sin(t * 0.8 + a);
+    const grd = ctx.createLinearGradient(0, 40 + a * 30, 0, 200 + a * 30);
+    grd.addColorStop(0, a % 2 ? 'rgba(56,225,255,0)' : 'rgba(154,107,255,0)');
+    grd.addColorStop(0.5, a % 2 ? 'rgba(56,225,255,0.9)' : 'rgba(120,160,255,0.9)');
+    grd.addColorStop(1, 'rgba(56,225,255,0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.moveTo(0, 90 + a * 24);
+    for (let x = 0; x <= GAME_W; x += 40)
+      ctx.lineTo(x, 90 + a * 24 + Math.sin(x * 0.008 + t * 0.9 + a) * 26);
+    ctx.lineTo(GAME_W, 0); ctx.lineTo(0, 0); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+
+  // 遠山（兩層視差）
+  ctx.fillStyle = '#0c2236';
+  ctx.beginPath(); ctx.moveTo(0, GAME_H);
+  const off1 = pan * 0.15;
+  for (let x = -50; x <= GAME_W + 50; x += 70) {
+    const h = GAME_H * 0.55 + Math.sin((x + off1) * 0.01) * 55 + Math.cos((x + off1) * 0.03) * 25;
+    ctx.lineTo(x - off1 % 70, h);
+  }
+  ctx.lineTo(GAME_W, GAME_H); ctx.closePath(); ctx.fill();
+  // 雪頂
+  ctx.fillStyle = 'rgba(190,235,255,0.25)';
+  ctx.beginPath(); ctx.moveTo(0, GAME_H);
+  for (let x = -50; x <= GAME_W + 50; x += 70) {
+    const h = GAME_H * 0.55 + Math.sin((x + off1) * 0.01) * 55 + Math.cos((x + off1) * 0.03) * 25;
+    ctx.lineTo(x - off1 % 70, h);
+  }
+  ctx.lineTo(GAME_W, GAME_H * 0.7); ctx.lineTo(0, GAME_H * 0.7); ctx.closePath(); ctx.fill();
+
+  const off2 = pan * 0.4;
+  ctx.fillStyle = '#0a1a2a';
+  ctx.beginPath(); ctx.moveTo(0, GAME_H);
+  for (let x = -50; x <= GAME_W + 50; x += 46) {
+    const h = GAME_H * 0.66 + Math.sin((x + off2) * 0.02 + 2) * 34;
+    ctx.lineTo(x - off2 % 46, h);
+  }
+  ctx.lineTo(GAME_W, GAME_H); ctx.closePath(); ctx.fill();
+
+  // 中景：工業設施剪影（吊塔、天線、雷達）
+  ctx.save();
+  ctx.translate(-pan * 0.7, 0);
+  const baseY = GAME_H * 0.78;
+  // 主堡建築群＋窗戶燈光（靜態,離屏快取一次,每幀只 drawImage,避免逐幀 160+ 次 fillRect）
+  ctx.drawImage(getBldgCache(baseY), 0, 0);
+  ctx.fillStyle = '#060f1a';
+  // 吊塔
+  ctx.strokeStyle = '#08131f'; ctx.lineWidth = 6;
+  ctx.beginPath(); ctx.moveTo(400, baseY); ctx.lineTo(400, baseY - 180);
+  ctx.lineTo(470, baseY - 160); ctx.stroke();
+  ctx.lineWidth = 3;
+  for (let i = 0; i < 6; i++) { ctx.beginPath(); ctx.moveTo(400, baseY - i*30); ctx.lineTo(400 + (i*11), baseY - 160 + i*4); ctx.stroke(); }
+  // 天線閃燈
+  const blinkOn = Math.sin(t * 4) > 0;
+  ctx.fillStyle = blinkOn ? '#ff5a3d' : '#3a1210';
+  ctx.beginPath(); ctx.arc(400, baseY - 184, 5, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // 旋轉雷達碟（中景固定右側）
+  ctx.save();
+  ctx.translate(GAME_W * 0.5 - pan * 0.7 + 0, baseY - 150);
+  ctx.strokeStyle = '#0d2438'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 40); ctx.stroke();
+  const radA = t * 1.6;
+  ctx.strokeStyle = '#123a52'; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, 30 * Math.cos(radA) + 4, 18, 0, 0, Math.PI * 2);
+  ctx.stroke();
+  // 雷達掃描光
+  ctx.strokeStyle = `rgba(56,225,255,${0.4 + 0.3*Math.sin(t*3)})`;
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.cos(radA) * 34, -Math.sin(radA)*20 - 6); ctx.stroke();
+  ctx.restore();
+
+  // 探照燈掃動
+  searchlight(GAME_W * 0.2, GAME_H * 0.2, 0.5 + Math.sin(t * 0.5) * 0.35, 460, 70, '120,200,255', 0.10);
+  searchlight(GAME_W * 0.82, GAME_H * 0.16, -0.4 + Math.cos(t * 0.6) * 0.35, 460, 70, '120,200,255', 0.10);
+
+  // 前景：戰壕／掩體
+  ctx.fillStyle = '#04090f';
+  ctx.beginPath();
+  ctx.moveTo(0, GAME_H);
+  ctx.lineTo(0, GAME_H * 0.86);
+  for (let x = 0; x <= GAME_W; x += 30)
+    ctx.lineTo(x, GAME_H * 0.86 + Math.sin(x * 0.05 + pan * 0.02) * 6 + (x % 120 < 60 ? 0 : 10));
+  ctx.lineTo(GAME_W, GAME_H); ctx.closePath(); ctx.fill();
+  // 前景鐵絲網剪影
+  ctx.strokeStyle = 'rgba(10,20,30,0.9)'; ctx.lineWidth = 2;
+  for (let x = 40; x < GAME_W; x += 90) {
+    ctx.beginPath(); ctx.moveTo(x, GAME_H * 0.86); ctx.lineTo(x, GAME_H * 0.78); ctx.stroke();
+  }
+  ctx.beginPath();
+  for (let x = 0; x <= GAME_W; x += 12) {
+    const y = GAME_H * 0.79 + Math.sin(x * 0.4) * 3;
+    x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  drawSnow(reveal);
+}
+
+// ========== 幹員「液氮」（冷凍戰術幹員半身像）==========
+function drawCryoOperator(cx, cy, s, t, alpha) {
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  const breathe = Math.sin(t * 1.6) * s * 0.01;
+  ctx.translate(cx, cy + breathe);
+
+  // 背後冷光暈
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  const halo = ctx.createRadialGradient(0, -s * 0.2, s * 0.1, 0, -s * 0.2, s * 1.6);
+  halo.addColorStop(0, `rgba(56,225,255,${0.35 * alpha})`);
+  halo.addColorStop(0.5, `rgba(79,124,255,${0.12 * alpha})`);
+  halo.addColorStop(1, 'rgba(56,225,255,0)');
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(0, -s * 0.2, s * 1.6, 0, Math.PI * 2); ctx.fill();
+  ctx.restore();
+
+  // ---- 身體：戰術護甲肩線 ----
+  const bodyGrad = ctx.createLinearGradient(-s, 0, s, s);
+  bodyGrad.addColorStop(0, '#0e1c28');
+  bodyGrad.addColorStop(0.5, '#1b3444');
+  bodyGrad.addColorStop(1, '#0a141c');
+  ctx.fillStyle = bodyGrad;
+  ctx.beginPath();
+  ctx.moveTo(-s * 1.15, s * 1.3);
+  ctx.lineTo(-s * 0.95, s * 0.15);
+  ctx.quadraticCurveTo(-s * 0.85, -s * 0.15, -s * 0.5, -s * 0.28); // 左肩
+  ctx.lineTo(s * 0.5, -s * 0.28);
+  ctx.quadraticCurveTo(s * 0.85, -s * 0.15, s * 0.95, s * 0.15); // 右肩
+  ctx.lineTo(s * 1.15, s * 1.3);
+  ctx.closePath(); ctx.fill();
+
+  // 胸甲板
+  ctx.fillStyle = '#12232f';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.5, s * 0.1); ctx.lineTo(s * 0.5, s * 0.1);
+  ctx.lineTo(s * 0.42, s * 1.3); ctx.lineTo(-s * 0.42, s * 1.3); ctx.closePath(); ctx.fill();
+  // 護甲分板線 + 冷光縫
+  ctx.strokeStyle = 'rgba(56,225,255,0.55)'; ctx.lineWidth = s * 0.02;
+  ctx.beginPath(); ctx.moveTo(0, s * 0.15); ctx.lineTo(0, s * 1.28); ctx.stroke();
+  ctx.strokeStyle = 'rgba(120,160,200,0.4)'; ctx.lineWidth = s * 0.015;
+  for (let i = 1; i <= 3; i++) {
+    ctx.beginPath(); ctx.moveTo(-s * 0.46, s * (0.1 + i * 0.3)); ctx.lineTo(s * 0.46, s * (0.1 + i * 0.3)); ctx.stroke();
+  }
+  // 肩甲
+  ctx.fillStyle = '#16303f';
+  ctx.beginPath(); ctx.ellipse(-s * 0.78, s * 0.08, s * 0.32, s * 0.24, 0.3, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(s * 0.78, s * 0.08, s * 0.32, s * 0.24, -0.3, 0, Math.PI * 2); ctx.fill();
+  // 肩章冷光徽記
+  ctx.fillStyle = 'rgba(56,225,255,0.85)';
+  ctx.beginPath(); ctx.arc(s * 0.78, s * 0.08, s * 0.06, 0, Math.PI * 2); ctx.fill();
+
+  // ---- 頸圍面罩（防寒圍脖）----
+  ctx.fillStyle = '#0c1a24';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.34, -s * 0.28); ctx.lineTo(s * 0.34, -s * 0.28);
+  ctx.lineTo(s * 0.28, -s * 0.62); ctx.lineTo(-s * 0.28, -s * 0.62); ctx.closePath(); ctx.fill();
+
+  // ---- 頭盔 ----
+  const helmGrad = ctx.createLinearGradient(0, -s * 1.5, 0, -s * 0.6);
+  helmGrad.addColorStop(0, '#20404f');
+  helmGrad.addColorStop(1, '#0e1e28');
+  ctx.fillStyle = helmGrad;
+  ctx.beginPath();
+  ctx.ellipse(0, -s * 1.05, s * 0.56, s * 0.6, 0, Math.PI, 0); // 盔頂
+  ctx.lineTo(s * 0.56, -s * 0.78);
+  ctx.quadraticCurveTo(s * 0.5, -s * 0.6, s * 0.3, -s * 0.58);
+  ctx.lineTo(-s * 0.3, -s * 0.58);
+  ctx.quadraticCurveTo(-s * 0.5, -s * 0.6, -s * 0.56, -s * 0.78);
+  ctx.closePath(); ctx.fill();
+  // 盔頂夜視儀基座
+  ctx.fillStyle = '#0a151c';
+  ctx.fillRect(-s * 0.1, -s * 1.62, s * 0.2, s * 0.16);
+  ctx.fillStyle = '#16303f';
+  ctx.fillRect(-s * 0.16, -s * 1.5, s * 0.32, s * 0.08);
+  // 盔側導軌
+  ctx.strokeStyle = '#2a4b5c'; ctx.lineWidth = s * 0.03;
+  ctx.beginPath(); ctx.moveTo(-s * 0.5, -s * 0.95); ctx.lineTo(-s * 0.5, -s * 0.72); ctx.stroke();
+
+  // ---- 面部：全罩式護目鏡（冷光橫掃）----
+  // 下半臉戰術面罩
+  ctx.fillStyle = '#0f2230';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.34, -s * 0.7);
+  ctx.lineTo(s * 0.34, -s * 0.7);
+  ctx.lineTo(s * 0.24, -s * 0.34);
+  ctx.quadraticCurveTo(0, -s * 0.24, -s * 0.24, -s * 0.34);
+  ctx.closePath(); ctx.fill();
+  // 呼吸閥（結霜）
+  ctx.fillStyle = '#1c3846';
+  ctx.beginPath(); ctx.ellipse(0, -s * 0.46, s * 0.12, s * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(190,243,255,0.6)'; ctx.lineWidth = s * 0.02;
+  for (let i = -1; i <= 1; i++) { ctx.beginPath(); ctx.moveTo(i * s * 0.06, -s * 0.53); ctx.lineTo(i * s * 0.06, -s * 0.4); ctx.stroke(); }
+
+  // 護目鏡外殼
+  ctx.fillStyle = '#0a161e';
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.5, -s * 0.86); ctx.lineTo(s * 0.5, -s * 0.86);
+  ctx.lineTo(s * 0.46, -s * 0.66); ctx.lineTo(-s * 0.46, -s * 0.66); ctx.closePath(); ctx.fill();
+  // 冷光護目鏡發光帶
+  const scan = 0.6 + 0.4 * Math.sin(t * 3);
+  ctx.save();
+  ctx.shadowColor = '#38e1ff'; ctx.shadowBlur = 22 * scan;
+  const visor = ctx.createLinearGradient(-s * 0.44, 0, s * 0.44, 0);
+  visor.addColorStop(0, '#0a3a4a');
+  visor.addColorStop(0.5, '#38e1ff');
+  visor.addColorStop(1, '#0a3a4a');
+  ctx.fillStyle = visor;
+  ctx.beginPath();
+  ctx.moveTo(-s * 0.44, -s * 0.82); ctx.lineTo(s * 0.44, -s * 0.82);
+  ctx.lineTo(s * 0.4, -s * 0.7); ctx.lineTo(-s * 0.4, -s * 0.7); ctx.closePath(); ctx.fill();
+  // 護目鏡掃描亮點
+  ctx.fillStyle = '#ffffff';
+  ctx.globalAlpha = alpha * scan;
+  ctx.fillRect(-s * 0.4 + (0.5 + 0.5 * Math.sin(t * 2)) * s * 0.76, -s * 0.81, s * 0.05, s * 0.1);
+  ctx.restore();
+
+  // ---- 結霜細節：肩上與圍脖霜白 ----
+  ctx.fillStyle = 'rgba(210,245,255,0.5)';
+  for (let i = 0; i < 10; i++) {
+    const fx = -s * 0.9 + Math.sin(i * 2.3) * s * 0.9;
+    const fy = -s * 0.1 + Math.cos(i * 1.7) * s * 0.2;
+    ctx.beginPath(); ctx.arc(fx, fy, s * 0.02 + (i % 3) * s * 0.01, 0, Math.PI * 2); ctx.fill();
+  }
+  // 右緣冷光描邊
+  ctx.strokeStyle = `rgba(56,225,255,${0.5 * alpha})`;
+  ctx.lineWidth = s * 0.025;
+  ctx.beginPath();
+  ctx.moveTo(s * 0.56, -s * 0.78);
+  ctx.quadraticCurveTo(s * 0.9, -s * 0.15, s * 1.0, s * 0.15);
+  ctx.lineTo(s * 1.18, s * 1.3);
+  ctx.stroke();
+
+  // ---- 呼出的白色寒氣（動態）----
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 3; i++) {
+    const bp = ((t * 0.5 + i * 0.33) % 1);
+    ctx.globalAlpha = alpha * (1 - bp) * 0.5;
+    ctx.fillStyle = 'rgba(200,240,255,0.5)';
+    ctx.beginPath();
+    ctx.arc(s * 0.02, -s * 0.38 + bp * s * 0.5, s * (0.06 + bp * 0.16), 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+
+  ctx.restore();
+}
+
+// ========== 冰霜刀（新刀皮：液氮之刃）==========
+function drawKnife(cx, cy, len, angle, frostAmt, t) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+  const W = len * 0.11;
+
+  // 刀刃冷光
+  ctx.save();
+  ctx.shadowColor = '#38e1ff'; ctx.shadowBlur = 20 * frostAmt;
+
+  // 刀身（clip-point 戰術刀型，刃尖朝上）
+  const bladeGrad = ctx.createLinearGradient(-W, 0, W, 0);
+  bladeGrad.addColorStop(0, '#8fb6c8');
+  bladeGrad.addColorStop(0.35, '#e6f6ff');
+  bladeGrad.addColorStop(0.5, '#ffffff');
+  bladeGrad.addColorStop(0.65, '#bfe6f2');
+  bladeGrad.addColorStop(1, '#5a8496');
+  ctx.fillStyle = bladeGrad;
+  ctx.beginPath();
+  ctx.moveTo(-W * 0.9, 0);
+  ctx.lineTo(-W * 0.9, -len * 0.62);
+  ctx.lineTo(-W * 0.55, -len * 0.9);
+  ctx.lineTo(0, -len);              // 刀尖
+  ctx.lineTo(W * 0.85, -len * 0.72);
+  ctx.quadraticCurveTo(W * 1.0, -len * 0.4, W * 0.9, 0);
+  ctx.closePath(); ctx.fill();
+  ctx.restore();
+
+  // 血槽（fuller）
+  ctx.strokeStyle = 'rgba(90,132,150,0.8)'; ctx.lineWidth = W * 0.16;
+  ctx.beginPath(); ctx.moveTo(-W * 0.15, -len * 0.1); ctx.lineTo(-W * 0.15, -len * 0.72); ctx.stroke();
+
+  // 液氮結霜：刀身冰晶塗層（近護手最厚）
+  ctx.save();
+  for (let i = 0; i < 18; i++) {
+    const yy = -len * (0.05 + (i / 18) * 0.85);
+    const density = frostAmt * (1 - i / 22);
+    if (Math.sin(i * 3.1) < 0.2) continue;
+    ctx.globalAlpha = clamp(density, 0, 1) * 0.85;
+    ctx.fillStyle = i % 2 ? '#bff3ff' : '#eaffff';
+    const side = (i % 2 ? 1 : -1);
+    const xx = side * W * (0.3 + Math.abs(Math.sin(i)) * 0.5);
+    const sz = W * (0.18 + Math.abs(Math.cos(i * 1.3)) * 0.25);
+    ctx.beginPath();
+    ctx.moveTo(xx, yy - sz); ctx.lineTo(xx + sz * 0.7, yy + sz * 0.5);
+    ctx.lineTo(xx - sz * 0.7, yy + sz * 0.5); ctx.closePath(); ctx.fill();
+  }
+  ctx.restore();
+
+  // 移動高光（刀鋒反光）
+  const glint = (t * 0.6) % 1;
+  ctx.save();
+  ctx.globalAlpha = 0.85 * frostAmt;
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = W * 0.35;
+  ctx.lineCap = 'round';
+  const gy = -len * (0.1 + glint * 0.8);
+  ctx.beginPath(); ctx.moveTo(-W * 0.4, gy); ctx.lineTo(W * 0.3, gy - len * 0.04); ctx.stroke();
+  ctx.restore();
+
+  // 護手（十字檔）
+  ctx.fillStyle = '#243a48';
+  ctx.beginPath();
+  ctx.moveTo(-W * 1.8, 0); ctx.lineTo(W * 1.8, 0);
+  ctx.lineTo(W * 1.5, W * 0.7); ctx.lineTo(-W * 1.5, W * 0.7); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(56,225,255,0.7)';
+  ctx.fillRect(-W * 1.7, W * 0.15, W * 3.4, W * 0.12);
+
+  // 握把
+  const handleGrad = ctx.createLinearGradient(-W, 0, W, 0);
+  handleGrad.addColorStop(0, '#0d1922');
+  handleGrad.addColorStop(0.5, '#25404f');
+  handleGrad.addColorStop(1, '#0d1922');
+  ctx.fillStyle = handleGrad;
+  ctx.beginPath();
+  ctx.moveTo(-W * 0.85, W * 0.7);
+  ctx.lineTo(W * 0.85, W * 0.7);
+  ctx.lineTo(W * 0.7, W * 0.7 + len * 0.34);
+  ctx.quadraticCurveTo(0, W * 0.7 + len * 0.4, -W * 0.7, W * 0.7 + len * 0.34);
+  ctx.closePath(); ctx.fill();
+  // 握把防滑紋
+  ctx.strokeStyle = 'rgba(10,20,28,0.9)'; ctx.lineWidth = W * 0.12;
+  for (let i = 1; i <= 5; i++) {
+    const yy = W * 0.7 + len * 0.05 * i;
+    ctx.beginPath(); ctx.moveTo(-W * 0.75, yy); ctx.lineTo(W * 0.75, yy); ctx.stroke();
+  }
+  // 冷光紋
+  ctx.strokeStyle = 'rgba(56,225,255,0.6)'; ctx.lineWidth = W * 0.06;
+  ctx.beginPath(); ctx.moveTo(0, W * 0.7); ctx.lineTo(0, W * 0.7 + len * 0.32); ctx.stroke();
+  // 尾錘
+  ctx.fillStyle = '#243a48';
+  ctx.beginPath(); ctx.arc(0, W * 0.7 + len * 0.37, W * 0.55, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(56,225,255,0.8)';
+  ctx.beginPath(); ctx.arc(0, W * 0.7 + len * 0.37, W * 0.22, 0, Math.PI * 2); ctx.fill();
+
+  ctx.restore();
+}
+
+// 液氮之刃周圍飄散寒霧
+function knifeMist(cx, cy, r, t, alpha) {
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (let i = 0; i < 5; i++) {
+    const a = t * 0.5 + i * 1.26;
+    const px = cx + Math.cos(a) * r * 0.7;
+    const py = cy + Math.sin(a) * r * 0.4 + Math.sin(t + i) * 20;
+    ctx.globalAlpha = alpha * (0.12 + 0.06 * Math.sin(t * 2 + i));
+    const g = ctx.createRadialGradient(px, py, 0, px, py, r * 0.5);
+    g.addColorStop(0, 'rgba(56,225,255,0.5)');
+    g.addColorStop(1, 'rgba(56,225,255,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(px, py, r * 0.5, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ========== 背景音樂：戰術風格合成配樂（零音檔，鼓點＋低音脈衝＋琶音）==========
+let musicGain = null, musicTimer = null, musicNextNoteTime = 0, musicBeat = 0, musicIntensity = 0;
+const MUSIC_BPM = 132, MUSIC_STEP = 60 / MUSIC_BPM / 2; // 8分音符步進
+const MUSIC_BASS = [55, 55, 61.74, 55, 58.27, 55, 61.74, 49]; // A1 附近低音行進，戰術感小調
+const MUSIC_ARP = [220, 261.63, 329.63, 261.63, 246.94, 293.66, 349.23, 293.66]; // A小調系琶音
+
+function scheduleKick(time, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(120, time);
+  osc.frequency.exponentialRampToValueAtTime(42, time + 0.12);
+  g.gain.setValueAtTime(vol, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + 0.16);
+  osc.connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + 0.18);
+}
+function scheduleHat(time, vol, open) {
+  const dur = open ? 0.16 : 0.045;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = 6500;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  src.connect(f).connect(g).connect(musicGain);
+  src.start(time);
+}
+function scheduleBass(time, freq, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(freq, time);
+  const f = audioCtx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 340; f.Q.value = 1.2;
+  g.gain.setValueAtTime(0.0001, time);
+  g.gain.linearRampToValueAtTime(vol, time + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, time + MUSIC_STEP * 1.8);
+  osc.connect(f).connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + MUSIC_STEP * 2);
+}
+function scheduleArp(time, freq, vol) {
+  const osc = audioCtx.createOscillator(), g = audioCtx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(freq, time);
+  g.gain.setValueAtTime(0.0001, time);
+  g.gain.linearRampToValueAtTime(vol, time + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, time + MUSIC_STEP * 0.9);
+  osc.connect(g).connect(musicGain);
+  osc.start(time); osc.stop(time + MUSIC_STEP);
+}
+// 槍戰射擊聲：短促噪音彈殼聲 + 低頻槍口衝擊，作為戰鬥段落的節奏層
+function scheduleGunshot(time, vol) {
+  const dur = 0.055;
+  const n = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 0.5);
+  const src = audioCtx.createBufferSource(); src.buffer = buf;
+  const f = audioCtx.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 1700; f.Q.value = 0.7;
+  const g = audioCtx.createGain(); g.gain.setValueAtTime(vol, time);
+  g.gain.exponentialRampToValueAtTime(0.001, time + dur);
+  src.connect(f).connect(g).connect(musicGain);
+  src.start(time);
+  const osc = audioCtx.createOscillator(), g2 = audioCtx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(95, time);
+  osc.frequency.exponentialRampToValueAtTime(48, time + 0.06);
+  g2.gain.setValueAtTime(vol * 0.75, time);
+  g2.gain.exponentialRampToValueAtTime(0.001, time + 0.08);
+  osc.connect(g2).connect(musicGain);
+  osc.start(time); osc.stop(time + 0.09);
+}
+// 每小節固定樣式的自動步槍連發節奏（戰鬥段落才觸發，強度由 musicIntensity 控制）
+const GUNFIRE_PATTERN = [0, 0.3, 0.45, 0.72];
+function musicScheduler() {
+  if (!audioCtx) return;
+  while (musicNextNoteTime < audioCtx.currentTime + 0.12) {
+    const step = musicBeat % 8;
+    scheduleKick(musicNextNoteTime, step % 4 === 0 ? 0.24 : (step % 2 === 0 ? 0.1 : 0));
+    scheduleHat(musicNextNoteTime, step % 2 === 1 ? 0.05 : 0.025, step === 6);
+    if (step % 2 === 0) scheduleBass(musicNextNoteTime, MUSIC_BASS[(musicBeat / 2 | 0) % MUSIC_BASS.length], 0.1);
+    scheduleArp(musicNextNoteTime, MUSIC_ARP[musicBeat % MUSIC_ARP.length], 0.045);
+    if (musicIntensity > 0.3 && (step === 1 || step === 4 || step === 6)) {
+      for (const off of GUNFIRE_PATTERN) {
+        if (off > 0 && Math.random() > 0.6) continue; // 隨機省略部分連發,聽感更自然
+        scheduleGunshot(musicNextNoteTime + off * MUSIC_STEP, 0.1 * musicIntensity);
+      }
+    }
+    musicNextNoteTime += MUSIC_STEP;
+    musicBeat++;
+  }
+  musicTimer = setTimeout(musicScheduler, 40);
+}
+function startMusic() {
+  if (!audioCtx || !soundOn || musicTimer) return;
+  if (!musicGain) {
+    musicGain = audioCtx.createGain();
+    musicGain.gain.value = 0.5;
+    musicGain.connect(audioCtx.destination);
+  }
+  musicGain.gain.cancelScheduledValues(audioCtx.currentTime);
+  musicGain.gain.setValueAtTime(0.5, audioCtx.currentTime);
+  musicNextNoteTime = audioCtx.currentTime + 0.05;
+  musicBeat = 0;
+  musicScheduler();
+}
+function stopMusic() {
+  if (musicTimer) { clearTimeout(musicTimer); musicTimer = null; }
+  if (musicGain && audioCtx) {
+    musicGain.gain.cancelScheduledValues(audioCtx.currentTime);
+    musicGain.gain.setTargetAtTime(0.0001, audioCtx.currentTime, 0.15);
+  }
+}
+
+// ========== 時間軸（總長約 33 秒，三幕結構）==========
+// 第一幕 0-8s：S10 賽季標題登場
+// 第二幕 8-15s 全新地圖 · 15-22s 新幹員液氮 · 22-28s 新刀皮
+// 第三幕 28-33s：高潮 + CTA
+const TIMELINE = 33, DURATION = 40, TIME_SCALE = TIMELINE / DURATION;
+let startTime = null, playing = false, lastNow = 0;
+let firedCues = {};
+function cue(id, fn) { if (!firedCues[id]) { firedCues[id] = true; fn(); } }
+
+function draw(t) {
+  ctx.clearRect(0, 0, GAME_W, GAME_H);
+  ctx.save();
+  // 螢幕震動
+  ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+  // 槍戰節奏強度：開場後升溫,戰鬥段落全開,結尾收束
+  musicIntensity = clamp((t - 5.5) / 2, 0, 1) * clamp((32 - t) / 1.5, 0, 1);
+
+  if (t < 8) {
+    // ===== 第一幕：黑暗戰場 + S10 標題落下 =====
+    // 深色戰場底
+    const bg = ctx.createLinearGradient(0, 0, 0, GAME_H);
+    bg.addColorStop(0, '#04080f');
+    bg.addColorStop(1, '#0a1622');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    // 遠方地平線冷光
+    const hor = ctx.createLinearGradient(0, GAME_H * 0.55, 0, GAME_H * 0.85);
+    hor.addColorStop(0, 'rgba(56,225,255,0)');
+    hor.addColorStop(1, 'rgba(56,225,255,0.12)');
+    ctx.fillStyle = hor; ctx.fillRect(0, GAME_H * 0.55, GAME_W, GAME_H * 0.3);
+    // 掃動探照燈
+    searchlight(GAME_W * 0.5, -40, Math.sin(t * 0.8) * 0.5, 560, 90, '120,200,255', 0.10 * clamp(t / 1.5, 0, 1));
+    drawSnow(clamp(t / 2, 0, 1) * 0.5);
+
+    // 登場音樂：開場即刻響起
+    if (t > 0.05) cue('entrance', () => entranceFanfare());
+
+    // 節奏性直升機低頻
+    if (t > 0.5 && Math.floor(t * 6) % 3 === 0) cue('rot' + Math.floor(t * 6), () => rotor());
+
+    // S10 巨型徽記落下
+    const slam = clamp((t - 1.2) / 0.5, 0, 1);
+    if (t > 1.2) {
+      const yoff = (1 - easeOut(slam)) * -120;
+      ctx.save();
+      ctx.globalAlpha = easeOut(slam);
+      ctx.translate(GAME_W / 2, GAME_H * 0.42 + yoff);
+      // 六角徽章
+      ctx.shadowColor = '#38e1ff'; ctx.shadowBlur = 30;
+      ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 4;
+      ctx.beginPath();
+      for (let i = 0; i < 6; i++) {
+        const a = i * Math.PI / 3 - Math.PI / 2;
+        const px = Math.cos(a) * 92, py = Math.sin(a) * 92;
+        i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      }
+      ctx.closePath(); ctx.stroke();
+      ctx.shadowBlur = 0;
+      glowText('S10', 0, 26, 76, '#eaf7ff', '#38e1ff', 1, '900');
+      ctx.restore();
+      cue('slam1', () => { boom(0.55); shake = 14; burstFrost(GAME_W / 2, GAME_H * 0.42, 30, 260); });
+    }
+    // 主標題
+    if (t > 2.6) {
+      const tp = clamp((t - 2.6) / 0.8, 0, 1);
+      glowText('三角洲行動', GAME_W / 2, GAME_H * 0.66, 54 + (1 - easeOut(tp)) * 24, '#ffffff', '#4f7cff', easeOut(tp), '800');
+      cue('titleWho', () => metalSwipe());
+    }
+    if (t > 3.8) {
+      const tp = clamp((t - 3.8) / 0.7, 0, 1);
+      glowText('全新賽季 · 即將登場', GAME_W / 2, GAME_H * 0.75, 24, '#38e1ff', '#38e1ff', easeOut(tp) * clamp((8 - t) / 0.6, 0, 1), 'bold');
+    }
+    if (t > 5.2) subtitle('液態氮風暴，席捲戰場', clamp((t - 5.2) / 0.6, 0, 1) * clamp((8 - t) / 0.6, 0, 1));
+    hudFrame(clamp((t - 1) / 1, 0, 1) * 0.9, 'INITIALIZING');
+    vignette(0.5);
+
+  } else if (t < 15) {
+    // ===== 第二幕 A：全新地圖 極寒要塞 =====
+    const p = (t - 8) / 7;
+    cue('mapIn', () => { blip(660); shake = 8; });
+    drawMap(t, clamp(p * 3, 0, 1), (t - 8) * 22);
+    // 地圖名稱 HUD 卡
+    const cardP = clamp((t - 8.3) / 0.6, 0, 1) * clamp((15 - t) / 0.5, 0, 1);
+    if (cardP > 0) {
+      ctx.save();
+      ctx.globalAlpha = cardP;
+      ctx.translate(GAME_W * 0.5, GAME_H * 0.3);
+      // 標籤
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38e1ff';
+      ctx.font = 'bold 15px "Consolas",monospace';
+      ctx.fillText('◤ NEW BATTLEGROUND ◥', 0, -46);
+      glowText('極寒要塞', 0, 6, 60, '#eaf7ff', '#38e1ff', 1, '800');
+      ctx.font = '18px "PingFang TC",sans-serif';
+      ctx.fillStyle = '#bff3ff'; ctx.globalAlpha = cardP * 0.9;
+      ctx.fillText('冰封工業區 · 長距離對狙 × 室內近戰', 0, 40);
+      ctx.restore();
+    }
+    if (t < 11.4) subtitle('全新戰場「極寒要塞」開放', clamp((t - 8.6) / 0.6, 0, 1));
+    else subtitle('冰原、地堡、雷達站，多線交火', clamp((t - 11.6) / 0.5, 0, 1) * clamp((15 - t) / 0.5, 0, 1));
+    hudFrame(0.9, 'MAP: FROST FORTRESS');
+    vignette(0.42);
+
+  } else if (t < 22) {
+    // ===== 第二幕 B：新幹員 液氮（AE3）=====
+    const p = (t - 15) / 7;
+    // 冷色戰術背景
+    const bg = ctx.createRadialGradient(GAME_W * 0.5, GAME_H * 0.4, 60, GAME_W * 0.5, GAME_H * 0.5, GAME_W * 0.7);
+    bg.addColorStop(0, '#0c2233');
+    bg.addColorStop(1, '#050c14');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    // 背景放射線
+    ctx.save();
+    ctx.globalAlpha = 0.12;
+    ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 2;
+    for (let i = 0; i < 24; i++) {
+      const a = i * Math.PI / 12 + t * 0.1;
+      ctx.beginPath(); ctx.moveTo(GAME_W/2, GAME_H*0.5);
+      ctx.lineTo(GAME_W/2 + Math.cos(a) * 700, GAME_H*0.5 + Math.sin(a) * 700); ctx.stroke();
+    }
+    ctx.restore();
+    drawSnow(0.7);
+
+    cue('opIn', () => { powerChime(); shake = 10; burstFrost(GAME_W * 0.62, GAME_H * 0.5, 40, 300); frostHit(0.35); });
+    // 幹員登場：從下方滑入 + 過衝
+    const entP = clamp(p * 2.4, 0, 1);
+    const opY = GAME_H * 0.58 + (1 - easeOutBack(entP)) * 260;
+    const opAlpha = clamp(p * 3, 0, 1);
+    drawCryoOperator(GAME_W * 0.6, opY, 150, t, opAlpha);
+    knifeMist(GAME_W * 0.6, GAME_H * 0.5, 200, t, opAlpha);
+
+    // 左側資訊面板
+    const panP = clamp((t - 16) / 0.6, 0, 1) * clamp((22 - t) / 0.5, 0, 1);
+    if (panP > 0) {
+      ctx.save();
+      ctx.globalAlpha = panP;
+      ctx.textAlign = 'left';
+      const px = GAME_W * 0.08, py = GAME_H * 0.3;
+      ctx.fillStyle = '#38e1ff';
+      ctx.font = 'bold 15px "Consolas",monospace';
+      ctx.fillText('◤ NEW OPERATOR // AE3', px, py - 34);
+      glowText('液　氮', px + 90, py + 34, 68, '#eaf7ff', '#38e1ff', 1, '900');
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#bff3ff';
+      ctx.font = 'bold 19px "PingFang TC",sans-serif';
+      ctx.fillText('代號　AE3 · 極地突擊幹員', px, py + 74);
+      // 技能列
+      ctx.font = '16px "PingFang TC",sans-serif';
+      const skills = ['■ 戰術技能：液氮噴射 — 凍結敵人與陷阱',
+                      '■ 被動：耐寒體質 — 冰面移動不減速',
+                      '■ 終極：絕對零度 — 範圍冰封護盾'];
+      for (let i = 0; i < skills.length; i++) {
+        ctx.globalAlpha = panP * clamp((t - 17.2 - i * 0.5) / 0.4, 0, 1);
+        ctx.fillStyle = '#d6f7ff';
+        ctx.fillText(skills[i], px, py + 108 + i * 30);
+      }
+      ctx.restore();
+    }
+    if (t < 18.5) subtitle('全新 AE3 幹員「液氮」加入戰局', clamp((t - 15.6) / 0.6, 0, 1));
+    else subtitle('凍結敵人，掌控整片冰封戰場', clamp((t - 18.6) / 0.5, 0, 1) * clamp((22 - t) / 0.5, 0, 1));
+    hudFrame(0.9, 'OPERATOR: LN₂');
+    vignette(0.4);
+
+  } else if (t < 28) {
+    // ===== 第二幕 C：新刀皮 液氮之刃 =====
+    const p = (t - 22) / 6;
+    const bg = ctx.createRadialGradient(GAME_W * 0.5, GAME_H * 0.5, 40, GAME_W * 0.5, GAME_H * 0.5, GAME_W * 0.7);
+    bg.addColorStop(0, '#0a2130');
+    bg.addColorStop(1, '#04090f');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    drawSnow(0.6);
+
+    cue('knifeIn', () => { metalSwipe(); shake = 9; });
+    // 刀出鞘：先快速旋轉再減速懸浮展示
+    const spin = p < 0.35 ? easeOut(p / 0.35) * Math.PI * 5 : Math.PI * 5 + Math.sin(t * 1.2) * 0.12;
+    const bob = Math.sin(t * 1.5) * 12;
+    const kx = GAME_W * 0.5, ky = GAME_H * 0.48 + bob;
+    const frostAmt = clamp((p - 0.2) / 0.4, 0, 1);
+    knifeMist(kx, ky, 220, t, 1);
+    drawKnife(kx, ky, 300, spin, Math.max(0.4, frostAmt), t);
+    // 結霜完成迸發
+    if (t > 24.4) cue('frostBurst', () => { frostHit(0.4); burstFrost(kx, ky, 34, 240); shake = 6; });
+
+    // 刀名卡
+    const cardP = clamp((t - 22.6) / 0.6, 0, 1) * clamp((28 - t) / 0.5, 0, 1);
+    if (cardP > 0) {
+      ctx.save();
+      ctx.globalAlpha = cardP;
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#38e1ff';
+      ctx.font = 'bold 15px "Consolas",monospace';
+      ctx.fillText('◤ LEGENDARY KNIFE SKIN ◥', GAME_W * 0.5, GAME_H * 0.2);
+      glowText('液氮之刃', GAME_W * 0.5, GAME_H * 0.28, 52, '#eaf7ff', '#38e1ff', 1, '800');
+      // 稀有度星級
+      ctx.fillStyle = '#ffcf5c';
+      ctx.font = '22px sans-serif';
+      ctx.fillText('★ ★ ★ ★ ★  傳說級', GAME_W * 0.5, GAME_H * 0.82);
+      ctx.restore();
+    }
+    if (t < 25) subtitle('全新刀皮「液氮之刃」限時登場', clamp((t - 22.8) / 0.6, 0, 1));
+    else subtitle('命中結霜，擊殺特效冰封綻放', clamp((t - 25.1) / 0.5, 0, 1) * clamp((28 - t) / 0.5, 0, 1));
+    hudFrame(0.9, 'SKIN: LN₂ BLADE');
+    vignette(0.42);
+
+  } else {
+    // ===== 第三幕：高潮 + CTA =====
+    const p = (t - 28) / 5;
+    const bg = ctx.createLinearGradient(0, 0, 0, GAME_H);
+    bg.addColorStop(0, '#05101f');
+    bg.addColorStop(1, '#0a1826');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, GAME_W, GAME_H);
+    // 背景快速切換三元素縮影
+    ctx.save();
+    ctx.globalAlpha = 0.25;
+    drawCryoOperator(GAME_W * 0.2, GAME_H * 0.7, 90, t, 1);
+    drawKnife(GAME_W * 0.82, GAME_H * 0.45, 150, Math.sin(t) * 0.3 + 0.4, 1, t);
+    ctx.restore();
+    drawSnow(0.7);
+    knifeMist(GAME_W * 0.5, GAME_H * 0.4, 260, t, 0.6);
+
+    cue('finaleIn', () => { boom(0.5); powerChime(); shake = 12; burstFrost(GAME_W / 2, GAME_H * 0.4, 40, 300); });
+
+    // 六角徽 + S10
+    const logoP = clamp(p * 2, 0, 1);
+    ctx.save();
+    ctx.globalAlpha = easeOut(logoP);
+    ctx.translate(GAME_W / 2, GAME_H * 0.34);
+    const sc = easeOutBack(clamp(p * 1.6, 0, 1));
+    ctx.scale(sc, sc);
+    ctx.shadowColor = '#38e1ff'; ctx.shadowBlur = 30;
+    ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 4;
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = i * Math.PI / 3 - Math.PI / 2;
+      const px = Math.cos(a) * 70, py = Math.sin(a) * 70;
+      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+    }
+    ctx.closePath(); ctx.stroke();
+    ctx.shadowBlur = 0;
+    glowText('S10', 0, 20, 56, '#eaf7ff', '#38e1ff', 1, '900');
+    ctx.restore();
+
+    glowText('三角洲行動', GAME_W / 2, GAME_H * 0.58, 52, '#ffffff', '#4f7cff', easeOut(logoP), '800');
+    if (t > 29.4) {
+      const cta = clamp((t - 29.4) / 0.7, 0, 1);
+      glowText('S10 賽季 · 現已上線', GAME_W / 2, GAME_H * 0.68, 30, '#38e1ff', '#38e1ff', easeOut(cta), 'bold');
+      ctx.save();
+      ctx.globalAlpha = easeOut(cta);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#bff3ff';
+      ctx.font = '18px "PingFang TC",sans-serif';
+      ctx.fillText('新地圖 · 新幹員液氮 · 新刀皮，一次登場', GAME_W / 2, GAME_H * 0.76);
+      ctx.restore();
+      cue('ctaSound', () => blip(1047));
+    }
+    // 品牌署名
+    if (t > 30.4) {
+      ctx.save();
+      ctx.globalAlpha = clamp((t - 30.4) / 0.8, 0, 1);
+      ctx.textAlign = 'center';
+      ctx.font = 'bold 16px "PingFang TC",sans-serif';
+      const bw = ctx.createLinearGradient(GAME_W/2 - 90, 0, GAME_W/2 + 90, 0);
+      bw.addColorStop(0, '#38e1ff'); bw.addColorStop(0.5, '#4f7cff'); bw.addColorStop(1, '#9a6bff');
+      ctx.fillStyle = bw;
+      ctx.fillText('AI未來創作營隊 出品', GAME_W / 2, GAME_H * 0.9);
+      ctx.restore();
+    }
+    hudFrame(0.9, 'SEASON 10 // LIVE');
+    vignette(0.45);
+  }
+
+  drawFrostParts();
+  ctx.restore();
+}
+
+function loop(now) {
+  if (!playing) return;
+  if (startTime === null) { startTime = now; lastNow = now; }
+  const dt = Math.min((now - lastNow) / 1000, 0.05) * TIME_SCALE;
+  lastNow = now;
+  const realSec = (now - startTime) / 1000;
+  const t = realSec * TIME_SCALE;
+  updateParticles(dt, 1);
+  if (realSec >= DURATION) {
+    draw(TIMELINE - 0.01);
+    playing = false;
+    replayBtn.style.display = 'block';
+    stopMusic();
+    return;
+  }
+  draw(t);
+  requestAnimationFrame(loop);
+}
+
+function play() {
+  startTime = null;
+  firedCues = {};
+  frost.length = 0;
+  shake = 0;
+  playing = true;
+  replayBtn.style.display = 'none';
+  if (soundOn) { stopMusic(); startMusic(); }
+  requestAnimationFrame(loop);
+}
+replayBtn.addEventListener('click', play);
+play();
+</script>
+</body>
+</html>

@@ -1,0 +1,682 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="蔡承均王永玄">
+<title>貓咪大戰爭 - 預告片</title>
+<style>
+  html,body{margin:0;height:100%;background:#05070f;overflow:hidden;touch-action:none;
+    -webkit-user-select:none;user-select:none;font-family:"Microsoft JhengHei",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+  canvas._scale = scale;
+}
+addEventListener('resize', resize); resize();
+
+// ===== 音效／音樂（Web Audio 合成，預設靜音）=====
+let AC = null;
+let muted = true;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+function beep(freq=440, dur=0.1, type='square', vol=0.14, slide=0, delay=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime + delay;
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t0); o.stop(t0+dur+0.02);
+}
+function noiseBurst(dur=0.3, vol=0.2, cutoff=900, delay=0){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime + delay;
+  const len = Math.floor(ac.sampleRate*dur);
+  const buf = ac.createBuffer(1,len,ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*(1-i/len);
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const f = ac.createBiquadFilter(); f.type='lowpass'; f.frequency.value=cutoff;
+  const g = ac.createGain(); g.gain.value=vol;
+  src.connect(f); f.connect(g); g.connect(ac.destination);
+  src.start(t0);
+}
+// 簡易配樂：低音鼓點 + 上行琶音，依時間軸排程觸發（在 scheduleMusicBeat 中呼叫）
+function kick(delay){ beep(90,0.14,'sine',0.22,-40,delay); }
+function hihat(delay){ noiseBurst(0.04,0.05,4000,delay); }
+function arp(freqs, gap, delay, dur=0.1, vol=0.1){
+  freqs.forEach((f,i)=> beep(f,dur,'triangle',vol,0,delay+i*gap));
+}
+let musicScheduled = false;
+function scheduleMusic(){
+  if(musicScheduled || muted) return;
+  musicScheduled = true;
+  for(let bar=0; bar<9; bar++){
+    const b = bar*4;
+    kick(b); kick(b+2);
+    hihat(b+1); hihat(b+3);
+    if(bar%2===0) arp([392,523,659], 0.09, b, 0.12, 0.06);
+  }
+}
+
+let muteHintT = 3;
+function toggleMute(){
+  muted = !muted;
+  if(!muted){ audio(); scheduleMusic(); beep(880,0.08,'square',0.12); }
+}
+const muteBtn = { x: GAME_W-58, y: 14, w: 48, h: 48 };
+function hitBtn(p,b){ return b && p.x>=b.x && p.x<=b.x+b.w && p.y>=b.y && p.y<=b.y+b.h; }
+function evtPos(e){
+  const r = canvas.getBoundingClientRect();
+  const t = e.touches ? e.touches[0] : e;
+  return { x:(t.clientX-r.left)/canvas._scale, y:(t.clientY-r.top)/canvas._scale };
+}
+function onTap(p){
+  audio();
+  if(hitBtn(p, muteBtn)){ toggleMute(); return; }
+  if(ended && hitBtn(p, replayBtn)){ restart(); return; }
+}
+canvas.addEventListener('pointerdown', e=>{ e.preventDefault(); onTap(evtPos(e)); });
+for(const ev of ['touchstart','touchmove','touchend']) canvas.addEventListener(ev, e=>e.preventDefault(), {passive:false});
+
+// ===== 繪圖工具 =====
+function rr(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
+}
+const easeOutBack = t => { const c=1.70158; t=t-1; return 1+(c+1)*t*t*t+c*t*t; };
+const easeOutCubic = t => 1-Math.pow(1-t,3);
+const easeInOutQuad = t => t<0.5 ? 2*t*t : 1-Math.pow(-2*t+2,2)/2;
+function clamp01(x){ return Math.max(0,Math.min(1,x)); }
+
+// ===== 粒子 =====
+const parts = [];
+function burst(x,y,color,n=14,speed=220){
+  for(let i=0;i<n && parts.length<400;i++){
+    const a=Math.random()*Math.PI*2, s=speed*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-40,life:0.6,color});
+  }
+}
+function updateParts(dt){
+  for(let i=parts.length-1;i>=0;i--){
+    const p=parts[i];
+    p.x+=p.vx*dt; p.y+=p.vy*dt; p.vy+=560*dt; p.life-=dt;
+    if(p.life<=0) parts.splice(i,1);
+  }
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0,p.life*2);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-3,p.y-3,6,6);
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ===== 角色繪製（簡化版，沿用遊戲配色語言）=====
+function drawCatSil(x,y,scale,color,flash){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(scale,scale);
+  ctx.fillStyle = flash ? '#fff' : (color||'#ffffff');
+  ctx.strokeStyle = '#44464f'; ctx.lineWidth = 2.4;
+  // 尾巴
+  ctx.beginPath();
+  ctx.moveTo(-14,10); ctx.quadraticCurveTo(-30,0,-22,-14);
+  ctx.lineWidth=6; ctx.strokeStyle='#e8e8e8'; ctx.lineCap='round'; ctx.stroke();
+  // 身體
+  ctx.fillStyle = flash ? '#fff' : (color||'#ffffff');
+  ctx.strokeStyle = '#44464f'; ctx.lineWidth = 2.4;
+  rr(-16,-6,32,26,10); ctx.fill(); ctx.stroke();
+  // 頭
+  rr(-15,-30,26,22,9); ctx.fill(); ctx.stroke();
+  // 耳朵
+  ctx.beginPath();
+  ctx.moveTo(-13,-28); ctx.lineTo(-8,-40); ctx.lineTo(-1,-30); ctx.fill(); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(9,-28); ctx.lineTo(6,-40); ctx.lineTo(-1,-30); ctx.fill(); ctx.stroke();
+  // 臉
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(-5,-20,2.2,0,Math.PI*2); ctx.arc(3,-20,2.2,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,150,160,.5)';
+  ctx.beginPath(); ctx.arc(-9,-14,2,0,Math.PI*2); ctx.arc(7,-14,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawDogSil(x,y,scale,color,flash){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(-scale,scale);
+  const bodyC = flash ? '#fff' : (color || '#c98f4e');
+  ctx.fillStyle = bodyC; ctx.strokeStyle = '#2b2b33'; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  ctx.moveTo(-14,10); ctx.quadraticCurveTo(-28,4,-24,-10);
+  ctx.lineWidth=6; ctx.strokeStyle='#8c5a3c'; ctx.lineCap='round'; ctx.stroke();
+  ctx.fillStyle = bodyC; ctx.strokeStyle = '#2b2b33'; ctx.lineWidth = 2.4;
+  rr(-16,-4,32,26,10); ctx.fill(); ctx.stroke();
+  rr(-15,-28,28,22,8); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#8c5a3c';
+  ctx.beginPath(); ctx.ellipse(-13,-16,5,9,0.3,0,Math.PI*2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-3,-18,4,0,Math.PI*2); ctx.arc(6,-18,4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#222';
+  ctx.beginPath(); ctx.arc(-2,-17,2,0,Math.PI*2); ctx.arc(7,-17,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawBatSil(x,y,scale,t){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(scale,scale);
+  const flap = Math.sin(t*14)*0.6+0.6;
+  ctx.fillStyle = '#5a3d8f'; ctx.strokeStyle = '#2b2b33'; ctx.lineWidth = 2;
+  ctx.save(); ctx.rotate(-0.3-flap*0.5);
+  ctx.beginPath(); ctx.moveTo(-6,0); ctx.lineTo(-24,-6); ctx.lineTo(-18,10); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  ctx.save(); ctx.rotate(0.3+flap*0.5);
+  ctx.beginPath(); ctx.moveTo(6,0); ctx.lineTo(24,-6); ctx.lineTo(18,10); ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.restore();
+  ctx.fillStyle = '#8f6bd6';
+  rr(-9,-8,18,16,7); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-3,-2,2,0,Math.PI*2); ctx.arc(3,-2,2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawBossSil(x,y,scale,t){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(-scale,scale);
+  ctx.fillStyle = '#6b4d8f'; ctx.strokeStyle = '#2b2b33'; ctx.lineWidth = 3;
+  rr(-40,-20,80,60,16); ctx.fill(); ctx.stroke();
+  rr(-34,-64,64,48,14); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#ffcd75';
+  ctx.beginPath();
+  ctx.moveTo(-26,-58); ctx.lineTo(-26,-80); ctx.lineTo(-12,-64);
+  ctx.lineTo(0,-86); ctx.lineTo(14,-64); ctx.lineTo(26,-80); ctx.lineTo(26,-58);
+  ctx.closePath(); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.beginPath(); ctx.arc(-10,-40,7,0,Math.PI*2); ctx.arc(12,-40,7,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#ff2975';
+  ctx.beginPath(); ctx.arc(-10,-40,3,0,Math.PI*2); ctx.arc(12,-40,3,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+}
+function drawTower(x,y,isCat,scale){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(scale,scale);
+  if(isCat){
+    ctx.fillStyle='#8c5a3c'; ctx.strokeStyle='#44322a'; ctx.lineWidth=3;
+    rr(-46,-150,92,150,8); ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.strokeStyle='#44464f'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.arc(0,-168,34,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(-30,-184); ctx.lineTo(-22,-212); ctx.lineTo(-8,-192);
+    ctx.moveTo(30,-184); ctx.lineTo(22,-212); ctx.lineTo(8,-192);
+    ctx.fillStyle='#fff'; ctx.fill(); ctx.stroke();
+    ctx.fillStyle='#222';
+    ctx.beginPath(); ctx.arc(-19,-170,2.4,0,Math.PI*2); ctx.arc(-7,-170,2.4,0,Math.PI*2); ctx.fill();
+  } else {
+    ctx.fillStyle='#6a7078'; ctx.strokeStyle='#2b2b33'; ctx.lineWidth=3;
+    rr(-52,-160,104,160,6); ctx.fill(); ctx.stroke();
+    for(let i=-2;i<=2;i++){ ctx.fillStyle='#4d5257'; ctx.fillRect(i*20-7,-178,14,20); }
+    ctx.fillStyle='#3a2a20';
+    ctx.beginPath(); ctx.arc(0,-34,24,Math.PI,0); ctx.rect(-24,-34,48,34); ctx.fill();
+  }
+  ctx.restore();
+}
+function drawArrow(x,y,side){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.strokeStyle='#8c5a3c'; ctx.lineWidth=3; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-side*10,0); ctx.lineTo(side*8,0); ctx.stroke();
+  ctx.fillStyle='#e8e8e8';
+  ctx.beginPath(); ctx.moveTo(side*14,0); ctx.lineTo(side*6,-4); ctx.lineTo(side*6,4); ctx.closePath(); ctx.fill();
+  ctx.restore();
+}
+
+// ===== 背景 =====
+function drawSky(top,bottom,groundY){
+  const g = ctx.createLinearGradient(0,0,0,GAME_H);
+  g.addColorStop(0,top); g.addColorStop(1,bottom);
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,GAME_H);
+  ctx.fillStyle = 'rgba(255,255,255,.15)';
+  for(let x=40;x<GAME_W;x+=220){
+    ctx.beginPath();
+    ctx.arc(x,70,18,0,Math.PI*2); ctx.arc(x+20,64,14,0,Math.PI*2); ctx.arc(x+40,70,16,0,Math.PI*2);
+    ctx.fill();
+  }
+}
+function drawGround(groundY,color,top){
+  ctx.fillStyle = color; ctx.fillRect(0,groundY,GAME_W,GAME_H-groundY);
+  ctx.fillStyle = top; ctx.fillRect(0,groundY,GAME_W,12);
+}
+const GROUND_Y = 430;
+
+// ===== 字幕系統：淡入淡出、留安全邊界 =====
+function caption(text, sub, localT, holdStart, holdEnd, fadeD){
+  const fadeIn = clamp01((localT-holdStart)/fadeD);
+  const fadeOut = clamp01((holdEnd-localT)/fadeD);
+  const a = Math.min(fadeIn, fadeOut);
+  if(a<=0) return;
+  ctx.save();
+  ctx.globalAlpha = a;
+  ctx.textAlign = 'center';
+  const rise = (1-easeOutCubic(fadeIn)) * 14;
+  ctx.fillStyle = 'rgba(5,7,15,.55)';
+  rr(GAME_W/2-330, 434+rise, 660, sub?76:50, 14); ctx.fill();
+  ctx.font = 'bold 34px sans-serif';
+  ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(10,10,20,.65)';
+  ctx.strokeText(text, GAME_W/2, 468+rise);
+  const tg = ctx.createLinearGradient(GAME_W/2-160,440,GAME_W/2+160,468);
+  tg.addColorStop(0,'#38e1ff'); tg.addColorStop(0.5,'#4f7cff'); tg.addColorStop(1,'#9a6bff');
+  ctx.fillStyle = tg;
+  ctx.fillText(text, GAME_W/2, 468+rise);
+  if(sub){
+    ctx.font = '18px sans-serif';
+    ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(10,10,20,.6)';
+    ctx.fillStyle = '#fff';
+    ctx.strokeText(sub, GAME_W/2, 494+rise);
+    ctx.fillText(sub, GAME_W/2, 494+rise);
+  }
+  ctx.restore();
+}
+
+// ===== 時間軸場景設計（三幕：開場→發展→高潮結尾，總長約 34 秒）=====
+// 0.0-4.0   開場：戰場全景 + 標題登場
+// 4.0-9.5   發展一：貓咪陣容展示
+// 9.5-15.5  發展二：對戰動作剪輯（擊退、傷害數字、貓貓砲）
+// 15.5-20.0 發展三：反空戰術（飛蝠汪 vs 鏢鏢貓）
+// 20.0-25.0 發展四：大魔王汪登場警告
+// 25.0-29.0 發展五：貓咪訓練所養成賣點
+// 29.0-34.0 高潮結尾：勝利煙火 + 呼籲行動 + 片尾
+const TOTAL = 34.0;
+let animT = 0, shake = 0, ended = false;
+let cannonFlash = 0;
+const replayBtn = { x: GAME_W/2-110, y: 420, w: 220, h: 56 };
+
+function fadeVeil(localT, inD, holdEnd, outD, blockEnd){
+  // 回傳 0~1 的黑幕不透明度，用於場景轉場
+  if(localT < inD) return 1-easeInOutQuad(localT/inD);
+  if(localT > blockEnd-outD) return easeInOutQuad((localT-(blockEnd-outD))/outD);
+  return 0;
+}
+
+function scenePrologue(t){
+  // 0-4s：戰場全景，鏡頭緩慢推近，標題登場
+  drawSky('#8fd3ff','#5c94fc');
+  drawGround(GROUND_Y,'#c84c0c','#3fbf5f');
+  const push = easeOutCubic(clamp01(t/3.2));
+  ctx.save();
+  ctx.translate(GAME_W/2, GAME_H/2);
+  ctx.scale(1+push*0.12, 1+push*0.12);
+  ctx.translate(-GAME_W/2, -GAME_H/2);
+  drawTower(78, GROUND_Y, true, 1);
+  drawTower(882, GROUND_Y, false, 1);
+  drawCatSil(220, GROUND_Y-14, 1.6, '#fff', false);
+  drawCatSil(280, GROUND_Y-8, 1.3, '#fff', false);
+  drawDogSil(720, GROUND_Y-14, 1.6, '#c98f4e', false);
+  drawDogSil(660, GROUND_Y-8, 1.3, '#7d8ba1', false);
+  ctx.restore();
+  if(t > 1.0){
+    const lt = clamp01((t-1.0)/1.1);
+    const pop = easeOutBack(lt);
+    ctx.save();
+    ctx.textAlign='center';
+    ctx.translate(GAME_W/2, 150);
+    ctx.scale(0.5+pop*0.5, 0.5+pop*0.5);
+    ctx.font = 'bold 78px sans-serif';
+    ctx.lineWidth=11; ctx.strokeStyle='#44322a';
+    ctx.strokeText('貓咪大戰爭', 0, 0);
+    const tg = ctx.createLinearGradient(-200,-60,200,10);
+    tg.addColorStop(0,'#38e1ff'); tg.addColorStop(0.5,'#4f7cff'); tg.addColorStop(1,'#9a6bff');
+    ctx.fillStyle = tg;
+    ctx.fillText('貓咪大戰爭', 0, 0);
+    ctx.restore();
+  }
+  if(t > 2.2){
+    const a = clamp01((t-2.2)/0.8);
+    ctx.save(); ctx.globalAlpha = a;
+    ctx.textAlign='center'; ctx.font='bold 24px sans-serif';
+    ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.5)'; ctx.fillStyle='#fff';
+    ctx.strokeText('派出貓咪大軍，推倒對面的汪汪城！', GAME_W/2, 200);
+    ctx.fillText('派出貓咪大軍，推倒對面的汪汪城！', GAME_W/2, 200);
+    ctx.restore();
+  }
+}
+
+const ROSTER = [
+  { name:'小貓貓',   color:'#ffffff', tag:'平衡先鋒' },
+  { name:'壯壯貓',   color:'#c9d4e6', tag:'超硬肉盾' },
+  { name:'鏢鏢貓',   color:'#bfe0ff', tag:'反空遠程' },
+  { name:'飛踢貓',   color:'#ffd9d9', tag:'極速爆發' },
+  { name:'弓箭貓',   color:'#d8ffe0', tag:'長程狙擊' },
+  { name:'巨無霸貓', color:'#ffe9b3', tag:'範圍終極' }
+];
+function sceneRoster(t){
+  drawSky('#6fb98f','#2e6b4f');
+  drawGround(GROUND_Y,'#5a3c26','#7ba05b');
+  ctx.save();
+  ctx.textAlign='center'; ctx.font='bold 30px sans-serif';
+  ctx.lineWidth=7; ctx.strokeStyle='rgba(0,0,0,.55)'; ctx.fillStyle='#ffcd75';
+  ctx.strokeText('六種貓咪，各有戰術', GAME_W/2, 70);
+  ctx.fillText('六種貓咪，各有戰術', GAME_W/2, 70);
+  ctx.restore();
+  const perCard = 0.75, stagger = 0.55;
+  for(let i=0;i<ROSTER.length;i++){
+    const cardStart = i*stagger;
+    const lt = clamp01((t-cardStart)/perCard);
+    if(lt<=0) continue;
+    const pop = easeOutBack(Math.min(1,lt*1.3));
+    const col = i%3, row = Math.floor(i/3);
+    const cx = 200 + col*280, cy = 200 + row*160;
+    ctx.save();
+    ctx.globalAlpha = clamp01(lt*2);
+    ctx.translate(cx,cy);
+    ctx.scale(pop,pop);
+    ctx.fillStyle = 'rgba(10,14,20,.55)';
+    rr(-90,-70,180,140,16); ctx.fill();
+    ctx.strokeStyle = '#38e1ff'; ctx.lineWidth=2.5; ctx.stroke();
+    drawCatSil(0,-4,1.6,ROSTER[i].color,false);
+    ctx.textAlign='center';
+    ctx.font='bold 19px sans-serif'; ctx.fillStyle='#fff';
+    ctx.fillText(ROSTER[i].name, 0, 48);
+    ctx.font='13px sans-serif'; ctx.fillStyle='#ffcd75';
+    ctx.fillText(ROSTER[i].tag, 0, 66);
+    ctx.restore();
+  }
+}
+
+function sceneBattle(t){
+  drawSky('#8fd3ff','#5c94fc');
+  drawGround(GROUND_Y,'#c84c0c','#3fbf5f');
+  ctx.save();
+  ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+  drawTower(78, GROUND_Y, true, 0.9);
+  drawTower(882, GROUND_Y, false, 0.9);
+
+  // 出兵行軍
+  const marchX = 140 + (t*60)%680;
+  drawCatSil(marchX, GROUND_Y-10, 1.4, '#fff', false);
+  drawCatSil(marchX-60, GROUND_Y-6, 1.2, '#c9d4e6', false);
+  drawDogSil(820-marchX*0.5, GROUND_Y-10, 1.4, '#c98f4e', false);
+
+  // 中場衝突特寫（固定位置反覆碰撞）
+  const clashCycle = t % 1.4;
+  const hitFlash = clashCycle < 0.08;
+  drawCatSil(480, GROUND_Y-14, 2.0, '#fff', false);
+  drawDogSil(560, GROUND_Y-14, 2.0, '#c98f4e', hitFlash);
+  if(hitFlash && Math.floor(t*10)%2===0){
+    burst(520, GROUND_Y-40, '#ffcd75', 6, 160);
+  }
+  // 傷害數字飄字
+  const dmgCycle = t % 1.4;
+  if(dmgCycle < 0.6){
+    const dlt = dmgCycle/0.6;
+    ctx.save();
+    ctx.globalAlpha = 1-dlt;
+    ctx.font='bold 22px sans-serif'; ctx.textAlign='center';
+    ctx.fillStyle='#fff700'; ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.5)';
+    ctx.strokeText('52', 560, GROUND_Y-70-dlt*36);
+    ctx.fillText('52', 560, GROUND_Y-70-dlt*36);
+    ctx.restore();
+  }
+  ctx.restore();
+
+  // 貓貓砲炫技（週期性大招）
+  const cannonCycle = t % 3.0;
+  if(cannonCycle < 0.12 && cannonFlash <= 0){
+    cannonFlash = 0.3; shake = 12;
+    burst(700, GROUND_Y-60, '#ff2975', 20, 280);
+    noiseBurst(0.4,0.2,700);
+    beep(90,0.4,'sawtooth',0.18,-30);
+  }
+  if(cannonFlash > 0){
+    ctx.fillStyle = 'rgba(255,255,230,'+(cannonFlash*2.4)+')';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
+  drawParts();
+}
+
+function sceneAntiAir(t){
+  drawSky('#6fb98f','#2e6b4f');
+  drawGround(GROUND_Y,'#5a3c26','#7ba05b');
+  ctx.save();
+  ctx.translate((Math.random()*2-1)*shake,(Math.random()*2-1)*shake);
+  drawTower(78, GROUND_Y, true, 0.85);
+  const batX = 820 - (t*90)%700;
+  const batY = GROUND_Y-140+Math.sin(t*3)*10;
+  drawBatSil(batX, batY, 1.6, t);
+  drawCatSil(300, GROUND_Y-10, 1.6, '#bfe0ff', false);
+  // 飛鏢投射
+  const dartCycle = t % 0.9;
+  if(dartCycle < 0.5){
+    const dx = 320 + dartCycle*640;
+    ctx.save(); ctx.translate(dx, GROUND_Y-90 - (dx-320)*0.12); ctx.rotate(t*20);
+    ctx.fillStyle='#cfd8e3'; ctx.strokeStyle='#44464f'; ctx.lineWidth=1.5;
+    ctx.beginPath(); ctx.moveTo(8,0); ctx.lineTo(0,3); ctx.lineTo(-8,0); ctx.lineTo(0,-3); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.restore();
+    if(dartCycle > 0.42 && dartCycle < 0.5){ burst(batX, batY, '#8f6bd6', 4, 120); }
+  }
+  ctx.restore();
+  drawParts();
+}
+
+function sceneBoss(t){
+  drawSky('#2e1a47','#0d0221');
+  drawGround(GROUND_Y,'#3a2a52','#4d3a6b');
+  ctx.fillStyle='rgba(255,255,255,.8)';
+  for(let i=0;i<20;i++){
+    const sx=(i*137.5)%960, sy=(i*73.3)%180;
+    ctx.globalAlpha = 0.3+0.6*Math.abs(Math.sin(t*2+i));
+    ctx.fillRect(sx,sy,2,2);
+  }
+  ctx.globalAlpha=1;
+  const entrance = easeOutCubic(clamp01(t/1.2));
+  ctx.save();
+  ctx.translate((1-entrance)*300 + (Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+  drawBossSil(700, GROUND_Y-6, 1.3, t);
+  ctx.restore();
+  drawTower(78, GROUND_Y, true, 0.85);
+  if(t > 1.0 && Math.sin(t*8) > -0.3){
+    ctx.save();
+    ctx.textAlign='center'; ctx.font='bold 42px sans-serif';
+    ctx.lineWidth=9; ctx.strokeStyle='rgba(0,0,0,.7)'; ctx.fillStyle='#ff2975';
+    ctx.strokeText('大魔王汪出現了！', GAME_W/2, 150);
+    ctx.fillText('大魔王汪出現了！', GAME_W/2, 150);
+    ctx.restore();
+  }
+}
+
+function sceneTraining(t){
+  drawSky('#1a1c2c','#0d0221');
+  const pop = easeOutBack(clamp01(t/0.8));
+  ctx.save();
+  ctx.translate(GAME_W/2, 250);
+  ctx.scale(pop,pop);
+  ctx.fillStyle='rgba(20,28,60,.85)';
+  rr(-260,-110,520,220,20); ctx.fill();
+  ctx.strokeStyle='#38e1ff'; ctx.lineWidth=3; ctx.stroke();
+  ctx.textAlign='center';
+  ctx.font='bold 28px sans-serif'; ctx.fillStyle='#fff';
+  ctx.fillText('全新！貓咪訓練所', 0, -60);
+  drawCatSil(-150,20,1.8,'#ffe9b3',false);
+  drawCatSil(0,20,1.8,'#bfe0ff',false);
+  drawCatSil(150,20,1.8,'#ffd9d9',false);
+  for(let c=0;c<3;c++){
+    const cx = -150+c*150;
+    for(let d=0;d<5;d++){
+      ctx.fillStyle = d<3 ? '#aee239' : 'rgba(255,255,255,.25)';
+      ctx.beginPath(); ctx.arc(cx-32+d*16, 62, 5, 0, Math.PI*2); ctx.fill();
+    }
+  }
+  ctx.font='16px sans-serif'; ctx.fillStyle='#ffcd75';
+  ctx.fillText('用貓草幣永久強化，越玩越強！', 0, 96);
+  ctx.restore();
+}
+
+function sceneFinale(t){
+  drawSky('#2e1a47','#0d0221');
+  drawGround(GROUND_Y,'#3a2a52','#4d3a6b');
+  drawTower(78, GROUND_Y, true, 1);
+  const fwCycle = t % 0.5;
+  if(fwCycle < 0.04){
+    burst(120+Math.random()*720, 80+Math.random()*220, ['#ffcd75','#ff2975','#38e1ff','#9a6bff','#fff'][Math.floor(Math.random()*5)], 20, 300);
+    beep(700+Math.random()*500, 0.1, 'triangle', 0.07);
+  }
+  drawParts();
+  if(t > 0.6){
+    const pop = easeOutBack(clamp01((t-0.6)/0.8));
+    ctx.save();
+    ctx.textAlign='center';
+    ctx.translate(GAME_W/2, 210);
+    ctx.scale(0.5+pop*0.5, 0.5+pop*0.5);
+    ctx.font='bold 72px sans-serif';
+    ctx.lineWidth=12; ctx.strokeStyle='#44322a';
+    ctx.strokeText('勝利！', 0, 0);
+    const tg = ctx.createLinearGradient(-160,-50,160,10);
+    tg.addColorStop(0,'#ffcf5c'); tg.addColorStop(0.5,'#ffa72e'); tg.addColorStop(1,'#ff7e3d');
+    ctx.fillStyle = tg;
+    ctx.fillText('勝利！', 0, 0);
+    ctx.restore();
+  }
+  if(t > 1.6){
+    const a = clamp01((t-1.6)/0.7);
+    ctx.save(); ctx.globalAlpha=a;
+    ctx.textAlign='center'; ctx.font='bold 26px sans-serif';
+    ctx.lineWidth=6; ctx.strokeStyle='rgba(0,0,0,.5)'; ctx.fillStyle='#fff';
+    ctx.strokeText('現在就開始遊玩！', GAME_W/2, 300);
+    ctx.fillText('現在就開始遊玩！', GAME_W/2, 300);
+    ctx.restore();
+  }
+}
+
+// 場景排程表：{start,end,draw}
+const TIMELINE = [
+  { start:0.0,  end:4.0,  draw:scenePrologue, sky:['#8fd3ff','#5c94fc'] },
+  { start:4.0,  end:9.5,  draw:sceneRoster },
+  { start:9.5,  end:15.5, draw:sceneBattle, caption:['貓咪 VS 汪汪，戰況一觸即發！',null,10.2,15.2] },
+  { start:15.5, end:20.0, draw:sceneAntiAir, caption:['反空戰術：鏢鏢貓專打飛行敵人！',null,16.1,19.8] },
+  { start:20.0, end:25.0, draw:sceneBoss },
+  { start:25.0, end:29.0, draw:sceneTraining },
+  { start:29.0, end:34.0, draw:sceneFinale }
+];
+
+function drawFrame(t){
+  let scene = TIMELINE[TIMELINE.length-1];
+  for(const s of TIMELINE){ if(t>=s.start && t<s.end){ scene=s; break; } }
+  const localT = t - scene.start;
+  scene.draw(localT);
+  if(scene.caption){
+    caption(scene.caption[0], scene.caption[1], t, scene.caption[2], scene.caption[3], 0.5);
+  }
+  // 場景交界淡入淡出黑幕（除了第一幕開頭與最終幕結尾，避免蓋掉片頭片尾動畫）
+  const inD = 0.35, outD = 0.35;
+  let veil = 0;
+  const sinceStart = t - scene.start;
+  const untilEnd = scene.end - t;
+  if(scene !== TIMELINE[0] && sinceStart < inD) veil = Math.max(veil, 1-easeInOutQuad(sinceStart/inD));
+  if(scene !== TIMELINE[TIMELINE.length-1] && untilEnd < outD) veil = Math.max(veil, 1-easeInOutQuad(untilEnd/outD));
+  if(veil > 0){
+    ctx.fillStyle = 'rgba(5,7,15,'+veil+')';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
+}
+
+function drawMuteBtn(){
+  const b = muteBtn;
+  ctx.fillStyle='rgba(10,14,30,.72)';
+  rr(b.x,b.y,b.w,b.h,12); ctx.fill();
+  ctx.strokeStyle = muted?'#666':'#38e1ff'; ctx.lineWidth=2; ctx.stroke();
+  const cx=b.x+20, cy=b.y+24;
+  ctx.fillStyle = muted?'#888':'#fff';
+  ctx.beginPath();
+  ctx.moveTo(cx-8,cy-5); ctx.lineTo(cx-2,cy-5); ctx.lineTo(cx+6,cy-12);
+  ctx.lineTo(cx+6,cy+12); ctx.lineTo(cx-2,cy+5); ctx.lineTo(cx-8,cy+5);
+  ctx.closePath(); ctx.fill();
+  if(muted){
+    ctx.strokeStyle='#ff5c5c'; ctx.lineWidth=3;
+    ctx.beginPath(); ctx.moveTo(cx+11,cy-8); ctx.lineTo(cx+23,cy+8);
+    ctx.moveTo(cx+23,cy-8); ctx.lineTo(cx+11,cy+8); ctx.stroke();
+  } else {
+    ctx.strokeStyle='#38e1ff'; ctx.lineWidth=2.5;
+    ctx.beginPath(); ctx.arc(cx+8,cy,8,-0.9,0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx+8,cy,14,-0.8,0.8); ctx.stroke();
+  }
+  if(muteHintT > 0){
+    ctx.save();
+    ctx.globalAlpha = clamp01(muteHintT);
+    ctx.textAlign='right'; ctx.font='bold 15px sans-serif';
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.fillStyle='#fff700';
+    ctx.strokeText('點這裡開啟音效', b.x-8, b.y+30);
+    ctx.fillText('點這裡開啟音效', b.x-8, b.y+30);
+    ctx.restore();
+  }
+}
+function drawReplayBtn(){
+  const b = replayBtn;
+  ctx.fillStyle='rgba(80,40,20,.92)';
+  rr(b.x,b.y,b.w,b.h,16); ctx.fill();
+  ctx.strokeStyle='#ffcd75'; ctx.lineWidth=3; ctx.stroke();
+  ctx.textAlign='center'; ctx.font='bold 24px sans-serif'; ctx.fillStyle='#fff';
+  ctx.fillText('重新播放', b.x+b.w/2, b.y+36);
+}
+
+function restart(){
+  animT = 0; ended = false; parts.length = 0; cannonFlash = 0; shake = 0;
+}
+
+// ===== 主迴圈 =====
+let last = performance.now();
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min((now-last)/1000, 0.1);
+  last = now;
+  if(muteHintT > 0) muteHintT -= dt;
+  shake *= Math.pow(0.001, dt);
+  cannonFlash = Math.max(0, cannonFlash - dt);
+  updateParts(dt);
+
+  if(!ended){
+    animT += dt;
+    if(animT >= TOTAL){ animT = TOTAL; ended = true; }
+  }
+
+  drawFrame(Math.min(animT, TOTAL-0.001));
+  drawMuteBtn();
+  if(ended){
+    ctx.fillStyle = 'rgba(5,7,15,.35)';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawReplayBtn();
+  }
+}
+requestAnimationFrame(frame);
+
+// 測試掛鉤
+window.__trailer = {
+  get t(){ return animT; },
+  get ended(){ return ended; },
+  get muted(){ return muted; },
+  seek(t){ animT = t; ended = t>=TOTAL; },
+  toggleMute, restart
+};
+</script>
+</body>
+</html>
