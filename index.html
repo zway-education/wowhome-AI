@@ -395,8 +395,12 @@ const PROVIDERS = [
 // 導致某些卡片沒數字。限制同時最多 4 個、每 130ms 才放行一個（約每秒 8 個），
 // 被拒(429)或失敗自動重試最多 2 次——每張卡最終都拿得到數字。
 const _cq = []; let _cqActive = 0; const _CQ_MAX = 4; let _cqLast = 0; const _CQ_GAP = 130;
-function queuedFetch(fn) {
-  return new Promise((resolve, reject) => { _cq.push({ fn, resolve, reject }); _cqPump(); });
+function queuedFetch(fn, prio) {
+  return new Promise((resolve, reject) => {
+    const job = { fn, resolve, reject };
+    prio ? _cq.unshift(job) : _cq.push(job); // 插隊：畫面上看得到的卡片優先查
+    _cqPump();
+  });
 }
 function _cqPump() {
   if (_cqActive >= _CQ_MAX || !_cq.length) return;
@@ -411,7 +415,7 @@ function _cqPump() {
 
 // 同一個 key 查詢中就共用同一個 Promise，避免重複請求
 const _inflight = {};
-async function readCount(name) {
+async function readCount(name, prio) {
   // 快取 45 秒過期，讓其他人的投票/遊玩數字也能更新
   if (name in countCache && Date.now() - (countCacheAt[name] || 0) < 45000) return countCache[name];
   if (_inflight[name]) return _inflight[name];
@@ -420,7 +424,7 @@ async function readCount(name) {
       if (attempt > 0) await new Promise(res => setTimeout(res, 1500 * attempt)); // 被拒後退避重試
       for (const p of PROVIDERS) {
         try {
-          const r = await queuedFetch(() => p.read(name));
+          const r = await queuedFetch(() => p.read(name), prio);
           if (r.status === 404) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; } // 尚未有人計數
           if (r.ok) {
             const j = await r.json();
@@ -494,8 +498,15 @@ async function fillNums(el, force) {
     ['-v','-p','-love','-love-c','-like','-like-c'].forEach(sfx => { delete countCache[key + sfx]; delete countCacheAt[key + sfx]; });
   }
   if (!el.innerHTML) el.innerHTML = '<span style="opacity:.5">統計載入中…</span>'; // 佔位，避免看起來沒有統計
-  // 兩段式：先查瀏覽/遊玩（2個查詢，很快亮出來），評分票數隨後補上
-  const [views, plays] = await Promise.all([readCount(key + '-v'), readCount(key + '-p')]);
+  // 逾時保險：2.5 秒還沒查到就先顯示 0，數字到了會自動蓋掉（30秒週期也會補）
+  const fallback = setTimeout(() => {
+    if (el.textContent.includes('載入中')) {
+      el.innerHTML = numSpan('v', '瀏覽', 0) + numSpan('p', '遊玩', 0) + numSpan('love', '非常好玩', 0) + numSpan('like', '好玩', 0);
+    }
+  }, 2500);
+  // 兩段式＋插隊優先：先查瀏覽/遊玩（2個查詢，很快亮出來），評分票數隨後補上
+  const [views, plays] = await Promise.all([readCount(key + '-v', true), readCount(key + '-p', true)]);
+  clearTimeout(fallback);
   if (views === null && plays === null) { el.innerHTML = ''; return; } // 統計服務連不上才隱藏
   const paint = (nl, ng) => {
     el.innerHTML = numSpan('v', '瀏覽', views || 0) + numSpan('p', '遊玩', plays || 0) +
@@ -503,8 +514,8 @@ async function fillNums(el, force) {
   };
   paint(0, 0);
   const [love, loveC, like, likeC] = await Promise.all([
-    readCount(key + '-love'), readCount(key + '-love-c'),
-    readCount(key + '-like'), readCount(key + '-like-c'),
+    readCount(key + '-love', true), readCount(key + '-love-c', true),
+    readCount(key + '-like', true), readCount(key + '-like-c', true),
   ]);
   paint(Math.max(0, (love || 0) - (loveC || 0)), Math.max(0, (like || 0) - (likeC || 0)));
 }
