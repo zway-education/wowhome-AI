@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>史蒂夫大戰凋零王 x 寶可夢對戰</title>
+<style>
+  :root{ --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7; }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14; font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none;
+  }
+  #stage{ position:fixed; inset:0; display:block; }
+  #ui{
+    position:fixed; inset:0; pointer-events:none;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .top{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px;
+  }
+  .title-chip{ background:rgba(7,11,20,.42); border-radius:12px; padding:6px 12px; display:inline-block; }
+  .title{
+    font-weight:800; font-size:clamp(14px,3vw,20px); color:#fff;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 18px rgba(56,225,255,.25);
+  }
+  .brand{ font-size:11px; color:#e8f0ff; opacity:.85; margin-top:2px; }
+  button{ pointer-events:auto; border:none; border-radius:14px; cursor:pointer; font-weight:700; font-family:inherit; }
+  #muteBtn{
+    width:44px;height:44px;min-width:44px;min-height:44px;
+    background:rgba(10,16,30,.65); border:1.5px solid rgba(255,255,255,.18);
+    color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center;
+  }
+  .caption-wrap{ display:flex; justify-content:center; padding-bottom: max(18px, env(safe-area-inset-bottom)); }
+  .caption{
+    pointer-events:none; color:#fff; font-weight:700; font-size:clamp(14px,3.6vw,20px);
+    background:rgba(7,11,20,.55); border:1px solid rgba(255,255,255,.12);
+    padding:8px 18px; border-radius:999px; max-width:88vw; text-align:center;
+    opacity:0; transition:opacity .35s ease;
+  }
+  .caption.show{ opacity:1; }
+  #hint{
+    position:absolute; top:56px; left:0; right:0; text-align:center;
+    color:#cfe6ff; font-size:13px; opacity:.85; pointer-events:none;
+    transition:opacity .6s ease;
+  }
+  #replayWrap{
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(5,8,16,.55); pointer-events:none;
+  }
+  #replayWrap.show{ display:flex; pointer-events:auto; }
+  #replayBtn{
+    padding:14px 30px; font-size:17px; color:#0a0f1c;
+    background:linear-gradient(92deg,var(--cyan),var(--blue));
+    box-shadow:0 8px 24px rgba(79,124,255,.45);
+    min-height:52px;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="title-chip">
+      <div class="title">史蒂夫大戰凋零王 x 寶可夢對戰</div>
+      <div class="brand">AI未來創作營隊</div>
+    </div>
+    <button id="muteBtn" aria-label="靜音切換">🔇</button>
+  </div>
+  <div id="hint">點畫面開啟音效與動畫 ▶</div>
+  <div class="caption-wrap"><div class="caption" id="caption"></div></div>
+</div>
+<div id="replayWrap"><button id="replayBtn">🔁 重新播放</button></div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------- 畫布縮放 ----------
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- 音效：Web Audio 原創音效與配樂 ----------
+let actx=null, masterGain=null, muted=true;
+function ensureAudio(){
+  if(actx) return;
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.0;
+  masterGain.connect(actx.destination);
+}
+function setMuted(m){
+  muted = m;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  if(masterGain){
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.linearRampToValueAtTime(muted?0.0:0.22, actx.currentTime+0.08);
+  }
+}
+function playTone(freq, startAt, dur, type, vol){
+  if(freq<=0) return;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  const filt = actx.createBiquadFilter();
+  filt.type='lowpass'; filt.frequency.value=2600; filt.Q.value=0.4;
+  osc.type = type; osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.linearRampToValueAtTime(vol, startAt+0.02);
+  g.gain.exponentialRampToValueAtTime(Math.max(vol*0.35,0.0005), startAt+dur*0.55);
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt+dur*0.95);
+  osc.connect(filt); filt.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.03);
+}
+const NOTE = {C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392.00,A4:440.00,B4:493.88,
+  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880.00,B5:987.77,C6:1046.5,R:0};
+const TEMPO = 0.15;
+const melody = [
+  ['C5',1],['E5',1],['G5',1],['C6',1],
+  ['B5',1],['G5',1],['E5',1],['G5',1],
+  ['A5',1],['F5',1],['D5',1],['F5',1],
+  ['G5',2],['R',1],['C6',1],
+  ['E5',1],['G5',1],['C6',1],['E5',2]
+];
+function playSeq(seq, type, vol, offset){
+  let t = actx.currentTime + 0.05;
+  for(const [n,beats] of seq){
+    const dur = beats*TEMPO;
+    if(NOTE[n]) playTone(NOTE[n]*offset, t, dur, type, vol);
+    t += dur;
+  }
+  return t;
+}
+let musicStarted=false;
+function startMusic(){
+  if(musicStarted) return;
+  musicStarted = true;
+  ensureAudio();
+  const totalDur = playSeq(melody, 'square', 0.16, 1);
+  playSeq(melody, 'sine', 0.12, 0.5);
+  setTimeout(()=>{ if(!ended){ playSeq(melody,'square',0.16,1); playSeq(melody,'sine',0.12,0.5);} }, (totalDur-actx.currentTime)*1000-50);
+}
+function sfxHit(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  playTone(160, t, 0.12, 'square', 0.2);
+  playTone(80, t, 0.15, 'sine', 0.18);
+}
+function sfxZap(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [880,660,1200,900].forEach((f,i)=>playTone(f, t+i*0.03, 0.09, 'sawtooth', 0.14));
+}
+function sfxCharge(){
+  if(!actx) return;
+  const osc = actx.createOscillator(); const g = actx.createGain();
+  osc.type='sawtooth';
+  const t = actx.currentTime;
+  osc.frequency.setValueAtTime(180, t);
+  osc.frequency.exponentialRampToValueAtTime(900, t+0.9);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.12, t+0.5);
+  g.gain.exponentialRampToValueAtTime(0.0001, t+0.9);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(t); osc.stop(t+0.95);
+}
+function sfxWin(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [523.25,659.25,783.99,1046.5].forEach((f,i)=>playTone(f, t+i*0.09, 0.16, 'sine', 0.2));
+}
+
+// ---------- 場景一：Minecraft 風格方塊世界 ----------
+function drawSkyGround(t, dark){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  if(dark){ g.addColorStop(0,'#160a26'); g.addColorStop(0.6,'#2b1240'); g.addColorStop(1,'#1a0c1f'); }
+  else { g.addColorStop(0,'#5ec8ff'); g.addColorStop(0.6,'#a9e4ff'); g.addColorStop(1,'#d9f5d0'); }
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  if(dark){
+    for(let i=0;i<40;i++){
+      const sx=(i*97)%W, sy=(i*53)%(H*0.6);
+      ctx.fillStyle='rgba(255,255,255,'+(0.3+0.4*((i*13)%10)/10)+')';
+      ctx.beginPath(); ctx.arc(sx,sy,1.4,0,Math.PI*2); ctx.fill();
+    }
+  } else {
+    ctx.save(); ctx.fillStyle='#fff6c9'; ctx.shadowColor='rgba(255,244,180,.9)'; ctx.shadowBlur=40;
+    ctx.beginPath(); ctx.arc(W*0.85, H*0.16, Math.min(W,H)*0.07, 0, Math.PI*2); ctx.fill(); ctx.restore();
+  }
+
+  const floorY = H*0.82;
+  const block = Math.max(18, Math.min(W,H)*0.05);
+  for(let x=-block; x<W+block; x+=block){
+    ctx.fillStyle = dark? '#3a2a1a' : '#7a4a24';
+    ctx.fillRect(x, floorY, block-2, H-floorY);
+    ctx.fillStyle = dark? '#4a3624' : '#8f5a2e';
+    ctx.fillRect(x, floorY, block-2, block*0.32);
+    ctx.strokeStyle='rgba(0,0,0,.25)'; ctx.strokeRect(x,floorY,block-2,H-floorY);
+  }
+  ctx.restore();
+}
+
+function drawSteve(x,y,scale,facing,phase,pose){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(facing*scale,scale);
+  let bob = Math.sin(phase*6)*2, tilt=0, armSwing = Math.sin(phase*6)*0.2;
+  if(pose==='charge'){ tilt=-0.08; armSwing=-0.6; }
+  if(pose==='swing'){ armSwing = 1.1; }
+  if(pose==='hit'){ tilt=0.15; bob+=4; }
+  if(pose==='win'){ bob=-Math.abs(Math.sin(phase*8))*10; }
+  ctx.translate(0,bob); ctx.rotate(tilt);
+
+  ctx.save(); ctx.globalAlpha=0.3; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,50,20,7,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 腿
+  ctx.fillStyle='#d8c9a3';
+  ctx.fillRect(-11,18,9,26); ctx.fillRect(2,18,9,26);
+  ctx.fillStyle='#b3a37a';
+  ctx.fillRect(-11,38,9,6); ctx.fillRect(2,38,9,6);
+
+  // 身體
+  ctx.fillStyle='#2e6fe0';
+  ctx.fillRect(-13,-14,26,34);
+  ctx.fillStyle='#204fa8';
+  ctx.fillRect(-13,-14,26,7);
+
+  // 後手臂
+  ctx.save(); ctx.translate(10,-8); ctx.rotate(-armSwing*0.5);
+  ctx.fillStyle='#e0a878'; ctx.fillRect(-4,0,8,24); ctx.restore();
+
+  // 前手臂（揮劍）
+  ctx.save(); ctx.translate(-10,-8); ctx.rotate(armSwing);
+  ctx.fillStyle='#e0a878'; ctx.fillRect(-4,0,8,24);
+  // 劍
+  ctx.save(); ctx.translate(0,22); ctx.rotate(-0.9);
+  const swordGrad = ctx.createLinearGradient(0,0,0,-34);
+  swordGrad.addColorStop(0,'#c9cfe0'); swordGrad.addColorStop(1,'#f4f7ff');
+  ctx.fillStyle=swordGrad;
+  ctx.fillRect(-2.5,-34,5,30);
+  ctx.fillStyle='#8a6a3a'; ctx.fillRect(-6,-4,12,5);
+  ctx.fillStyle='#5c3f22'; ctx.fillRect(-2,1,4,8);
+  ctx.restore();
+  ctx.restore();
+
+  // 頭
+  ctx.save(); ctx.translate(0,-26);
+  ctx.fillStyle='#e0a878'; ctx.fillRect(-11,-11,22,22);
+  ctx.fillStyle='#5a3b22'; ctx.fillRect(-11,-11,22,7);
+  ctx.fillStyle='#12121a';
+  ctx.fillRect(-7,-2,4,4); ctx.fillRect(3,-2,4,4);
+  ctx.fillStyle='#7a4a2a'; ctx.fillRect(-5,6,10,3);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawWitherKing(x,y,scale,phase,pose){
+  ctx.save();
+  ctx.translate(x,y); ctx.scale(scale,scale);
+  let bob=Math.sin(phase*4)*4, tilt=Math.sin(phase*3)*0.03;
+  if(pose==='charge'){ bob-=6; }
+  if(pose==='attack'){ tilt=0.12; }
+  if(pose==='hit'){ tilt=-0.1; bob+=6; }
+  ctx.translate(0,bob); ctx.rotate(tilt);
+
+  ctx.save(); ctx.globalAlpha=0.28; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,90,44,10,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 中央骨柱身體
+  ctx.fillStyle='#2b2b32';
+  ctx.fillRect(-10,-10,20,90);
+  for(let i=0;i<5;i++){
+    ctx.fillStyle= i%2===0 ? '#e9e6df' : '#2b2b32';
+    ctx.fillRect(-12,-6+i*18,24,10);
+  }
+
+  function skull(sx,sy,ssc,glow){
+    ctx.save(); ctx.translate(sx,sy); ctx.scale(ssc,ssc);
+    ctx.fillStyle='#efece3';
+    ctx.fillRect(-16,-14,32,28);
+    ctx.fillStyle='#c9c4b6';
+    ctx.fillRect(-16,10,32,6);
+    // 眼窩發光
+    ctx.save();
+    ctx.shadowColor = glow; ctx.shadowBlur=14;
+    ctx.fillStyle = glow;
+    ctx.fillRect(-10,-6,6,6); ctx.fillRect(4,-6,6,6);
+    ctx.restore();
+    ctx.fillStyle='#8a857a';
+    for(let i=0;i<4;i++){ ctx.fillRect(-14+i*8,12,4,6); }
+    ctx.restore();
+  }
+  const glowColor = pose==='charge' ? '#ff5c5c' : '#66ffe0';
+  skull(0,-38,1.15, glowColor);
+  const armSwing = pose==='attack' ? 0.7 : Math.sin(phase*4)*0.1;
+  ctx.save(); ctx.translate(-46,-2); ctx.rotate(-armSwing);
+  skull(0,0,0.85, glowColor);
+  ctx.restore();
+  ctx.save(); ctx.translate(46,-2); ctx.rotate(armSwing);
+  skull(0,0,0.85, glowColor);
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawSparkBurst(x,y,t,color){
+  ctx.save();
+  for(let i=0;i<10;i++){
+    const ang=(i/10)*Math.PI*2+t*2, r=10+t*130, a=Math.max(0,1-t*1.3);
+    ctx.fillStyle=color.replace('ALPHA',a.toFixed(2));
+    ctx.beginPath(); ctx.arc(x+Math.cos(ang)*r,y+Math.sin(ang)*r,4*(1-t*0.7),0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------- 場景二：寶可夢對戰 ----------
+function drawArena(t){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#ffe9a8'); g.addColorStop(0.55,'#ffcf8a'); g.addColorStop(1,'#8fd88a');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+  const floorY=H*0.8;
+  ctx.fillStyle='#6cb85a'; ctx.fillRect(0,floorY,W,H-floorY);
+  ctx.save(); ctx.globalAlpha=0.5; ctx.fillStyle='#4f9e3f';
+  ctx.beginPath(); ctx.ellipse(W*0.28,floorY+30,W*0.18,14,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(W*0.72,floorY+30,W*0.18,14,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+
+function drawMewtwo(x,y,scale,phase,pose){
+  ctx.save(); ctx.translate(x,y); ctx.scale(scale,scale);
+  let bob=Math.sin(phase*4)*3, squashX=1, squashY=1;
+  if(pose==='charge'){ squashX=1.06; squashY=0.94; }
+  if(pose==='zap'){ squashX=0.94; squashY=1.06; }
+  ctx.translate(0,bob); ctx.scale(squashX,squashY);
+
+  ctx.save(); ctx.globalAlpha=0.3; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,58,24,7,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 長尾巴（微微飄動）
+  const tailWave = Math.sin(phase*3)*0.3;
+  ctx.save(); ctx.translate(-6,26); ctx.rotate(tailWave);
+  ctx.strokeStyle='#e7e6ee'; ctx.lineWidth=7; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(-26,10,-30,-14); ctx.stroke();
+  ctx.fillStyle='#8a5fe0';
+  ctx.beginPath(); ctx.ellipse(-30,-16,6,9,0.4,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // 身體＋雙腿
+  ctx.fillStyle='#dcdbe6';
+  ctx.beginPath(); ctx.ellipse(0,30,13,16,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#c7c5d6';
+  ctx.beginPath(); ctx.ellipse(-10,44,7,9,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10,44,7,9,0,0,Math.PI*2); ctx.fill();
+
+  // 軀幹（灰白漸層，紫色胸口紋路）
+  const torsoGrad = ctx.createLinearGradient(-16,-6,16,30);
+  torsoGrad.addColorStop(0,'#f2f1f8'); torsoGrad.addColorStop(1,'#c9c7d8');
+  ctx.fillStyle=torsoGrad;
+  ctx.beginPath(); ctx.ellipse(0,6,17,22,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#9a6bff';
+  ctx.beginPath(); ctx.ellipse(0,10,7,10,0,0,Math.PI*2); ctx.fill();
+
+  // 手臂（施力姿勢）
+  const armAng = pose==='zap' ? -0.75 : (pose==='charge' ? -0.3 : -0.1+Math.sin(phase*3)*0.05);
+  [-1,1].forEach(side=>{
+    ctx.save(); ctx.translate(side*15,2); ctx.rotate(side*armAng);
+    ctx.fillStyle='#dcdbe6';
+    ctx.beginPath(); ctx.ellipse(side*10,10,6,14,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#c7c5d6';
+    ctx.beginPath(); ctx.arc(side*13,22,5,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  });
+
+  // 頭部
+  ctx.save(); ctx.translate(0,-24);
+  const headGrad = ctx.createRadialGradient(-6,-8,3,0,0,26);
+  headGrad.addColorStop(0,'#fbfaff'); headGrad.addColorStop(1,'#d3d1e2');
+  ctx.fillStyle=headGrad;
+  ctx.beginPath(); ctx.ellipse(0,0,20,18,0,0,Math.PI*2); ctx.fill();
+
+  // 頭頂／後腦導管造型
+  ctx.fillStyle='#c7c5d6';
+  ctx.beginPath(); ctx.ellipse(0,-14,10,7,0,0,Math.PI*2); ctx.fill();
+  ctx.strokeStyle='#9a8fc2'; ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(-20,4); ctx.quadraticCurveTo(-26,-2,-22,-10); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(20,4); ctx.quadraticCurveTo(26,-2,22,-10); ctx.stroke();
+
+  // 眼睛（發光紫）
+  const glowE = pose==='zap' ? '#ff5cf0' : '#a86bff';
+  ctx.save(); ctx.shadowColor=glowE; ctx.shadowBlur=14; ctx.fillStyle=glowE;
+  ctx.beginPath(); ctx.ellipse(-8,-1,4.6,5.4,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(8,-1,4.6,5.4,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+
+  if(pose==='zap'){
+    ctx.save();
+    const g = ctx.createRadialGradient(34,-14,2,34,-14,20);
+    g.addColorStop(0,'rgba(255,255,255,.95)'); g.addColorStop(0.4,'rgba(168,111,255,.85)'); g.addColorStop(1,'rgba(168,111,255,0)');
+    ctx.fillStyle=g; ctx.shadowColor='#a86bff'; ctx.shadowBlur=20;
+    ctx.beginPath(); ctx.arc(34,-14,16,0,Math.PI*2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.restore();
+}
+
+function drawMew(x,y,scale,phase,pose){
+  ctx.save(); ctx.translate(x,y); ctx.scale(-scale,scale);
+  const floatY = Math.sin(phase*2.6+1)*10;
+  ctx.translate(0,floatY-6);
+
+  ctx.save(); ctx.globalAlpha=0.22; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,50,20,6,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  // 長尾巴（S形飄動）
+  const tw = phase*2.4;
+  ctx.strokeStyle='#ffb8d6'; ctx.lineWidth=6; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(-6,10);
+  ctx.quadraticCurveTo(-22+Math.sin(tw)*4, 6, -30, -6+Math.sin(tw+1)*6);
+  ctx.stroke();
+  ctx.fillStyle='#ffb8d6';
+  ctx.beginPath(); ctx.arc(-30,-6+Math.sin(tw+1)*6,6,0,Math.PI*2); ctx.fill();
+
+  // 身體（渾圓可愛）
+  const bodyGrad = ctx.createRadialGradient(-6,-6,3,0,4,22);
+  bodyGrad.addColorStop(0,'#ffe6f2'); bodyGrad.addColorStop(1,'#ff9ecb');
+  ctx.fillStyle=bodyGrad;
+  ctx.beginPath(); ctx.ellipse(0,6,20,18,0,0,Math.PI*2); ctx.fill();
+
+  // 小手臂與腳
+  ctx.fillStyle='#ffaed4';
+  ctx.beginPath(); ctx.ellipse(-14,16,6,5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(14,16,6,5,0,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-10,-14,5,4,0.5,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(10,-14,5,4,-0.5,0,Math.PI*2); ctx.fill();
+
+  // 大耳＋大眼
+  ctx.fillStyle='#ffaed4';
+  ctx.beginPath(); ctx.ellipse(-12,-8,7,9,0.3,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(12,-8,7,9,-0.3,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#12121a';
+  ctx.beginPath(); ctx.arc(-7,2,4.4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7,2,4.4,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-8.5,0.5,1.4,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(5.5,0.5,1.4,0,Math.PI*2); ctx.fill();
+
+  if(pose==='hit'){
+    ctx.save(); ctx.globalAlpha=0.55; ctx.fillStyle='#fff';
+    ctx.beginPath(); ctx.ellipse(0,6,24,22,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  }
+  ctx.restore();
+}
+
+// ---------- 場景時間軸 ----------
+let startTime=null, ended=false, camShake=0;
+const TOTAL = 20;
+const captions = [
+  {t:0.3, d:2.6, text:'史蒂夫，出擊！'},
+  {t:3.0, d:3.2, text:'凋零王三頭齊發，蓄力反擊！'},
+  {t:6.4, d:3.0, text:'鑽石劍・一擊斬殺！'},
+  {t:9.6, d:2.6, text:'戰場切換——寶可夢對戰開始！'},
+  {t:12.4, d:3.0, text:'超夢，究極波動彈！'},
+  {t:15.6, d:4.4, text:'雙重勝利！精彩世界即將登場 ★'},
+];
+let captionEl = document.getElementById('caption');
+let shownCaption = -1;
+function updateCaption(tt){
+  let idx=-1;
+  for(let i=0;i<captions.length;i++){ if(tt>=captions[i].t && tt<captions[i].t+captions[i].d){ idx=i; break; } }
+  if(idx!==shownCaption){
+    shownCaption=idx;
+    if(idx>=0){ captionEl.textContent=captions[idx].text; captionEl.classList.add('show'); }
+    else { captionEl.classList.remove('show'); }
+  }
+}
+
+let collided1=false, collided2=false, sceneSwitched=false;
+let sfxFlags={};
+function sfxOnce(key, fn){ if(sfxFlags[key]) return; sfxFlags[key]=true; fn(); }
+
+function frame(now){
+  if(startTime===null) startTime = now;
+  const tt = (now-startTime)/1000;
+  ctx.clearRect(0,0,W,H);
+
+  if(camShake>0){
+    ctx.save(); ctx.translate((Math.random()-0.5)*camShake,(Math.random()-0.5)*camShake); camShake*=0.85;
+  } else { ctx.save(); }
+
+  updateCaption(tt);
+  const scaleBase = Math.min(W,H)/420;
+  const floorYmc = H*0.82 - 22*scaleBase;
+
+  if(tt < 9.6){
+    // 幕一：Minecraft 史蒂夫 VS 凋零王
+    drawSkyGround(tt, tt>3.0);
+    const enterT = Math.min(1, tt/2.0);
+    const ease = 1-Math.pow(1-enterT,3);
+    const steveX = -W*0.25 + ease*(W*0.32-(-W*0.25));
+    let stevePose='idle';
+    if(tt>=3.0 && tt<6.4) stevePose = (Math.floor((tt-3.0)*2)%2===0) ? 'charge' : 'swing';
+    if(tt>=6.4 && tt<8.0) stevePose='swing';
+    if(tt>=8.0) stevePose='win';
+    drawSteve(steveX, floorYmc, 2.1*scaleBase, 1, tt, stevePose);
+
+    let witherPose='idle';
+    if(tt>=3.0 && tt<6.4) witherPose='charge';
+    if(tt>=6.4 && tt<7.2) witherPose='attack';
+    if(tt>=7.2) witherPose='hit';
+    drawWitherKing(W*0.72, floorYmc-40*scaleBase, 1.6*scaleBase, tt, witherPose);
+
+    if(tt>=6.4 && tt<6.9) sfxOnce('sword', ()=>sfxHit());
+    if(tt>=6.4 && !collided1 && tt<7.4){ collided1=true; camShake=16; }
+    if(collided1 && tt>=6.4 && tt<7.2){
+      drawSparkBurst(W*0.6, floorYmc-40*scaleBase, tt-6.4, 'rgba(102,255,224,ALPHA)');
+    }
+  } else {
+    // 幕二：寶可夢對戰
+    if(!sceneSwitched){ sceneSwitched=true; camShake=10; }
+    drawArena(tt);
+    const t2 = tt-9.6;
+    const enterT = Math.min(1, t2/1.4);
+    const ease = 1-Math.pow(1-enterT,3);
+    const pikaX = -W*0.2 + ease*(W*0.26-(-W*0.2));
+    let pikaPose='idle';
+    if(t2>=2.4 && t2<4.6) pikaPose = (Math.floor((t2-2.4)*4)%2===0) ? 'charge' : 'zap';
+    if(t2>=4.6) pikaPose='zap';
+    drawMewtwo(pikaX, H*0.8-10*scaleBase, 1.9*scaleBase, tt, pikaPose);
+
+    let rivalPose='idle';
+    if(t2>=4.6 && t2<6.0){ rivalPose='hit'; }
+    drawMew(W*0.76, H*0.8-6*scaleBase, 1.9*scaleBase, tt, rivalPose);
+
+    if(t2>=4.6 && t2<5.0) sfxOnce('zap', ()=>sfxZap());
+    if(t2>=4.6 && !collided2 && t2<5.4){ collided2=true; camShake=14; }
+    if(collided2 && t2>=4.6 && t2<5.3){
+      drawSparkBurst(W*0.66, H*0.78-40*scaleBase, t2-4.6, 'rgba(255,245,107,ALPHA)');
+    }
+    if(t2>=6.0) sfxOnce('win', ()=>sfxWin());
+  }
+
+  ctx.restore();
+
+  if(!ended && tt>=TOTAL){
+    ended=true;
+    document.getElementById('replayWrap').classList.add('show');
+  }
+  if(!ended){ requestAnimationFrame(frame); }
+}
+
+function startAll(){
+  document.getElementById('hint').style.opacity='0';
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(false);
+  startMusic();
+}
+let running=false;
+function beginPlayback(){
+  if(running) return;
+  running=true;
+  startTime=null; ended=false; collided1=false; collided2=false; sceneSwitched=false; sfxFlags={};
+  document.getElementById('replayWrap').classList.remove('show');
+  requestAnimationFrame(frame);
+}
+document.body.addEventListener('pointerdown', function firstTap(){
+  startAll(); beginPlayback();
+  document.body.removeEventListener('pointerdown', firstTap);
+}, {once:true});
+try { startAll(); beginPlayback(); } catch(e) {}
+
+document.getElementById('muteBtn').addEventListener('click', function(e){
+  e.stopPropagation(); ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(!muted);
+});
+document.getElementById('replayBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  musicStarted=false;
+  if(!muted) startMusic();
+  running=false;
+  beginPlayback();
+});
+
+resize();
+drawSkyGround(0,false);
+drawSteve(W*0.32, H*0.82-22*Math.min(W,H)/420, 2.1*Math.min(W,H)/420, 1, 0, 'idle');
+drawWitherKing(W*0.72, H*0.82-62*Math.min(W,H)/420, 1.6*Math.min(W,H)/420, 0, 'idle');
+
+})();
+</script>
+<script>/* AI-CAMP-STATS-BEACON */
+(function(){
+  try{ if(window.top!==window.self) return; }catch(e){ return; }
+  var NS="ai-future-camp", K="t-3c08d1e4";
+  function ping(n){ try{ var p=fetch("//abacus.jasoncameron.dev/hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }
+  ping(K+"-v");
+  ping(K+"-p"); ping("site-total-plays");
+})();
+</script>
+</body>
+</html>
