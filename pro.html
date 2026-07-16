@@ -173,6 +173,10 @@
   #player .bar button.vote.voted { background: #2f9e63; border-color: transparent; cursor: default; }
   #player .bar button.vote:disabled { opacity: .55; cursor: default; }
   #player .bar button.copied { background: #2f9e63; border-color: transparent; }
+  #player .bar .ptabs { display: inline-flex; gap: 0; border: 1px solid rgba(255,255,255,.2); border-radius: 12px; overflow: hidden; }
+  #player .bar .ptabs button { border: none; border-radius: 0; background: transparent; padding: 8px 16px; }
+  #player .bar .ptabs button.on { background: linear-gradient(92deg, var(--gold), var(--gold2)); color: #241a05; font-weight: 700; }
+  .thumb .trbadge { position: absolute; bottom: 10px; right: 10px; z-index: 2; font-size: 10.5px; font-weight: 700; letter-spacing: 1px; border-radius: 999px; padding: 3px 10px; color: #241a05; background: linear-gradient(92deg, #ffd97e, var(--amber)); box-shadow: 0 4px 12px rgba(255,167,46,.35); }
   #player .stage { flex: 1; position: relative; overflow: hidden; margin: 0 10px 10px; border-radius: 16px; background: #fff; }
   #player iframe { border: 0; width: 100%; height: 100%; display: block; }
 
@@ -227,6 +231,10 @@
 <div id="player">
   <div class="bar">
     <div class="title" id="ptitle"></div>
+    <span id="ptabs" class="ptabs" style="display:none">
+      <button id="ptabGame" class="on" onclick="setPlayerTab('game')">遊戲</button>
+      <button id="ptabTrailer" onclick="setPlayerTab('trailer')">預告片</button>
+    </span>
     <button class="vote" id="pvote2">非常好玩</button>
     <button class="vote" id="pvote1">好玩</button>
     <button id="pcopy">複製程式碼</button>
@@ -284,8 +292,26 @@ async function copyCode(src, btn) {
 }
 
 
+// 預告片配對：影片標題是「遊戲名-預告片 / 遊戲名預告」時，掛進同名遊戲卡片（播放器內切換），動畫區不重複顯示
+function buildTrailerMap() {
+  const map = {}, hidden = new Set();
+  const gameTitles = new Set((DATA.games || []).map(g => g.title || g.file.replace(/\.html?$/i, '')));
+  for (const v of (DATA.videos || [])) {
+    const t = v.title || v.file.replace(/\.html?$/i, '');
+    const m = t.match(/^(.+?)[\s\-–—－]*(預告片|預告)$/);
+    if (!m) continue;
+    const base = m[1].trim();
+    if (gameTitles.has(base)) {
+      map[base] = { src: 'pro/videos/' + v.file, key: 'pro-' + (v.thumb || t).replace(/\.(png|jpe?g)$/i, '') };
+      hidden.add(v.file);
+    }
+  }
+  return { map, hidden };
+}
+
 function render(filter) {
   const q = (filter || '').trim().toLowerCase();
+  const trailers = buildTrailerMap();
   const conf = [
     { id: 'games',  dir: 'pro/games',  tag: '遊戲' },
     { id: 'videos', dir: 'pro/videos', tag: '動畫' },
@@ -295,6 +321,7 @@ function render(filter) {
     grid.innerHTML = '';
     let list = (DATA[c.id] || []).filter(it => {
       const t = it.title || it.file;
+      if (c.id === 'videos' && trailers.hidden.has(it.file)) return false; // 已併入遊戲卡片
       if (DATEFILTER && dateGroup(it.created) !== DATEFILTER) return false;
       return !q || t.toLowerCase().includes(q);
     });
@@ -316,6 +343,7 @@ function render(filter) {
       const src = c.dir + '/' + item.file;
       const thumbSrc = item.thumb ? 'thumbs/' + c.dir + '/' + item.thumb : '';
       const key = 'pro-' + (item.thumb || title).replace(/\.(png|jpe?g)$/i, '');
+      const trailer = (c.id === 'games' && trailers.map[title]) || null;
       const card = document.createElement('div');
       card.className = 'card';
       card.innerHTML =
@@ -324,6 +352,7 @@ function render(filter) {
           (thumbSrc ? '<img loading="lazy" alt="">' : '') +
           '<span class="probadge">PRO</span>' +
           (dateGroup(item.created) === '7/10' ? '<span class="newbadge">NEW</span>' : '') +
+          (trailer ? '<span class="trbadge">含預告片</span>' : '') +
           '<span class="tag-on">' + c.tag + '</span>' +
           '<div class="playbtn"><span>▶</span></div>' +
         '</div>' +
@@ -358,7 +387,8 @@ function render(filter) {
         e.stopPropagation();
         copyCode(src, e.currentTarget);
       });
-      card.onclick = () => openPlayer(title, src, key, c.id === 'games');
+      card.onclick = () => openPlayer(title, src, key, c.id === 'games', trailer);
+      card.dataset.key = key; // 分頁代號：供網址 #代號 直接開啟
       grid.appendChild(card);
       countObserver.observe(card.querySelector('.nums'));
     }
@@ -622,8 +652,30 @@ document.getElementById('pvote2').addEventListener('click', () => castVote('-lov
 document.getElementById('pvote1').addEventListener('click', () => castVote('-like'));
 
 let currentSrc = '';
-function openPlayer(title, src, key, isGame) {
+// 遊戲/預告片分頁切換（有預告片的遊戲才顯示）
+let TRAILER_CUR = null, trailerCounted = false, baseSrcCur = '';
+function setPlayerTab(which) {
+  const f = document.getElementById('pframe');
+  document.getElementById('ptabGame').classList.toggle('on', which === 'game');
+  document.getElementById('ptabTrailer').classList.toggle('on', which === 'trailer');
+  const target = (which === 'trailer' && TRAILER_CUR) ? TRAILER_CUR.src : baseSrcCur;
+  if (f.getAttribute('src') !== target) { resetFrame(); f.src = target; }
+  document.getElementById('popen').href = target;
+  // 預告片是動畫：切過去看就計一次瀏覽+遊玩（每次打開作品只計一次）
+  if (which === 'trailer' && TRAILER_CUR && !trailerCounted) {
+    trailerCounted = true;
+    bumpCount(TRAILER_CUR.key + '-v');
+    bumpCount(TRAILER_CUR.key + '-p');
+  }
+}
+function openPlayer(title, src, key, isGame, trailer) {
   currentSrc = src;
+  TRAILER_CUR = trailer || null; trailerCounted = false; baseSrcCur = src;
+  const tabs = document.getElementById('ptabs');
+  tabs.style.display = TRAILER_CUR ? 'inline-flex' : 'none';
+  document.getElementById('ptabGame').classList.add('on');
+  document.getElementById('ptabTrailer').classList.remove('on');
+  if (key) { try { history.replaceState(null, '', '#' + encodeURIComponent(key)); } catch (e) {} } // 分頁代號：網址帶 #代號 可直接分享這個作品
   document.getElementById('ptitle').textContent = title;
   setupVotes(key);
   resetFrame();
@@ -661,7 +713,17 @@ function closePlayer() {
   fitTimers.forEach(clearTimeout);
   resetFrame();
   document.getElementById('pframe').src = 'about:blank';
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) {} // 清掉分頁代號
 }
+
+// 網址帶 #分頁代號 時自動打開對應作品（可分享直達連結）
+function openFromHash() {
+  const h = decodeURIComponent((location.hash || '').slice(1));
+  if (!h) return;
+  const card = document.querySelector('.card[data-key="' + (window.CSS && CSS.escape ? CSS.escape(h) : h) + '"]');
+  if (card) card.click();
+}
+window.addEventListener('hashchange', openFromHash);
 document.getElementById('pcopy').addEventListener('click', e => {
   if (currentSrc) copyCode(currentSrc, e.currentTarget);
 });
@@ -738,6 +800,7 @@ loadManifest().then(m => {
     try { localStorage.setItem('manifest-cache-pro', JSON.stringify(m)); } catch (e) {}
     render(document.getElementById('search').value);
   }
+  if (!document.getElementById('player').classList.contains('open')) openFromHash(); // 分頁代號直達
   setTimeout(hotSort, 4000);
 });
 </script>
