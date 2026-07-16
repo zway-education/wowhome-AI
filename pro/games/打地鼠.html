@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6 -->
+<!-- 升級摘要：畫質——烘焙太陽bloom＋vignette後製、蝴蝶/花粉環境層、命中衝擊波光圈、地鼠冒出揚土、FEVER量表流光、滑鼠鎚子落點影；音效——DynamicsCompressor母線＋戶外程序化殘響（ConvolverNode）、草原風聲氛圍層＋隨機鳥鳴（炸彈事件自動ducking） -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -121,13 +122,53 @@ function initAudio(){
   if(!AC){
     try{
       AC = new (window.AudioContext || window.webkitAudioContext)();
-      /* v3：主控音量匯流排——多事件同發也不削波 */
+      /* v6：主控匯流排升級——DynamicsCompressor 防削波＋戶外程序化殘響（短促、低濕度） */
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 22; comp.ratio.value = 7;
       master = AC.createGain();
       master.gain.value = 0.55;
-      master.connect(AC.destination);
+      master.connect(comp); comp.connect(AC.destination);
+      const rev = AC.createConvolver();
+      const rlen = Math.floor(AC.sampleRate * 0.7);
+      const rbuf = AC.createBuffer(2, rlen, AC.sampleRate);
+      for(let ch = 0; ch < 2; ch++){
+        const d = rbuf.getChannelData(ch);
+        for(let i = 0; i < rlen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / rlen, 2.8);
+      }
+      rev.buffer = rbuf;
+      const rg = AC.createGain(); rg.gain.value = 0.12;
+      master.connect(rev); rev.connect(rg); rg.connect(comp);
+      initAmbient();
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+}
+/* v6 草原氛圍層：風聲 loop（濾波噪聲）＋隨機鳥鳴；炸彈爆炸時 ducking */
+let amb = null, ambDuck = 1, chirpT = 4;
+function initAmbient(){
+  if(!AC || amb) return;
+  try{
+    const len = AC.sampleRate * 2;
+    const buf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for(let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+    const f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = 340; f.Q.value = 0.5;
+    const g = AC.createGain(); g.gain.value = 0;
+    src.connect(f); f.connect(g); g.connect(master); src.start();
+    amb = { g };
+  }catch(e){ amb = null; }
+}
+function updateAmbient(dt){
+  ambDuck = Math.min(1, ambDuck + dt * 0.5);
+  if(!AC || !amb) return;
+  const on = muted ? 0 : ambDuck;
+  amb.g.gain.setTargetAtTime(0.016 * on * (1 + Math.sin(T * 0.5) * 0.35), AC.currentTime, 0.4);
+  chirpT -= dt;
+  if(chirpT <= 0){
+    chirpT = 3 + Math.random() * 6;
+    if(!muted && AC) sfx.bird();
+  }
 }
 /* v3：微幅隨機音高，連續敲擊不像機關槍 */
 const rp = f => f * (0.94 + Math.random() * 0.12);
@@ -163,7 +204,8 @@ function noise(dur = 0.15, vol = 0.2){
 const sfx = {
   whack(){ noise(0.08, 0.18); beep(rp(140), 0.09, 'square', 0.14, -60); },
   gold(){ beep(988, 0.08, 'square', 0.1); setTimeout(() => beep(1319, 0.14, 'square', 0.1), 80); },
-  bomb(){ noise(0.35, 0.25); beep(90, 0.4, 'sawtooth', 0.18, -50); },
+  bomb(){ noise(0.35, 0.25); beep(90, 0.4, 'sawtooth', 0.18, -50); ambDuck = 0.2; },
+  bird(){ const b = rp(2000); beep(b, 0.09, 'sine', 0.04, 600); setTimeout(() => beep(b * 1.15, 0.08, 'sine', 0.035, 500), 120); },
   whiff(){ beep(rp(300), 0.06, 'triangle', 0.06, -120); },
   tick(){ beep(880, 0.05, 'square', 0.09); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
@@ -265,7 +307,7 @@ function startGame(m){
   mode = m === 'hard' ? 'hard' : (m === 'classic' ? 'classic' : mode);
   score = 0; scoreShow = 0; timeLeft = mode === 'hard' ? HARD_TIME : GAME_TIME;
   elapsed = 0; spawnTimer = 0.4; combo = 0; lastTick = 99;
-  moles = []; swings = []; booms = []; parts = []; floaters.length = 0;
+  moles = []; swings = []; booms = []; parts = []; floaters.length = 0; rings = [];
   fever = 0; feverOn = false; feverT = 0; sprint = false; sprintT = 0;
   stHits = 0; stMaxCombo = 0; stGold = 0; stBombs = 0;
   shake = 0; freeze = 0;   /* v4：重開時完全歸零殘留震動/凍格 */
@@ -294,7 +336,7 @@ function endGame(){
 }
 function toTitle(){
   stateName = 'title'; stateT = 0;
-  moles = []; swings = []; booms = []; parts = []; floaters.length = 0;
+  moles = []; swings = []; booms = []; parts = []; floaters.length = 0; rings = [];
 }
 
 /* ===== 生成與難度 ===== */
@@ -329,6 +371,9 @@ function spawnMole(){
     : type === 'helmet' ? (hard ? 1.3 : 1.5)
     : Math.max(hard ? 0.45 : 0.55, (hard ? 1.0 : 1.2) - elapsed * 0.013);
   moles.push({ hole: idx, type, t: 0, upTime, state: 'up', hitT: 0, hp: type === 'helmet' ? 2 : 1 });
+  /* v6：冒出時揚起泥土 */
+  const sh = HOLES[idx];
+  burst(sh.x, sh.y - 6, '#6b4423', 6, 150, 0.4);
 }
 /* v2：FEVER 量表 */
 function addFever(v){
@@ -389,6 +434,8 @@ function hitMole(m){
     booms.push({ x: h.x, y: h.y - 60 * h.s, t: 0 });
     burst(h.x, h.y - 55 * h.s, '#ff6b35', 16, 300, 0.55);
     burst(h.x, h.y - 55 * h.s, '#3f3f3f', 10, 220, 0.5);
+    addRing(h.x, h.y - 30 * h.s, '#ff6b35');
+    addRing(h.x, h.y - 30 * h.s, '#ffd23f');
     addFloater(h.x, h.y - 120 * h.s, hard ? '炸彈！-50分 -5秒' : '炸彈！-30分 -3秒', '#ff5a5a', 24);
     sfx.bomb();
     return;
@@ -421,6 +468,7 @@ function hitMole(m){
   const col = m.type === 'gold' ? '#ffd23f' : m.type === 'zap' ? '#5ad7ff' : m.type === 'helmet' ? '#ffcc00' : '#c99b6f';
   burst(h.x, h.y - 60 * h.s, col, 12, 240, 0.45);
   burst(h.x, h.y - 60 * h.s, '#fff', 5, 180, 0.35);
+  addRing(h.x, h.y - 30 * h.s, col);
   addFloater(h.x, h.y - 120 * h.s, '+' + gain, m.type === 'normal' ? '#fff' : m.type === 'zap' ? '#5ad7ff' : '#ffd23f', m.type === 'normal' ? 22 : 26);
   if(m.type === 'gold'){
     stGold++;
@@ -571,6 +619,13 @@ function bakeBG(){
   sg.addColorStop(0, '#fff7d8'); sg.addColorStop(1, '#ffd23f');
   c.fillStyle = sg;
   c.beginPath(); c.arc(sunX, 60, 36, 0, Math.PI * 2); c.fill();
+  /* v6 太陽 bloom：大範圍 additive 光暈（烘焙一次，主迴圈零成本） */
+  c.globalCompositeOperation = 'lighter';
+  const bloom = c.createRadialGradient(sunX, 60, 20, sunX, 60, 130);
+  bloom.addColorStop(0, 'rgba(255,242,175,.45)'); bloom.addColorStop(1, 'rgba(255,242,175,0)');
+  c.fillStyle = bloom;
+  c.beginPath(); c.arc(sunX, 60, 130, 0, Math.PI * 2); c.fill();
+  c.globalCompositeOperation = 'source-over';
   /* 遠丘（兩層） */
   c.fillStyle = '#4fa032';
   c.beginPath(); c.moveTo(0, HORIZON);
@@ -630,7 +685,65 @@ function bakeBG(){
     c.beginPath(); c.ellipse(h.x, h.y, 58 * h.s, 20 * h.s, 0, 0, Math.PI * 2); c.fill();
   }
   bgHasImgs = !!(IMG.flower.complete && IMG.flower.naturalWidth && IMG.mush.complete && IMG.mush.naturalWidth);
+  /* v6 vignette 同步烘焙（低解析放大＝平滑漸層） */
+  if(!vigCanvas) vigCanvas = document.createElement('canvas');
+  vigCanvas.width = 240; vigCanvas.height = Math.max(2, Math.round(240 * GAME_H / GAME_W));
+  const vc = vigCanvas.getContext('2d');
+  const vh = vigCanvas.height;
+  const vg = vc.createRadialGradient(120, vh * 0.46, Math.min(110, vh * 0.42), 120, vh * 0.5, Math.max(150, vh * 0.75));
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(14,24,10,.32)');
+  vc.fillStyle = vg; vc.fillRect(0, 0, 240, vh);
   bgDirty = false;
+}
+let vigCanvas = null;
+/* v6 環境層：蝴蝶＋飄浮花粉（無狀態程序動畫，零配置） */
+function drawAmbientLayer(){
+  for(let i = 0; i < 14; i++){
+    const sp = 8 + (i % 4) * 5;
+    const x = ((i * 191) + T * sp) % (GAME_W + 20) - 10;
+    const y = HORIZON - 50 + ((i * 113) + T * (5 + (i % 3) * 4)) % (GAME_H - HORIZON + 30);
+    ctx.globalAlpha = 0.3 + 0.28 * Math.sin(T * 2 + i);
+    ctx.fillStyle = '#fff8d8';
+    ctx.fillRect(x, y, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+  for(let i = 0; i < 3; i++){
+    const bx = GAME_W / 2 + Math.sin(T * (0.23 + i * 0.07) + i * 2.1) * (GAME_W * 0.42);
+    const by = HORIZON - 58 + Math.sin(T * (0.5 + i * 0.11) + i * 4) * 34 + i * 14;
+    const flap = Math.sin(T * 12 + i * 2);
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.fillStyle = ['#ff9ecf', '#9ecfff', '#ffd23f'][i];
+    for(const s of [-1, 1]){
+      ctx.beginPath();
+      ctx.ellipse(s * 5 * Math.abs(flap), 0, 6 * Math.max(0.3, Math.abs(flap)), 8, s * 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = '#4a2f18';
+    ctx.fillRect(-1.2, -6, 2.4, 12);
+    ctx.restore();
+  }
+}
+/* v6 命中衝擊波光圈 */
+let rings = [];
+function addRing(x, y, color){ if(rings.length < 24) rings.push({ x, y, t: 0, color }); }
+function updateRings(dt){
+  for(let i = rings.length - 1; i >= 0; i--){
+    rings[i].t += dt;
+    if(rings[i].t > 0.35){ rings[i] = rings[rings.length - 1]; rings.pop(); }
+  }
+}
+function drawRings(){
+  for(const r of rings){
+    const k = r.t / 0.35;
+    ctx.globalAlpha = (1 - k) * 0.7;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 3 * (1 - k) + 1;
+    ctx.beginPath();
+    ctx.ellipse(r.x, r.y, 20 + k * 58, (20 + k * 58) * 0.42, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
 }
 function drawBG(){
   if(bgDirty || (!bgHasImgs && IMG.flower.complete && IMG.flower.naturalWidth)) bakeBG();
@@ -906,6 +1019,9 @@ function drawSwings(){
 function drawCursorHammer(){
   if(touchMode || stateName !== 'play') return;
   if(swings.length) return;
+  /* v6：落點影——一眼看出會敲到哪 */
+  ctx.fillStyle = 'rgba(20,30,10,.22)';
+  ctx.beginPath(); ctx.ellipse(mouse.x, mouse.y + 8, 20, 7, 0, 0, Math.PI * 2); ctx.fill();
   drawHammerAt(mouse.x + 22, mouse.y - 24, -0.9 + Math.sin(T * 4) * 0.05, 80);
 }
 
@@ -945,6 +1061,11 @@ function drawFeverBar(){
       ? 'hsl(' + ((T * 300) % 360) + ',95%,55%)'
       : (fever > 0.75 ? '#ff6b35' : '#ffd23f');
     ctx.fillRect(bx, by, bw, bh);
+    /* v6：流光掃過（充能感） */
+    ctx.globalAlpha = 0.35;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(bx + ((T * 150) % (bw + 40)) - 20, by + 2, 10, bh - 4);
+    ctx.globalAlpha = 1;
     ctx.restore();
   }
   ctx.font = 'bold 11px ' + FONT;
@@ -1037,10 +1158,12 @@ function drawWorld(){
   ctx.save();
   ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
   drawBG();   /* v3：洞內漸層已烘進背景 */
+  drawAmbientLayer();   /* v6：蝴蝶＋花粉 */
   for(let i = 0; i < 9; i++){
     for(const m of moles) if(m.hole === i) drawMole(m);
     drawHoleFront(HOLES[i]);
   }
+  drawRings();          /* v6：命中衝擊波 */
   for(const b of booms){
     const k = clamp(b.t / 0.35, 0, 1);
     ctx.globalAlpha = 1 - k;
@@ -1052,6 +1175,7 @@ function drawWorld(){
   drawFloaters();
   drawSwings();
   ctx.restore();
+  if(vigCanvas) ctx.drawImage(vigCanvas, 0, 0, GAME_W, GAME_H);   /* v6：後製 vignette */
 }
 function titleDraw(){
   /* 示範地鼠 */
@@ -1205,12 +1329,14 @@ function frame(now){
     acc -= STEP;
     T += STEP;
     stateT += STEP;
+    updateAmbient(STEP);   /* v6：氛圍層（不受 hit-stop 影響） */
     if(freeze > 0){ freeze -= STEP; continue; }   // hit-stop
     shake *= Math.pow(0.001, STEP);
     if(stateName === 'play') playUpdate(STEP);
     else if(stateName === 'over') overT += STEP;
     updateParts(STEP);
     updateFloaters(STEP);
+    updateRings(STEP);     /* v6：衝擊波 */
   }
   uiButtons = [];
   if(stateName === 'title') titleDraw();

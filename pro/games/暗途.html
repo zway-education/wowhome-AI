@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5 -->
+<!-- 專業AI升級 v6 -->
+<!-- 升級摘要：音場——DynamicsCompressor母線＋療養院程序化殘響（ConvolverNode）、隨機方位的水滴/遠處敲擊環境驚悚音（StereoPanner聲像）；畫質——底片顆粒質感、光照區緩慢漂移迷霧層、暗角呼吸（超低頻不閃爍）。完整保留：進場三次驚嚇確認警告、恐怖鬼臉驚嚇畫面、三怪物AI、劇情抉擇多結局、惡夢模式 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -157,13 +158,58 @@ const wallFrontCv=(()=>{
   g.fillStyle=fg;g.fillRect(0,0,48,14);
   return c;
 })();
+/* v6 底片顆粒磚（一次烘焙，低頻換偏移、極低透明度——恐怖片質感、不改變亮度） */
+const grainTile=(()=>{
+  const c=document.createElement('canvas');c.width=192;c.height=192;
+  const g=c.getContext('2d'),img=g.createImageData(192,192);
+  for(let i=0;i<img.data.length;i+=4){const v=(Math.random()*255)|0;img.data[i]=img.data[i+1]=img.data[i+2]=v;img.data[i+3]=13;}
+  g.putImageData(img,0,0);return c;
+})();
+let grainPat=null,grainOx=0,grainOy=0,grainNext=0;
+function drawGrain(t){
+  if(!grainPat)grainPat=ctx.createPattern(grainTile,'repeat');
+  if(t>grainNext||t<grainNext-1){grainNext=t+.13;grainOx=(Math.random()*192)|0;grainOy=(Math.random()*192)|0;}
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  ctx.save();ctx.translate(-grainOx,-grainOy);
+  ctx.fillStyle=grainPat;ctx.fillRect(0,0,vw+192,vh+192);
+  ctx.restore();
+}
+/* v6 迷霧層：緩慢漂移的蒼白霧塊（烘焙軟糰、screen 疊加、極低透明度；畫在遮罩前只在光照區可見） */
+const fogBlob=(()=>{
+  const c=document.createElement('canvas');c.width=c.height=256;
+  const g=c.getContext('2d');
+  const gr=g.createRadialGradient(128,128,10,128,128,128);
+  gr.addColorStop(0,'rgba(150,160,175,.5)');gr.addColorStop(1,'rgba(150,160,175,0)');
+  g.fillStyle=gr;g.fillRect(0,0,256,256);return c;
+})();
+function drawFog(t){
+  ctx.save();ctx.globalCompositeOperation='screen';
+  for(let i=0;i<3;i++){
+    const fx=(((i*.37+t*.008*(1+i*.35))%1.2)+1.2)%1.2*vw-vw*.1;
+    const fy=(.25+.4*Math.sin(t*.05+i*2.1))*vh;
+    ctx.globalAlpha=.05+.02*Math.sin(t*.3+i);
+    const s=vh*(.9+i*.35);
+    ctx.drawImage(fogBlob,fx-s/2,fy-s/2,s,s);
+  }
+  ctx.restore();ctx.globalAlpha=1;
+}
 const clamp=(v,a,b)=>v<a?a:v>b?b:v,dist=(a,b,c,d)=>Math.hypot(a-c,b-d),rnd=(a,b)=>a+Math.random()*(b-a);
 /* ============ 音效（全部 Web Audio 合成） ============ */
 let AC=null,master=null,muted=false,drone=null,musicT=null,heartT=null,stepT=0;
 function audio(){
   if(!AC){try{
     AC=new (window.AudioContext||window.webkitAudioContext)();
-    master=AC.createGain();master.gain.value=muted?0:.6;master.connect(AC.destination);
+    master=AC.createGain();master.gain.value=muted?0:.6;
+    /* v6：DynamicsCompressor 母線＋廢棄療養院程序化殘響（ConvolverNode 濕聲並聯） */
+    const comp=AC.createDynamicsCompressor();
+    comp.threshold.value=-18;comp.knee.value=24;comp.ratio.value=8;
+    master.connect(comp);comp.connect(AC.destination);
+    const rev=AC.createConvolver();
+    const rl=Math.floor(AC.sampleRate*1.8),rb=AC.createBuffer(2,rl,AC.sampleRate);
+    for(let ch=0;ch<2;ch++){const d=rb.getChannelData(ch);for(let i=0;i<rl;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/rl,2.4);}
+    rev.buffer=rb;
+    const rg=AC.createGain();rg.gain.value=.2;
+    master.connect(rev);rev.connect(rg);rg.connect(comp);
   }catch(e){}}
   return AC;
 }
@@ -244,6 +290,34 @@ function sJumpscare(){
   sBlip(500,.45,'sine',.35,-430);
   sBlip(1200,.1,'sawtooth',.15,-900);
   heartbeat(false);
+}
+/* v6 環境驚悚音：隨機方位的水滴聲／遠處敲擊（配合殘響營造廢棄空間感） */
+let dripT=5,knockT=16;
+function panOut(g,pan){
+  if(AC.createStereoPanner){const p=AC.createStereoPanner();p.pan.value=clamp(pan,-1,1);g.connect(p);p.connect(master);}
+  else g.connect(master);
+}
+function sDrip(){
+  if(!audio())return;
+  const o=AC.createOscillator(),g=AC.createGain(),now=AC.currentTime;
+  o.type='sine';o.frequency.setValueAtTime(1400+Math.random()*800,now);
+  o.frequency.exponentialRampToValueAtTime(500,now+.09);
+  g.gain.setValueAtTime(.08,now);g.gain.exponentialRampToValueAtTime(.001,now+.12);
+  o.connect(g);panOut(g,Math.random()*1.6-.8);
+  o.start(now);o.stop(now+.13);
+}
+function sKnock(){
+  if(!audio())return;
+  const now=AC.currentTime,pan=Math.random()*1.6-.8,n=2+(Math.random()*2|0);
+  for(let i=0;i<n;i++){
+    const o=AC.createOscillator(),g=AC.createGain(),t0=now+i*(.24+Math.random()*.08);
+    o.type='sine';o.frequency.setValueAtTime(82+Math.random()*24,t0);
+    o.frequency.exponentialRampToValueAtTime(45,t0+.1);
+    g.gain.setValueAtTime(.0001,t0);g.gain.linearRampToValueAtTime(.13,t0+.012);
+    g.gain.exponentialRampToValueAtTime(.001,t0+.16);
+    o.connect(g);panOut(g,pan);
+    o.start(t0);o.stop(t0+.18);
+  }
 }
 function stopAllAudio(){
   heartbeat(false);
@@ -1281,6 +1355,7 @@ function render(t){
   }
   ctx.globalAlpha=1;
   ctx.restore();
+  drawFog(t);   /* v6：迷霧層（畫在遮罩前——只在光照區浮現） */
   // ===== 手電筒遮罩 =====
   const psx=player.x-camX+shx,psy=player.y-camY+shy;
   maskCtx.globalCompositeOperation='source-over';
@@ -1327,6 +1402,10 @@ function render(t){
   }
   // 常駐暗角（v3：快取貼圖）
   ctx.drawImage(vigCv,0,0,vw,vh);
+  /* v6：暗角呼吸——超低頻（約 14 秒一循環）緩慢加深再放鬆，壓迫感不閃爍 */
+  ctx.globalAlpha=.11+.11*Math.sin(t*.45);
+  ctx.drawImage(vigCv,0,0,vw,vh);
+  ctx.globalAlpha=1;
   // 飄字
   ctx.font='bold 15px sans-serif';ctx.textAlign='center';
   for(const f of floats){
@@ -1457,6 +1536,11 @@ function frame(now){
       camY+=(player.y-vh/2+lookY-camY)*k;
       const pct=Math.round(100*explored.reduce((a,b)=>a+b,0)/(MW*MH));
       document.getElementById('explPct').textContent=pct;
+      /* v6：環境驚悚音排程（水滴／遠處敲擊，隨機方位） */
+      dripT-=STEP;
+      if(dripT<=0){dripT=4+Math.random()*7;if(!muted)sDrip();}
+      knockT-=STEP;
+      if(knockT<=0){knockT=14+Math.random()*16;if(!muted)sKnock();}
     }else if(state==='jumpscare'){
       scareT+=STEP;
       if(scareT>.75){state='end';showEnd('death');}   /* 加強版：驚嚇畫面延長至 0.75 秒，讓放大逼近效果完整播完 */
@@ -1467,6 +1551,7 @@ function frame(now){
   const t=performance.now()/1000;
   if(state==='jumpscare')drawJumpscare();
   else if(state==='play'||state==='end')render(t);
+  if(state==='play'||state==='jumpscare'||state==='end')drawGrain(t);   /* v6：底片顆粒 */
 }
 /* v4：標題難度選單 + 回標題 */
 const TITLE_HTML=overlay.innerHTML;

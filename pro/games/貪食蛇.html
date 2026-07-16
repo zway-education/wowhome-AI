@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6 -->
+<!-- v6 升級摘要：花園氛圍升級——飄落花瓣環境粒子＋金星果實改烘焙光暈(移除主迴圈shadowBlur)＋綠意vignette；蘋果/辣椒/瓢蟲/蛇頭/鼓包/岩石漸層全面快取或改局部座標、主迴圈零createGradient；音效新增程序化殘響ConvolverNode＋花園氛圍(風聲循環與隨機鳥鳴、死亡ducking) -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -250,7 +251,8 @@ const COLORS = [
 let snakeColor = COLORS[0];
 
 // ----- Web Audio 合成音效 -----
-let AC = null, master = null;
+let AC = null, master = null, ambGain = null, ambOut = null;
+const AMB_BASE = 0.032;
 let muted = localStorage.getItem('snake1-muted') === '1';
 function audio() {
   if (!AC) {
@@ -261,10 +263,63 @@ function audio() {
       comp.attack.value = 0.003; comp.release.value = 0.2;
       master = AC.createGain(); master.gain.value = 0.85;
       master.connect(comp); comp.connect(AC.destination);
+      /* v6：程序化殘響——generated impulse ConvolverNode（戶外花園的輕微空間感） */
+      try {
+        const sr = AC.sampleRate, len = Math.floor(sr * 1.1);
+        const imp = AC.createBuffer(2, len, sr);
+        for (let ch = 0; ch < 2; ch++) {
+          const d = imp.getChannelData(ch);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.8);
+        }
+        const conv = AC.createConvolver(); conv.buffer = imp;
+        const wet = AC.createGain(); wet.gain.value = 0.13;
+        master.connect(conv); conv.connect(wet); wet.connect(comp);
+      } catch (e) {}
+      /* v6：花園氛圍——柔風噪聲循環＋LFO 起伏＋隨機合成鳥鳴 */
+      try {
+        const sr = AC.sampleRate, alen = Math.floor(sr * 2.4);
+        const abuf = AC.createBuffer(1, alen, sr);
+        const ad = abuf.getChannelData(0); let v = 0;
+        for (let i = 0; i < alen; i++) { v = v * 0.985 + (Math.random() * 2 - 1) * 0.06; ad[i] = v * 2.2; }
+        const src = AC.createBufferSource(); src.buffer = abuf; src.loop = true;
+        const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 480; lp.Q.value = 0.4;
+        ambGain = AC.createGain(); ambGain.gain.value = AMB_BASE;
+        const lfo = AC.createOscillator(); lfo.frequency.value = 0.13;
+        const lg = AC.createGain(); lg.gain.value = AMB_BASE * 0.45;
+        lfo.connect(lg); lg.connect(ambGain.gain);
+        ambOut = AC.createGain(); ambOut.gain.value = muted ? 0 : 1;
+        src.connect(lp); lp.connect(ambGain); ambGain.connect(ambOut); ambOut.connect(comp);
+        src.start(); lfo.start();
+        birdLoop();
+      } catch (e) {}
     } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+/* v6：死亡等大事件時，氛圍層先壓低再回升（ducking） */
+function duckAmb() {
+  if (!AC || !ambGain) return;
+  const t = AC.currentTime;
+  ambGain.gain.cancelScheduledValues(t);
+  ambGain.gain.setValueAtTime(Math.max(0.001, ambGain.gain.value), t);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE * 0.2, t + 0.05);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE, t + 1.3);
+}
+/* v6：隨機合成鳥鳴（3~9 秒一聲，高音滑音雙啾） */
+let birdStarted = false;
+function birdLoop() {
+  if (birdStarted) return; birdStarted = true;
+  (function next() {
+    setTimeout(() => {
+      if (!muted && AC && AC.state === 'running') {
+        const f = 2200 + Math.random() * 900;
+        beep(f, 0.09, 'sine', 0.035, 500);
+        if (Math.random() < 0.6) setTimeout(() => beep(f * 1.12, 0.07, 'sine', 0.03, -400), 130);
+      }
+      next();
+    }, 3000 + Math.random() * 6000);
+  })();
 }
 addEventListener('pointerdown', audio, { once: true });
 addEventListener('keydown', audio, { once: true });
@@ -301,7 +356,7 @@ const sfx = {
   eat()   { beep(988, 0.07, 'square', 0.12); setTimeout(() => beep(1319, 0.12, 'square', 0.12), 70); },
   gold()  { [880, 1109, 1319, 1760].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'triangle', 0.14), i * 80)); },
   turn()  { beep(340, 0.03, 'triangle', 0.05); },
-  die()   { beep(220, 0.4, 'sawtooth', 0.18, -160); noiseBurst(0.35, 0.22); },
+  die()   { duckAmb(); beep(220, 0.4, 'sawtooth', 0.18, -160); noiseBurst(0.35, 0.22); },
   start() { [523, 659, 784].forEach((f, i) => setTimeout(() => beep(f, 0.1, 'square', 0.1), i * 90)); },
   best()  { [784, 988, 1175, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.12), i * 110)); },
   harvest() { [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.13, 'triangle', 0.12), i * 80)); },
@@ -315,6 +370,7 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   localStorage.setItem('snake1-muted', muted ? '1' : '0');
   refreshMute();
+  if (ambOut) ambOut.gain.value = muted ? 0 : 1;   /* v6：氛圍層跟著靜音 */
   if (!muted) beep(660, 0.08, 'square', 0.1);
 });
 refreshMute();
@@ -955,6 +1011,55 @@ skyCv.width = GAME_W; skyCv.height = GAME_H;
   c.fill();
 })();
 const hillGrads = {};
+/* ===== v6：漸層快取＋金星光暈 sprite＋綠意 vignette＋飄落花瓣 ===== */
+const _gc = new Map();
+function cg2(key, maker) {
+  let g = _gc.get(key);
+  if (!g) { g = maker(); _gc.set(key, g); }
+  return g;
+}
+const goldGlowC = (function () {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(48, 48, 3, 48, 48, 48);
+  gr.addColorStop(0, 'rgba(255,215,90,.85)'); gr.addColorStop(0.5, 'rgba(255,205,80,.35)'); gr.addColorStop(1, 'rgba(255,205,80,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 96, 96);
+  return c;
+})();
+const vignetteC = (function () {
+  const c = document.createElement('canvas'); c.width = 480; c.height = 270;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(240, 130, 148, 240, 135, 330);
+  gr.addColorStop(0, 'rgba(0,0,0,0)'); gr.addColorStop(0.75, 'rgba(20,45,28,.07)'); gr.addColorStop(1, 'rgba(14,34,20,.32)');
+  g.fillStyle = gr; g.fillRect(0, 0, 480, 270);
+  return c;
+})();
+const petals = [];
+for (let i = 0; i < 14; i++) petals.push({
+  x: Math.random() * GAME_W, y: Math.random() * GAME_H,
+  vx: -(10 + Math.random() * 16), vy: 22 + Math.random() * 20,
+  ph: Math.random() * Math.PI * 2, pink: Math.random() < 0.55
+});
+function updatePetals(dt) {
+  for (const p of petals) {
+    p.x += (p.vx + Math.sin(p.ph * 1.4) * 12) * dt;
+    p.y += p.vy * dt; p.ph += dt;
+    if (p.y > GAME_H + 8) { p.y = -8; p.x = Math.random() * GAME_W; }
+    if (p.x < -10) p.x = GAME_W + 10;
+  }
+}
+function drawPetals() {
+  for (const p of petals) {
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(Math.sin(p.ph * 2) * 1.1);
+    ctx.globalAlpha = 0.6;
+    ctx.fillStyle = p.pink ? '#ffc9dd' : '#fff2c9';
+    ctx.beginPath(); ctx.ellipse(0, 0, 4, 2.4, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
 function drawBackground() {
   ctx.drawImage(skyCv, 0, 0);   // 天空＋太陽（靜態層）
 
@@ -1090,32 +1195,37 @@ function drawRocks() {
   if (!rocks.length) return;
   for (const r of rocks) {
     const c = cellCenter(r.x, r.y), rad = CELL * 0.42;
+    ctx.save();
+    ctx.translate(c.x, c.y);   /* v6：改局部座標繪製，岩體漸層可全域快取 */
     ctx.fillStyle = 'rgba(0,0,0,0.28)';
     ctx.beginPath();
-    ctx.ellipse(c.x, c.y + rad * 0.7, rad * 1.02, rad * 0.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(0, rad * 0.7, rad * 1.02, rad * 0.5, 0, 0, Math.PI * 2);
     ctx.fill();
-    const g = ctx.createLinearGradient(c.x, c.y - rad, c.x, c.y + rad);
-    g.addColorStop(0, '#9aa0a6'); g.addColorStop(1, '#5b6169');
-    ctx.fillStyle = g;
+    ctx.fillStyle = cg2('rock' + Math.round(rad), () => {
+      const g = ctx.createLinearGradient(0, -rad, 0, rad);
+      g.addColorStop(0, '#9aa0a6'); g.addColorStop(1, '#5b6169');
+      return g;
+    });
     ctx.beginPath();
-    ctx.moveTo(c.x - rad, c.y + rad * 0.5);
-    ctx.lineTo(c.x - rad * 0.75, c.y - rad * 0.55);
-    ctx.lineTo(c.x - rad * 0.1, c.y - rad);
-    ctx.lineTo(c.x + rad * 0.7, c.y - rad * 0.6);
-    ctx.lineTo(c.x + rad, c.y + rad * 0.35);
-    ctx.lineTo(c.x + rad * 0.55, c.y + rad * 0.85);
-    ctx.lineTo(c.x - rad * 0.5, c.y + rad * 0.85);
+    ctx.moveTo(-rad, rad * 0.5);
+    ctx.lineTo(-rad * 0.75, -rad * 0.55);
+    ctx.lineTo(-rad * 0.1, -rad);
+    ctx.lineTo(rad * 0.7, -rad * 0.6);
+    ctx.lineTo(rad, rad * 0.35);
+    ctx.lineTo(rad * 0.55, rad * 0.85);
+    ctx.lineTo(-rad * 0.5, rad * 0.85);
     ctx.closePath();
     ctx.fill();
     ctx.strokeStyle = 'rgba(40,44,50,0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
     ctx.beginPath();
-    ctx.ellipse(c.x - rad * 0.28, c.y - rad * 0.4, rad * 0.32, rad * 0.2, -0.5, 0, Math.PI * 2);
+    ctx.ellipse(-rad * 0.28, -rad * 0.4, rad * 0.32, rad * 0.2, -0.5, 0, Math.PI * 2);
     ctx.fill();
     ctx.fillStyle = 'rgba(96,150,60,0.75)';   // 苔蘚
     ctx.beginPath();
-    ctx.ellipse(c.x + rad * 0.35, c.y + rad * 0.55, rad * 0.3, rad * 0.16, 0.3, 0, Math.PI * 2);
+    ctx.ellipse(rad * 0.35, rad * 0.55, rad * 0.3, rad * 0.16, 0.3, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
   }
 }
 
@@ -1137,8 +1247,12 @@ function drawFood() {
   ctx.fill();
 
   if (food.golden) {
-    // 金色星星蘋果：限時大獎
-    ctx.shadowColor = PAL.gold; ctx.shadowBlur = 16;
+    // 金色星星蘋果：限時大獎——v6：改烘焙光暈加法疊印（主迴圈零 shadowBlur）
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.75 + 0.25 * Math.sin(food.age * 6);
+    ctx.drawImage(goldGlowC, -26, -26, 52, 52);
+    ctx.restore();
     ctx.fillStyle = PAL.gold;
     ctx.beginPath();
     for (let i = 0; i < 5; i++) {
@@ -1149,7 +1263,6 @@ function drawFood() {
     }
     ctx.closePath();
     ctx.fill();
-    ctx.shadowBlur = 0;
     // 倒數圈
     ctx.strokeStyle = PAL.goldDark;
     ctx.lineWidth = 2.5;
@@ -1163,11 +1276,13 @@ function drawFood() {
     ctx.arc(-3.5, 1, 9.6, 0, Math.PI * 2);
     ctx.arc(3.5, 1, 9.6, 0, Math.PI * 2);
     ctx.fill();
-    const ag = ctx.createRadialGradient(-4, -4, 2, 0, 1, 13);
-    ag.addColorStop(0, '#f07a68');
-    ag.addColorStop(0.55, PAL.apple);
-    ag.addColorStop(1, PAL.appleDark);
-    ctx.fillStyle = ag;
+    ctx.fillStyle = cg2('apple', () => {
+      const ag = ctx.createRadialGradient(-4, -4, 2, 0, 1, 13);
+      ag.addColorStop(0, '#f07a68');
+      ag.addColorStop(0.55, PAL.apple);
+      ag.addColorStop(1, PAL.appleDark);
+      return ag;
+    });
     ctx.beginPath();
     ctx.arc(-3.5, 1, 8, 0, Math.PI * 2);
     ctx.arc(3.5, 1, 8, 0, Math.PI * 2);
@@ -1212,9 +1327,11 @@ function drawChili() {
   // 辣椒本體
   ctx.fillStyle = '#a31515';
   ctx.beginPath(); ctx.ellipse(0.5, 2, 6, 11.5, 0, 0, Math.PI * 2); ctx.fill();
-  const cg = ctx.createRadialGradient(-3, -3, 1, 0, 2, 12);
-  cg.addColorStop(0, '#ff6f60'); cg.addColorStop(0.6, '#e53935'); cg.addColorStop(1, '#b71c1c');
-  ctx.fillStyle = cg;
+  ctx.fillStyle = cg2('chili', () => {
+    const g = ctx.createRadialGradient(-3, -3, 1, 0, 2, 12);
+    g.addColorStop(0, '#ff6f60'); g.addColorStop(0.6, '#e53935'); g.addColorStop(1, '#b71c1c');
+    return g;
+  });
   ctx.beginPath(); ctx.ellipse(0, 2, 4.8, 10.2, 0, 0, Math.PI * 2); ctx.fill();
   // 高光
   ctx.fillStyle = 'rgba(255,255,255,0.55)';
@@ -1249,10 +1366,16 @@ function drawBug() {
     const r = 6.5 - i * 0.9;
     ctx.fillStyle = '#3f7a2e';
     ctx.beginPath(); ctx.arc(bx, by, r + 1.5, 0, Math.PI * 2); ctx.fill();
-    const bg2 = ctx.createRadialGradient(bx - 2, by - 2, 1, bx, by, r);
-    bg2.addColorStop(0, '#c5e86c'); bg2.addColorStop(1, '#8bc34a');
-    ctx.fillStyle = bg2;
-    ctx.beginPath(); ctx.arc(bx, by, r, 0, Math.PI * 2); ctx.fill();
+    /* v6：改局部平移＋快取漸層（主迴圈零 createGradient） */
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.fillStyle = cg2('bug' + i, () => {
+      const g = ctx.createRadialGradient(-2, -2, 1, 0, 0, r);
+      g.addColorStop(0, '#c5e86c'); g.addColorStop(1, '#8bc34a');
+      return g;
+    });
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
   }
   // 觸角
   ctx.strokeStyle = '#3f7a2e'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
@@ -1329,11 +1452,17 @@ function drawSnake() {
       const bi = Math.min(pts.length - 1, b);
       ctx.fillStyle = outline;
       ctx.beginPath(); ctx.arc(pts[bi].x, pts[bi].y, 16.5, 0, Math.PI * 2); ctx.fill();
-      const bg = ctx.createRadialGradient(pts[bi].x - 4, pts[bi].y - 5, 2, pts[bi].x, pts[bi].y, 15);
-      bg.addColorStop(0, hilite);
-      bg.addColorStop(1, snakeColor.body);
-      ctx.fillStyle = bg;
-      ctx.beginPath(); ctx.arc(pts[bi].x, pts[bi].y, 14.5, 0, Math.PI * 2); ctx.fill();
+      /* v6：局部平移＋依蛇色快取漸層 */
+      ctx.save();
+      ctx.translate(pts[bi].x, pts[bi].y);
+      ctx.fillStyle = cg2('bulge' + snakeColor.body, () => {
+        const g = ctx.createRadialGradient(-4, -5, 2, 0, 0, 15);
+        g.addColorStop(0, hilite);
+        g.addColorStop(1, snakeColor.body);
+        return g;
+      });
+      ctx.beginPath(); ctx.arc(0, 0, 14.5, 0, Math.PI * 2); ctx.fill();
+      ctx.restore();
     }
   }
 
@@ -1357,11 +1486,13 @@ function drawSnake() {
   ctx.beginPath();
   ctx.ellipse(1, 0, 17.5, 15.5, 0, 0, Math.PI * 2);
   ctx.fill();
-  const hgrad = ctx.createRadialGradient(-4, -6, 3, 0, 0, 18);
-  hgrad.addColorStop(0, shade(snakeColor.head, 0.35));
-  hgrad.addColorStop(0.7, snakeColor.head);
-  hgrad.addColorStop(1, shade(snakeColor.head, -0.15));
-  ctx.fillStyle = hgrad;
+  ctx.fillStyle = cg2('head' + snakeColor.head, () => {
+    const hgrad = ctx.createRadialGradient(-4, -6, 3, 0, 0, 18);
+    hgrad.addColorStop(0, shade(snakeColor.head, 0.35));
+    hgrad.addColorStop(0.7, snakeColor.head);
+    hgrad.addColorStop(1, shade(snakeColor.head, -0.15));
+    return hgrad;
+  });
   ctx.beginPath();
   ctx.ellipse(1, 0, 15.5, 13.5, 0, 0, Math.PI * 2);
   ctx.fill();
@@ -1524,6 +1655,7 @@ function draw() {
   drawChili();
   drawBug();
   drawSnake();
+  drawPetals();   /* v6：飄落花瓣氛圍層 */
   drawParts();
   drawFloats();
 
@@ -1592,9 +1724,11 @@ function frame(now) {
   while (acc >= STEP) {
     if (freeze > 0) { freeze -= STEP; acc -= STEP; continue; }  // hit-stop
     update(STEP);
+    updatePetals(STEP);
     acc -= STEP;
   }
   draw();
+  ctx.drawImage(vignetteC, 0, 0, GAME_W, GAME_H);   /* v6：綠意暗角 */
 }
 
 // 開場：標題畫面 + 展示蛇

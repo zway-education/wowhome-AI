@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5 -->
+<!-- 專業AI升級 v6 -->
+<!-- v6 升級摘要：夜賽球場全面烘焙升級(照明光束/草皮質地/看板光/暗角vignette)＋觀眾席相機閃光與光束塵埃氛圍層＋進球螢幕閃光與加法光暈球軌跡＋足球改離屏立體精靈；音效新增程序化體育場殘響ConvolverNode與人群嗡嗡氛圍循環(進球swell/失誤ducking)；主迴圈漸層全面快取、零createGradient -->
 <!-- v5 升級摘要：修正門框RNG覆蓋完美進球的不公判定／補齊Z-X弧線鍵操作說明／新增直向裝置轉橫提示／加入連續進球combo回饋／鍵盤瞄準補上即時力道條 -->
 <!-- v5 補強輪：角色精細化(輪廓線/漸層光影/高光/表情兩態/squash&stretch，Minecraft路人改離屏sprite)／觸控可玩稽核／新增大螢幕提醒浮層 -->
 <html lang="zh-Hant">
@@ -153,6 +154,8 @@ let legendUnlocked = LS.get('messipro_legend','0') === '1';
 
 /* ===== 音效：Web Audio 合成＋DynamicsCompressor 主匯流排 ===== */
 let AC = null, master = null, noiseBuf = null;
+let ambGain = null, ambOut = null;
+const AMB = 0.05;
 let muted = LS.get('messipro_muted','0') === '1';
 function initAudio(){
   if(!AC){
@@ -162,9 +165,54 @@ function initAudio(){
       comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
       master = AC.createGain(); master.gain.value = 0.6;
       master.connect(comp); comp.connect(AC.destination);
+      /* v6：程序化體育場殘響——generated impulse 的 ConvolverNode（大場館尾音） */
+      try{
+        const sr = AC.sampleRate, len = Math.floor(sr*1.7);
+        const imp = AC.createBuffer(2, len, sr);
+        for(let ch=0; ch<2; ch++){
+          const d = imp.getChannelData(ch);
+          for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 2.8);
+        }
+        const conv = AC.createConvolver(); conv.buffer = imp;
+        const wet = AC.createGain(); wet.gain.value = 0.24;
+        master.connect(conv); conv.connect(wet); wet.connect(comp);
+      }catch(e){}
+      /* v6：人群氛圍循環層——棕噪聲帶通模擬觀眾嗡嗡＋LFO緩慢起伏；主音效時 ducking */
+      try{
+        const sr = AC.sampleRate, alen = Math.floor(sr*2.5);
+        const abuf = AC.createBuffer(1, alen, sr);
+        const ad = abuf.getChannelData(0); let v = 0;
+        for(let i=0;i<alen;i++){ v = v*0.985 + (Math.random()*2-1)*0.06; ad[i] = v*2.4; }
+        const src = AC.createBufferSource(); src.buffer = abuf; src.loop = true;
+        const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 460; bp.Q.value = 0.5;
+        ambGain = AC.createGain(); ambGain.gain.value = AMB;
+        const lfo = AC.createOscillator(); lfo.frequency.value = 0.11;
+        const lg = AC.createGain(); lg.gain.value = AMB*0.4;
+        lfo.connect(lg); lg.connect(ambGain.gain);
+        ambOut = AC.createGain(); ambOut.gain.value = muted ? 0 : 1;
+        src.connect(bp); bp.connect(ambGain); ambGain.connect(ambOut); ambOut.connect(comp);
+        src.start(); lfo.start();
+      }catch(e){}
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+}
+/* v6：氛圍層 ducking（失誤/撲救時人群安靜一拍）與 swell（進球時歡呼湧起） */
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime;
+  ambGain.gain.cancelScheduledValues(t);
+  ambGain.gain.setValueAtTime(Math.max(0.001, ambGain.gain.value), t);
+  ambGain.gain.linearRampToValueAtTime(AMB*0.22, t+0.05);
+  ambGain.gain.linearRampToValueAtTime(AMB, t+0.9);
+}
+function swellAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime;
+  ambGain.gain.cancelScheduledValues(t);
+  ambGain.gain.setValueAtTime(Math.max(0.001, ambGain.gain.value), t);
+  ambGain.gain.linearRampToValueAtTime(AMB*3.4, t+0.12);
+  ambGain.gain.linearRampToValueAtTime(AMB, t+1.7);
 }
 addEventListener('pointerdown', initAudio);
 addEventListener('keydown', initAudio);
@@ -199,20 +247,23 @@ function noise(dur, vol, delay){
 }
 const sfx = {
   kick(){ beep(rp(140),0.09,'square',0.18,120); noise(0.08,0.12); },
-  goal(){ [523,659,784,1046].forEach((f,i)=> beep(rp(f),0.16,'square',0.15,0,i*0.09)); noise(0.6,0.13,0.05); },
-  perfect(){ [659,784,1046,1319,1568].forEach((f,i)=> beep(rp(f),0.15,'square',0.13,0,i*0.08)); noise(0.7,0.14,0.05); },
-  save(){ beep(rp(180),0.2,'sawtooth',0.16,-100); noise(0.15,0.11,0.02); },
-  crossbar(){ beep(rp(900),0.18,'triangle',0.14); beep(rp(1200),0.12,'triangle',0.1,0,0.05); },
+  goal(){ [523,659,784,1046].forEach((f,i)=> beep(rp(f),0.16,'square',0.15,0,i*0.09)); noise(0.6,0.13,0.05); swellAmb(); },
+  perfect(){ [659,784,1046,1319,1568].forEach((f,i)=> beep(rp(f),0.15,'square',0.13,0,i*0.08)); noise(0.7,0.14,0.05); swellAmb(); },
+  save(){ beep(rp(180),0.2,'sawtooth',0.16,-100); noise(0.15,0.11,0.02); duckAmb(); },
+  crossbar(){ beep(rp(900),0.18,'triangle',0.14); beep(rp(1200),0.12,'triangle',0.1,0,0.05); duckAmb(); },
   whistle(){ beep(rp(1700),0.35,'sine',0.11,-40); },
-  roar(){ beep(rp(90),0.35,'sawtooth',0.18,60); noise(0.3,0.14,0.03); },
-  wall(){ beep(rp(240),0.14,'square',0.14,-80); noise(0.1,0.1); },
+  roar(){ beep(rp(90),0.35,'sawtooth',0.18,60); noise(0.3,0.14,0.03); duckAmb(); },
+  wall(){ beep(rp(240),0.14,'square',0.14,-80); noise(0.1,0.1); duckAmb(); },
   ui(){ beep(rp(660),0.06,'square',0.08); },
   crowd(){ noise(0.8,0.08); },
   end(){ [784,659,523,659,784,1046].forEach((f,i)=> beep(f,0.18,'triangle',0.12,0,i*0.12)); },
   combo(n){ const base = 740 + clamp(n,2,8)*30; [0,1,2].forEach((i)=> beep(rp(base+i*160),0.11,'square',0.13,0,i*0.055)); }
 };
 const muteBtn = document.getElementById('mute');
-function syncMute(){ muteBtn.textContent = muted ? '🔇' : '🔊'; }
+function syncMute(){
+  muteBtn.textContent = muted ? '🔇' : '🔊';
+  if(ambOut) ambOut.gain.value = muted ? 0 : 1;
+}
 muteBtn.addEventListener('click', e => { e.stopPropagation(); muted = !muted; LS.set('messipro_muted', muted?'1':'0'); syncMute(); });
 syncMute();
 
@@ -377,6 +428,17 @@ function bakePitch(){
     g.fillRect(-200, y0, 1400, y1-y0);
   }
   g.restore();
+  /* v6：草皮質地——細碎草點（烘焙一次，零運行成本） */
+  g.save();
+  g.beginPath(); g.moveTo(150,540); g.lineTo(810,540); g.lineTo(640,92); g.lineTo(320,92); g.closePath(); g.clip();
+  for(let i=0;i<1600;i++){
+    const gy = 92 + Math.pow(Math.random(),0.7)*448;
+    const gx = 480 + (Math.random()*2-1)*(120 + (gy-92)/448*360);
+    g.fillStyle = Math.random()<0.5 ? 'rgba(255,255,255,.05)' : 'rgba(0,20,0,.08)';
+    const s = 1 + (gy-92)/448*1.6;
+    g.fillRect(gx, gy, s, s*0.6);
+  }
+  g.restore();
   /* 禁區與罰球弧 */
   g.strokeStyle = 'rgba(255,255,255,.55)'; g.lineWidth = 3;
   g.beginPath(); g.ellipse(480,462,90,26,0,Math.PI,TAU); g.stroke();
@@ -385,9 +447,71 @@ function bakePitch(){
   g.stroke();
   g.strokeStyle = 'rgba(255,255,255,.35)';
   g.beginPath(); g.moveTo(380,152); g.lineTo(580,152); g.moveTo(355,150); g.lineTo(348,200); g.moveTo(605,150); g.lineTo(612,200); g.stroke();
+  /* v6：看板底部光暈與觀眾席景深壓暗 */
+  const boardGlow = g.createLinearGradient(0,92,0,132);
+  boardGlow.addColorStop(0,'rgba(56,225,255,.14)'); boardGlow.addColorStop(1,'rgba(56,225,255,0)');
+  g.fillStyle = boardGlow; g.fillRect(0,92,GAME_W,40);
+  const standShade = g.createLinearGradient(0,0,0,74);
+  standShade.addColorStop(0,'rgba(0,0,0,.45)'); standShade.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle = standShade; g.fillRect(0,0,GAME_W,74);
+  /* v6：照明塔光束錐（烘焙 additive）＋草皮光池 */
+  g.save();
+  g.globalCompositeOperation = 'lighter';
+  const beam = (x0, tx) => {
+    const lg = g.createLinearGradient(x0, 10, tx, 330);
+    lg.addColorStop(0,'rgba(200,232,255,.26)'); lg.addColorStop(1,'rgba(200,232,255,0)');
+    g.fillStyle = lg;
+    g.beginPath(); g.moveTo(x0-16,6); g.lineTo(x0+16,6); g.lineTo(tx+130,360); g.lineTo(tx-130,360); g.closePath(); g.fill();
+  };
+  beam(60, 350); beam(900, 610);
+  const pool = (px, py, pr) => {
+    const rg = g.createRadialGradient(px,py,4, px,py,pr);
+    rg.addColorStop(0,'rgba(220,255,230,.10)'); rg.addColorStop(1,'rgba(220,255,230,0)');
+    g.fillStyle = rg;
+    g.save(); g.translate(px,py); g.scale(1,0.45); g.translate(-px,-py);
+    g.beginPath(); g.arc(px,py,pr,0,TAU); g.fill(); g.restore();
+  };
+  pool(370, 320, 170); pool(600, 320, 170); pool(480, 452, 150);
+  g.restore();
   bakedPitch = c;
 }
 bakePitch();
+/* v6：暗角 vignette（低解析烘焙、每幀單次 drawImage） */
+const vignetteC = (function(){
+  const c = document.createElement('canvas'); c.width = 480; c.height = 270;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(240,128,130, 240,135,320);
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(0.72,'rgba(0,0,0,.1)'); gr.addColorStop(1,'rgba(4,8,16,.4)');
+  g.fillStyle = gr; g.fillRect(0,0,480,270);
+  return c;
+})();
+/* v6：足球離屏精靈——radial 立體陰影＋高光一次烘焙 */
+const ballSprite = (function(){
+  const k = 3, R = 11;
+  const c = document.createElement('canvas'); c.width = c.height = R*2*k;
+  const g = c.getContext('2d');
+  g.translate(R*k, R*k); g.scale(k,k);
+  const sh = g.createRadialGradient(-3.2,-3.2,1, 0,0,10.4);
+  sh.addColorStop(0,'#ffffff'); sh.addColorStop(0.62,'#eef2f6'); sh.addColorStop(1,'#a9b6c2');
+  g.fillStyle = sh;
+  g.beginPath(); g.arc(0,0,9,0,TAU); g.fill();
+  g.save(); g.beginPath(); g.arc(0,0,9,0,TAU); g.clip();
+  g.fillStyle = '#1c232b';
+  for(let i=0;i<5;i++){
+    const a = i/5*TAU;
+    g.beginPath(); g.arc(Math.cos(a)*4.6, Math.sin(a)*4.6, 2.3, 0, TAU); g.fill();
+  }
+  g.fillStyle = 'rgba(0,0,0,.22)';
+  g.beginPath(); g.arc(3,3.4,8.6,Math.PI*1.75,Math.PI*0.78); g.fill();
+  g.restore();
+  g.strokeStyle = 'rgba(10,16,22,.5)'; g.lineWidth = 1;
+  g.beginPath(); g.arc(0,0,8.6,0,TAU); g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.75)';
+  g.beginPath(); g.ellipse(-3.4,-4.2,2.4,1.4,-0.6,0,TAU); g.fill();
+  c._R = R;
+  return c;
+})();
+const glowBallTrail = makeGlow('rgba(170,225,255,.55)', 13);
 
 /* ===== 角色精細化：共用繪圖輔助（描邊/漸層光影/高光/表情）===== */
 function oRect(x,y,w,h,fill){
@@ -407,14 +531,26 @@ function limbLine(x1,y1,x2,y2,width,color){
   ctx.strokeStyle = color; ctx.lineWidth = width;
   ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
 }
+/* v6：漸層快取——角色都在自身局部座標繪製，同參數漸層可重用，主迴圈零 createGradient */
+const _gradCache = new Map();
 function grad2(x0,y0,x1,y1,c0,c1){
-  const g = ctx.createLinearGradient(x0,y0,x1,y1);
-  g.addColorStop(0,c0); g.addColorStop(1,c1);
+  const k = 'L'+x0+','+y0+','+x1+','+y1+','+c0+c1;
+  let g = _gradCache.get(k);
+  if(!g){
+    g = ctx.createLinearGradient(x0,y0,x1,y1);
+    g.addColorStop(0,c0); g.addColorStop(1,c1);
+    _gradCache.set(k,g);
+  }
   return g;
 }
 function headGrad(cx,cy,r,light,base,dark){
-  const g = ctx.createRadialGradient(cx-r*0.4,cy-r*0.4,r*0.1, cx,cy,r*1.1);
-  g.addColorStop(0,light); g.addColorStop(0.55,base); g.addColorStop(1,dark);
+  const k = 'R'+cx+','+cy+','+r+','+light+base+dark;
+  let g = _gradCache.get(k);
+  if(!g){
+    g = ctx.createRadialGradient(cx-r*0.4,cy-r*0.4,r*0.1, cx,cy,r*1.1);
+    g.addColorStop(0,light); g.addColorStop(0.55,base); g.addColorStop(1,dark);
+    _gradCache.set(k,g);
+  }
   return g;
 }
 function glint(cx,cy,rx,ry,rot){
@@ -700,19 +836,11 @@ function drawTarget(x,y,r,t){
   ctx.restore();
 }
 function drawBall(x,y,scale,spin){
+  /* v6：改貼離屏烘焙的立體足球精靈（漸層陰影/高光皆預繪） */
+  const R = ballSprite._R;
   ctx.save();
   ctx.translate(x,y); ctx.rotate(spin); ctx.scale(scale,scale);
-  ctx.fillStyle = '#fff';
-  ctx.beginPath(); ctx.arc(0,0,9,0,TAU); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,.15)';
-  ctx.beginPath(); ctx.arc(2.4,2.4,8,Math.PI*1.7,Math.PI*0.8); ctx.fill();
-  ctx.fillStyle = '#222';
-  for(let i=0;i<5;i++){
-    const a = i/5*TAU;
-    ctx.beginPath(); ctx.arc(Math.cos(a)*4.2, Math.sin(a)*4.2, 2.2, 0, TAU); ctx.fill();
-  }
-  ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth=1;
-  ctx.beginPath(); ctx.arc(0,0,9,0,TAU); ctx.stroke();
+  ctx.drawImage(ballSprite, -R, -R, R*2, R*2);
   ctx.restore();
 }
 function drawGoalAndNet(rippleT){
@@ -740,12 +868,59 @@ function drawGoalAndNet(rippleT){
 function drawFloodlights(){
   for(const lx of [38, 60, 82]) ctx.drawImage(glowLight, lx-26, 10-26);
   for(const lx of [878, 900, 922]) ctx.drawImage(glowLight, lx-26, 10-26);
+  drawAtmo();
+}
+/* v6：環境氛圍——光束塵埃緩慢漂浮＋觀眾席相機閃光（短促事件式） */
+const motes = [];
+for(let i=0;i<22;i++) motes.push({ x:Math.random()*GAME_W, y:80+Math.random()*250, vx:5+Math.random()*11, ph:Math.random()*TAU });
+const camFlashes = [];
+let camFlashTimer = 1.4, screenFlashT = 0;
+function flashBurst(n){
+  for(let i=0;i<n;i++) camFlashes.push({ x:rnd(30,930), y:rnd(8,66), t:-Math.random()*0.9, life:0.2 });
+}
+function updateAtmo(dt){
+  for(const m of motes){
+    m.x += m.vx*dt; m.ph += dt;
+    if(m.x > GAME_W+10){ m.x = -10; m.y = 80+Math.random()*250; }
+  }
+  camFlashTimer -= dt;
+  if(camFlashTimer <= 0){
+    camFlashTimer = rnd(0.8, 2.4);
+    camFlashes.push({ x:rnd(30,930), y:rnd(8,66), t:0, life:0.2 });
+  }
+  for(let i=camFlashes.length-1;i>=0;i--){
+    const f = camFlashes[i]; f.t += dt;
+    if(f.t > f.life){ camFlashes[i] = camFlashes[camFlashes.length-1]; camFlashes.pop(); }
+  }
+  if(screenFlashT > 0) screenFlashT -= dt;
+}
+function drawAtmo(){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(const f of camFlashes){
+    if(f.t < 0) continue;
+    ctx.globalAlpha = (1 - f.t/f.life)*0.85;
+    ctx.drawImage(glowLight, f.x-26, f.y-26);
+  }
+  ctx.fillStyle = '#dff2ff';
+  for(const m of motes){
+    ctx.globalAlpha = 0.05 + 0.07*(0.5+0.5*Math.sin(m.ph*1.7));
+    ctx.fillRect(m.x, m.y + Math.sin(m.ph)*6, 2.2, 2.2);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 function drawButton(b, hot){
-  const g = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
-  if(b.disabled){ g.addColorStop(0,'rgba(70,80,90,.85)'); g.addColorStop(1,'rgba(40,48,56,.85)'); }
-  else if(b.gold){ g.addColorStop(0,'#ffcf5c'); g.addColorStop(1,'#ff7e3d'); }
-  else { g.addColorStop(0,'rgba(56,150,200,.95)'); g.addColorStop(1,'rgba(20,60,100,.95)'); }
+  const styleK = b.disabled ? 'd' : (b.gold ? 'g' : 'n');
+  const gk = 'B'+b.y+','+b.h+styleK;
+  let g = _gradCache.get(gk);
+  if(!g){
+    g = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
+    if(b.disabled){ g.addColorStop(0,'rgba(70,80,90,.85)'); g.addColorStop(1,'rgba(40,48,56,.85)'); }
+    else if(b.gold){ g.addColorStop(0,'#ffcf5c'); g.addColorStop(1,'#ff7e3d'); }
+    else { g.addColorStop(0,'rgba(56,150,200,.95)'); g.addColorStop(1,'rgba(20,60,100,.95)'); }
+    _gradCache.set(gk,g);
+  }
   ctx.fillStyle = g;
   ctx.beginPath();
   const r = 14;
@@ -806,9 +981,7 @@ const titleState = {
     ctx.font='900 52px '+FONT;
     ctx.lineWidth=10; ctx.strokeStyle='#0a2e12';
     ctx.strokeText('梅西世紀任意球', 0, 0);
-    const g = ctx.createLinearGradient(0,-30,0,20);
-    g.addColorStop(0,'#eafff5'); g.addColorStop(1,'#38e1ff');
-    ctx.fillStyle = g; ctx.fillText('梅西世紀任意球', 0, 0);
+    ctx.fillStyle = grad2(0,-30,0,20,'#eafff5','#38e1ff'); ctx.fillText('梅西世紀任意球', 0, 0);
     ctx.font='900 21px '+FONT; ctx.fillStyle='#ffcf5c';
     ctx.fillText('PRO 版　傳奇模式 × 跳躍人牆 × 金色目標', 0, 40);
     ctx.restore();
@@ -1060,6 +1233,7 @@ const playState = {
       this.streak++; if(this.streak > this.bestStreak) this.bestStreak = this.streak;
       for(const k of this.keepers) k.expr = 'shock';
       this.bystanderCheerT = 1.3;
+      flashBurst(12); screenFlashT = 0.16;
     } else {
       this.result = '進球！GOAL！'; this.resultColor = '#38e1ff';
       this.goals++;
@@ -1072,6 +1246,7 @@ const playState = {
       this.streak++; if(this.streak > this.bestStreak) this.bestStreak = this.streak;
       for(const k of this.keepers) k.expr = 'shock';
       this.bystanderCheerT = 1.3;
+      flashBurst(8); screenFlashT = 0.11;
     }
     /* v5 新增：連續進球 combo 回饋——愈連愈熱烈的文字/顏色/音效疊層 */
     if(this.streak >= 2){
@@ -1159,11 +1334,14 @@ const playState = {
     if(this.phase === 'aim' || this.phase === 'kick'){
       drawBall(BALL_START.x, BALL_START.y-4, 1, this.ball.spin);
     } else {
+      /* v6：球軌跡改加法光暈疊印（烘焙 glow sprite，微 bloom 感） */
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
       for(const tr of this.trail){
-        ctx.globalAlpha = clamp(tr.t/0.3,0,1)*0.4;
-        ctx.fillStyle = '#fff';
-        ctx.beginPath(); ctx.arc(tr.x, tr.y, 5, 0, TAU); ctx.fill();
+        ctx.globalAlpha = clamp(tr.t/0.3,0,1)*0.75;
+        ctx.drawImage(glowBallTrail, tr.x-13, tr.y-13);
       }
+      ctx.restore();
       ctx.globalAlpha = 1;
       /* 地面影子 */
       ctx.fillStyle = 'rgba(0,0,0,.25)';
@@ -1308,9 +1486,18 @@ function frame(now){
   last = now;
   while(acc >= STEP){
     state.update(STEP);
+    updateAtmo(STEP);
     acc -= STEP;
   }
   state.draw();
+  /* v6：螢幕後製——暗角 vignette＋進球瞬間短促白閃 */
+  ctx.drawImage(vignetteC, 0, 0, GAME_W, GAME_H);
+  if(screenFlashT > 0){
+    ctx.globalAlpha = clamp(screenFlashT/0.16, 0, 1)*0.4;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.globalAlpha = 1;
+  }
 }
 setState(titleState);
 requestAnimationFrame(frame);
@@ -1341,6 +1528,7 @@ window.__test = {
   tick(s){ const n = Math.round((s||1)*60); for(let i=0;i<n;i++) state.update(STEP); }
 };
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

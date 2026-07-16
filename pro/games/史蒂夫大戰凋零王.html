@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：烘焙陽光光束+暗角vignette+狂暴紫霧、環境粒子(花粉/狂暴灰燼)、發光體bloom(凋零眼/頭骨彈/金蘋果)、衝擊波圓環特效、低血愛心脈動；程序化殘響ConvolverNode、風聲鳥鳴/狂暴低鳴氛圍層+ducking -->
+<!-- v4：困難模式(追蹤頭骨)、完美反彈、連擊系統、金蘋果、頭骨雨 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -96,7 +97,8 @@ function box3d(x, y, w, h, d, col, noAO) {
 }
 
 // ---------- 音效 ----------
-let AC = null, master = null, muted = false;
+let AC = null, master = null, muted = false, revSend = null, ambGain = null, ambOn = '';
+const ambNodes = [];
 function audio() {
   if (!AC) {
     try {
@@ -107,10 +109,54 @@ function audio() {
       comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
       comp.attack.value = 0.003; comp.release.value = 0.2;
       master.connect(comp); comp.connect(AC.destination);
+      // v6：程序化殘響（generated impulse，小空間，所有音效帶空間感）
+      const conv = AC.createConvolver();
+      const n = Math.floor(AC.sampleRate * 1.2), buf = AC.createBuffer(2, n, AC.sampleRate);
+      for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch);
+        for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3); }
+      conv.buffer = buf;
+      revSend = AC.createGain(); revSend.gain.value = 0.22;
+      revSend.connect(conv); conv.connect(master);
+      // v6：氛圍母線（風聲鳥鳴/狂暴低鳴，主音效時 ducking）
+      ambGain = AC.createGain(); ambGain.gain.value = 1; ambGain.connect(master);
+      setAmbience(wither.phase >= 2 ? 'rage' : 'calm');
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function setAmbience(mode) {
+  if (!AC || !ambGain || ambOn === mode) return;
+  for (const nd of ambNodes) { try { nd.stop(); } catch (e) {} try { nd.disconnect(); } catch (e) {} }
+  ambNodes.length = 0; ambOn = mode;
+  if (mode === 'calm') {              // 和風：帶通噪聲＋慢速濾波掃頻
+    const n = AC.sampleRate * 2, buf = AC.createBuffer(1, n, AC.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+    const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+    const filt = AC.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 480; filt.Q.value = 0.6;
+    const g = AC.createGain(); g.gain.value = 0.035;
+    const lfo = AC.createOscillator(), lg = AC.createGain();
+    lfo.frequency.value = 0.11; lg.gain.value = 220;
+    lfo.connect(lg); lg.connect(filt.frequency);
+    src.connect(filt); filt.connect(g); g.connect(ambGain);
+    src.start(); lfo.start(); ambNodes.push(src, lfo, g);
+  } else {                            // 狂暴：雙振盪器低鳴＋音量緩慢起伏
+    const o1 = AC.createOscillator(), o2 = AC.createOscillator();
+    o1.type = 'sawtooth'; o1.frequency.value = 46; o2.type = 'sawtooth'; o2.frequency.value = 69.5;
+    const filt = AC.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 190;
+    const g = AC.createGain(); g.gain.value = 0.05;
+    const lfo = AC.createOscillator(), lg = AC.createGain();
+    lfo.frequency.value = 0.5; lg.gain.value = 0.02;
+    lfo.connect(lg); lg.connect(g.gain);
+    o1.connect(filt); o2.connect(filt); filt.connect(g); g.connect(ambGain);
+    o1.start(); o2.start(); lfo.start(); ambNodes.push(o1, o2, lfo, g);
+  }
+}
+function duckAmb() {
+  if (!AC || !ambGain) return;
+  const t = AC.currentTime, g = ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, 1), t);
+  g.linearRampToValueAtTime(0.12, t + 0.05); g.linearRampToValueAtTime(1, t + 1.1);
 }
 function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 0.85; }
 function beep(freq, dur, type, vol, slide) {
@@ -123,7 +169,7 @@ function beep(freq, dur, type, vol, slide) {
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(master);
+  o.connect(g); g.connect(master); if (revSend) g.connect(revSend);
   o.start(); o.stop(ac.currentTime + dur);
 }
 function noise(dur, vol) {
@@ -136,7 +182,7 @@ function noise(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.1, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(master);
+  src.connect(g); g.connect(master); if (revSend) g.connect(revSend);
   src.start();
 }
 const sfx = {
@@ -146,16 +192,16 @@ const sfx = {
   swing() { noise(0.09, 0.08); beep(340, 0.08, 'triangle', 0.06, -140); },
   hit(crit) { beep(crit ? 160 : 220, 0.1, 'square', 0.14, -80); noise(0.06, 0.1); },
   skull() { beep(170, 0.2, 'sawtooth', 0.08, -60); },
-  boom() { noise(0.28, 0.16); beep(90, 0.3, 'sawtooth', 0.12, -50); },
+  boom() { duckAmb(); noise(0.28, 0.16); beep(90, 0.3, 'sawtooth', 0.12, -50); },
   block() { beep(880, 0.07, 'triangle', 0.13, -100); },
   parry() { beep(660, 0.07, 'square', 0.12, 500); setTimeout(() => beep(1320, 0.12, 'square', 0.11, 300), 60); },
   eat() { beep(300, 0.08, 'triangle', 0.12, 140); setTimeout(() => beep(520, 0.1, 'triangle', 0.1, 200), 80); },
   combo(n) { beep(440 + Math.min(n, 12) * 40, 0.06, 'square', 0.08, 120); },
-  hurt() { beep(240, 0.24, 'sawtooth', 0.14, -140); },
-  charge() { beep(110, 0.5, 'sawtooth', 0.1, 160); },
-  phase() { [220, 180, 260, 200].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'sawtooth', 0.11), i * 120)); },
-  win() { [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.11), i * 100)); },
-  lose() { [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 140)); }
+  hurt() { duckAmb(); beep(240, 0.24, 'sawtooth', 0.14, -140); },
+  charge() { duckAmb(); beep(110, 0.5, 'sawtooth', 0.1, 160); },
+  phase() { duckAmb(); [220, 180, 260, 200].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'sawtooth', 0.11), i * 120)); },
+  win() { duckAmb(); [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.16, 'square', 0.11), i * 100)); },
+  lose() { duckAmb(); [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 140)); }
 };
 
 // ---------- FX ----------
@@ -203,6 +249,84 @@ function drawFloaters() {
   }
   ctx.globalAlpha = 1;
 }
+// v6：衝擊波圓環（頭骨落地/階段轉換/完美反彈）
+const rings = [];
+function addRing(x, y, color, maxR, flat) { rings.push({ x, y, color, maxR, t: 0, dur: 0.45, flat: !!flat }); }
+function updateRings(dt) {
+  for (let i = rings.length - 1; i >= 0; i--) { rings[i].t += dt; if (rings[i].t >= rings[i].dur) rings.splice(i, 1); }
+}
+function drawRings() {
+  for (const r of rings) {
+    const p = r.t / r.dur, e = 1 - Math.pow(1 - p, 3);
+    ctx.globalAlpha = (1 - p) * 0.8;
+    ctx.strokeStyle = r.color; ctx.lineWidth = 3 + (1 - p) * 3;
+    ctx.beginPath();
+    ctx.ellipse(r.x, r.y, 8 + (r.maxR - 8) * e, (8 + (r.maxR - 8) * e) * (r.flat ? 0.32 : 1), 0, 0, 6.29);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+// v6：烘焙發光點精靈（bloom 疊加用，主迴圈零漸層建立）
+function makeSpot(r, g2, b) {
+  const cv = document.createElement('canvas'); cv.width = cv.height = 48;
+  const c = cv.getContext('2d');
+  const gr = c.createRadialGradient(24, 24, 0, 24, 24, 24);
+  gr.addColorStop(0, 'rgba(' + r + ',' + g2 + ',' + b + ',.9)');
+  gr.addColorStop(0.5, 'rgba(' + r + ',' + g2 + ',' + b + ',.32)');
+  gr.addColorStop(1, 'rgba(' + r + ',' + g2 + ',' + b + ',0)');
+  c.fillStyle = gr; c.fillRect(0, 0, 48, 48);
+  return cv;
+}
+const spotGreen = makeSpot(102, 255, 102), spotPurple = makeSpot(187, 102, 255),
+      spotGold = makeSpot(255, 205, 117), spotOrange = makeSpot(255, 126, 61);
+// v6：環境粒子（平時飄花粉、狂暴期升灰燼）
+const ambP = [];
+for (let i = 0; i < 24; i++) ambP.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H - 90), z: rnd(0.4, 1), ph: rnd(0, 9) });
+let chirpT = 3;
+function updateAmbP(dt) {
+  const rage = wither.phase >= 2 && !wither.dead;
+  for (const a of ambP) {
+    a.ph += dt;
+    if (rage) { a.y -= (16 + 26 * a.z) * dt; a.x += Math.sin(a.ph * 2.5) * 12 * dt; if (a.y < -8) { a.y = GAME_H - 60; a.x = rnd(0, GAME_W); } }
+    else { a.x -= (8 + 16 * a.z) * dt; a.y += Math.sin(a.ph * 1.3) * 9 * dt; if (a.x < -8) { a.x = GAME_W + 8; a.y = rnd(20, GAME_H - 120); } }
+  }
+  chirpT -= dt;                       // 平時偶爾遠處鳥鳴（狂暴期不叫）
+  if (chirpT <= 0) {
+    chirpT = rnd(4, 9);
+    if (AC && !muted && !rage && !steve.dead) {
+      const f = rnd(1900, 2600);
+      beep(f, 0.07, 'sine', 0.028, rnd(200, 500));
+      setTimeout(() => beep(f * 1.12, 0.09, 'sine', 0.022, -300), 110);
+    }
+  }
+}
+function drawAmbP() {
+  const rage = wither.phase >= 2 && !wither.dead;
+  ctx.globalCompositeOperation = rage ? 'lighter' : 'source-over';
+  for (const a of ambP) {
+    const k = (rage ? 15 : 11) * a.z;
+    ctx.globalAlpha = rage ? (0.2 + 0.25 * a.z) * (0.7 + 0.3 * Math.sin(a.ph * 5)) : 0.16 + 0.24 * a.z;
+    ctx.drawImage(rage ? spotPurple : spotGold, a.x - k / 2, a.y - k / 2, k, k);
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+}
+// v6：烘焙暗角與狂暴紫霧
+const vigCv = document.createElement('canvas');
+vigCv.width = GAME_W; vigCv.height = GAME_H;
+(function () {
+  const c = vigCv.getContext('2d');
+  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.5, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  g.addColorStop(0, 'rgba(10,12,30,0)'); g.addColorStop(1, 'rgba(10,12,30,.4)');
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
+})();
+const rageCv = document.createElement('canvas');
+rageCv.width = GAME_W; rageCv.height = GAME_H;
+(function () {
+  const c = rageCv.getContext('2d');
+  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.35, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  g.addColorStop(0, 'rgba(120,40,180,0)'); g.addColorStop(1, 'rgba(120,40,180,.34)');
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
+})();
 
 // ---------- 背景：方塊世界（視差雲、方塊丘陵、草地）----------
 const GROUND_Y = 470;
@@ -215,6 +339,8 @@ function updateBG(dt) {
     c.x -= c.v * dt;
     if (c.x < -120) { c.x = GAME_W + 120; c.y = rnd(30, 150); }
   }
+  updateAmbP(dt);
+  updateRings(dt);
 }
 // 靜態背景預繪（天空+太陽 / 地面）：只算一次，避免每幀重建漸層
 const skyCv = document.createElement('canvas');
@@ -233,6 +359,20 @@ skyCv.width = GAME_W; skyCv.height = GROUND_Y;
   c.fillRect(96, 56, 48, 48);
   c.strokeStyle = 'rgba(220,190,90,0.8)'; c.lineWidth = 3;
   c.strokeRect(96, 56, 48, 48);
+  // v6：烘焙陽光斜射光束＋地平線霞光
+  for (const [ang, len, wdt, al] of [[0.5, 560, 46, 0.07], [0.66, 500, 30, 0.055], [0.38, 460, 24, 0.05]]) {
+    c.save();
+    c.translate(120, 80); c.rotate(ang);
+    const bg2 = c.createLinearGradient(0, 0, len, 0);
+    bg2.addColorStop(0, 'rgba(255,250,210,' + al + ')'); bg2.addColorStop(1, 'rgba(255,250,210,0)');
+    c.fillStyle = bg2;
+    c.beginPath(); c.moveTo(30, -wdt * 0.3); c.lineTo(len, -wdt); c.lineTo(len, wdt); c.lineTo(30, wdt * 0.3);
+    c.closePath(); c.fill();
+    c.restore();
+  }
+  const hz = c.createLinearGradient(0, GROUND_Y - 130, 0, GROUND_Y);
+  hz.addColorStop(0, 'rgba(255,255,240,0)'); hz.addColorStop(1, 'rgba(255,246,214,.35)');
+  c.fillStyle = hz; c.fillRect(0, GROUND_Y - 130, GAME_W, 130);
 })();
 const groundCv = document.createElement('canvas');
 groundCv.width = GAME_W; groundCv.height = GAME_H - GROUND_Y;
@@ -296,6 +436,7 @@ function drawBG() {
     ctx.fillRect(gx + 5 + sway2, GROUND_Y - 12, 3, 12);
     ctx.fillRect(gx + 10 + sway2, GROUND_Y - 6, 3, 6);
   }
+  drawAmbP();  // v6：環境粒子（花粉/灰燼）
 }
 
 // 劍刃漸層：建一次重複用（座標在劍局部空間，恆定）
@@ -496,6 +637,14 @@ function drawWither(wi) {
   drawWitherHead(x - 52, y - 26 + Math.sin(wi.bob * 1.4 + 1) * 5, 1, false, rage, wi.flash, bgTime);
   drawWitherHead(x + 52, y - 26 + Math.sin(wi.bob * 1.4 + 2) * 5, 1, false, rage, wi.flash, bgTime + 2);
   drawWitherHead(x, y - 34 + Math.sin(wi.bob * 1.2) * 4, 1, true, rage, wi.flash, bgTime + 1);
+  // v6：眼部 bloom 光暈（烘焙精靈 additive）
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.5 + Math.sin(bgTime * 4) * 0.15;
+  const eg = rage ? spotPurple : spotGreen;
+  ctx.drawImage(eg, x - 52 - 21, y - 30 - 21, 42, 42);
+  ctx.drawImage(eg, x + 52 - 21, y - 30 - 21, 42, 42);
+  ctx.drawImage(eg, x - 26, y - 40 - 26, 52, 52);
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   // 受擊白閃
   if (wi.flash > 0) {
     ctx.globalAlpha = clamp(wi.flash * 4, 0, 0.7);
@@ -558,6 +707,7 @@ function updateSkulls(dt) {
         freeze = 0.09; shake = Math.max(shake, 5);
         sfx.parry();
         burst(k.x, k.y, PAL.gold, 16, 260);
+        addRing(k.x, k.y, PAL.gold, 64);
         addFloat(steve.x, steve.y - 104, '完美反彈！', PAL.gold, true);
         continue;
       }
@@ -569,6 +719,7 @@ function updateSkulls(dt) {
     if (k.y > GROUND_Y - 4 || k.x < -30 || k.x > GAME_W + 30 || k.y < -60) {
       burst(k.x, Math.min(k.y, GROUND_Y), '#555566', 10, 180, 60);
       burst(k.x, Math.min(k.y, GROUND_Y), '#aa8855', 6, 120, 60);
+      if (k.y > GROUND_Y - 4) addRing(k.x, GROUND_Y + 4, '#bbaacb', 58, true);
       shake = Math.max(shake, 3);
       sfx.boom();
       skulls.splice(i, 1);
@@ -662,9 +813,11 @@ function damageWither(dmg, big, hx, hy, label) {
   if (wither.hp <= wither.hpMax * 0.5 && wither.phase === 1) {
     wither.phase = 2;
     sfx.phase();
+    setAmbience('rage');
     shake = Math.max(shake, 10);
     addFloat(wither.x, by - 130, '凋零王狂暴化！', PAL.eyeRage, true);
     burst(wither.x, by, PAL.eyeRage, 30, 320);
+    addRing(wither.x, by, PAL.eyeRage, 150);
     spawnApple(rnd(150, 450));
   }
   if (wither.hp <= wither.hpMax * 0.25 && wither.phase === 2) {
@@ -674,11 +827,14 @@ function damageWither(dmg, big, hx, hy, label) {
     shake = Math.max(shake, 12);
     addFloat(wither.x, by - 130, '最終狂暴！頭骨雨來襲！', PAL.eyeRage, true);
     burst(wither.x, by, PAL.eyeRage, 40, 360);
+    addRing(wither.x, by, PAL.eyeRage, 190);
     spawnApple(rnd(150, 450));
   }
   if (wither.hp <= 0) {
     wither.hp = 0; wither.dead = true; wither.deathT = 0;
     freeze = 0.18; shake = 14;
+    addRing(wither.x, wither.y, PAL.gold, 220);
+    setAmbience('calm');
     sfx.boom();
   }
 }
@@ -838,12 +994,17 @@ function muteButton() {
 
 // ---------- HUD ----------
 function drawHearts() {
+  const lowHp = steve.hp <= 6 && !steve.dead;   // v6：低血量愛心脈動警示
   for (let i = 0; i < 10; i++) {
     const hx = 20 + i * 26, hy = 18;
     const full = steve.hp >= (i + 1) * 2, half = !full && steve.hp >= i * 2 + 1;
     ctx.save();
     ctx.translate(hx, hy);
     if (steve.hurtT > 0.6) ctx.translate(rnd(-1.5, 1.5), rnd(-1.5, 1.5));
+    if (lowHp && (full || half)) {
+      const pu = 1 + Math.sin(bgTime * 9 + i * 0.4) * 0.12;
+      ctx.translate(11, 10); ctx.scale(pu, pu); ctx.translate(-11, -10);
+    }
     // 像素愛心
     const col = full || half ? PAL.heart : '#3a3a3a';
     ctx.fillStyle = '#1a1a1a';
@@ -940,7 +1101,8 @@ function resetFight() {
   wither.tired = false;
   wither.dead = false; wither.deathT = 0; wither.sx = 1; wither.sy = 1; wither.rainT = 3;
   skulls.length = 0; parts.length = 0; floaters.length = 0;
-  items.length = 0; warnings.length = 0;
+  items.length = 0; warnings.length = 0; rings.length = 0;
+  setAmbience('calm');
   elapsed = 0; dealt = 0; bossBarDisp = 1;
   combo = 0; comboT = 0; maxCombo = 0; comboPop = 0; parries = 0; missHint = 0;
   shake = 0; freeze = 0; prevTouch = {};
@@ -960,6 +1122,7 @@ const titleState = {
     drawWither(wither);
     steve.walkT = bgTime;
     drawSteve(steve);
+    ctx.drawImage(vigCv, 0, 0);
     const ts = easeOutBack(clamp(this.t / 0.7, 0, 1));
     ctx.save();
     ctx.translate(GAME_W / 2, 130);
@@ -1254,13 +1417,28 @@ const playState = {
     drawSkulls();
     if (!steve.dead || Math.floor(bgTime * 10) % 2) drawSteve(steve);
     drawParts();
+    drawRings();
+    // v6：發光體 bloom（頭骨彈/金蘋果，烘焙精靈 additive）
+    ctx.globalCompositeOperation = 'lighter';
+    for (const k of skulls) {
+      const g = k.friendly ? spotGold : k.homing > 0 ? spotOrange : k.fast ? spotPurple : spotGreen;
+      ctx.globalAlpha = 0.55;
+      ctx.drawImage(g, k.x - 22, k.y - 22, 44, 44);
+    }
+    for (const it of items) {
+      ctx.globalAlpha = 0.45 + Math.sin(bgTime * 5) * 0.18;
+      ctx.drawImage(spotGold, it.x - 30, it.y - 30, 60, 60);
+    }
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     drawFloaters();
     ctx.restore();
-    // 最終狂暴的紫色氛圍
-    if (wither.phase === 3 && !wither.dead) {
-      ctx.fillStyle = 'rgba(120,40,180,0.08)';
-      ctx.fillRect(0, 0, GAME_W, GAME_H);
+    // v6：狂暴紫霧（烘焙半徑漸層，隨階段脈動）＋常駐暗角
+    if (wither.phase >= 2 && !wither.dead) {
+      ctx.globalAlpha = (wither.phase === 3 ? 0.8 : 0.45) + Math.sin(bgTime * 2.4) * 0.12;
+      ctx.drawImage(rageCv, 0, 0);
+      ctx.globalAlpha = 1;
     }
+    ctx.drawImage(vigCv, 0, 0);
     drawHearts();
     drawBossBar(1 / 60);
     drawCombo();
@@ -1301,6 +1479,7 @@ const overState = {
     if (!wither.dead) drawWither(wither);
     if (wither.dead) drawSteve(steve);
     drawParts();
+    ctx.drawImage(vigCv, 0, 0);
     ctx.fillStyle = 'rgba(10,12,24,' + (0.55 * clamp(this.t / 0.3, 0, 1)) + ')';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
     const ps = easeOutBack(clamp(this.t / 0.45, 0, 1));
@@ -1372,7 +1551,7 @@ function frame(now) {
   state.draw();
 }
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
-window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : 'title', x: steve.x, atkT: steve.atkT, bossHp: wither.hp });
+window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : 'title', x: steve.x, atkT: steve.atkT, bossHp: wither.hp, hp: steve.hp, ambN: ambNodes.length, ambOn, phase: wither.phase });
 setState(titleState);
 requestAnimationFrame(frame);
 </script>

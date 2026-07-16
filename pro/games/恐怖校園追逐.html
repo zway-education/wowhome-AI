@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <!-- 專業AI升級 v6 -->
-<!-- 本次調整：畫質＋地圖大改版——(1)牆面升級為離屏烘焙的程序化紋理圖集（磚牆/瓷磚/置物櫃/佈告欄/夜窗/黑板/書櫃），raycasting 逐列透視取樣＋細膩距離霧化，對比溫和不閃爍；(2)地圖改為「像真的學校」的走廊環狀布局：教室（課桌椅）、保健室（病床）、圖書室（書架）、置物櫃儲藏室，走廊成環保證 2~3 條逃脫路線、絕無死路挫折；(3)新增鑰匙機制：先到遠端地標房找到鑰匙才能開逃生門，引導探索節奏；(4)小地圖改為已探索區域漸顯（迷霧），標記玩家/逃生門/鑰匙，阿嬤不顯示保持緊張感；(5)精靈全面精緻化（阿嬤髮髻/圍裙/落地影、鎖定逃生門、發光鑰匙、課桌/病床/書架），受距離霧影響且貼地正確；(6)手電筒光暈離屏烘焙、緩慢呼吸不閃爍；(7)回應實測回饋：轉向靈敏度整體再降（鍵盤 2.1→1.5 rad/s、拖曳 0.0022→0.0013/px），並新增「轉向靈敏度 低/中/高」三段設定（預設低、localStorage 記憶）。保留：dpr 全解析度、固定時間步進、臨界阻尼轉向、事件式短促 shake、距離紅暈、阿嬤蓄力❗衝刺/滑倒/東張西望 -->
+<!-- 升級摘要：音場大升級——走廊程序化殘響（ConvolverNode）、阿嬤腳步「聽聲辨位」立體聲像（距離定音量、方位定左右耳）、黑暗低鳴＋風聲氛圍層與隨機木板嘎吱（隨恐懼值起伏）；畫質——手電筒光束浮塵（低速防頭暈）、底片顆粒質感、被抓特寫改為皺紋／發光雙瞳／血盆大嘴的恐怖阿嬤鬼臉＋雙爪撲抓、HUD 讀性背板。完整保留：滑鼠鎖定視角、轉向靈敏度三段(預設低)、臨界阻尼低通轉向、事件式短促 shake、紋理圖集 raycasting、探索迷霧小地圖、鑰匙機制 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
 <head>
@@ -33,6 +33,10 @@
     color: #6bcf5a;
     line-height: 1.5;
     max-width: 62vw;
+    background: rgba(6,10,4,0.55);
+    border: 1px solid rgba(124,255,107,0.22);
+    border-radius: 8px;
+    padding: 7px 12px;
   }
   #hud b { color: #dfffbf; }
   #crosshair {
@@ -110,7 +114,14 @@
     text-shadow: 0 0 16px #ff0000, 0 0 4px #000;
     margin: 0 0 16px;
     letter-spacing: 2px;
+    animation: titlePulse 3s ease-in-out infinite; /* v6 緩慢呼吸紅光（低頻不閃爍） */
   }
+  @keyframes titlePulse {
+    0%, 100% { text-shadow: 0 0 14px #d00000, 0 0 4px #000; }
+    50% { text-shadow: 0 0 28px #ff2020, 0 0 6px #000; }
+  }
+  .bigBtn, .levelCard { transition: transform .15s ease, box-shadow .15s ease; }
+  .bigBtn:hover, .levelCard:not(.locked):hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,0,0,.5); }
   #titleScreen .howto {
     color: #7fdb6b;
     font-size: 14px;
@@ -801,10 +812,95 @@ function ensureAudio() {
       const comp = audioCtx.createDynamicsCompressor();
       masterGain.connect(comp).connect(audioCtx.destination);
       masterGain._comp = comp;
+      // v6 走廊殘響：generated impulse 的 ConvolverNode，濕聲並聯（空曠校舍空間感）
+      const rev = audioCtx.createConvolver();
+      const rlen = Math.floor(audioCtx.sampleRate * 1.5);
+      const rbuf = audioCtx.createBuffer(2, rlen, audioCtx.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = rbuf.getChannelData(ch);
+        for (let i = 0; i < rlen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / rlen, 3.0);
+      }
+      rev.buffer = rbuf;
+      const revG = audioCtx.createGain(); revG.gain.value = 0.17;
+      masterGain.connect(rev); rev.connect(revG); revG.connect(comp);
+      initAmbientAudio();
     } catch (e) {}
   } else if (audioCtx.state === 'suspended') {
     audioCtx.resume();
   }
+}
+// ---------- v6 氛圍層：黑暗低鳴＋走廊風聲（loop 噪聲＋濾波），恐懼值愈高愈沉重 ----------
+let ambientA = null, creakT = 7, lastDreadA = 0, grannyStepT = 0;
+function initAmbientAudio() {
+  if (!audioCtx || ambientA) return;
+  try {
+    const len = audioCtx.sampleRate * 2;
+    const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const mk = (type, freq, q) => {
+      const src = audioCtx.createBufferSource(); src.buffer = buf; src.loop = true;
+      const f = audioCtx.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = audioCtx.createGain(); g.gain.value = 0;
+      src.connect(f); f.connect(g); g.connect(masterGain); src.start();
+      return { src, f, g };
+    };
+    ambientA = { drone: mk('lowpass', 190, 0.8), hiss: mk('bandpass', 2400, 0.5) };
+  } catch (e) { ambientA = null; }
+}
+function updateAmbientAudio(dt) {
+  if (!audioCtx || !ambientA) return;
+  const on = (gameState === 'play' && !muted && !dying) ? 1 : 0;
+  const t = audioCtx.currentTime;
+  const breathe = 1 + Math.sin(elapsed * 0.5) * 0.4;
+  ambientA.drone.g.gain.setTargetAtTime(on * (0.02 + lastDreadA * 0.04), t, 0.6);
+  ambientA.hiss.g.gain.setTargetAtTime(on * 0.006 * breathe, t, 0.8);
+  if (on) {
+    creakT -= dt;
+    if (creakT <= 0) { creakT = 6 + Math.random() * 9; playCreak(); }
+  }
+}
+function playCreak() { // 隨機方位的木板嘎吱（StereoPanner 聲像）
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  const f = 140 + Math.random() * 160;
+  osc.type = 'sawtooth';
+  osc.frequency.setValueAtTime(f, t);
+  osc.frequency.linearRampToValueAtTime(f * (0.55 + Math.random() * 0.2), t + 0.5);
+  const filt = audioCtx.createBiquadFilter();
+  filt.type = 'lowpass'; filt.frequency.value = 520;
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(0.035, t + 0.12);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.6);
+  let out = gain;
+  if (audioCtx.createStereoPanner) {
+    const p = audioCtx.createStereoPanner(); p.pan.value = Math.random() * 1.6 - 0.8;
+    gain.connect(p); out = p;
+  }
+  out.connect(masterGain);
+  osc.connect(filt); filt.connect(gain);
+  osc.start(t); osc.stop(t + 0.65);
+}
+function playGrannyStep(vol, pan) { // v6 阿嬤腳步：低沉拖步聲，左右耳定位
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = 'triangle';
+  osc.frequency.setValueAtTime(pitchVar(64), t);
+  osc.frequency.exponentialRampToValueAtTime(38, t + 0.11);
+  gain.gain.setValueAtTime(vol, t);
+  gain.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+  let out = gain;
+  if (audioCtx.createStereoPanner) {
+    const p = audioCtx.createStereoPanner(); p.pan.value = clamp(pan, -1, 1);
+    gain.connect(p); out = p;
+  }
+  out.connect(masterGain);
+  osc.connect(gain);
+  osc.start(t); osc.stop(t + 0.15);
 }
 function pitchVar(base) { return base * (0.94 + Math.random() * 0.12); }
 
@@ -973,6 +1069,16 @@ function updateDreadAudio(dt, dread, chaserDist, moving) {
   if (moving && !player.hiding) {
     footstepTimer -= dt;
     if (footstepTimer <= 0) { playFootstep(); footstepTimer = 0.32; }
+  }
+  // v6 阿嬤腳步「聽聲辨位」：距離決定音量、相對方位決定左右耳（衝刺時腳步變急）
+  const stunned = elapsed < (chaser.stunnedUntil || 0);
+  if (chaserDist < 7.5 && chaserDist > 0.01 && isFinite(chaserDist) && !stunned && elapsed >= SAFE_TIME) {
+    grannyStepT -= dt;
+    if (grannyStepT <= 0) {
+      grannyStepT = chaser.charge === 'dash' ? 0.24 : 0.5;
+      const rel = normalizeAngle(Math.atan2(chaser.y - player.y, chaser.x - player.x) - player.angle);
+      playGrannyStep(clamp(1 - chaserDist / 7.5, 0, 1) * 0.16 + 0.02, Math.sin(rel) * 0.85);
+    }
   }
 }
 
@@ -1660,6 +1766,7 @@ function updatePlay(dt) {
   } else if (cdist > 2.5) wasInDanger = false;
 
   const dread = active ? clamp(1 - cdist / DREAD_RANGE, 0, 1) : 0;
+  lastDreadA = dread; // v6 氛圍層強度來源
   shakeMag *= Math.pow(0.0001, dt); // 短促衰減（約 0.25 秒內消失）
   if (shakeMag < 0.2) shakeMag = 0;
   updateDreadAudio(dt, dread, player.hiding ? Infinity : cdist, moving);
@@ -1788,36 +1895,164 @@ function drawScene() {
     ctx.globalAlpha = 1;
   }
 
+  // v6 光束浮塵：無狀態程序動畫，靠近光心較亮（防頭暈：低速、低對比）
+  const lcx = w / 2, lcy = h * 0.58, lr = Math.min(w, h) * 0.62;
+  for (let i = 0; i < 24; i++) {
+    const dspd = 1 + (i % 5) * 0.35;
+    const mx = ((i * 0.1372 + elapsed * 0.0075 * dspd) % 1.08) - 0.04;
+    const my = ((i * 0.3713 + elapsed * 0.011 * dspd) % 1.08) - 0.04;
+    const x = mx * w + Math.sin(elapsed * 0.6 + i * 2.1) * w * 0.012;
+    const y = my * h + Math.cos(elapsed * 0.5 + i * 1.3) * h * 0.008;
+    const dd = Math.hypot(x - lcx, y - lcy) / lr;
+    const a = Math.max(0, 0.15 * (1 - dd)) + 0.02;
+    ctx.fillStyle = `rgba(255,240,200,${a.toFixed(3)})`;
+    const sz = Math.max(1, (1 + (i % 3)) * (h / 900));
+    ctx.fillRect(x, y, sz, sz);
+  }
+
   drawParticles();
   ctx.restore();
+
+  // v6 底片顆粒：離屏烘焙噪點磚，低頻換偏移、極低透明度（恐怖片質感、不影響亮度）
+  if (!grainPat) grainPat = ctx.createPattern(grainTile, 'repeat');
+  if (elapsed > grainNext || elapsed < grainNext - 1) {
+    grainNext = elapsed + 0.13;
+    grainOx = (Math.random() * 192) | 0; grainOy = (Math.random() * 192) | 0;
+  }
+  ctx.save();
+  ctx.translate(-grainOx, -grainOy);
+  ctx.fillStyle = grainPat;
+  ctx.fillRect(0, 0, w + 192, h + 192);
+  ctx.restore();
 }
+// v6 底片顆粒磚（一次烘焙）
+const grainTile = (() => {
+  const c = document.createElement('canvas'); c.width = 192; c.height = 192;
+  const g = c.getContext('2d');
+  const img = g.createImageData(192, 192);
+  for (let i = 0; i < img.data.length; i += 4) {
+    const v = (Math.random() * 255) | 0;
+    img.data[i] = img.data[i + 1] = img.data[i + 2] = v;
+    img.data[i + 3] = 13;
+  }
+  g.putImageData(img, 0, 0);
+  return c;
+})();
+let grainPat = null, grainOx = 0, grainOy = 0, grainNext = 0;
 
 function drawDeathCloseup(t, w, h, horizon) {
-  const size = h * (1.3 + t * 0.6);
-  const lunge = Math.min(1, t / 0.35);
+  // v6 恐怖阿嬤特寫：皺紋滿面＋發光雙瞳＋血盆大嘴，撲向鏡頭（單次事件動畫，非持續晃動）
+  const lunge = Math.min(1, t / 0.3);
+  const ease = 1 - Math.pow(1 - lunge, 3);
+  const size = h * (0.55 + ease * 0.55 + t * 0.15);
+  const cx = w / 2, cy = horizon + size * 0.02;
   ctx.save();
-  ctx.translate(w / 2, horizon + size * 0.1 - lunge * size * 0.15);
-  ctx.fillStyle = `rgba(20,4,4,1)`;
+  ctx.translate(cx, cy);
+  // 亂髮剪影
+  ctx.fillStyle = 'rgba(26,24,22,1)';
   ctx.beginPath();
-  ctx.moveTo(-size * 0.28, size * 0.05);
-  ctx.quadraticCurveTo(-size * 0.4, -size * 0.3, -size * 0.08, -size * 0.42);
-  ctx.quadraticCurveTo(size * 0.02, -size * 0.48, size * 0.14, -size * 0.4);
-  ctx.quadraticCurveTo(size * 0.42, -size * 0.32, size * 0.34, size * 0.05);
-  ctx.lineTo(size * 0.4, size * 0.55);
-  ctx.lineTo(-size * 0.4, size * 0.55);
-  ctx.closePath();
+  ctx.ellipse(0, -size * 0.06, size * 0.47, size * 0.54, 0, 0, Math.PI * 2);
   ctx.fill();
+  ctx.strokeStyle = 'rgba(150,145,135,0.45)';
+  ctx.lineWidth = Math.max(1, size * 0.006);
+  for (let i = 0; i < 9; i++) {
+    const a = -Math.PI / 2 + (i - 4) * 0.24;
+    ctx.beginPath();
+    ctx.moveTo(Math.cos(a) * size * 0.2, -size * 0.12 + Math.sin(a) * size * 0.28);
+    ctx.quadraticCurveTo(Math.cos(a) * size * 0.48, Math.sin(a) * size * 0.46,
+      Math.cos(a) * size * 0.48 + (i % 2 ? size * 0.05 : -size * 0.04), Math.sin(a) * size * 0.5 + size * 0.14);
+    ctx.stroke();
+  }
+  // 灰白髮髻
+  ctx.fillStyle = 'rgba(168,163,152,1)';
+  ctx.beginPath(); ctx.arc(0, -size * 0.52, size * 0.12, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(90,86,78,0.8)'; ctx.lineWidth = Math.max(1, size * 0.008);
+  ctx.beginPath(); ctx.arc(0, -size * 0.52, size * 0.07, 0, Math.PI * 2); ctx.stroke();
+  // 臉
+  ctx.fillStyle = 'rgba(170,152,124,1)';
   ctx.beginPath();
-  ctx.arc(-size * 0.03, -size * 0.5, size * 0.11, 0, Math.PI * 2);
-  ctx.fillStyle = `rgba(150,135,110,1)`;
+  ctx.moveTo(-size * 0.33, -size * 0.16);
+  ctx.quadraticCurveTo(-size * 0.35, -size * 0.5, 0, -size * 0.5);
+  ctx.quadraticCurveTo(size * 0.35, -size * 0.5, size * 0.33, -size * 0.16);
+  ctx.quadraticCurveTo(size * 0.31, size * 0.26, 0, size * 0.4);
+  ctx.quadraticCurveTo(-size * 0.31, size * 0.26, -size * 0.33, -size * 0.16);
   ctx.fill();
+  // 顴骨與眼窩陰影
+  ctx.fillStyle = 'rgba(84,64,46,0.4)';
+  ctx.beginPath(); ctx.ellipse(-size * 0.2, size * 0.02, size * 0.09, size * 0.05, 0.35, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(size * 0.2, size * 0.02, size * 0.09, size * 0.05, -0.35, 0, Math.PI * 2); ctx.fill();
+  // 皺紋（額頭三道、法令紋）
+  ctx.strokeStyle = 'rgba(76,58,40,0.6)';
+  ctx.lineWidth = Math.max(1, size * 0.008);
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.18, -size * (0.4 - i * 0.045));
+    ctx.quadraticCurveTo(0, -size * (0.44 - i * 0.045), size * 0.18, -size * (0.4 - i * 0.045));
+    ctx.stroke();
+  }
+  ctx.beginPath(); ctx.moveTo(-size * 0.1, size * 0.08); ctx.quadraticCurveTo(-size * 0.16, size * 0.16, -size * 0.12, size * 0.24); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.1, size * 0.08); ctx.quadraticCurveTo(size * 0.16, size * 0.16, size * 0.12, size * 0.24); ctx.stroke();
+  // 眼窩（深洞）
+  ctx.fillStyle = 'rgba(22,10,7,1)';
+  ctx.beginPath(); ctx.ellipse(-size * 0.14, -size * 0.16, size * 0.1, size * 0.075, 0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(size * 0.14, -size * 0.16, size * 0.1, size * 0.075, -0.1, 0, Math.PI * 2); ctx.fill();
+  // 下垂怒眉
+  ctx.strokeStyle = 'rgba(60,52,45,1)';
+  ctx.lineWidth = Math.max(2, size * 0.02);
+  ctx.beginPath(); ctx.moveTo(-size * 0.23, -size * 0.27); ctx.lineTo(-size * 0.05, -size * 0.22); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.23, -size * 0.27); ctx.lineTo(size * 0.05, -size * 0.22); ctx.stroke();
+  // 發光雙瞳（緩慢脈動）
   const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 16);
-  ctx.fillStyle = `rgba(255,${Math.floor(10 + eyeGlow * 20)},0,1)`;
+  ctx.fillStyle = `rgba(255,${Math.floor(20 + eyeGlow * 40)},0,1)`;
   ctx.beginPath();
-  ctx.arc(-size * 0.07, -size * 0.505, size * 0.02, 0, Math.PI * 2);
-  ctx.arc(size * 0.01, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.arc(-size * 0.14, -size * 0.155, size * 0.028, 0, Math.PI * 2);
+  ctx.arc(size * 0.14, -size * 0.155, size * 0.028, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = 'rgba(255,220,180,0.9)';
+  ctx.fillRect(-size * 0.148, -size * 0.168, size * 0.012, size * 0.012);
+  ctx.fillRect(size * 0.132, -size * 0.168, size * 0.012, size * 0.012);
+  // 鼻影
+  ctx.fillStyle = 'rgba(84,64,46,0.5)';
+  ctx.beginPath();
+  ctx.moveTo(0, -size * 0.12); ctx.lineTo(-size * 0.035, size * 0.02); ctx.lineTo(size * 0.035, size * 0.02);
+  ctx.closePath(); ctx.fill();
+  // 血盆大嘴（隨撲近張大）
+  const mouthOpen = size * (0.08 + ease * 0.15);
+  ctx.fillStyle = 'rgba(18,4,4,1)';
+  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.16, mouthOpen, 0, 0, Math.PI * 2); ctx.fill();
+  // 稀疏牙齒（裁切在嘴型內）
+  ctx.save();
+  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.16, mouthOpen, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = 'rgba(210,196,158,1)';
+  for (let i = -2; i <= 2; i++) {
+    if (i === 0) continue;
+    ctx.fillRect(i * size * 0.055 - size * 0.018, size * 0.18 - mouthOpen, size * 0.036, mouthOpen * 0.45);
+  }
+  for (let i = -1; i <= 1; i++)
+    ctx.fillRect(i * size * 0.07 - size * 0.016, size * 0.18 + mouthOpen * 0.6, size * 0.032, mouthOpen * 0.4);
   ctx.restore();
+  ctx.restore();
+  // 兩側撲來的爪手
+  for (const side of [-1, 1]) {
+    const hx = w * (0.5 + side * (0.46 - ease * 0.1));
+    const hy = h * (1.12 - ease * 0.34);
+    const hs = h * 0.26;
+    ctx.save();
+    ctx.translate(hx, hy);
+    ctx.rotate(side * -0.5);
+    ctx.fillStyle = 'rgba(140,124,98,1)';
+    ctx.beginPath(); ctx.ellipse(0, 0, hs * 0.3, hs * 0.42, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(140,124,98,1)';
+    ctx.lineWidth = hs * 0.14; ctx.lineCap = 'round';
+    for (let f = 0; f < 4; f++) {
+      const fa = -0.7 + f * 0.42;
+      ctx.beginPath();
+      ctx.moveTo(Math.sin(fa) * hs * 0.24, -hs * 0.3);
+      ctx.lineTo(Math.sin(fa) * hs * 0.52, -hs * 0.66);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
 
   const strikes = [0.25, 0.55];
   for (const st of strikes) {
@@ -2162,6 +2397,7 @@ function frame(now) {
   acc += dt;
   // 防頭暈：燈光改為緩慢柔和的呼吸，不再每幀隨機閃爍
   flicker = 0.93 + 0.07 * Math.sin(now * 0.0011);
+  updateAmbientAudio(dt); // v6 氛圍層音量追隨（任何狀態都會平滑歸零/恢復）
 
   if (gameState === 'play') {
     while (acc >= STEP) {

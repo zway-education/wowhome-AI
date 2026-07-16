@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6 -->
+<!-- 升級摘要（渲染核心不動，只加強 UI/音效/HUD）：音效——DynamicsCompressor母線＋程序化殘響（ConvolverNode）、晝夜氛圍層（日風＋鳥鳴／夜風＋蟋蟀＋血月低鳴）、夜間殭屍呻吟環境音、受擊/死亡自動ducking；UI/HUD——螢幕vignette後製層、低血量心跳脈動、晝夜/血月狀態膠囊配色、標題畫面漂浮雲層與金色漸層標題 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -88,10 +89,34 @@
     .slot{width:42px;height:42px}
     .slot .swatch{width:22px;height:22px}
   }
+  /* ===== v6 UI/HUD 質感升級 ===== */
+  #vignette{position:fixed;inset:0;z-index:5;pointer-events:none;
+    background:radial-gradient(ellipse at 50% 45%,rgba(0,0,0,0) 55%,rgba(4,8,18,.42) 100%)}
+  .panel{box-shadow:0 4px 14px rgba(0,0,0,.35)}
+  #healthRow.low{animation:lowhp 1.1s ease-in-out infinite}
+  @keyframes lowhp{0%,100%{transform:scale(1)}50%{transform:scale(1.1)}}
+  #dayPill{transition:background .8s,border-color .8s,color .8s}
+  #dayPill.night{border-color:rgba(130,160,255,.5);background:rgba(8,10,32,.7)}
+  #dayPill.blood{border-color:rgba(255,80,60,.7);background:rgba(42,6,4,.75);color:#ffb4a4}
+  #startScreen h1{background:linear-gradient(180deg,#ffffff,#ffd447 55%,#e0891a);
+    -webkit-background-clip:text;background-clip:text;color:transparent;text-shadow:none;
+    filter:drop-shadow(0 4px 0 #0a1428) drop-shadow(0 8px 18px rgba(0,0,0,.55))}
+  #startScreen{position:fixed;overflow:hidden}
+  #startScreen::before{content:'';position:absolute;inset:0;pointer-events:none;
+    background:
+      radial-gradient(46px 46px at 84% 14%,rgba(255,244,180,.9),rgba(255,244,180,0) 70%),
+      radial-gradient(70px 26px at 18% 16%,rgba(255,255,255,.30),rgba(255,255,255,0) 70%),
+      radial-gradient(95px 32px at 62% 10%,rgba(255,255,255,.24),rgba(255,255,255,0) 70%),
+      radial-gradient(75px 28px at 40% 24%,rgba(255,255,255,.18),rgba(255,255,255,0) 70%);
+    animation:cloudDrift 36s ease-in-out infinite alternate}
+  @keyframes cloudDrift{0%{transform:translateX(-4%)}100%{transform:translateX(4%)}}
+  .modeBtn:hover{transform:translateY(-2px)}
+  .slot:hover{border-color:#8b93b8}
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
+<div id="vignette"></div>
 <button id="muteBtn">🔊</button>
 <div id="scorePill" class="panel">分數 <b id="scoreVal">0</b><br>最佳 <b id="bestVal">0</b></div>
 <div id="dayPill" class="panel"><div id="dnIcon" style="font-size:20px">☀️</div><div id="dnLabel">第 1 天・白天</div></div>
@@ -177,10 +202,54 @@ let AC=null,muted=false,master=null,noiseBuf=null;
 function audio(){
   if(!AC){try{
     AC=new (window.AudioContext||window.webkitAudioContext)();
-    /* v3：主控音量匯流排——挖掘連發＋殭屍混戰也不削波 */
-    master=AC.createGain();master.gain.value=.55;master.connect(AC.destination);
+    /* v6：主控匯流排升級——DynamicsCompressor 防削波＋程序化殘響（ConvolverNode） */
+    const comp=AC.createDynamicsCompressor();
+    comp.threshold.value=-16;comp.knee.value=22;comp.ratio.value=7;
+    master=AC.createGain();master.gain.value=.55;
+    master.connect(comp);comp.connect(AC.destination);
+    const rev=AC.createConvolver();
+    const rl=Math.floor(AC.sampleRate*.9),rb=AC.createBuffer(2,rl,AC.sampleRate);
+    for(let ch=0;ch<2;ch++){const d=rb.getChannelData(ch);for(let i=0;i<rl;i++)d[i]=(Math.random()*2-1)*Math.pow(1-i/rl,2.9);}
+    rev.buffer=rb;
+    const rg=AC.createGain();rg.gain.value=.13;
+    master.connect(rev);rev.connect(rg);rg.connect(comp);
+    initAmbient();
   }catch(e){}}
   return AC;
+}
+/* v6 晝夜氛圍層：日風＋鳥鳴／夜風＋蟋蟀＋血月低鳴＋殭屍呻吟（loop 節點音量平滑追隨） */
+let amb=null,ambDuck=1,chirpT=4,groanT=6;
+function initAmbient(){
+  if(!AC||amb)return;
+  try{
+    const len=AC.sampleRate*2,buf=AC.createBuffer(1,len,AC.sampleRate),d=buf.getChannelData(0);
+    for(let i=0;i<len;i++)d[i]=Math.random()*2-1;
+    const mk=(type,fr,q)=>{const s=AC.createBufferSource();s.buffer=buf;s.loop=true;
+      const f=AC.createBiquadFilter();f.type=type;f.frequency.value=fr;f.Q.value=q;
+      const g=AC.createGain();g.gain.value=0;s.connect(f);f.connect(g);g.connect(master);s.start();return {g};};
+    amb={wind:mk('bandpass',380,.5),drone:mk('lowpass',150,.8)};
+  }catch(e){amb=null;}
+}
+function updateAmbient(dt){
+  ambDuck=Math.min(1,ambDuck+dt*.5);
+  if(!AC||!amb)return;
+  const on=(muted||state!=='play')?0:ambDuck;
+  const t0=AC.currentTime,night=prevNight;
+  amb.wind.g.gain.setTargetAtTime(on*(night?.016:.010)*(1+Math.sin(performance.now()*.0005)*.35),t0,.5);
+  amb.drone.g.gain.setTargetAtTime(on*(night?(bloodMoon?.03:.013):0),t0,.8);
+  chirpT-=dt;
+  if(chirpT<=0){
+    chirpT=3.5+Math.random()*6;
+    if(on){
+      if(!night){const b=1900+Math.random()*500;beep(b,.09,'sine',.035,650);setTimeout(()=>beep(b*1.12,.08,'sine',.03,520),120);}
+      else for(let i=0;i<3;i++)setTimeout(()=>beep(4200+Math.random()*400,.03,'square',.016),i*70);
+    }
+  }
+  groanT-=dt;
+  if(groanT<=0){
+    groanT=4+Math.random()*7;
+    if(on&&night&&zombies.length)sfx.groan();
+  }
 }
 addEventListener('pointerdown',audio,{once:true});addEventListener('keydown',audio,{once:true});
 function beep(f,d,type,vol,slide){
@@ -210,14 +279,15 @@ const sfx={
   brk(){noiseS(.09,.13);beep(84+Math.random()*14,.09,'triangle',.1,-30);},
   place(){beep(310+Math.random()*40,.06,'square',.08,60);},
   pick(){beep(988,.06,'square',.09);setTimeout(()=>beep(1319,.1,'square',.09),70);},
-  hurt(){beep(190,.22,'sawtooth',.16,-120);noiseS(.08,.08);},
+  hurt(){beep(190,.22,'sawtooth',.16,-120);noiseS(.08,.08);ambDuck=.3;},
+  groan(){const f=95+Math.random()*40;beep(f,.5,'sawtooth',.045,-25);setTimeout(()=>beep(f*.85,.4,'sawtooth',.035,-15),240);},
   zhit(){beep(120,.08,'square',.12,-50);},
   zdie(){noiseS(.15,.14);beep(160,.25,'sawtooth',.12,-110);},
   eat(){beep(500,.07,'triangle',.1);setTimeout(()=>beep(380,.09,'triangle',.1),80);},
   horn(){beep(90,.3,'sawtooth',.1,50);},
   warn(){beep(660,.12,'square',.1);setTimeout(()=>beep(660,.12,'square',.1),160);},
   dawn(){[523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,.16,'triangle',.09),i*100));},
-  death(){beep(300,.7,'sawtooth',.16,-260);},
+  death(){beep(300,.7,'sawtooth',.16,-260);ambDuck=.15;},
   craft(){beep(440,.07,'square',.08);setTimeout(()=>beep(587,.1,'square',.08),80);},
   win(){[523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.16,'square',.09),i*110));}
 };
@@ -488,6 +558,7 @@ function renderBars(){
   lastHp=player.hp;lastHu=player.hunger;
   const hr=document.getElementById('healthRow');hr.innerHTML='';
   for(let i=0;i<10;i++){const sp=document.createElement('span');sp.textContent=player.hp>=(i+1)*2?'❤️':(player.hp>i*2?'💔':'🖤');hr.appendChild(sp);}
+  hr.classList.toggle('low',player.hp<=6&&player.hp>0);   /* v6：低血量心跳脈動 */
   const fr=document.getElementById('hungerRow');fr.innerHTML='';
   if(!creative)for(let i=0;i<10;i++){const sp=document.createElement('span');sp.textContent=player.hunger>=(i+1)*2?'🍖':'🦴';fr.appendChild(sp);}
 }
@@ -840,6 +911,9 @@ function updateDay(dt){
     /* v2：每逢 3 的倍數天為血月之夜；v4 極限模式改為每 2 夜 */
     if(isNight)bloodMoon=(day%(hardcore?2:3)===0);else bloodMoon=false;
     document.getElementById('dnIcon').textContent=isNight?(bloodMoon?'🔴':'🌙'):'☀️';
+    const dp=document.getElementById('dayPill');   /* v6：狀態膠囊隨晝夜/血月換色 */
+    dp.classList.toggle('night',isNight&&!bloodMoon);
+    dp.classList.toggle('blood',isNight&&bloodMoon);
     document.getElementById('dnLabel').textContent=isNight
       ?(bloodMoon?('第 '+day+' 夜・血月！殭屍狂暴！'):('第 '+day+' 夜・小心殭屍！'))
       :('第 '+day+' 天・白天');
@@ -1344,6 +1418,7 @@ function frame(now){
   requestAnimationFrame(frame);
   acc+=Math.min((now-last)/1000,.1);last=now;
   while(acc>=STEP){
+    updateAmbient(STEP);   /* v6：氛圍層（不受 hit-stop 影響） */
     if(freeze>0){freeze-=STEP;acc-=STEP;continue;}
     update(STEP);acc-=STEP;
   }

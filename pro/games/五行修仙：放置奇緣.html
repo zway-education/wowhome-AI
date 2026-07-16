@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：仙山夜空離屏烘焙（仙氣極光/月暈/寶塔）＋流星與靈氣飄螢氛圍層、蓮臺/狂怒氣場/飛升光柱漸層快取零逐幀createGradient、程序化殘響＋山風古韻編鐘氛圍音與ducking -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -71,7 +71,7 @@ function roundRect(x, y, w, h, r) {
 }
 
 // ---------- 音效 ----------
-let AC = null, master = null, muted = false;
+let AC = null, master = null, muted = false, ambDuck = null;
 function audio() {
   if (!AC) {
     try {
@@ -82,15 +82,53 @@ function audio() {
       const comp = AC.createDynamicsCompressor();
       comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
       master.connect(comp); comp.connect(AC.destination);
+      // v6：程序化殘響（generated impulse 山谷空靈感）
+      const ir = AC.createBuffer(2, (AC.sampleRate * 1.8) | 0, AC.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.4);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.18;
+      comp.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：山風＋古韻編鐘氛圍層（五聲音階泛音，8 秒無縫循環）
+      const sr = AC.sampleRate, len = sr * 8, buf = AC.createBuffer(1, len, sr), ad = buf.getChannelData(0);
+      let lp = 0;
+      const chimes = [[0.9, 523], [2.6, 659], [4.1, 784], [5.9, 587], [7.1, 880]];
+      for (let i = 0; i < len; i++) {
+        const t = i / sr, w = Math.random() * 2 - 1;
+        lp += (w - lp) * 0.012;
+        let v = lp * (0.6 + 0.4 * Math.sin(t * 1.1)) * 1.2;
+        for (const c of chimes) {
+          const dt2 = t - c[0];
+          if (dt2 > 0 && dt2 < 1.6) v += Math.sin(2 * Math.PI * c[1] * dt2) * Math.exp(-dt2 * 3.2) * 0.05;
+        }
+        ad[i] = v;
+      }
+      const f = (sr * 0.15) | 0;
+      for (let i = 0; i < f; i++) { const a = i / f; ad[i] = ad[i] * a + ad[len - f + i] * (1 - a); }
+      const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+      const ag = AC.createGain(); ag.gain.value = 0.05;
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1;
+      src.connect(ag); ag.connect(ambDuck); ambDuck.connect(master);
+      src.start();
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
 }
+function duckAmb() {
+  if (!AC || !ambDuck || muted) return;
+  const t0 = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t0);
+  ambDuck.gain.setTargetAtTime(0.4, t0, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t0 + 0.12, 0.3);
+}
 function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 1; }
 function beep(freq, dur, type, vol, slide) {
   const ac = audio(); if (!ac || muted) return;
   type = type || 'square'; vol = vol || 0.14; slide = slide || 0;
+  if (vol >= 0.11) duckAmb();   // v6：主音效壓低氛圍層
   freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，連點百次不膩
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
@@ -210,13 +248,97 @@ function updateBG(dt) {
     c.x -= c.v * dt * c.s;
     if (c.x < -140) { c.x = GAME_W + 140; c.y = rnd(50, 170); }
   }
+  updateSkyFx(dt);   // v6：流星與飄螢
 }
 // v3：靜態漸層預先計算（原本每幀重建，平板掉幀主因之一）
 const MTN_GS = {};
-const SKY_G = (() => { const g = ctx.createLinearGradient(0, 0, 0, GAME_H);
-  g.addColorStop(0, '#0a0e22'); g.addColorStop(0.5, PAL.bg1); g.addColorStop(1, '#2a2350'); return g; })();
-const MOON_G = (() => { const g = ctx.createRadialGradient(830, 80, 10, 830, 80, 90);
-  g.addColorStop(0, 'rgba(255,240,200,0.55)'); g.addColorStop(1, 'rgba(255,240,200,0)'); return g; })();
+// v6：仙山夜空離屏烘焙——天空漸層/仙氣極光/微星塵/月亮月暈/寶塔剪影 一張圖收工
+function bakeCv(w, h, fn) { const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d')); return c; }
+const SKY_BAKE = bakeCv(GAME_W, GAME_H, g => {
+  const sky = g.createLinearGradient(0, 0, 0, GAME_H);
+  sky.addColorStop(0, '#0a0e22'); sky.addColorStop(0.5, PAL.bg1); sky.addColorStop(1, '#2a2350');
+  g.fillStyle = sky; g.fillRect(0, 0, GAME_W, GAME_H);
+  // 仙氣極光帶（青/紫 斜向流光）
+  g.save(); g.translate(420, 130); g.rotate(-0.18);
+  let au = g.createLinearGradient(0, -60, 0, 60);
+  au.addColorStop(0, 'rgba(94,200,247,0)'); au.addColorStop(0.5, 'rgba(94,200,247,0.09)'); au.addColorStop(1, 'rgba(94,200,247,0)');
+  g.fillStyle = au; g.fillRect(-500, -60, 1000, 120);
+  g.restore();
+  g.save(); g.translate(520, 210); g.rotate(-0.12);
+  au = g.createLinearGradient(0, -46, 0, 46);
+  au.addColorStop(0, 'rgba(167,139,250,0)'); au.addColorStop(0.5, 'rgba(167,139,250,0.08)'); au.addColorStop(1, 'rgba(167,139,250,0)');
+  g.fillStyle = au; g.fillRect(-540, -46, 1080, 92);
+  g.restore();
+  // 微星塵
+  for (let i = 0; i < 110; i++) {
+    g.globalAlpha = 0.1 + ((i * 37) % 30) / 100;
+    g.fillStyle = '#dfe6ff';
+    g.fillRect((i * 167.3) % GAME_W, (i * 71.7) % 320, 1.2, 1.2);
+  }
+  g.globalAlpha = 1;
+  // 明月與大月暈
+  const mg = g.createRadialGradient(830, 80, 10, 830, 80, 110);
+  mg.addColorStop(0, 'rgba(255,240,200,0.55)'); mg.addColorStop(0.6, 'rgba(255,240,200,0.12)'); mg.addColorStop(1, 'rgba(255,240,200,0)');
+  g.fillStyle = mg; g.beginPath(); g.arc(830, 80, 110, 0, 6.29); g.fill();
+  g.fillStyle = '#fff3d0'; g.beginPath(); g.arc(830, 80, 34, 0, 6.29); g.fill();
+  g.fillStyle = 'rgba(210,190,150,0.5)';
+  g.beginPath(); g.arc(820, 72, 7, 0, 6.29); g.arc(842, 90, 5, 0, 6.29); g.fill();
+  // 遠方寶塔剪影（含塔簷微光）
+  g.fillStyle = '#10142c';
+  const px = 90, py = 330;
+  for (let i = 0; i < 4; i++) {
+    const w = 56 - i * 10, y = py - i * 26;
+    g.fillRect(px - w / 2, y - 18, w, 18);
+    g.beginPath();
+    g.moveTo(px - w / 2 - 8, y - 18); g.lineTo(px + w / 2 + 8, y - 18); g.lineTo(px, y - 30);
+    g.closePath(); g.fill();
+    g.fillStyle = 'rgba(255,212,94,0.14)'; g.fillRect(px - w / 2, y - 19, w, 1.5);
+    g.fillStyle = '#10142c';
+  }
+});
+// v6：流星＋靈氣飄螢氛圍層
+const meteors = []; let meteorT = 6;
+const wisps = [];
+for (let i = 0; i < 10; i++) wisps.push({ x: rnd(0, GAME_W), y: rnd(GAME_H - 160, GAME_H - 10), sp: rnd(6, 14), ph: rnd(0, 6.28) });
+function updateSkyFx(dt) {
+  meteorT -= dt;
+  if (meteorT <= 0) {
+    meteorT = rnd(6, 14);
+    meteors.push({ x: rnd(80, 700), y: rnd(20, 120), vx: rnd(240, 380), vy: rnd(70, 130), life: 0.9 });
+  }
+  for (let i = meteors.length - 1; i >= 0; i--) {
+    const m = meteors[i];
+    m.x += m.vx * dt; m.y += m.vy * dt; m.life -= dt;
+    if (m.life <= 0) meteors.splice(i, 1);
+  }
+  for (const w of wisps) {
+    w.ph += dt;
+    w.y -= w.sp * dt;
+    if (w.y < GAME_H - 220) { w.y = GAME_H + 10; w.x = rnd(0, GAME_W); }
+  }
+}
+function drawSkyFx() {
+  ctx.lineCap = 'round';
+  for (const m of meteors) {
+    const a = clamp(m.life * 1.6, 0, 1);
+    ctx.strokeStyle = 'rgba(167,139,250,' + (0.3 * a).toFixed(3) + ')'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - m.vx * 0.09, m.y - m.vy * 0.09); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,244,214,' + (0.7 * a).toFixed(3) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - m.vx * 0.16, m.y - m.vy * 0.16); ctx.stroke();
+  }
+}
+function drawWisps() {
+  for (const w of wisps) {
+    const tw = 0.25 + 0.4 * Math.abs(Math.sin(w.ph * 1.6));
+    const wx = w.x + Math.sin(w.ph * 0.9) * 16;
+    ctx.globalAlpha = tw;
+    ctx.fillStyle = '#ffe9a8';
+    ctx.beginPath(); ctx.arc(wx, w.y, 2.2, 0, 6.29); ctx.fill();
+    ctx.globalAlpha = tw * 0.35;
+    ctx.beginPath(); ctx.arc(wx, w.y, 5.5, 0, 6.29); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
 const MIST_G = (() => { const g = ctx.createLinearGradient(0, GAME_H - 90, 0, GAME_H);
   g.addColorStop(0, 'rgba(140,160,255,0)'); g.addColorStop(1, 'rgba(140,160,255,0.13)'); return g; })();
 const HPBAR_G = (() => { const g = ctx.createLinearGradient(336, 0, 336 + 588, 0);
@@ -239,8 +361,8 @@ function mountainLayer(baseY, amp, colA, colB, seedOff, drift) {
   ctx.lineTo(GAME_W, GAME_H); ctx.closePath(); ctx.fill();
 }
 function drawBG() {
-  // 夜空漸層（v3：預計算）
-  ctx.fillStyle = SKY_G; ctx.fillRect(0, 0, GAME_W, GAME_H);
+  // v6：整幅烘焙夜空（含極光/月暈/寶塔），主迴圈一張 drawImage
+  ctx.drawImage(SKY_BAKE, 0, 0);
   // 星星（閃爍）
   ctx.fillStyle = '#dfe6ff';
   for (const s of stars) {
@@ -248,11 +370,7 @@ function drawBG() {
     ctx.fillRect(s.x, s.y, s.r, s.r);
   }
   ctx.globalAlpha = 1;
-  // 明月與光暈（v3：預計算）
-  ctx.fillStyle = MOON_G; ctx.beginPath(); ctx.arc(830, 80, 90, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#fff3d0'; ctx.beginPath(); ctx.arc(830, 80, 34, 0, 6.29); ctx.fill();
-  ctx.fillStyle = 'rgba(210,190,150,0.5)';
-  ctx.beginPath(); ctx.arc(820, 72, 7, 0, 6.29); ctx.arc(842, 90, 5, 0, 6.29); ctx.fill();
+  drawSkyFx();   // v6：流星
   // 三層視差遠山
   mountainLayer(300, 130, '#232a55', '#1a2140', 1.7, 30);
   mountainLayer(360, 150, '#1c2247', '#141a36', 4.2, 60);
@@ -264,17 +382,9 @@ function drawBG() {
     ctx.ellipse(c.x + 40 * c.s, c.y + 6 * c.s, 44 * c.s, 12 * c.s, 0, 0, 6.29); ctx.fill();
   }
   ctx.globalAlpha = 1;
-  // 遠方寶塔剪影
-  ctx.fillStyle = '#10142c';
-  const px = 90, py = 330;
-  for (let i = 0; i < 4; i++) {
-    const w = 56 - i * 10, y = py - i * 26;
-    ctx.fillRect(px - w / 2, y - 18, w, 18); ctx.beginPath();
-    ctx.moveTo(px - w / 2 - 8, y - 18); ctx.lineTo(px + w / 2 + 8, y - 18); ctx.lineTo(px, y - 30);
-    ctx.closePath(); ctx.fill();
-  }
-  // 底部霧氣（v3：預計算）
+  // 底部霧氣（v3：預計算）＋ v6：靈氣飄螢
   ctx.fillStyle = MIST_G; ctx.fillRect(0, GAME_H - 90, GAME_W, 90);
+  drawWisps();
 }
 
 // ---------- 五行資料 ----------
@@ -1010,10 +1120,14 @@ const playState = {
     const hover = Math.sin(bgTime * 1.6) * 5;
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.beginPath(); ctx.ellipse(CHAR_X, CHAR_Y + 52, 62, 10, 0, 0, 6.29); ctx.fill();
-    const lg = ctx.createLinearGradient(0, CHAR_Y + 26 + hover, 0, CHAR_Y + 52 + hover);
-    lg.addColorStop(0, '#7a5aa8'); lg.addColorStop(1, '#4a3570');
-    ctx.fillStyle = lg;
-    ctx.beginPath(); ctx.ellipse(CHAR_X, CHAR_Y + 38 + hover, 66, 16, 0, 0, 6.29); ctx.fill();
+    if (!this._lotusG) {   // v6：蓮臺漸層快取（配合 translate 消掉每幀 createGradient）
+      this._lotusG = ctx.createLinearGradient(0, CHAR_Y + 26, 0, CHAR_Y + 52);
+      this._lotusG.addColorStop(0, '#7a5aa8'); this._lotusG.addColorStop(1, '#4a3570');
+    }
+    ctx.save(); ctx.translate(0, hover);
+    ctx.fillStyle = this._lotusG;
+    ctx.beginPath(); ctx.ellipse(CHAR_X, CHAR_Y + 38, 66, 16, 0, 0, 6.29); ctx.fill();
+    ctx.restore();
     ctx.strokeStyle = 'rgba(255,212,94,0.5)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.ellipse(CHAR_X, CHAR_Y + 34 + hover, 58, 12, 0, 0, 6.29); ctx.stroke();
     // 蓮臺花瓣
@@ -1070,12 +1184,16 @@ const playState = {
     // 擂臺地面
     ctx.fillStyle = 'rgba(70,120,80,0.35)';
     ctx.beginPath(); ctx.ellipse(DRAG_X, DRAG_Y + 44, 120, 18, 0, 0, 6.29); ctx.fill();
-    if (monster.enraged && !monster.dead) {   // v2：狂怒紅色氣場
+    if (monster.enraged && !monster.dead) {   // v2：狂怒紅色氣場（v6：烘焙光暈＋縮放脈動）
+      if (!playState._rageSpr) {
+        playState._rageSpr = bakeCv(200, 200, g => {
+          const rg = g.createRadialGradient(100, 100, 10, 100, 100, 95);
+          rg.addColorStop(0, 'rgba(255,60,60,0.3)'); rg.addColorStop(1, 'rgba(255,60,60,0)');
+          g.fillStyle = rg; g.fillRect(0, 0, 200, 200);
+        });
+      }
       const pu = 1 + Math.sin(bgTime * 8) * 0.12;
-      const rg = ctx.createRadialGradient(DRAG_X, DRAG_Y, 10, DRAG_X, DRAG_Y, 95 * pu);
-      rg.addColorStop(0, 'rgba(255,60,60,0.3)'); rg.addColorStop(1, 'rgba(255,60,60,0)');
-      ctx.fillStyle = rg;
-      ctx.beginPath(); ctx.arc(DRAG_X, DRAG_Y, 95 * pu, 0, 6.29); ctx.fill();
+      ctx.drawImage(playState._rageSpr, DRAG_X - 100 * pu, DRAG_Y - 100 * pu, 200 * pu, 200 * pu);
     }
     if (!monster.dead || monster.deathT < 0.5) {
       drawDragon(DRAG_X, DRAG_Y, 1.15, tier, bgTime, monster.flash, monster.sx, monster.sy);
@@ -1210,9 +1328,11 @@ const overState = {
     // 飛升中的修士（緩緩上升）
     const rise = Math.min(1, this.t / 3);
     drawCultivator(GAME_W / 2, 420 - rise * 160 + Math.sin(bgTime * 2) * 6, 1.7, G.gender === 1, ELEMS[G.elemIdx], bgTime);
-    const beam = ctx.createLinearGradient(0, 0, 0, GAME_H);
-    beam.addColorStop(0, 'rgba(255,240,180,0.35)'); beam.addColorStop(1, 'rgba(255,240,180,0)');
-    ctx.fillStyle = beam; ctx.fillRect(GAME_W / 2 - 70, 0, 140, GAME_H);
+    if (!this._beamG) {   // v6：飛升光柱漸層快取
+      this._beamG = ctx.createLinearGradient(0, 0, 0, GAME_H);
+      this._beamG.addColorStop(0, 'rgba(255,240,180,0.35)'); this._beamG.addColorStop(1, 'rgba(255,240,180,0)');
+    }
+    ctx.fillStyle = this._beamG; ctx.fillRect(GAME_W / 2 - 70, 0, 140, GAME_H);
     drawParts();
     const pt = clamp(this.t / 0.5, 0, 1), ps = easeOutBack(pt);
     ctx.save(); ctx.translate(GAME_W / 2, 0); ctx.scale(ps, ps); ctx.translate(-GAME_W / 2, 0);

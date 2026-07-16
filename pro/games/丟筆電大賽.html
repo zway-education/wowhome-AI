@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：辦公室背景整幅離屏烘焙（牆飾板/時鐘/窗光束/盆栽/吊燈）＋動態時鐘指針與光塵微粒、程序化殘響＋辦公室空調嗡鳴氛圍層與ducking、投擲風聲隨力道變化 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -93,7 +93,7 @@ function wrapText(text, x, y, maxW, lh) {
 }
 
 // ---------- 音效（Web Audio 合成，零音檔）----------
-let AC = null, master = null, muted = false;
+let AC = null, master = null, muted = false, ambDuck = null;
 function audio() {
   if (!AC) {
     try {
@@ -104,10 +104,45 @@ function audio() {
       const comp = AC.createDynamicsCompressor();
       comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
       master.connect(comp); comp.connect(AC.destination);
+      // v6：程序化殘響（generated impulse 辦公室小房間）
+      const ir = AC.createBuffer(2, (AC.sampleRate * 0.9) | 0, AC.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const d = ir.getChannelData(ch);
+        for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3.2);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.12;
+      comp.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：辦公室空調嗡鳴＋偶發鍵盤聲氛圍層（4 秒無縫循環，經 master 受靜音控制）
+      const sr = AC.sampleRate, len = sr * 4, buf = AC.createBuffer(1, len, sr), ad = buf.getChannelData(0);
+      let lp = 0;
+      for (let i = 0; i < len; i++) {
+        const t = i / sr, w = Math.random() * 2 - 1;
+        lp += (w - lp) * 0.01;
+        let v = lp * (0.7 + 0.3 * Math.sin(t * 1.3)) * 1.3 + Math.sin(2 * Math.PI * 58 * t) * 0.02;
+        const kt = t % 1.9;                                     // 偶發鍵盤喀喀
+        if (kt > 0 && kt < 0.02) v += w * Math.sin(kt / 0.02 * Math.PI) * 0.1;
+        if (kt > 0.11 && kt < 0.125) v += w * Math.sin((kt - 0.11) / 0.015 * Math.PI) * 0.07;
+        ad[i] = v;
+      }
+      const f = (sr * 0.12) | 0;
+      for (let i = 0; i < f; i++) { const a = i / f; ad[i] = ad[i] * a + ad[len - f + i] * (1 - a); }
+      const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+      const ag = AC.createGain(); ag.gain.value = 0.035;
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1;
+      src.connect(ag); ag.connect(ambDuck); ambDuck.connect(master);
+      src.start();
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function duckAmb() {
+  if (!AC || !ambDuck || muted) return;
+  const t0 = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t0);
+  ambDuck.gain.setTargetAtTime(0.35, t0, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t0 + 0.12, 0.25);
 }
 function setMuted(m) {
   muted = m;
@@ -116,6 +151,7 @@ function setMuted(m) {
 function beep(freq, dur, type, vol, slide) {
   const ac = audio(); if (!ac || muted) return;
   type = type || 'square'; vol = vol || 0.15; slide = slide || 0;
+  if (vol >= 0.11) duckAmb();   // v6：主音效壓低氛圍層
   freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，聽感不機械
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
@@ -140,7 +176,11 @@ function noise(dur, vol) {
   src.start();
 }
 const sfx = {
-  throw() { noise(0.14, 0.08); beep(180, 0.14, 'triangle', 0.08, 260); },
+  throw(p) {   // v6：投擲風聲隨力道變化（p=0~1）
+    p = p === undefined ? 0.6 : p;
+    noise(0.1 + 0.1 * p, 0.05 + 0.07 * p);
+    beep(150 + 90 * p, 0.12 + 0.06 * p, 'triangle', 0.06 + 0.05 * p, 200 + 200 * p);
+  },
   rim() { beep(620, 0.07, 'triangle', 0.14, -80); noise(0.04, 0.05); },
   score() { beep(988, 0.08, 'square', 0.13); setTimeout(() => beep(1319, 0.16, 'square', 0.13), 80); },
   perfect() { [1047, 1319, 1568, 2093].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.12), i * 70)); },
@@ -228,18 +268,9 @@ function updateBG(dt) {
   }
 }
 const FLOOR_Y = GAME_H - 46;
-// v3：靜態背景漸層預先計算一次（原本每幀配置 ~10 個漸層，平板掉幀主因）
-const BG_WALL_G = (() => { const g = ctx.createLinearGradient(0, 0, 0, FLOOR_Y);
-  g.addColorStop(0, PAL.wall); g.addColorStop(1, PAL.wallLo); return g; })();
+// v3：動態元素仍需的漸層（窗景天空、暗角、葉片）
 const BG_SKY_G = (() => { const g = ctx.createLinearGradient(0, 60, 0, 240);
   g.addColorStop(0, PAL.sky); g.addColorStop(1, '#8cc0ff'); return g; })();
-const BG_FLOOR_G = (() => { const g = ctx.createLinearGradient(0, FLOOR_Y, 0, GAME_H);
-  g.addColorStop(0, '#343a5c'); g.addColorStop(1, PAL.bg0); return g; })();
-const POT_G = (() => { const g = ctx.createLinearGradient(330 - 26, 0, 330 + 26, 0);
-  g.addColorStop(0, '#8a4a2c'); g.addColorStop(0.4, '#c96b3c'); g.addColorStop(1, '#8a4a2c'); return g; })();
-const LAMP_G = (() => { const lampX = GAME_W / 2 + 130;
-  const g = ctx.createRadialGradient(lampX, 46, 4, lampX, 46, 90);
-  g.addColorStop(0, 'rgba(255,220,140,0.5)'); g.addColorStop(1, 'rgba(255,220,140,0)'); return g; })();
 const VIG_G = (() => { const g = ctx.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.45, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
   g.addColorStop(0, 'rgba(10,10,30,0)'); g.addColorStop(1, 'rgba(10,10,30,0.32)'); return g; })();
 const LEAF_GS = (() => { const arr = [], px = 330, py = FLOOR_Y;
@@ -249,12 +280,91 @@ const LEAF_GS = (() => { const arr = [], px = 330, py = FLOOR_Y;
     const g = ctx.createLinearGradient(px, py - 44, lx, ly);
     g.addColorStop(0, '#2c6e3f'); g.addColorStop(1, '#5fbf6e'); arr.push(g);
   } return arr; })();
+// v6：辦公室靜態背景整幅離屏烘焙（牆飾板/海報/時鐘面/地板/盆栽體/吊燈/窗邊光束），窗景與動態另畫
+function bakeCv(w, h, fn) { const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d')); return c; }
+const CLOCK_X = 615, CLOCK_Y = 130;
+const BG_OFFICE = bakeCv(GAME_W, GAME_H, g => {
+  const rr = (x, y, w, h, r) => { r = Math.min(r, w / 2, h / 2); g.beginPath(); g.moveTo(x + r, y);
+    g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r);
+    g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath(); };
+  // 牆面漸層＋飾板線
+  const wallG = g.createLinearGradient(0, 0, 0, FLOOR_Y);
+  wallG.addColorStop(0, PAL.wall); wallG.addColorStop(1, PAL.wallLo);
+  g.fillStyle = wallG; g.fillRect(0, 0, GAME_W, FLOOR_Y);
+  g.strokeStyle = 'rgba(255,255,255,0.035)'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, 290); g.lineTo(GAME_W, 290); g.stroke();
+  g.beginPath(); g.moveTo(0, 300); g.lineTo(GAME_W, 300); g.stroke();
+  // 回收海報
+  g.fillStyle = PAL.bg1; rr(430, 80, 120, 150, 8); g.fill();
+  g.strokeStyle = PAL.line; g.lineWidth = 3; g.stroke();
+  g.fillStyle = PAL.good; g.font = 'bold 52px sans-serif'; g.textAlign = 'center';
+  g.fillText('♻', 490, 160);
+  g.fillStyle = PAL.dim; g.font = 'bold 18px sans-serif';
+  g.fillText('回收愛地球', 490, 205);
+  // v6：牆面時鐘（面盤靜態，指針動態另畫）
+  g.fillStyle = '#20243c'; g.beginPath(); g.arc(CLOCK_X, CLOCK_Y, 30, 0, 6.29); g.fill();
+  g.fillStyle = '#e8ecf4'; g.beginPath(); g.arc(CLOCK_X, CLOCK_Y, 25, 0, 6.29); g.fill();
+  g.strokeStyle = '#20243c'; g.lineWidth = 2;
+  for (let i = 0; i < 12; i++) {
+    const a = i / 12 * Math.PI * 2;
+    g.beginPath();
+    g.moveTo(CLOCK_X + Math.cos(a) * 20, CLOCK_Y + Math.sin(a) * 20);
+    g.lineTo(CLOCK_X + Math.cos(a) * 23, CLOCK_Y + Math.sin(a) * 23);
+    g.stroke();
+  }
+  // 地板＋花紋＋踢腳板
+  const floorG = g.createLinearGradient(0, FLOOR_Y, 0, GAME_H);
+  floorG.addColorStop(0, '#343a5c'); floorG.addColorStop(1, PAL.bg0);
+  g.fillStyle = floorG; g.fillRect(0, FLOOR_Y, GAME_W, GAME_H - FLOOR_Y);
+  g.strokeStyle = PAL.line; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, FLOOR_Y); g.lineTo(GAME_W, FLOOR_Y); g.stroke();
+  g.strokeStyle = 'rgba(255,255,255,0.05)';
+  for (let i = 1; i < 6; i++) {
+    g.beginPath(); g.moveTo(i * 180, FLOOR_Y); g.lineTo(i * 180 + 30, GAME_H); g.stroke();
+  }
+  g.fillStyle = 'rgba(0,0,0,0.25)'; g.fillRect(0, FLOOR_Y - 10, GAME_W, 10);
+  // v6：窗邊斜射光束灑向地板
+  const shaft = g.createLinearGradient(360, 120, 560, FLOOR_Y);
+  shaft.addColorStop(0, 'rgba(255,244,214,0.10)'); shaft.addColorStop(1, 'rgba(255,244,214,0)');
+  g.fillStyle = shaft;
+  g.beginPath(); g.moveTo(360, 80); g.lineTo(360, 240); g.lineTo(600, FLOOR_Y); g.lineTo(420, FLOOR_Y); g.closePath(); g.fill();
+  // 盆栽本體（葉片動態另畫）
+  const px = 330, py = FLOOR_Y;
+  g.fillStyle = 'rgba(0,0,0,0.28)';
+  g.beginPath(); g.ellipse(px, py + 4, 34, 7, 0, 0, 6.29); g.fill();
+  const potG = g.createLinearGradient(px - 26, 0, px + 26, 0);
+  potG.addColorStop(0, '#8a4a2c'); potG.addColorStop(0.4, '#c96b3c'); potG.addColorStop(1, '#8a4a2c');
+  g.fillStyle = potG;
+  g.beginPath();
+  g.moveTo(px - 26, py - 40); g.lineTo(px + 26, py - 40);
+  g.lineTo(px + 18, py); g.lineTo(px - 18, py);
+  g.closePath(); g.fill();
+  g.strokeStyle = 'rgba(0,0,0,0.3)'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#a85835'; g.fillRect(px - 28, py - 46, 56, 9);
+  // 吊燈＋光暈
+  const lampX = GAME_W / 2 + 130;
+  g.strokeStyle = '#444c74'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(lampX, 0); g.lineTo(lampX, 34); g.stroke();
+  const lampG = g.createRadialGradient(lampX, 46, 4, lampX, 46, 90);
+  lampG.addColorStop(0, 'rgba(255,220,140,0.5)'); lampG.addColorStop(1, 'rgba(255,220,140,0)');
+  g.fillStyle = lampG;
+  g.beginPath(); g.arc(lampX, 46, 90, 0, 6.29); g.fill();
+  g.fillStyle = '#565f8c';
+  g.beginPath(); g.moveTo(lampX - 22, 44);
+  g.quadraticCurveTo(lampX, 12, lampX + 22, 44);
+  g.closePath(); g.fill();
+  g.fillStyle = '#ffe9b0';
+  g.beginPath(); g.arc(lampX, 46, 7, 0, 6.29); g.fill();
+  // 窗框（含框線）後清出窗景透明孔，讓動態窗景從下層透出
+  g.strokeStyle = PAL.line; g.lineWidth = 8;
+  g.strokeRect(60, 60, 300, 180);
+  g.clearRect(64, 64, 292, 172);
+});
+// v6：窗邊光塵微粒
+const dust = [];
+for (let i = 0; i < 12; i++) dust.push({ x: rnd(240, 560), y: rnd(120, FLOOR_Y - 30), ph: rnd(0, 7), sp: rnd(4, 10) });
 function drawBG() {
-  // 牆面漸層
-  ctx.fillStyle = BG_WALL_G;
-  ctx.fillRect(0, 0, GAME_W, FLOOR_Y);
-
-  // 窗戶（外面是天空 + 視差雲）
+  // 窗景（先畫，被烘焙層的透明窗孔露出）
   const wx = 60, wy = 60, ww = 300, wh = 180;
   ctx.fillStyle = BG_SKY_G;
   ctx.fillRect(wx, wy, ww, wh);
@@ -273,7 +383,6 @@ function drawBG() {
     ctx.fill();
   }
   ctx.globalAlpha = 1;
-  // 遠方小山（最慢視差層）
   ctx.fillStyle = 'rgba(60,110,80,0.85)';
   ctx.beginPath();
   ctx.moveTo(wx, wy + wh);
@@ -285,60 +394,28 @@ function drawBG() {
   ctx.closePath();
   ctx.fill();
   ctx.restore();
-  // 窗框
+  // 靜態辦公室整幅烘焙層
+  ctx.drawImage(BG_OFFICE, 0, 0);
+  // 窗欞十字（在窗景之上）
   ctx.strokeStyle = PAL.line;
-  ctx.lineWidth = 8;
-  ctx.strokeRect(wx, wy, ww, wh);
   ctx.lineWidth = 4;
   ctx.beginPath();
   ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh);
   ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2);
   ctx.stroke();
-
-  // 回收海報
-  ctx.fillStyle = PAL.bg1;
-  roundRect(430, 80, 120, 150, 8);
-  ctx.fill();
-  ctx.strokeStyle = PAL.line; ctx.lineWidth = 3; ctx.stroke();
-  ctx.fillStyle = PAL.good;
-  ctx.font = 'bold 52px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText('♻', 490, 160);
-  ctx.fillStyle = PAL.dim;
-  ctx.font = 'bold 18px sans-serif';
-  ctx.fillText('回收愛地球', 490, 205);
-
-  // 地板
-  ctx.fillStyle = BG_FLOOR_G;
-  ctx.fillRect(0, FLOOR_Y, GAME_W, GAME_H - FLOOR_Y);
-  ctx.strokeStyle = PAL.line;
+  // v6：時鐘指針（分針快轉增添生活感）
+  ctx.strokeStyle = '#20243c'; ctx.lineCap = 'round';
+  const mA = bgTime * 0.22 - Math.PI / 2, hA = bgTime * 0.02 - Math.PI / 3;
+  ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(CLOCK_X, CLOCK_Y);
+  ctx.lineTo(CLOCK_X + Math.cos(hA) * 12, CLOCK_Y + Math.sin(hA) * 12); ctx.stroke();
   ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, FLOOR_Y); ctx.lineTo(GAME_W, FLOOR_Y);
-  ctx.stroke();
-  // 地板紋
-  ctx.strokeStyle = 'rgba(255,255,255,0.05)';
-  for (let i = 1; i < 6; i++) {
-    ctx.beginPath();
-    ctx.moveTo(i * 180, FLOOR_Y);
-    ctx.lineTo(i * 180 + 30, GAME_H);
-    ctx.stroke();
-  }
-  // 踢腳板
-  ctx.fillStyle = 'rgba(0,0,0,0.25)';
-  ctx.fillRect(0, FLOOR_Y - 10, GAME_W, 10);
-
-  // 盆栽（左側環境小物，葉片會輕輕搖）
+  ctx.beginPath(); ctx.moveTo(CLOCK_X, CLOCK_Y);
+  ctx.lineTo(CLOCK_X + Math.cos(mA) * 18, CLOCK_Y + Math.sin(mA) * 18); ctx.stroke();
+  ctx.fillStyle = PAL.accentDeep;
+  ctx.beginPath(); ctx.arc(CLOCK_X, CLOCK_Y, 2.5, 0, 6.29); ctx.fill();
+  // 盆栽搖曳葉片
   const px = 330, py = FLOOR_Y;
-  ctx.fillStyle = 'rgba(0,0,0,0.28)';
-  ctx.beginPath(); ctx.ellipse(px, py + 4, 34, 7, 0, 0, 6.29); ctx.fill();
-  ctx.fillStyle = POT_G;
-  ctx.beginPath();
-  ctx.moveTo(px - 26, py - 40); ctx.lineTo(px + 26, py - 40);
-  ctx.lineTo(px + 18, py); ctx.lineTo(px - 18, py);
-  ctx.closePath(); ctx.fill();
-  ctx.strokeStyle = 'rgba(0,0,0,0.3)'; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = '#a85835'; ctx.fillRect(px - 28, py - 46, 56, 9);
   const sway = Math.sin(bgTime * 1.5) * 0.06;
   for (let i = -2; i <= 2; i++) {
     const ang = -Math.PI / 2 + i * 0.42 + sway;
@@ -347,26 +424,21 @@ function drawBG() {
     ctx.beginPath(); ctx.moveTo(px, py - 42);
     ctx.quadraticCurveTo(px + Math.cos(ang) * 26, py - 44 + Math.sin(ang) * 30, lx, ly);
     ctx.stroke();
-    ctx.fillStyle = LEAF_GS[i + 2];   // v3：預計算葉片漸層（搖擺 ±0.06rad 視覺無差）
+    ctx.fillStyle = LEAF_GS[i + 2];
     ctx.save(); ctx.translate(lx, ly); ctx.rotate(ang + Math.PI / 2);
     ctx.beginPath(); ctx.ellipse(0, 0, 9, 17, 0, 0, 6.29); ctx.fill();
     ctx.strokeStyle = 'rgba(0,0,0,0.2)'; ctx.lineWidth = 1.5; ctx.stroke();
     ctx.restore();
   }
-
-  // 天花板吊燈光暈
-  const lampX = GAME_W / 2 + 130;
-  ctx.strokeStyle = '#444c74'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(lampX, 0); ctx.lineTo(lampX, 34); ctx.stroke();
-  ctx.fillStyle = LAMP_G;
-  ctx.beginPath(); ctx.arc(lampX, 46, 90, 0, 6.29); ctx.fill();
-  ctx.fillStyle = '#565f8c';
-  ctx.beginPath(); ctx.moveTo(lampX - 22, 44);
-  ctx.quadraticCurveTo(lampX, 12, lampX + 22, 44);
-  ctx.closePath(); ctx.fill();
-  ctx.fillStyle = '#ffe9b0';
-  ctx.beginPath(); ctx.arc(lampX, 46, 7, 0, 6.29); ctx.fill();
-
+  // v6：光塵微粒（緩緩漂浮、隨相位閃爍）
+  ctx.fillStyle = '#fff4d6';
+  for (const d of dust) {
+    const dx = d.x + Math.sin(bgTime * 0.4 + d.ph) * 14;
+    const dy = d.y + Math.sin(bgTime * 0.25 + d.ph * 2) * 18;
+    ctx.globalAlpha = 0.1 + 0.12 * Math.abs(Math.sin(bgTime * 0.9 + d.ph));
+    ctx.fillRect(dx, dy, 2.4, 2.4);
+  }
+  ctx.globalAlpha = 1;
   // 全場氛圍暗角
   ctx.fillStyle = VIG_G;
   ctx.fillRect(0, 0, GAME_W, GAME_H);
@@ -1218,7 +1290,7 @@ function throwLaptop(vx, vy) {
   laptop.thrown = true;
   laptop.sx = 1.25; laptop.sy = 0.8;
   throws++;
-  sfx.throw();
+  sfx.throw(clamp(Math.hypot(vx, vy) / 1650, 0.2, 1));   // v6：力道越大風聲越猛
 }
 function scoreHit() {
   hits++;

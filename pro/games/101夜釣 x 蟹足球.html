@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：離屏烘焙星雲夜景與101、水下月光光柱/深水魚影/流星、足球立體烘焙精靈與草皮質感、進球彩帶＋球網波動、程序化殘響＋場景氛圍音（水波/夜風/人群）與ducking -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -89,6 +89,7 @@ function updateParts(dt){
   for(let i=parts.length-1;i>=0;i--){
     const p = parts[i];
     p.x += p.vx*dt; p.y += p.vy*dt; p.vy += p.g*dt; p.life -= dt;
+    if(p.vr) p.rot += p.vr*dt;   // v6：彩帶旋轉
     if(p.life <= 0){ parts[i] = parts[parts.length-1]; parts.pop(); }  // v3：swap-pop 零搬移
   }
 }
@@ -96,9 +97,22 @@ function drawParts(){
   for(const p of parts){
     ctx.globalAlpha = clamp(p.life*2, 0, 1);
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    if(p.conf){   // v6：長方形彩帶（帶旋轉）
+      ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      ctx.fillRect(-p.size/2, -p.size/4, p.size, p.size/2);
+      ctx.restore();
+    } else {
+      ctx.fillRect(p.x - p.size/2, p.y - p.size/2, p.size, p.size);
+    }
   }
   ctx.globalAlpha = 1;
+}
+/* v6：進球彩帶 */
+function confetti(x,y,n){
+  const cols = ['#ffd77a','#ff6b5e','#2ec4b6','#c77dff','#fff5d6'];
+  for(let i=0;i<n;i++) spawnPart({x, y, vx:(Math.random()*2-1)*260, vy:-120-Math.random()*220,
+    life:0.9+Math.random()*0.7, color:cols[(Math.random()*cols.length)|0], size:8,
+    g:420, conf:1, rot:Math.random()*7, vr:(Math.random()*2-1)*10});
 }
 
 /* ---------------- 飄字 ---------------- */
@@ -120,7 +134,7 @@ function drawFloaters(){
 }
 
 /* ---------------- 音效：Web Audio 合成（零音檔） ---------------- */
-let AC = null, MASTER = null;
+let AC = null, MASTER = null, ambSrc = null, ambVol = null, ambDuck = null, ambKind = null, ambDesired = 'night';
 let muted = load('wow101v2_mute') === '1';
 function audio(){
   if(!AC){
@@ -131,15 +145,81 @@ function audio(){
       MASTER.threshold.value = -18; MASTER.knee.value = 24; MASTER.ratio.value = 8;
       const mg = AC.createGain(); mg.gain.value = 0.9;
       MASTER.connect(mg); mg.connect(AC.destination);
+      // v6：程序化殘響——generated impulse 小廳堂，SFX 全體帶空間感
+      const ir = AC.createBuffer(2, (AC.sampleRate*1.4)|0, AC.sampleRate);
+      for(let ch=0; ch<2; ch++){
+        const d = ir.getChannelData(ch);
+        for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 2.6);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.16;
+      MASTER.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：氛圍音母線（主音效觸發時 ducking）
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1;
+      ambVol = AC.createGain(); ambVol.gain.value = 0;
+      ambVol.connect(ambDuck); ambDuck.connect(mg);
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+  if(AC && ambVol) applyAmb();
   return AC;
+}
+/* v6：場景氛圍音——水波（夜釣）/ 人群嗡嗡（足球）/ 夜風（選單），程序化 4 秒循環 */
+function makeAmbBuf(kind){
+  const sr = AC.sampleRate, len = sr*4, buf = AC.createBuffer(1, len, sr), d = buf.getChannelData(0);
+  let lp = 0, br = 0;
+  for(let i=0;i<len;i++){
+    const t = i/sr, w = Math.random()*2-1;
+    if(kind === 'water'){ lp += (w-lp)*0.045; d[i] = lp * (0.55 + 0.45*Math.sin(t*Math.PI*1.2) + 0.2*Math.sin(t*7.3)) * 0.9; }
+    else if(kind === 'crowd'){ br += (w-br)*0.02; lp += (br-lp)*0.3; d[i] = lp * (0.8 + 0.2*Math.sin(t*3.1) + 0.1*Math.sin(t*13.7)) * 2.2; }
+    else { lp += (w-lp)*0.012; d[i] = lp * (0.7 + 0.3*Math.sin(t*1.4)) * 1.4; }
+  }
+  const f = (sr*0.15)|0;   // 頭尾交叉淡接，循環無接縫
+  for(let i=0;i<f;i++){ const a = i/f; d[i] = d[i]*a + d[len-f+i]*(1-a); }
+  return buf;
+}
+function applyAmb(){
+  if(!AC || !ambVol) return;
+  if(ambKind !== ambDesired){
+    if(ambSrc){ try{ ambSrc.stop(); }catch(e){} ambSrc = null; }
+    ambKind = ambDesired;
+    try{
+      ambSrc = AC.createBufferSource();
+      ambSrc.buffer = makeAmbBuf(ambKind); ambSrc.loop = true;
+      ambSrc.connect(ambVol); ambSrc.start();
+    }catch(e){}
+  }
+  const target = muted ? 0 : (ambKind === 'crowd' ? 0.05 : (ambKind === 'water' ? 0.065 : 0.04));
+  ambVol.gain.setTargetAtTime(target, AC.currentTime, 0.4);
+}
+function setAmb(kind){ ambDesired = kind; if(AC && ambVol) applyAmb(); }
+function duckAmb(){
+  if(!AC || !ambDuck || muted) return;
+  const t = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t);
+  ambDuck.gain.setTargetAtTime(0.35, t, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t + 0.12, 0.25);
+}
+/* v6：人群歡呼（進球/奪冠限定，帶起伏包絡的濾波噪聲） */
+function cheer(vol, dur){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime, len = (dur*ac.sampleRate)|0;
+  const buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+  let lp = 0;
+  for(let i=0;i<len;i++){ const w = Math.random()*2-1; lp += (w-lp)*0.12; d[i] = lp; }
+  const s = ac.createBufferSource(); s.buffer = buf;
+  const g = ac.createGain();
+  g.gain.setValueAtTime(0.001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + dur*0.25);
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  s.connect(g); g.connect(MASTER); s.start(t0);
 }
 function beep(freq,dur,type,vol,slide,delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
   freq *= 0.975 + Math.random()*0.05;   // v3：±2.5% 隨機音高，聽感不機械
+  if((vol||0.14) >= 0.1) duckAmb();     // v6：主音效壓低氛圍層
   const t0 = ac.currentTime + (delay||0);
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
@@ -151,6 +231,7 @@ function beep(freq,dur,type,vol,slide,delay){
 function noise(dur,vol,delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
+  if((vol||0.12) >= 0.1) duckAmb();     // v6
   const t0 = ac.currentTime + (delay||0);
   const len = Math.max(1, (dur*ac.sampleRate)|0);
   const buf = ac.createBuffer(1, len, ac.sampleRate);
@@ -187,6 +268,7 @@ const SFX = {
 function toggleMute(){
   muted = !muted;
   store('wow101v2_mute', muted ? '1' : '0');
+  if(AC && ambVol) applyAmb();   // v6：靜音同步關閉氛圍層
   if(!muted) SFX.click();
 }
 
@@ -257,9 +339,11 @@ function drawButton(b){
   ctx.save();
   ctx.translate(b.x + b.w/2, b.y + b.h/2);
   ctx.scale(s, s);
-  const g = ctx.createLinearGradient(-b.w/2, -b.h/2, b.w/2, b.h/2);
-  g.addColorStop(0, b.grad[0]); g.addColorStop(1, b.grad[1]);
-  ctx.fillStyle = g;
+  if(!b._g){   // v6：按鈕漸層快取
+    b._g = ctx.createLinearGradient(-b.w/2, -b.h/2, b.w/2, b.h/2);
+    b._g.addColorStop(0, b.grad[0]); b._g.addColorStop(1, b.grad[1]);
+  }
+  ctx.fillStyle = b._g;
   ctx.shadowColor = b.grad[0]; ctx.shadowBlur = 10 + b.hot*10;
   rr(-b.w/2, -b.h/2, b.w, b.h, b.h/2); ctx.fill();
   ctx.shadowBlur = 0;
@@ -290,16 +374,19 @@ const VIGN = (function(){
 })();
 function drawVignette(){ ctx.fillStyle = VIGN; ctx.fillRect(0,0,GAME_W,GAME_H); }
 /* v3：靜態漸層預先計算一次（原本每幀重建，平板掉幀主因之一） */
-const SKY_G = (function(){ const g = ctx.createLinearGradient(0,0,0,WATER_Y);
-  g.addColorStop(0,'#050915'); g.addColorStop(0.6,'#0b1730'); g.addColorStop(1,'#14224e'); return g; })();
 const WATER_G = (function(){ const g = ctx.createLinearGradient(0, WATER_Y, 0, GAME_H);
   g.addColorStop(0,'#14476b'); g.addColorStop(0.5,'#0b2c48'); g.addColorStop(1,'#04101c'); return g; })();
 const TURF_G = (function(){ const g = ctx.createLinearGradient(0,0,0,GAME_H);
   g.addColorStop(0,'#0a2e1e'); g.addColorStop(1,'#123f2a'); return g; })();
 const FEVER_G = (function(){ const g = ctx.createLinearGradient(0,0,0,GAME_H);
   g.addColorStop(0,'#ffb627'); g.addColorStop(1,'rgba(255,107,94,0)'); return g; })();
-const MOON_G = (function(){ const g = ctx.createRadialGradient(110,70,20,110,70,64);
-  g.addColorStop(0,'rgba(245,239,224,0.5)'); g.addColorStop(1,'rgba(245,239,224,0)'); return g; })();
+/* v6：離屏烘焙工廠＋色彩明暗工具（主迴圈零 createGradient/shadowBlur） */
+function bake(w,h,fn){ const c=document.createElement('canvas'); c.width=w; c.height=h; fn(c.getContext('2d')); return c; }
+function shade(hex,f){
+  const n=parseInt(hex.slice(1),16);
+  const r=clamp(Math.round(((n>>16)&255)*f),0,255), g=clamp(Math.round(((n>>8)&255)*f),0,255), b=clamp(Math.round((n&255)*f),0,255);
+  return 'rgb('+r+','+g+','+b+')';
+}
 
 /* ---------------- 夜空 / 城市 素材（預先生成，避免每幀閃爍） ---------------- */
 const rand0 = makeRand(20260709);
@@ -326,62 +413,154 @@ for(let r=0;r<14;r++)
   for(let c=0;c<4;c++)
     if(rand0() < 0.82) towerWins.push({x:TX-30+c*18, y:TOWER_TOP+10+r*13, ph:rand0()*7, sp:0.3+rand0()*1.2});
 
+/* v6：整幅夜景（星雲/銀河/月亮/城市剪影/101 主體）離屏烘焙一次，主迴圈一張 drawImage 收工 */
+const NIGHT_BG = bake(GAME_W, WATER_Y+6, g=>{
+  const sky = g.createLinearGradient(0,0,0,WATER_Y);
+  sky.addColorStop(0,'#050915'); sky.addColorStop(0.6,'#0b1730'); sky.addColorStop(1,'#14224e');
+  g.fillStyle = sky; g.fillRect(0,0,GAME_W,WATER_Y+6);
+  let nb = g.createRadialGradient(640,90,10,640,90,260);   // 紫色星雲
+  nb.addColorStop(0,'rgba(154,107,255,0.16)'); nb.addColorStop(1,'rgba(154,107,255,0)');
+  g.fillStyle = nb; g.fillRect(340,0,600,300);
+  nb = g.createRadialGradient(300,180,10,300,180,300);     // 青色星雲
+  nb.addColorStop(0,'rgba(46,196,182,0.10)'); nb.addColorStop(1,'rgba(46,196,182,0)');
+  g.fillStyle = nb; g.fillRect(0,0,640,320);
+  g.save(); g.translate(480,120); g.rotate(-0.32);          // 銀河斜帶
+  const mw = g.createLinearGradient(0,-70,0,70);
+  mw.addColorStop(0,'rgba(243,236,217,0)'); mw.addColorStop(0.5,'rgba(200,214,255,0.07)'); mw.addColorStop(1,'rgba(243,236,217,0)');
+  g.fillStyle = mw; g.fillRect(-560,-70,1120,140); g.restore();
+  const r2 = makeRand(777);                                 // 微星塵
+  for(let i=0;i<130;i++){ g.globalAlpha = 0.12 + r2()*0.3;
+    g.fillStyle = '#dfe4f2'; g.fillRect(r2()*GAME_W, r2()*(WATER_Y-40), 1.3, 1.3); }
+  g.globalAlpha = 1;
+  const mg2 = g.createRadialGradient(110,70,20,110,70,86);  // 月亮＋大光暈
+  mg2.addColorStop(0,'rgba(245,239,224,0.55)'); mg2.addColorStop(0.55,'rgba(245,239,224,0.12)'); mg2.addColorStop(1,'rgba(245,239,224,0)');
+  g.fillStyle = mg2; g.fillRect(10,-16,200,200);
+  g.fillStyle = '#f5efe0'; g.beginPath(); g.arc(110,70,28,0,7); g.fill();
+  g.fillStyle = 'rgba(11,23,48,0.25)';
+  g.beginPath(); g.arc(102,62,7,0,7); g.arc(122,80,5,0,7); g.fill();
+  g.fillStyle = '#0c1735';                                  // 遠景天際線
+  for(const b of skylineFar) g.fillRect(b.x, WATER_Y - b.h*0.6, b.w, b.h*0.6+6);
+  for(const b of skylineNear){                              // 近景大樓（漸層立面＋樓頂霓虹）
+    const bg2 = g.createLinearGradient(0, WATER_Y-b.h, 0, WATER_Y);
+    bg2.addColorStop(0,'#152352'); bg2.addColorStop(1,'#0d1837');
+    g.fillStyle = bg2; g.fillRect(b.x, WATER_Y-b.h, b.w, b.h+6);
+    g.fillStyle = 'rgba(56,225,255,0.18)'; g.fillRect(b.x, WATER_Y-b.h, b.w, 2);
+  }
+  const segs = 8, baseY = WATER_Y-30, hSeg = (baseY-TOWER_TOP)/segs;  // 101 斗型節（左亮右暗立體感）
+  g.fillStyle = '#0f1c42'; g.fillRect(TX-58, WATER_Y-34, 116, 38);
+  for(let i=0;i<segs;i++){
+    const yB = baseY - i*hSeg, yT = yB - hSeg;
+    const sg = g.createLinearGradient(TX-44,0,TX+44,0);
+    sg.addColorStop(0,'#101d44'); sg.addColorStop(0.5, i%2 ? '#1c2e64' : '#152452'); sg.addColorStop(1,'#0d1838');
+    g.fillStyle = sg;
+    g.beginPath(); g.moveTo(TX-33,yB); g.lineTo(TX-44,yT+3); g.lineTo(TX+44,yT+3); g.lineTo(TX+33,yB); g.closePath(); g.fill();
+    g.fillStyle = '#1c2d63'; g.fillRect(TX-46, yT, 92, 4);
+    g.fillStyle = 'rgba(56,225,255,0.1)'; g.fillRect(TX-46, yT+4, 92, 2);
+  }
+  g.fillStyle = '#162552'; g.fillRect(TX-15, TOWER_TOP-18, 30, 20);
+  g.strokeStyle = '#8fa0c9'; g.lineWidth = 3;
+  g.beginPath(); g.moveTo(TX, TOWER_TOP-18); g.lineTo(TX, TOWER_TOP-54); g.stroke();
+});
+/* v6：水下月光光柱（烘焙一次，遊玩時只平移＋改透明度） */
+const RAY_SPR = bake(160, 240, g=>{
+  const lg = g.createLinearGradient(0,0,0,240);
+  lg.addColorStop(0,'rgba(168,230,226,0.30)'); lg.addColorStop(1,'rgba(168,230,226,0)');
+  g.fillStyle = lg;
+  g.beginPath(); g.moveTo(58,0); g.lineTo(102,0); g.lineTo(160,240); g.lineTo(0,240); g.closePath(); g.fill();
+});
+/* v6：立體足球烘焙精靈（受光高光＋五角紋） */
+const BALL_SPR = bake(32,32,g=>{
+  g.translate(16,16);
+  const sh = g.createRadialGradient(-4,-5,2,0,0,14);
+  sh.addColorStop(0,'#ffffff'); sh.addColorStop(0.55,'#f3ecd9'); sh.addColorStop(1,'#b0a68d');
+  g.fillStyle = sh; g.beginPath(); g.arc(0,0,13,0,7); g.fill();
+  g.strokeStyle = 'rgba(4,7,15,0.7)'; g.lineWidth = 1.5; g.stroke();
+  g.fillStyle = '#122048';
+  g.beginPath(); g.arc(0,0,13*0.36,0,7); g.fill();
+  for(let i=0;i<5;i++){ const a = i/5*Math.PI*2;
+    g.beginPath(); g.arc(Math.cos(a)*13*0.72, Math.sin(a)*13*0.72, 13*0.2, 0, 7); g.fill(); }
+});
+/* v6：草皮質感貼圖（隨機草纖噪點 pattern） */
+const TURF_PAT = ctx.createPattern(bake(120,120,g=>{
+  const r2 = makeRand(4242);
+  for(let i=0;i<260;i++){
+    g.fillStyle = r2()<0.5 ? 'rgba(255,255,255,0.028)' : 'rgba(0,0,0,0.055)';
+    g.fillRect(r2()*120, r2()*120, 1.5+r2()*2, 3+r2()*4);
+  }
+}),'repeat');
+/* v6：流星（事件式驚喜，非持續閃爍） */
+const meteors = []; let meteorT = 4;
+function updateMeteors(dt){
+  meteorT -= dt;
+  if(meteorT <= 0){
+    meteorT = 5 + Math.random()*9;
+    meteors.push({x:120+Math.random()*600, y:20+Math.random()*90, vx:260+Math.random()*160, vy:90+Math.random()*50, life:0.9});
+  }
+  for(let i=meteors.length-1;i>=0;i--){
+    const m = meteors[i];
+    m.x += m.vx*dt; m.y += m.vy*dt; m.life -= dt;
+    if(m.life <= 0) meteors.splice(i,1);
+  }
+}
+function drawMeteors(){
+  ctx.lineCap = 'round';
+  for(const m of meteors){
+    const a = clamp(m.life*1.6, 0, 1);
+    ctx.strokeStyle = 'rgba(56,225,255,' + (0.28*a).toFixed(3) + ')'; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - m.vx*0.09, m.y - m.vy*0.09); ctx.stroke();
+    ctx.strokeStyle = 'rgba(243,236,217,' + (0.7*a).toFixed(3) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(m.x, m.y); ctx.lineTo(m.x - m.vx*0.16, m.y - m.vy*0.16); ctx.stroke();
+  }
+}
+/* v6：深水魚群剪影（氛圍層） */
+const deepFish = [];
+for(let i=0;i<6;i++) deepFish.push({y:335+rand0()*165, sp:12+rand0()*20, ph:rand0()*900, s:0.6+rand0()*0.9, dir:rand0()<0.5?-1:1});
+
 function drawSky(t){
-  ctx.fillStyle = SKY_G; ctx.fillRect(0,0,GAME_W,WATER_Y+4);
+  ctx.drawImage(NIGHT_BG, 0, 0);
   for(const s of stars){
     ctx.globalAlpha = 0.35 + 0.55*Math.abs(Math.sin(t*s.sp + s.ph));
     ctx.fillStyle = '#f3ecd9'; ctx.fillRect(s.x, s.y, s.r*2, s.r*2);
   }
   ctx.globalAlpha = 1;
-  // 月亮（v3：光暈改預計算漸層，取代每幀 shadowBlur 30）
-  ctx.fillStyle = MOON_G;
-  ctx.fillRect(46, 6, 128, 128);
-  ctx.fillStyle = '#f5efe0';
-  ctx.beginPath(); ctx.arc(110, 70, 28, 0, 7); ctx.fill();
-  ctx.fillStyle = 'rgba(11,23,48,0.25)';
-  ctx.beginPath(); ctx.arc(102, 62, 7, 0, 7); ctx.arc(122, 80, 5, 0, 7); ctx.fill();
+  drawMeteors();
 }
 function drawCity(t){
-  ctx.fillStyle = '#0c1735';
-  for(const b of skylineFar) ctx.fillRect(b.x, WATER_Y - b.h*0.6, b.w, b.h*0.6+4);
-  ctx.fillStyle = '#101d44';
+  ctx.fillStyle = '#ffb627';   // v6：只畫動態窗燈，建築主體已烘焙
   for(const b of skylineNear){
-    ctx.fillRect(b.x, WATER_Y - b.h, b.w, b.h+4);
     for(const w of b.wins){
       ctx.globalAlpha = 0.25 + 0.45*Math.abs(Math.sin(t*0.7 + w.ph));
-      ctx.fillStyle = '#ffb627';
       ctx.fillRect(b.x + w.dx, WATER_Y - b.h + w.dy, 6, 8);
-      ctx.fillStyle = '#101d44';
     }
   }
   ctx.globalAlpha = 1;
 }
 function drawTower(t){
-  // 臺北 101：八節斗型節節高升 + 尖塔 + 閃爍航空燈
-  const segs = 8, baseY = WATER_Y - 30, hSeg = (baseY - TOWER_TOP) / segs;
-  ctx.fillStyle = '#0f1c42'; ctx.fillRect(TX-58, WATER_Y-34, 116, 38);
-  for(let i=0;i<segs;i++){
-    const yB = baseY - i*hSeg, yT = yB - hSeg;
-    ctx.fillStyle = i%2 ? '#15234f' : '#101d44';
-    ctx.beginPath();
-    ctx.moveTo(TX-33, yB); ctx.lineTo(TX-44, yT+3); ctx.lineTo(TX+44, yT+3); ctx.lineTo(TX+33, yB);
-    ctx.closePath(); ctx.fill();
-    ctx.fillStyle = '#1c2d63'; ctx.fillRect(TX-46, yT, 92, 4);
-  }
   for(const w of towerWins){
     ctx.globalAlpha = 0.3 + 0.55*Math.abs(Math.sin(t*w.sp + w.ph));
     ctx.fillStyle = '#ffd77a'; ctx.fillRect(w.x, w.y, 7, 8);
   }
   ctx.globalAlpha = 1;
-  ctx.fillStyle = '#162552'; ctx.fillRect(TX-15, TOWER_TOP-18, 30, 20);
-  ctx.strokeStyle = '#8fa0c9'; ctx.lineWidth = 3;
-  ctx.beginPath(); ctx.moveTo(TX, TOWER_TOP-18); ctx.lineTo(TX, TOWER_TOP-54); ctx.stroke();
   const bl = 0.5 + 0.5*Math.sin(t*4);
   ctx.fillStyle = 'rgba(255,100,100,' + (0.4+0.6*bl) + ')';
   ctx.beginPath(); ctx.arc(TX, TOWER_TOP-54, 3.5 + bl*2.5, 0, 7); ctx.fill();
 }
 function drawWater(t){
   ctx.fillStyle = WATER_G; ctx.fillRect(0, WATER_Y, GAME_W, GAME_H-WATER_Y);
+  ctx.fillStyle = 'rgba(4,14,28,0.8)';   // v6：深水魚群剪影
+  for(const f of deepFish){
+    const x = ((f.ph + t*f.sp*f.dir) % (GAME_W+80) + (GAME_W+80)) % (GAME_W+80) - 40;
+    const y = f.y + Math.sin(t*0.8 + f.ph)*6;
+    ctx.save(); ctx.translate(x, y); ctx.scale(f.dir*f.s, f.s);
+    ctx.beginPath(); ctx.ellipse(0, 0, 16, 6, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-14,0); ctx.lineTo(-22,-5); ctx.lineTo(-22,5); ctx.closePath(); ctx.fill();
+    ctx.restore();
+  }
+  for(let i=0;i<3;i++){   // v6：月光斜射光柱（烘焙精靈緩慢搖曳）
+    ctx.globalAlpha = 0.05 + 0.03*Math.sin(t*0.5 + i*2.1);
+    ctx.drawImage(RAY_SPR, 36 + i*118 + Math.sin(t*0.22 + i)*18, WATER_Y+2, 180, 230);
+  }
+  ctx.globalAlpha = 1;
   ctx.strokeStyle = 'rgba(168,230,226,0.5)'; ctx.lineWidth = 2.5;  // 波浪表面
   ctx.beginPath();
   for(let x=0;x<=GAME_W;x+=16){
@@ -393,6 +572,11 @@ function drawWater(t){
   for(let i=0;i<7;i++){
     const yy = WATER_Y + 16 + i*30, ww = 40 + Math.sin(t*1.5+i)*14;
     ctx.fillRect(110-ww/2, yy, ww, 4);
+  }
+  ctx.globalAlpha = 0.07; ctx.fillStyle = '#ffd77a';  // v6：101 燈光金色倒影
+  for(let i=0;i<6;i++){
+    const ww = 34 + Math.sin(t*1.7 + i*1.3)*12;
+    ctx.fillRect(TX - ww/2, WATER_Y + 12 + i*26, ww, 4);
   }
   ctx.globalAlpha = 1;
   ctx.strokeStyle = 'rgba(46,196,182,0.14)'; ctx.lineWidth = 1.5;  // 水中光紋
@@ -478,6 +662,7 @@ const fishGame = {
     this.fishes = []; this.jellies = [];
     for(let i=0;i<6;i++) this.spawnFish(false, true);
     this.hint = 6; this.buttons = [];
+    setAmb('water');   // v6：水波氛圍
     floater(GAME_W/2, 240, this.hard ? '🌙 夜霧釣場：魚更快、水母成群！' : '瞄準魚群，拋線！', '#ffd77a', 30);
   },
   spawnFish(gold, anywhere){
@@ -562,6 +747,8 @@ const fishGame = {
       f.x += f.dir * f.sp * speedMul * dt;
       f.wig += dt * (5 + f.sp/25);
       f.sx += (1-f.sx)*Math.min(1,dt*10); f.sy += (1-f.sy)*Math.min(1,dt*10);
+      if((f.k.gold || f.k.boss) && Math.random() < 0.14)   // v6：金魚/魚王游動灑金粉
+        spawnPart({x:f.x - f.dir*f.k.r, y:f.y, vx:0, vy:-16, life:0.6, color:'#ffd447', size:3, g:-20});
       if(f.k.boss){  // 魚王限時逗留，時間到就溜走（不折返）
         f.bossT -= dt;
         if(f.bossT <= 0){
@@ -757,12 +944,22 @@ const fishGame = {
       ctx.beginPath(); ctx.ellipse(0, 0, f.k.r*1.5, f.k.r*1.05, 0, 0, 7); ctx.fill();
       ctx.globalAlpha = 1;
     }
-    ctx.fillStyle = f.k.color;
+    if(!f.k._g){   // v6：魚身立體漸層（快取於魚種，主迴圈零 createGradient）
+      const g2 = ctx.createLinearGradient(0, -f.k.r*0.7, 0, f.k.r*0.7);
+      g2.addColorStop(0, shade(f.k.color, 1.35)); g2.addColorStop(0.5, f.k.color); g2.addColorStop(1, shade(f.k.color, 0.62));
+      f.k._g = g2; f.k._dark = shade(f.k.color, 0.72);
+    }
+    ctx.fillStyle = f.k._g;
     ctx.beginPath(); ctx.ellipse(0, 0, f.k.r, f.k.r*0.62, 0, 0, 7); ctx.fill();
     ctx.fillStyle = f.k.belly;
     ctx.beginPath(); ctx.ellipse(1, f.k.r*0.2, f.k.r*0.7, f.k.r*0.32, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = f.k._dark; ctx.lineWidth = 1; ctx.globalAlpha *= 0.55;  // v6：鱗片弧線
+    for(let sc=0; sc<3; sc++){
+      ctx.beginPath(); ctx.arc(-f.k.r*0.25 + sc*f.k.r*0.3, -f.k.r*0.05, f.k.r*0.3, -0.9, 0.9); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
     const tw = Math.sin(f.wig)*0.5;  // 尾巴擺動
-    ctx.fillStyle = f.k.color;
+    ctx.fillStyle = f.k._dark;
     ctx.beginPath();
     ctx.moveTo(-f.k.r+2, 0); ctx.lineTo(-f.k.r-9, -7 + tw*6); ctx.lineTo(-f.k.r-9, 7 + tw*6);
     ctx.closePath(); ctx.fill();
@@ -773,6 +970,8 @@ const fishGame = {
     ctx.beginPath(); ctx.arc(f.k.r*0.45, -f.k.r*0.12, f.k.r*0.24, 0, 7); ctx.fill();
     ctx.fillStyle = '#04070f';
     ctx.beginPath(); ctx.arc(f.k.r*0.5, -f.k.r*0.12, f.k.r*0.12, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';  // v6：眼睛高光
+    ctx.beginPath(); ctx.arc(f.k.r*0.46, -f.k.r*0.18, f.k.r*0.05, 0, 7); ctx.fill();
     ctx.restore();
   },
   drawJelly(j){
@@ -824,6 +1023,7 @@ const crabGame = {
     this.hint = 6; this.goalGlow = 0; this.buttons = [];
     this.pows = []; this.powT = 7; this.powHinted = false;   // v2：場中道具
     this.golden = false; this.goldenEnd = false;             // v2：黃金進球加時
+    setAmb('crowd');   // v6：夜賽人群氛圍
     SFX.whistle();
   },
   onKey(code){
@@ -1026,6 +1226,8 @@ const crabGame = {
     flash = byPlayer ? 0.3 : 0.15; this.goalGlow = 1;
     const gx = byPlayer ? FIELD.x + FIELD.w : FIELD.x;
     burst(gx, CY, byPlayer ? ['#ffd77a','#ff6b5e','#fff5d6'] : ['#a8e6e2','#2ec4b6'], 36, 320, {size:6, g:400, life:0.9});
+    confetti(gx, CY - 30, byPlayer ? 44 : 16);   // v6：進球彩帶雨
+    if(byPlayer) cheer(0.22, 1.3);               // v6：觀眾歡呼
     if(this.golden){   // v2：黃金進球 = 立刻分勝負
       this.goldenEnd = true;
       this.msg = {txt: byPlayer ? '⚡ 黃金進球！' : '對手黃金進球…', t:0, life:1.4};
@@ -1053,7 +1255,7 @@ const crabGame = {
     let unlock = null;   // v4：一般模式首勝解鎖冠軍盃
     if(!this.hard && won && !unlk.C){ unlk.C = true; store('wow101v4_unlkC','1'); unlock = '🏆 解鎖「冠軍盃」困難模式！回選單開啟'; }
     let title, color;
-    if(won){ title = this.hard ? '冠軍盃制霸！傳奇紅蟹！' : (this.golden ? '黃金進球奪冠！🏆' : '紅蟹奪冠！🏆'); color = '#ffd77a'; SFX.win(); }
+    if(won){ title = this.hard ? '冠軍盃制霸！傳奇紅蟹！' : (this.golden ? '黃金進球奪冠！🏆' : '紅蟹奪冠！🏆'); color = '#ffd77a'; SFX.win(); cheer(0.25, 2.0); }
     else if(this.pScore < this.cScore){ title = '雖敗猶榮，再戰！'; color = '#a8e6e2'; SFX.lose(); }
     else { title = '激戰平手，握手言和！'; color = '#f3ecd9'; SFX.whistle(); }
     showOver({ bg: this, replay: crabGame, title, unlock,
@@ -1066,6 +1268,7 @@ const crabGame = {
     ctx.fillStyle = TURF_G; ctx.fillRect(0,0,GAME_W,GAME_H);  // 夜間球場草皮（v3：預計算漸層）
     ctx.fillStyle = 'rgba(255,255,255,0.035)';
     for(let s=0;s<GAME_W;s+=80) if((s/80)%2===0) ctx.fillRect(s,0,80,GAME_H);
+    ctx.fillStyle = TURF_PAT; ctx.fillRect(0,0,GAME_W,GAME_H);   // v6：草纖噪點質感
     ctx.globalAlpha = 0.05; ctx.fillStyle = '#fff5d6';  // 探照燈光束
     ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(GAME_W*0.45,GAME_H); ctx.lineTo(GAME_W*0.2,GAME_H); ctx.closePath(); ctx.fill();
     ctx.beginPath(); ctx.moveTo(GAME_W,0); ctx.lineTo(GAME_W*0.55,GAME_H); ctx.lineTo(GAME_W*0.8,GAME_H); ctx.closePath(); ctx.fill();
@@ -1076,6 +1279,12 @@ const crabGame = {
     ctx.beginPath(); ctx.arc(GAME_W/2, CY, 56, 0, 7); ctx.stroke();
     ctx.fillStyle = 'rgba(243,236,217,0.55)';
     ctx.beginPath(); ctx.arc(GAME_W/2, CY, 5, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(243,236,217,0.32)'; ctx.lineWidth = 2.5;   // v6：禁區與角旗弧
+    ctx.strokeRect(FIELD.x, CY-110, 86, 220);
+    ctx.strokeRect(FIELD.x+FIELD.w-86, CY-110, 86, 220);
+    for(const cn of [[FIELD.x,FIELD.y],[FIELD.x+FIELD.w,FIELD.y],[FIELD.x,FIELD.y+FIELD.h],[FIELD.x+FIELD.w,FIELD.y+FIELD.h]]){
+      ctx.beginPath(); ctx.arc(cn[0], cn[1], 12, 0, 7); ctx.stroke();
+    }
     this.drawGoal(FIELD.x - GOAL_D, '#2ec4b6', false);       // 球門
     this.drawGoal(FIELD.x + FIELD.w, '#ffb627', true);       // 右側金色 = 得分目標
     if(this.elapsed < 5 && this.pauseT <= 0){
@@ -1171,14 +1380,24 @@ const crabGame = {
   },
   drawGoal(gx, color, isTarget){
     const gy = CY - GOAL_H/2;
-    ctx.save();
-    if(isTarget && this.goalGlow > 0){ ctx.shadowColor = color; ctx.shadowBlur = 24*this.goalGlow; }
+    if(this.goalGlow > 0){   // v6：進球光暈改半透明疊色（零 shadowBlur）
+      ctx.globalAlpha = 0.35*this.goalGlow;
+      ctx.fillStyle = color;
+      ctx.fillRect(gx-10, gy-10, GOAL_D+20, GOAL_H+20);
+      ctx.globalAlpha = 1;
+    }
     ctx.fillStyle = 'rgba(4,7,15,0.35)'; ctx.fillRect(gx, gy, GOAL_D, GOAL_H);
     ctx.strokeStyle = color; ctx.lineWidth = 3; ctx.strokeRect(gx, gy, GOAL_D, GOAL_H);
-    ctx.restore();
+    const wob = this.goalGlow > 0 ? Math.sin(tGlobal*26)*3.5*this.goalGlow : 0;   // v6：進球球網波動
     ctx.strokeStyle = 'rgba(243,236,217,0.22)'; ctx.lineWidth = 1;  // 球網
-    for(let i=1;i<4;i++){ ctx.beginPath(); ctx.moveTo(gx + i*GOAL_D/4, gy); ctx.lineTo(gx + i*GOAL_D/4, gy+GOAL_H); ctx.stroke(); }
-    for(let i=1;i<7;i++){ ctx.beginPath(); ctx.moveTo(gx, gy + i*GOAL_H/7); ctx.lineTo(gx+GOAL_D, gy + i*GOAL_H/7); ctx.stroke(); }
+    for(let i=1;i<4;i++){
+      ctx.beginPath(); ctx.moveTo(gx + i*GOAL_D/4, gy);
+      ctx.quadraticCurveTo(gx + i*GOAL_D/4 + wob, gy + GOAL_H/2, gx + i*GOAL_D/4, gy + GOAL_H); ctx.stroke();
+    }
+    for(let i=1;i<7;i++){
+      ctx.beginPath(); ctx.moveTo(gx, gy + i*GOAL_H/7);
+      ctx.quadraticCurveTo(gx + GOAL_D/2, gy + i*GOAL_H/7 + wob, gx + GOAL_D, gy + i*GOAL_H/7); ctx.stroke();
+    }
   },
   drawCrabChar(c){
     const hopY = Math.sin(c.hop*Math.PI)*18;
@@ -1210,9 +1429,11 @@ const crabGame = {
       ctx.closePath(); ctx.fill();
       ctx.restore();
     }
-    const bodyG = ctx.createLinearGradient(0,-14,0,14);  // 身體
-    bodyG.addColorStop(0, c.col); bodyG.addColorStop(1, c.colD);
-    ctx.fillStyle = bodyG;
+    if(!c.grad){  // v6：蟹殼漸層快取（頂部受光更亮）
+      c.grad = ctx.createLinearGradient(0,-14,0,14);
+      c.grad.addColorStop(0, shade(c.col, 1.22)); c.grad.addColorStop(0.45, c.col); c.grad.addColorStop(1, c.colD);
+    }
+    ctx.fillStyle = c.grad;
     ctx.beginPath(); ctx.ellipse(0, 2, 21, 15, 0, 0, 7); ctx.fill();
     ctx.strokeStyle = 'rgba(255,255,255,0.25)'; ctx.lineWidth = 2;
     ctx.beginPath(); ctx.ellipse(0, -1, 15, 9, 0, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
@@ -1238,19 +1459,16 @@ const crabGame = {
     ctx.restore();
   },
   drawBall(){
-    const B = this.ball;
+    const B = this.ball, sp = Math.hypot(B.vx, B.vy);
+    if(sp > 420){   // v6：高速殘影
+      ctx.globalAlpha = 0.22;
+      ctx.drawImage(BALL_SPR, B.x - B.vx*0.03 - 16, B.y - B.vy*0.03 - 16);
+      ctx.globalAlpha = 1;
+    }
     ctx.save();
     ctx.translate(B.x, B.y);
     ctx.rotate(B.rot);
-    ctx.fillStyle = '#f3ecd9';
-    ctx.beginPath(); ctx.arc(0, 0, B.r, 0, 7); ctx.fill();
-    ctx.strokeStyle = 'rgba(4,7,15,0.7)'; ctx.lineWidth = 1.5; ctx.stroke();
-    ctx.fillStyle = '#122048';
-    ctx.beginPath(); ctx.arc(0, 0, B.r*0.36, 0, 7); ctx.fill();
-    for(let i=0;i<5;i++){
-      const a = i/5*Math.PI*2;
-      ctx.beginPath(); ctx.arc(Math.cos(a)*B.r*0.72, Math.sin(a)*B.r*0.72, B.r*0.2, 0, 7); ctx.fill();
-    }
+    ctx.drawImage(BALL_SPR, -16, -16);   // v6：立體烘焙足球（受光高光）
     ctx.restore();
   }
 };
@@ -1342,6 +1560,7 @@ const menuState = {
   buttons: [],
   enter(){
     this.t = 0; this.crabX = -80;
+    setAmb('night');   // v6：夜風氛圍
     this.buttons = [
       button(78, 226, 380, 240, '', ()=> setState(fishGame), {ghost:true}),
       button(502, 226, 380, 240, '', ()=> setState(crabGame), {ghost:true})
@@ -1449,7 +1668,7 @@ function frame(now){
     if(freeze > 0){ freeze -= STEP; continue; }
     tGlobal += STEP;
     state.update(STEP);
-    updateParts(STEP); updateFloaters(STEP);
+    updateParts(STEP); updateFloaters(STEP); updateMeteors(STEP); updateMeteors(STEP);
     shake *= Math.pow(0.0008, STEP); if(shake < 0.1) shake = 0;
     flash = Math.max(0, flash - STEP*3);
   }

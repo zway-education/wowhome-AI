@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：舞台聚光燈光束(擺動additive)、替身能量光點上升粒子、接住/覺醒/受擊衝擊波圓環、狂熱金色邊緣bloom+烘焙暗角；程序化殘響ConvolverNode、ゴゴゴ低鳴氛圍層+主音效ducking、靜音同步關氛圍 -->
+<!-- v4：困難模式黃金狂潮、章節制難度、ORA量表狂熱、箭雨事件 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -220,6 +221,68 @@ const auraSpr = [48, 30, 12, -6].map(h => bake(256, 256, g => {
   g.fillStyle = rg;
   g.fillRect(0, 0, 256, 256);
 }, 1));
+/* v6：舞臺聚光燈光束（烘焙漸層，繪製時旋轉擺動） */
+const beamSpr = bake(160, 700, g => {
+  const bg = g.createLinearGradient(0, 0, 0, 700);
+  bg.addColorStop(0, 'rgba(255,235,170,.3)'); bg.addColorStop(1, 'rgba(255,235,170,0)');
+  g.fillStyle = bg;
+  g.beginPath(); g.moveTo(66, 0); g.lineTo(94, 0); g.lineTo(160, 700); g.lineTo(0, 700);
+  g.closePath(); g.fill();
+}, 1);
+/* v6：能量光點精靈＋烘焙暗角＋狂熱金色邊緣光 */
+const spotSprG = bake(32, 32, g => {
+  const rg = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  rg.addColorStop(0, 'rgba(255,224,138,.95)'); rg.addColorStop(1, 'rgba(255,224,138,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 32, 32);
+}, 1);
+const spotSprP = bake(32, 32, g => {
+  const rg = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  rg.addColorStop(0, 'rgba(203,122,232,.9)'); rg.addColorStop(1, 'rgba(203,122,232,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 32, 32);
+}, 1);
+const vigSpr = bake(GAME_W, GAME_H, g => {
+  const rg = g.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.42, GAME_W / 2, GAME_H / 2, GAME_H * 0.85);
+  rg.addColorStop(0, 'rgba(10,3,20,0)'); rg.addColorStop(1, 'rgba(10,3,20,.5)');
+  g.fillStyle = rg; g.fillRect(0, 0, GAME_W, GAME_H);
+}, 1);
+const feverEdgeSpr = bake(GAME_W, GAME_H, g => {
+  const rg = g.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.34, GAME_W / 2, GAME_H / 2, GAME_H * 0.8);
+  rg.addColorStop(0, 'rgba(244,196,48,0)'); rg.addColorStop(1, 'rgba(244,196,48,.45)');
+  g.fillStyle = rg; g.fillRect(0, 0, GAME_W, GAME_H);
+}, 1);
+/* v6：替身能量光點（上升、金紫交錯） */
+const motes = [];
+for(let i = 0; i < 16; i++) motes.push({ x: Math.random() * GAME_W, y: Math.random() * GAME_H, z: 0.4 + Math.random() * 0.6, ph: Math.random() * 9, purple: Math.random() < 0.4 });
+function updateMotes(dt){
+  for(const m of motes){
+    m.ph += dt;
+    m.y -= (16 + 30 * m.z) * dt;
+    m.x += Math.sin(m.ph * 1.5) * 14 * dt;
+    if(m.y < -8){ m.y = GAME_H + 8; m.x = Math.random() * GAME_W; }
+  }
+}
+function drawMotes(){
+  ctx.globalCompositeOperation = 'lighter';
+  for(const m of motes){
+    const k = 11 * m.z;
+    ctx.globalAlpha = (0.2 + 0.3 * m.z) * (0.7 + 0.3 * Math.sin(m.ph * 4));
+    ctx.drawImage((m.purple ? spotSprP : spotSprG).c, m.x - k / 2, m.y - k / 2, k, k);
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+}
+/* v6：衝擊波圓環（接住/覺醒/受擊） */
+const rings = [];
+function addRing(x, y, color, maxR){ rings.push({ x, y, color, maxR, t: 0, dur: 0.4 }); }
+function updateRings(dt){ for(let i = rings.length - 1; i >= 0; i--){ rings[i].t += dt; if(rings[i].t >= rings[i].dur) rings.splice(i, 1); } }
+function drawRings(){
+  for(const r of rings){
+    const p = r.t / r.dur, e = easeOutCubic(p);
+    ctx.globalAlpha = (1 - p) * 0.85;
+    ctx.strokeStyle = r.color; ctx.lineWidth = 3 + (1 - p) * 3.5;
+    ctx.beginPath(); ctx.arc(r.x, r.y, 8 + (r.maxR - 8) * e, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
 /* 主畫布常駐漸層（一次建立重複使用） */
 const FEVER_G = ctx.createLinearGradient(175, 0, 365, 0);
 FEVER_G.addColorStop(0, '#e8478b'); FEVER_G.addColorStop(1, '#f4c430');
@@ -245,7 +308,8 @@ function getCheekGrads(lvl){
 }
 
 /* ===== 音效（Web Audio 合成：master bus＋壓縮器防爆音）===== */
-let AC = null, master = null;
+let AC = null, master = null, revSend = null, ambGain = null, ambOn = false;
+const ambNodes = [];
 let muted = false;
 try{ muted = localStorage.getItem('jojo_muted') === '1'; }catch(e){}
 function initAudio(){
@@ -256,12 +320,43 @@ function initAudio(){
       comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 12;
       comp.attack.value = 0.003; comp.release.value = 0.25;
       master = AC.createGain();
-      master.gain.value = 0.9;
+      master.gain.value = muted ? 0 : 0.9;
       master.connect(comp);
       comp.connect(AC.destination);
+      /* v6：程序化殘響（generated impulse 舞臺空間感） */
+      const conv = AC.createConvolver();
+      const n = Math.floor(AC.sampleRate * 1.3), buf = AC.createBuffer(2, n, AC.sampleRate);
+      for(let ch = 0; ch < 2; ch++){ const d = buf.getChannelData(ch);
+        for(let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.8); }
+      conv.buffer = buf;
+      revSend = AC.createGain(); revSend.gain.value = 0.22;
+      revSend.connect(conv); conv.connect(master);
+      /* v6：ゴゴゴ低鳴氛圍層（主音效觸發 ducking） */
+      ambGain = AC.createGain(); ambGain.gain.value = 1; ambGain.connect(master);
+      startAmbience();
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+}
+function startAmbience(){
+  if(!AC || !ambGain || ambOn) return;
+  ambOn = true;
+  const n = AC.sampleRate * 2, buf = AC.createBuffer(1, n, AC.sampleRate), d = buf.getChannelData(0);
+  for(let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const filt = AC.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 130; filt.Q.value = 0.9;
+  const g = AC.createGain(); g.gain.value = 0.07;
+  const lfo = AC.createOscillator(), lg = AC.createGain();
+  lfo.frequency.value = 0.22; lg.gain.value = 45;
+  lfo.connect(lg); lg.connect(filt.frequency);
+  src.connect(filt); filt.connect(g); g.connect(ambGain);
+  src.start(); lfo.start(); ambNodes.push(src, lfo, g);
+}
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime, g = ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, 1), t);
+  g.linearRampToValueAtTime(0.12, t + 0.05); g.linearRampToValueAtTime(1, t + 1.1);
 }
 function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0, jit = 0){
   if(muted || !AC) return;
@@ -272,7 +367,7 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0, jit
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g).connect(master);
+  o.connect(g); g.connect(master); if(revSend) g.connect(revSend);
   o.start(); o.stop(AC.currentTime + dur);
 }
 function noise(dur = 0.15, vol = 0.2){
@@ -286,23 +381,24 @@ function noise(dur = 0.15, vol = 0.2){
   const g = AC.createGain();
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  src.connect(g).connect(master);
+  src.connect(g); g.connect(master); if(revSend) g.connect(revSend);
   src.start();
 }
 const sfx = {
   catch(){ beep(988, 0.07, 'square', 0.1, 0, 0.05); setTimeout(() => beep(1319, 0.12, 'square', 0.1, 0, 0.05), 70); },
   jojo(){ [659, 784, 988, 1319, 1568].forEach((f, i) => setTimeout(() => beep(f, 0.13, 'square', 0.1, 0, 0.03), i * 70)); },
-  hurt(){ noise(0.12, 0.15); beep(200, 0.25, 'sawtooth', 0.14, -140, 0.08); },
+  hurt(){ duckAmb(); noise(0.12, 0.15); beep(200, 0.25, 'sawtooth', 0.14, -140, 0.08); },
   miss(){ beep(150, 0.2, 'triangle', 0.13, -80, 0.08); },
   ui(){ beep(660, 0.06, 'square', 0.08, 0, 0.04); },
   ora(){ beep(440, 0.05, 'square', 0.09, 200, 0.08); },
-  fever(){ noise(0.2, 0.16); [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'sawtooth', 0.11, 150), i * 80)); },
+  fever(){ duckAmb(); noise(0.2, 0.16); [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'sawtooth', 0.11, 150), i * 80)); },
   heart(){ beep(660, 0.1, 'triangle', 0.12, 220); setTimeout(() => beep(988, 0.16, 'triangle', 0.11), 100); },
-  rumble(){ beep(80, 0.5, 'sawtooth', 0.12, 40); noise(0.35, 0.1); },
-  lose(){ [392, 330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 140)); }
+  rumble(){ duckAmb(); beep(80, 0.5, 'sawtooth', 0.12, 40); noise(0.35, 0.1); },
+  lose(){ duckAmb(); [392, 330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 140)); }
 };
 function toggleMute(){
   muted = !muted;
+  if(master) master.gain.value = muted ? 0 : 0.9;   /* v6：靜音同步關掉氛圍層與殘響尾音 */
   try{ localStorage.setItem('jojo_muted', muted ? '1' : '0'); }catch(e){}
 }
 
@@ -552,11 +648,13 @@ function catchItem(it){
     if(lives < 3){ lives++; addFloater(it.x, it.y - 12, '回復 1 顆心！', '#ff7ab0', 26); }
     else{ score += 30; addFloater(it.x, it.y - 12, '+30', '#ff7ab0', 22); }
     burst(it.x, it.y, '#ff7ab0', 14, 260, 0.55);
+    addRing(it.x, it.y, '#ff7ab0', 72);
     lifeFlash = 1;
     sfx.heart();
   }else if(it.type === 'jojo'){
     freeze = 0.1; shake = 10;
     burst(it.x, it.y, '#fff', 14, 300, 0.6);
+    addRing(it.x, it.y, 'hsl(' + ((T * 300) % 360) + ',85%,62%)', 116);
     for(let i = 0; i < 12; i++)
       burst(it.x, it.y, 'hsl(' + (i * 30) + ',85%,62%)', 2, 280, 0.55);
     if(player.lvl < MAX_LVL){
@@ -576,6 +674,7 @@ function catchItem(it){
     const gain = (10 + Math.min(40, (combo - 1) * 2)) * mult;
     score += gain;
     shake = Math.max(shake, 4);
+    addRing(it.x, it.y, '#f4c430', 58);
     burst(it.x, it.y, '#f4c430', 10, 240, 0.45);
     burst(it.x, it.y, '#fff6e8', 4, 180, 0.35);
     addFloater(it.x, it.y - 8, '+' + gain, feverT > 0 ? '#fff' : '#ffe08a', 22);
@@ -598,6 +697,7 @@ function loseLife(x, y, txt){
   freeze = Math.max(freeze, 0.08);
   shake = Math.max(shake, 9);
   player.hurtT = 0.6;
+  addRing(x, y, '#b04ad0', 84);
   addFloater(x, y - 10, txt, '#ff7ab0', 24);
   sfx.hurt();
   if(lives <= 0){
@@ -747,6 +847,18 @@ function drawBG(){
   /* 城市剪影（烘焙長條，兩層緩慢視差） */
   drawSkyline(sky1, T * 3, FEET_Y + 26);
   drawSkyline(sky2, T * 7, FEET_Y + 34);
+  /* v6：舞臺聚光燈（烘焙光束、緩慢擺動、additive） */
+  ctx.globalCompositeOperation = 'lighter';
+  for(const [bx, ph] of [[130, 0], [GAME_W - 130, 2.4]]){
+    ctx.save();
+    ctx.translate(bx, -30);
+    ctx.rotate(Math.sin(T * 0.5 + ph) * 0.16);
+    ctx.globalAlpha = 0.5;
+    ctx.drawImage(beamSpr.c, -80, 0, 160, 700);
+    ctx.restore();
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  drawMotes();   /* v6：替身能量光點 */
   /* 舞臺地板（烘焙） */
   ctx.drawImage(floorC.c, 0, FEET_Y + 8, GAME_W, 92);
   /* 地板菱格 */
@@ -1116,8 +1228,10 @@ function drawWorld(){
   for(const it of items) drawItem(it);
   drawPlayer(stateName !== 'play');
   drawParts();
+  drawRings();   /* v6：衝擊波圓環 */
   drawFloaters();
   ctx.restore();
+  ctx.drawImage(vigSpr.c, 0, 0);   /* v6：烘焙暗角 */
 }
 function titleDraw(){
   drawWorld();
@@ -1186,10 +1300,14 @@ function drawTabletIcon(x, y){
 }
 function playDraw(){
   drawWorld();
-  /* ORA ORA 時間：金色氛圍 */
+  /* ORA ORA 時間：金色氛圍＋v6 邊緣 bloom 脈動 */
   if(feverT > 0){
     ctx.fillStyle = 'rgba(244,196,48,' + (0.07 + Math.sin(T * 10) * 0.03) + ')';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5 + Math.sin(T * 8) * 0.2;
+    ctx.drawImage(feverEdgeSpr.c, 0, 0);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
   }
   drawHUD();
   if(phase === 'ready'){
@@ -1275,7 +1393,7 @@ function overDraw(){
 }
 
 /* 測試掛鉤（自動化冒煙測試用，不影響遊戲） */
-window.__smoke = () => ({ scene: stateName, mode, x: player.x, tx: player.tx, lives, score, fever, feverT, elapsed, stage, lvl: player.lvl, cleared, bestHard, items: items.length, overT });
+window.__smoke = () => ({ scene: stateName, mode, x: player.x, tx: player.tx, lives, score, fever, feverT, elapsed, stage, lvl: player.lvl, cleared, bestHard, items: items.length, overT, ambN: ambNodes.length });
 window.__startMode = m => startGame(m); // 測試專用：直接進入指定模式
 window.__test = { hit(){ if(stateName === 'play') loseLife(player.x, 300, '測試'); } };
 
@@ -1296,6 +1414,8 @@ function frame(now){
     else if(stateName === 'over') overT += STEP;
     updateParts(STEP);
     updateFloaters(STEP);
+    updateMotes(STEP);   /* v6：能量光點與圓環 */
+    updateRings(STEP);
   }
   uiButtons = [];
   if(stateName === 'title') titleDraw();

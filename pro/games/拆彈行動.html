@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6 -->
+<!-- 升級摘要：畫質——烘焙月亮bloom＋vignette後製、倒數最後5秒漸強紅色警戒暈、屋頂餘燼浮塵與流星、剪斷銅芯餘火花、成功拆除彩帶禮花、裝置拉絲金屬質感；音效——DynamicsCompressor母線＋夜空程序化殘響、城市低鳴/風聲氛圍層、最後5秒緊張低音漸強（爆炸自動ducking） -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -118,13 +119,59 @@ function initAudio(){
   if(!AC){
     try{
       AC = new (window.AudioContext || window.webkitAudioContext)();
-      /* v3：主控音量匯流排——多事件同發也不削波 */
+      /* v6：主控匯流排升級——DynamicsCompressor 防削波＋夜空程序化殘響（ConvolverNode） */
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 22; comp.ratio.value = 7;
       master = AC.createGain();
       master.gain.value = 0.55;
-      master.connect(AC.destination);
+      master.connect(comp); comp.connect(AC.destination);
+      const rev = AC.createConvolver();
+      const rlen = Math.floor(AC.sampleRate * 1.2);
+      const rbuf = AC.createBuffer(2, rlen, AC.sampleRate);
+      for(let ch = 0; ch < 2; ch++){
+        const d = rbuf.getChannelData(ch);
+        for(let i = 0; i < rlen; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / rlen, 3);
+      }
+      rev.buffer = rbuf;
+      const rg = AC.createGain(); rg.gain.value = 0.13;
+      master.connect(rev); rev.connect(rg); rg.connect(comp);
+      initAmbient();
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+}
+/* v6 夜城氛圍層：城市低鳴＋高樓風聲＋最後 5 秒緊張低音（loop 節點，音量平滑追隨） */
+let amb = null, ambDuck = 1;
+function initAmbient(){
+  if(!AC || amb) return;
+  try{
+    const len = AC.sampleRate * 2;
+    const buf = AC.createBuffer(1, len, AC.sampleRate);
+    const d = buf.getChannelData(0);
+    for(let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    const mk = (type, freq, q) => {
+      const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+      const f = AC.createBiquadFilter(); f.type = type; f.frequency.value = freq; f.Q.value = q;
+      const g = AC.createGain(); g.gain.value = 0;
+      src.connect(f); f.connect(g); g.connect(master); src.start();
+      return { g };
+    };
+    const to = AC.createOscillator(); to.type = 'sawtooth'; to.frequency.value = 46;
+    const tf = AC.createBiquadFilter(); tf.type = 'lowpass'; tf.frequency.value = 180;
+    const tg = AC.createGain(); tg.gain.value = 0;
+    to.connect(tf); tf.connect(tg); tg.connect(master); to.start();
+    amb = { city: mk('lowpass', 120, 0.8), wind: mk('bandpass', 520, 0.4), tension: { g: tg } };
+  }catch(e){ amb = null; }
+}
+function updateAmbient(dt){
+  ambDuck = Math.min(1, ambDuck + dt * 0.5);
+  if(!AC || !amb) return;
+  const on = muted ? 0 : ambDuck;
+  const t0 = AC.currentTime;
+  amb.city.g.gain.setTargetAtTime(0.02 * on, t0, 0.5);
+  amb.wind.g.gain.setTargetAtTime(0.007 * on * (1 + Math.sin(T * 0.5) * 0.4), t0, 0.5);
+  const urgent = stateName === 'play' && phase === 'active' && timeLeft <= 5;
+  amb.tension.g.gain.setTargetAtTime(urgent ? (0.035 * (1 - timeLeft / 5) + 0.012) * on : 0, t0, 0.25);
 }
 /* v3：微幅隨機音高 */
 const rp = f => f * (0.94 + Math.random() * 0.12);
@@ -161,7 +208,7 @@ const sfx = {
   tick(u){ beep(u ? 1100 : 780, 0.045, 'square', u ? 0.11 : 0.07); },
   snip(){ noise(0.05, 0.14); beep(rp(1500), 0.06, 'square', 0.08, -400); },
   success(){ [659, 784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.1), i * 90)); },
-  boom(){ noise(0.6, 0.3); beep(70, 0.7, 'sawtooth', 0.2, -35); },
+  boom(){ noise(0.6, 0.3); beep(70, 0.7, 'sawtooth', 0.2, -35); ambDuck = 0.15; },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   chirp(){ beep(1200 + Math.random() * 500, 0.07, 'sine', 0.05, 300); },
   lose(){ [330, 262, 196, 147].forEach((f, i) => setTimeout(() => beep(f, 0.24, 'triangle', 0.12), i * 160)); },
@@ -423,6 +470,9 @@ function cutWire(i, x){
       addFloater(GAME_W / 2, 334, '獲得 🔍 排除鏡！', '#ffd77e', 20);
     }
     shake = 3;
+    /* v6：彩帶禮花 */
+    for(const cc of ['#ff6b6b', '#ffd23d', '#33d1a6', '#3d8bff', '#b673ff'])
+      burst(GAME_W / 2 + (Math.random() * 200 - 100), 190 + Math.random() * 60, cc, 4, 280, 0.75);
     sfx.success();
     spawnCrowd();
   }else{
@@ -568,7 +618,14 @@ function playUpdate(dt){
   }else if(phase === 'boom'){
     if(phaseT > 1.3) endGame();
   }
-  for(const w of wires) if(w.cut) w.cutT = Math.min(1, w.cutT + dt * 3);
+  for(const w of wires) if(w.cut){
+    w.cutT = Math.min(1, w.cutT + dt * 3);
+    /* v6：剛剪斷的銅芯端點迸出餘火花 */
+    if(w.cutT < 1 && Math.random() < dt * 9){
+      const yc = wireYAt(w, w.cutX) + 26 * easeOutCubic(w.cutT);
+      burst(w.cutX + (Math.random() < 0.5 ? -7 : 7), yc, '#ffd23d', 1, 90, 0.25);
+    }
+  }
   flash = Math.max(0, flash - dt * 2.6);
   updateVillagers(dt);
   scoreShow += (score - scoreShow) * (1 - Math.pow(0.02, dt));
@@ -596,6 +653,12 @@ function bakeBG(){
   c.beginPath(); c.arc(110, 80, 6, 0, Math.PI * 2); c.fill();
   c.beginPath(); c.arc(130, 96, 4.5, 0, Math.PI * 2); c.fill();
   c.beginPath(); c.arc(126, 74, 3, 0, Math.PI * 2); c.fill();
+  /* v6 月亮 bloom：大範圍 additive 光暈（烘焙一次） */
+  c.globalCompositeOperation = 'lighter';
+  const mb = c.createRadialGradient(120, 86, 20, 120, 86, 135);
+  mb.addColorStop(0, 'rgba(250,240,200,.28)'); mb.addColorStop(1, 'rgba(250,240,200,0)');
+  c.fillStyle = mb; c.beginPath(); c.arc(120, 86, 135, 0, Math.PI * 2); c.fill();
+  c.globalCompositeOperation = 'source-over';
   /* 屋頂平臺 */
   const fg = c.createLinearGradient(0, GAME_H - 82, 0, GAME_H);
   fg.addColorStop(0, '#232c42'); fg.addColorStop(1, '#12182a');
@@ -603,8 +666,21 @@ function bakeBG(){
   c.fillStyle = '#39435e'; c.fillRect(0, GAME_H - 82, GAME_W, 4);
   c.fillStyle = 'rgba(255,176,32,.5)';
   for(let x = 14; x < GAME_W; x += 60) c.fillRect(x, GAME_H - 46, 30, 5);   // 警示斜紋
+  /* v6 vignette 後製（一般＋紅色警戒兩張，低解析放大＝平滑漸層） */
+  const mkVig = (col) => {
+    const v = document.createElement('canvas');
+    v.width = 240; v.height = Math.max(2, Math.round(240 * GAME_H / GAME_W));
+    const vc = v.getContext('2d');
+    const vg = vc.createRadialGradient(120, v.height * 0.46, Math.min(110, v.height * 0.42), 120, v.height * 0.5, Math.max(150, v.height * 0.75));
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, col);
+    vc.fillStyle = vg; vc.fillRect(0, 0, 240, v.height);
+    return v;
+  };
+  vigCanvas = mkVig('rgba(2,4,10,.42)');
+  vigRed = mkVig('rgba(160,10,10,.85)');
   bgDirty = false;
 }
+let vigCanvas = null, vigRed = null;
 function drawBG(){
   if(bgDirty) bakeBG();
   ctx.drawImage(bgCanvas, 0, 0, GAME_W, GAME_H);
@@ -636,6 +712,26 @@ function drawBG(){
   /* 城市剪影（兩層視差） */
   drawSkyline(T * 2.5, GAME_H - 118, '#111a2e', 1);
   drawSkyline(T * 6, GAME_H - 96, '#0a1020', 1.35);
+  /* v6 屋頂餘燼浮塵（程序化上升暖光點） */
+  for(let i = 0; i < 10; i++){
+    const sp = 12 + (i % 4) * 6;
+    const x = ((i * 197) + Math.sin(T * 0.4 + i) * 30 + T * 6) % (GAME_W + 20) - 10;
+    const y = GAME_H - 20 - ((i * 83 + T * sp) % (GAME_H * 0.55));
+    ctx.globalAlpha = 0.13 + 0.11 * Math.sin(T * 2 + i);
+    ctx.fillStyle = '#ffcf7e';
+    ctx.fillRect(x, y, 2.5, 2.5);
+  }
+  ctx.globalAlpha = 1;
+  /* v6 流星：約每 9 秒一顆劃過夜空 */
+  const met = T % 9;
+  if(met < 1.1){
+    const mk = met / 1.1;
+    const mx = GAME_W * 0.78 - mk * 330, my = 28 + mk * 120;
+    ctx.globalAlpha = Math.sin(mk * Math.PI) * 0.8;
+    ctx.strokeStyle = '#eaf2ff'; ctx.lineWidth = 2; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx + 48, my - 20); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
 }
 function drawSkyline(off, baseY, color, hs){
   const period = GAME_W + 200;
@@ -709,6 +805,13 @@ function drawCase(){
   rr(CASE_X, CASE_Y, CASE_W, CASE_H, 20);
   ctx.fillStyle = caseGrad; ctx.fill();
   ctx.strokeStyle = '#39435e'; ctx.lineWidth = 2.5; ctx.stroke();
+  /* v6 拉絲金屬質感（極淡水平髮絲紋） */
+  ctx.globalAlpha = 0.045;
+  ctx.strokeStyle = '#dfe8ff'; ctx.lineWidth = 1;
+  for(let ly = CASE_Y + 26; ly < CASE_Y + CASE_H - 10; ly += 17){
+    ctx.beginPath(); ctx.moveTo(CASE_X + 10, ly); ctx.lineTo(CASE_X + CASE_W - 10, ly); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
   /* 鉚釘 */
   for(const p of [[16, 16], [CASE_W - 16, 16], [16, CASE_H - 16], [CASE_W - 16, CASE_H - 16]]){
     const rx = CASE_X + p[0], ry = CASE_Y + p[1];
@@ -1011,6 +1114,13 @@ function drawWorld(){
   drawVillagers();
   drawFloaters();
   ctx.restore();
+  /* v6 後製：vignette＋最後 5 秒漸強紅色警戒暈（穩定漸強、不閃爍） */
+  if(vigCanvas) ctx.drawImage(vigCanvas, 0, 0, GAME_W, GAME_H);
+  if(vigRed && stateName === 'play' && phase === 'active' && timeLeft <= 5){
+    ctx.globalAlpha = (1 - timeLeft / 5) * 0.28;
+    ctx.drawImage(vigRed, 0, 0, GAME_W, GAME_H);
+    ctx.globalAlpha = 1;
+  }
   if(flash > 0){
     ctx.fillStyle = 'rgba(255,255,255,' + (flash * 0.85).toFixed(3) + ')';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
@@ -1245,6 +1355,7 @@ function frame(now){
     acc -= STEP;
     T += STEP;
     stateT += STEP;
+    updateAmbient(STEP);   /* v6：氛圍層（不受 hit-stop 影響） */
     if(freeze > 0){ freeze -= STEP; continue; }   // hit-stop
     shake *= Math.pow(0.001, STEP);
     if(stateName === 'play') playUpdate(STEP);

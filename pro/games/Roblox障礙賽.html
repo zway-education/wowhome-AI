@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v5：觸控端補上返回選關鈕／移除觸控中央死區／跳躍加角落修正／視窗切走自動重置輸入／新關卡解鎖加慶祝回饋 -->
+<!-- 專業AI升級 v6：主題星雲天空與烘焙漸層大樓、霓虹光塵氛圍粒子、高速殘影、終點光柱、鋸輪危險光圈、vignette、程序化殘響＋城市夜氛圍層與ducking、跑步腳步聲（保留v5觸控返回鈕/角落修正/輸入重置） -->
 <!-- 補強輪：角色臉部表情多狀態(平常/受擊/開心)＋離屏烘焙sprite／觸控可玩性複查／大螢幕提醒浮層 -->
 <html lang="zh-Hant">
 <head>
@@ -92,7 +92,7 @@ addEventListener('resize', resize); resize();
 const clamp = (v,a,b)=>Math.max(a,Math.min(b,v));
 
 // ============ 音效：Web Audio 合成（壓縮器母線＋隨機音高） ============
-let AC = null, master = null, muted = false;
+let AC = null, master = null, muted = false, ambGain = null, ambDuck = null, ambLevel = 0.02;
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
@@ -100,15 +100,54 @@ function audio(){
     comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 8;
     master = AC.createGain(); master.gain.value = 0.9;
     master.connect(comp).connect(AC.destination);
+    try{
+      // v6：程序化殘響——generated impulse，空曠賽場空間感
+      const ir = AC.createBuffer(2, (AC.sampleRate*1.2)|0, AC.sampleRate);
+      for(let ch=0;ch<2;ch++){
+        const d = ir.getChannelData(ch);
+        for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/d.length, 2.8);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.14;
+      comp.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：城市夜風氛圍層（低通噪聲＋緩慢起伏，4 秒無縫循環）
+      const sr = AC.sampleRate, len = sr*4, buf = AC.createBuffer(1, len, sr), ad = buf.getChannelData(0);
+      let lp = 0;
+      for(let i=0;i<len;i++){
+        const t = i/sr, w = Math.random()*2-1;
+        lp += (w-lp)*0.018;
+        ad[i] = lp*(0.6+0.4*Math.sin(t*2.2)+0.15*Math.sin(t*7.7))*1.5;
+      }
+      const f = (sr*0.12)|0;
+      for(let i=0;i<f;i++){ const a=i/f; ad[i]=ad[i]*a+ad[len-f+i]*(1-a); }
+      const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+      ambGain = AC.createGain(); ambGain.gain.value = 0;
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1;
+      src.connect(ambGain); ambGain.connect(ambDuck); ambDuck.connect(master);
+      src.start();
+      setAmbLevel(ambLevel);
+    }catch(e){}
   }
   if(AC.state === 'suspended') AC.resume();
   return AC;
+}
+function setAmbLevel(v){
+  ambLevel = v;
+  if(AC && ambGain) ambGain.gain.setTargetAtTime(muted ? 0 : v, AC.currentTime, 0.6);
+}
+function duckAmb(){
+  if(!AC || !ambDuck || muted) return;
+  const t0 = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t0);
+  ambDuck.gain.setTargetAtTime(0.35, t0, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t0+0.12, 0.25);
 }
 addEventListener('pointerdown', audio, { once:true });
 addEventListener('keydown', audio, { once:true });
 function beep(freq=440, dur=0.1, type='square', vol=0.15, slide=0){
   if(muted || !AC) return;
   const ac = audio();
+  if(vol >= 0.12) duckAmb();                       // v6：主音效壓低氛圍層
   freq *= 0.94 + Math.random()*0.12;               // 隨機音高
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
@@ -121,6 +160,7 @@ function beep(freq=440, dur=0.1, type='square', vol=0.15, slide=0){
 function noise(dur=0.15, vol=0.12){
   if(muted || !AC) return;
   const ac = audio(), n = Math.floor(ac.sampleRate*dur);
+  if(vol >= 0.12) duckAmb();                       // v6
   const buf = ac.createBuffer(1, n, ac.sampleRate), d = buf.getChannelData(0);
   for(let i=0;i<n;i++) d[i] = (Math.random()*2-1) * (1 - i/n);
   const s = ac.createBufferSource(); s.buffer = buf;
@@ -143,6 +183,7 @@ muteBtn.addEventListener('click', ()=>{
   muted = !muted;
   document.getElementById('icoOn').style.display = muted?'none':'block';
   document.getElementById('icoOff').style.display = muted?'block':'none';
+  setAmbLevel(ambLevel);   // v6：靜音同步氛圍層
 });
 // 返回選關鈕（觸控裝置沒有實體 ESC 鍵，遊玩中必須也能一鍵離開關卡）
 const backBtn = document.getElementById('backBtn');
@@ -160,14 +201,22 @@ const THEMES = [
 ];
 const PAL = { accent:'#00f0ff', pink:'#ff2975', gold:'#ffd700', white:'#f6f6f6', green:'#3fe08a' };
 
-// ---- 烘焙天空（避免每幀重算漸層） ----
-let skyCv = null;
+// ---- 烘焙天空（避免每幀重算漸層；v6：加主題色星雲、地平線霞光、月面坑洞） ----
+let skyCv = null, bldCvs = [], vignCv = null, beamCv = null;
 function bakeSky(th){
   skyCv = document.createElement('canvas'); skyCv.width = GAME_W; skyCv.height = GAME_H;
   const c = skyCv.getContext('2d');
   const g = c.createLinearGradient(0,0,0,GAME_H);
   g.addColorStop(0, th.sky1); g.addColorStop(1, th.sky2);
   c.fillStyle = g; c.fillRect(0,0,GAME_W,GAME_H);
+  // v6：主題色星雲兩團（頂面色低透明擴散）
+  let nb = c.createRadialGradient(GAME_W*0.25, 130, 10, GAME_W*0.25, 130, 300);
+  nb.addColorStop(0, th.top); nb.addColorStop(1, 'rgba(0,0,0,0)');
+  c.globalAlpha = 0.14; c.fillStyle = nb; c.fillRect(0,0,GAME_W*0.62,GAME_H*0.8);
+  nb = c.createRadialGradient(GAME_W*0.62, 60, 10, GAME_W*0.62, 60, 240);
+  nb.addColorStop(0, th.side); nb.addColorStop(1, 'rgba(0,0,0,0)');
+  c.globalAlpha = 0.18; c.fillStyle = nb; c.fillRect(GAME_W*0.3,0,GAME_W*0.62,GAME_H*0.6);
+  c.globalAlpha = 1;
   // 星星與微光（烘焙）
   for(let i=0;i<60;i++){
     const x = (i*173.3)%GAME_W, y = (i*97.7)%(GAME_H*.62), s = 1+(i%3);
@@ -180,7 +229,64 @@ function bakeSky(th){
   c.fillStyle = glow; c.fillRect(GAME_W*.78-180, -90, 360, 360);
   c.fillStyle = 'rgba(255,255,240,.9)'; c.beginPath(); c.arc(GAME_W*.78, 90, 26, 0, Math.PI*2); c.fill();
   c.fillStyle = 'rgba(0,0,0,.08)'; c.beginPath(); c.arc(GAME_W*.78-8, 84, 6, 0, Math.PI*2); c.arc(GAME_W*.78+7, 96, 4, 0, Math.PI*2); c.fill();
+  // v6：地平線霞光帶
+  const hz = c.createLinearGradient(0, GROUND_Y-160, 0, GROUND_Y+60);
+  hz.addColorStop(0,'rgba(255,255,255,0)'); hz.addColorStop(1, th.edge);
+  c.globalAlpha = 0.5; c.fillStyle = hz; c.fillRect(0, GROUND_Y-160, GAME_W, 220);
+  c.globalAlpha = 1;
+  // v6：漸層大樓烘焙（三種高度，含受光面/窗燈/屋頂天線）
+  bldCvs = [0,1,2].map(v=>{
+    const h = 130 + v*40;
+    const cv = document.createElement('canvas'); cv.width = 130; cv.height = h + 40;
+    const b = cv.getContext('2d');
+    b.fillStyle = th.bld; b.fillRect(0, 40, 130, h);
+    b.fillStyle = 'rgba(255,255,255,.07)'; b.fillRect(0, 40, 28, h);      // 左受光
+    b.fillStyle = 'rgba(0,0,0,.28)'; b.fillRect(102, 40, 28, h);          // 右陰影
+    b.fillStyle = 'rgba(255,255,255,.1)'; b.fillRect(0, 40, 130, 4);      // 頂亮
+    for(let r=0;r<Math.floor(h/34);r++)                                    // 窗燈（明暗交錯）
+      for(let w=0;w<3;w++){
+        b.globalAlpha = ((r*3+w+v)%4===0) ? 0.3 : 0.12;
+        b.fillStyle = '#ffe9b0';
+        b.fillRect(18+w*38, 62+r*34, 18, 18);
+      }
+    b.globalAlpha = 1;
+    b.strokeStyle = 'rgba(255,255,255,.25)'; b.lineWidth = 2;              // 天線
+    b.beginPath(); b.moveTo(65, 40); b.lineTo(65, 14); b.stroke();
+    b.fillStyle = th.edge; b.beginPath(); b.arc(65, 12, 3, 0, Math.PI*2); b.fill();
+    return cv;
+  });
+  // v6：vignette 與終點光柱（只烘焙一次）
+  if(!vignCv){
+    vignCv = document.createElement('canvas'); vignCv.width = GAME_W; vignCv.height = GAME_H;
+    const v = vignCv.getContext('2d');
+    const vg = v.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.5, GAME_W/2, GAME_H/2, GAME_H*1.05);
+    vg.addColorStop(0,'rgba(0,0,0,0)'); vg.addColorStop(1,'rgba(5,2,18,0.4)');
+    v.fillStyle = vg; v.fillRect(0,0,GAME_W,GAME_H);
+    beamCv = document.createElement('canvas'); beamCv.width = 120; beamCv.height = 340;
+    const bm = beamCv.getContext('2d');
+    const bg2 = bm.createLinearGradient(0,0,0,340);
+    bg2.addColorStop(0,'rgba(255,215,0,0)'); bg2.addColorStop(1,'rgba(255,215,0,0.4)');
+    bm.fillStyle = bg2;
+    bm.beginPath(); bm.moveTo(38,0); bm.lineTo(82,0); bm.lineTo(112,340); bm.lineTo(8,340); bm.closePath(); bm.fill();
+  }
 }
+// v6：霓虹光塵氛圍粒子（隨鏡頭視差漂浮）
+const motes = [];
+for(let i=0;i<16;i++) motes.push({ x:Math.random()*GAME_W*1.4, y:Math.random()*GAME_H, sp:8+Math.random()*18, ph:Math.random()*7 });
+function drawMotes(cx, t){
+  ctx.fillStyle = TH.edge;
+  for(const m of motes){
+    const wx = ((m.x - cx*0.85) % (GAME_W+80) + (GAME_W+80)) % (GAME_W+80) - 40 + cx;
+    const wy = (m.y - t*m.sp) % GAME_H;
+    const yy = wy < 0 ? wy + GAME_H : wy;
+    ctx.globalAlpha = 0.25 + 0.3*Math.abs(Math.sin(t*1.4 + m.ph));
+    ctx.fillRect(wx, yy, 3, 3);
+  }
+  ctx.globalAlpha = 1;
+}
+// v6：高速殘影
+const trail = [];
+let trailT = 0, stepT = 0;
 
 // ============ 輸入：鍵盤＋虛擬按鈕觸控 ============
 const input = { left:false, right:false, action:false, actionBuffer:0 };
@@ -443,7 +549,7 @@ function respawn(){
 
 // ============ 狀態機 ============
 let state = null;
-function setState(s){ state = s; if(s.enter) s.enter(); backBtn.style.display = (s===playState)?'flex':'none'; }
+function setState(s){ state = s; if(s.enter) s.enter(); backBtn.style.display = (s===playState)?'flex':'none'; setAmbLevel(s===playState ? 0.045 : 0.02); }
 function stateName(){ return state===menuState?'menu':state===selectState?'select':state===playState?'play':state===clearState?'clear':'?'; }
 
 function startLevel(i){
@@ -453,7 +559,7 @@ function startLevel(i){
   player = makePlayer();
   score.coins = 0; score.total = LV.coins.length;
   deaths = 0; elapsed = 0; hintT = 0; cam.x = 0;
-  parts.length = 0; floaters.length = 0;
+  parts.length = 0; floaters.length = 0; trail.length = 0;   // v6
   setState(playState);
 }
 
@@ -703,6 +809,19 @@ const playState = {
     player.sx += (1 - player.sx) * 12 * dt;
     player.sy += (1 - player.sy) * 12 * dt;
     if(Math.abs(player.vx) > 10 && player.grounded) player.walkT += dt*9; else player.walkT += dt*2;
+    // v6：高速殘影取樣（快取 sprite 重繪，近零成本）
+    trailT -= dt;
+    if((Math.abs(player.vx) > 260 || Math.abs(player.vy) > 560) && trailT <= 0){
+      trailT = 0.05;
+      trail.push({ x:player.x, y:player.y, facing:player.facing, walkT:player.walkT, air:!player.grounded, t:0.22 });
+      if(trail.length > 6) trail.shift();
+    }
+    for(let i=trail.length-1;i>=0;i--){ trail[i].t -= dt; if(trail[i].t <= 0) trail.splice(i,1); }
+    // v6：跑步腳步聲（輕，節流）
+    if(player.grounded && Math.abs(player.vx) > 200){
+      stepT -= dt;
+      if(stepT <= 0){ stepT = 0.24; beep(95, 0.035, 'triangle', 0.045); }
+    } else stepT = 0.08;
     // 金幣
     for(const c of LV.coins){
       if(c.taken) continue;
@@ -737,6 +856,7 @@ const playState = {
     ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
     ctx.translate(-cam.x, 0);
     drawParallaxAt(cam.x);
+    drawMotes(cam.x, elapsed);   // v6：霓虹光塵
     for(const p of LV.platforms) drawPlatform(p);
     for(const sp of LV.springs) drawSpring(sp);
     for(const s of LV.spikes) drawSpikes(s);
@@ -744,9 +864,15 @@ const playState = {
     for(const c of LV.coins) if(!c.taken) drawCoin(c);
     for(const cp of LV.checkpoints) drawCheckpoint(cp);
     drawGoal(LV.goal);
+    for(const g of trail){   // v6：高速殘影（sprite 快取重繪，幾乎零成本）
+      ctx.globalAlpha = g.t * 0.9;
+      drawCharacter(g.x, g.y, 1, 1, g.facing, g.walkT, '#ff2975', g.air, 'normal');
+    }
+    ctx.globalAlpha = 1;
     drawParts(); drawFloaters();
     if(!player.dead || player.deadT < 0.25) drawPlayerEnt();
     ctx.restore();
+    ctx.drawImage(vignCv, 0, 0);   // v6：vignette
     drawHud();
     if(hintT < 3.2) drawHint();
     drawTouchUI();
@@ -876,14 +1002,11 @@ function drawParallaxAt(cx){
     ctx.moveTo(bx, GROUND_Y+40); ctx.lineTo(bx+250, GROUND_Y-150); ctx.lineTo(bx+500, GROUND_Y+40);
     ctx.closePath(); ctx.fill();
   }
-  ctx.fillStyle = th.bld;                        // 近景方塊建築（視差 0.5）
+  // 近景方塊建築（視差 0.5；v6：烘焙漸層大樓精靈——受光面/窗燈/天線）
   for(let i=0;i<6;i++){
     const bx = ((i*320 - cx*0.5) % (GAME_W+320) + GAME_W+320) % (GAME_W+320) - 160 + cx;
-    const h = 90 + (i%3)*40;
-    ctx.fillRect(bx, GROUND_Y-h+40, 130, h+40);
-    ctx.fillStyle = 'rgba(255,255,200,.14)';
-    for(let w=0;w<3;w++) ctx.fillRect(bx+18+w*38, GROUND_Y-h+62, 18, 18);
-    ctx.fillStyle = th.bld;
+    const cv = bldCvs[i%3];
+    if(cv) ctx.drawImage(cv, bx, GROUND_Y+80-cv.height);
   }
   ctx.fillStyle = 'rgba(0,0,0,.3)';              // 地平線下方
   ctx.fillRect(cx-50, GROUND_Y+80, GAME_W+100, GAME_H);
@@ -935,6 +1058,11 @@ function drawSpikes(s){
   }
 }
 function drawSaw(s){
+  // v6：危險警示光圈（脈動紅暈，一眼辨識威脅範圍）
+  ctx.globalAlpha = 0.12 + 0.07*Math.sin(elapsed*6);
+  ctx.fillStyle = '#ff2975';
+  ctx.beginPath(); ctx.arc(s.x, s.y, s.r+14, 0, Math.PI*2); ctx.fill();
+  ctx.globalAlpha = 1;
   const rot = elapsed*5;
   ctx.save(); ctx.translate(s.x, s.y); ctx.rotate(rot);
   ctx.fillStyle = '#c9ccd6';
@@ -973,6 +1101,11 @@ function drawCheckpoint(cp){
   if(cp.hit){ ctx.fillStyle = 'rgba(0,240,255,.25)'; ctx.beginPath(); ctx.arc(cp.x, cp.y+44, 12+Math.sin(elapsed*5)*3, 0, Math.PI*2); ctx.fill(); }
 }
 function drawGoal(g){
+  if(beamCv){   // v6：終點光柱（烘焙漸層，脈動呼吸）
+    ctx.globalAlpha = 0.5 + 0.2*Math.sin(elapsed*2.4);
+    ctx.drawImage(beamCv, g.x+g.w/2-60, g.y+g.h-330, 120, 330);
+    ctx.globalAlpha = 1;
+  }
   ctx.fillStyle = 'rgba(255,215,0,.12)';
   ctx.beginPath(); ctx.arc(g.x+g.w/2, g.y+g.h/2, 58+Math.sin(elapsed*3)*6, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = '#8c5a3c'; ctx.fillRect(g.x+g.w/2-4, g.y, 8, g.h);
@@ -1145,6 +1278,7 @@ window.__test = () => ({ state: stateName(), level: curLevel, px: player.x, py: 
   vx: player.vx, coins: score.coins, deaths, stars: save.stars.slice(), unlocked: unlockedCount(), parts: parts.length });
 window.__warp = x => { if(state===playState){ player.x = x; player.y = 100; player.vy = 0; cam.x = clamp(x-GAME_W*0.4,0,LV.len-GAME_W); } };
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

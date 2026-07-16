@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5：模擬行動延長至72秒並加入漸進難度曲線、補給箱/無人靶機重繪為立體漸層多部件美術、連段(combo)加成系統、射擊後座回饋、修正撤離階段落空無反饋的問題、時限告急畫面警示、重新校準評分門檻 -->
+<!-- 專業AI升級 v6：戰術背景離屏烘焙（徑向光照/等高線/掃描線）＋雷達掃描、子彈曳光與彈殼拋射、槍口星芒閃光、實體漸層快取零逐幀createGradient/shadowBlur、警戒紅暈烘焙、程序化殘響＋無線電風噪氛圍層與ducking、槍聲加低頻震膛、階段切換無線電雜訊（保留v5漸進難度/連段/後座/評分） -->
 <!-- +補強：角色精細化/觸控/大螢幕提醒 -->
 <html lang="zh-Hant">
 <head>
@@ -897,6 +897,7 @@
 var SFX = (function(){
   var ac = null, master = null, muted = false;
   try{ muted = localStorage.getItem('pro_delta_muted') === '1'; }catch(e){}
+  var ambDuck = null;
   function ensure(){
     if(ac) return ac;
     var Ctx = window.AudioContext || window.webkitAudioContext;
@@ -907,7 +908,43 @@ var SFX = (function(){
     master = ac.createGain();
     master.gain.value = muted ? 0 : 0.9;
     master.connect(comp); comp.connect(ac.destination);
+    try{
+      /* v6：程序化殘響（generated impulse，靶場空間感） */
+      var ir = ac.createBuffer(2, (ac.sampleRate*1.1)|0, ac.sampleRate);
+      for(var ch2=0; ch2<2; ch2++){
+        var dd = ir.getChannelData(ch2);
+        for(var i2=0; i2<dd.length; i2++) dd[i2] = (Math.random()*2-1)*Math.pow(1-i2/dd.length, 2.9);
+      }
+      var conv = ac.createConvolver(); conv.buffer = ir;
+      var wet = ac.createGain(); wet.gain.value = 0.13;
+      comp.connect(conv); conv.connect(wet); wet.connect(ac.destination);
+      /* v6：無線電風噪氛圍層（低通噪聲＋偶發電波刺聲，4 秒無縫循環） */
+      var sr = ac.sampleRate, len = sr*4, buf = ac.createBuffer(1, len, sr), ad = buf.getChannelData(0);
+      var lp = 0;
+      for(var i3=0; i3<len; i3++){
+        var t3 = i3/sr, w3 = Math.random()*2-1;
+        lp += (w3-lp)*0.02;
+        var v3 = lp*(0.6+0.4*Math.sin(t3*2.1))*1.4;
+        var st = t3 % 1.7;                                   /* 電波刺聲 */
+        if(st > 0 && st < 0.03) v3 += w3*Math.sin(st/0.03*Math.PI)*0.14;
+        ad[i3] = v3;
+      }
+      var fL = (sr*0.12)|0;
+      for(var i4=0; i4<fL; i4++){ var a4 = i4/fL; ad[i4] = ad[i4]*a4 + ad[len-fL+i4]*(1-a4); }
+      var src = ac.createBufferSource(); src.buffer = buf; src.loop = true;
+      var ag = ac.createGain(); ag.gain.value = 0.028;
+      ambDuck = ac.createGain(); ambDuck.gain.value = 1;
+      src.connect(ag); ag.connect(ambDuck); ambDuck.connect(master);
+      src.start();
+    }catch(e){}
     return ac;
+  }
+  function duckAmb(){
+    if(!ac || !ambDuck || muted) return;
+    var t0 = ac.currentTime;
+    ambDuck.gain.cancelScheduledValues(t0);
+    ambDuck.gain.setTargetAtTime(0.3, t0, 0.015);
+    ambDuck.gain.setTargetAtTime(1, t0+0.1, 0.22);
   }
   function unlock(){ var a = ensure(); if(a && a.state === 'suspended') a.resume(); }
   addEventListener('pointerdown', unlock, { once:false });
@@ -916,6 +953,7 @@ var SFX = (function(){
   function beep(freq, dur, type, vol, slide){
     if(muted) return;
     var a = ensure(); if(!a || a.state !== 'running') return;
+    if((vol || 0.12) >= 0.11) duckAmb();   /* v6：主音效壓低氛圍層 */
     var o = a.createOscillator(), g = a.createGain();
     o.type = type || 'square';
     o.frequency.setValueAtTime(freq, a.currentTime);
@@ -928,6 +966,7 @@ var SFX = (function(){
   function noise(dur, vol){
     if(muted) return;
     var a = ensure(); if(!a || a.state !== 'running') return;
+    if((vol || 0.14) >= 0.11) duckAmb();   /* v6 */
     var n = Math.floor(a.sampleRate * dur);
     var buf = a.createBuffer(1, n, a.sampleRate);
     var d = buf.getChannelData(0);
@@ -941,7 +980,8 @@ var SFX = (function(){
   return {
     beep: beep, noise: noise,
     ui: function(){ beep(880, 0.05, 'square', 0.07); },
-    shot: function(){ noise(0.09, 0.16); beep(160, 0.07, 'square', 0.09, -90); },
+    shot: function(){ noise(0.09, 0.16); beep(160, 0.07, 'square', 0.09, -90); beep(68, 0.1, 'sine', 0.18, -25); },   /* v6：加低頻震膛 */
+    radio: function(){ noise(0.06, 0.1); setTimeout(function(){ noise(0.04, 0.08); }, 90); setTimeout(function(){ beep(1250, 0.05, 'square', 0.05); }, 160); },   /* v6：無線電雜訊 */
     pickup: function(){ beep(988, 0.07, 'square', 0.1); setTimeout(function(){ beep(1319, 0.12, 'square', 0.1); }, 70); },
     hit: function(){ beep(520, 0.06, 'square', 0.11, 220); },
     warn: function(){ beep(660, 0.12, 'sawtooth', 0.1, -120); },
@@ -1323,7 +1363,7 @@ OperatorArt.paintAll('assault');
     state = 'play';
     phase = 1; phaseT = PHASE_TIME[1]; bannerT = 2;
     score = 0; shots = 0; hits = 0;
-    ents = []; parts = []; floats = [];
+    ents = []; parts = []; floats = []; tracers.length = 0;   // v6
     pad = null; padProg = 0; extracted = false;
     spawnT = 0; warned = false;
     combo = 0; comboMax = 0; comboFlashT = 0;
@@ -1369,6 +1409,10 @@ OperatorArt.paintAll('assault');
     SFX.shot();
     muzzle = { t: 0.08, x: x, y: y };
     recoil = 1;                      // 開火後座回饋，drawCrosshair() 用來做瞬間放大
+    /* v6：子彈曳光（從畫面底部射向準星）＋彈殼拋射 */
+    tracers.push({ x1: W/2 + (x - W/2)*0.25, y1: H + 16, x2: x, y2: y, life: 0.1 });
+    parts.push({ x: x + 8, y: y + 4, vx: 140 + Math.random()*90, vy: -180 - Math.random()*60,
+                 life: 0.5, color: '#ffcf5c', rot: Math.random()*6, vr: 14 + Math.random()*8, casing: 1 });
     var hitAny = false;
 
     if(phase === 3 && pad){
@@ -1467,6 +1511,7 @@ OperatorArt.paintAll('assault');
       padProg = 0;
     }
     SFX.beep(660, 0.14, 'square', 0.12, 200);
+    SFX.radio();   /* v6：階段切換無線電雜訊 */
   }
 
   function spawn(){
@@ -1537,8 +1582,13 @@ OperatorArt.paintAll('assault');
     for(var j = 0; j < parts.length; j++){
       var p = parts[j];
       p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 500 * dt; p.life -= dt;
+      if(p.vr) p.rot += p.vr * dt;   /* v6：彈殼旋轉 */
     }
     parts = parts.filter(function(p){ return p.life > 0; });
+    for(var j2 = tracers.length - 1; j2 >= 0; j2--){   /* v6：曳光衰減 */
+      tracers[j2].life -= dt;
+      if(tracers[j2].life <= 0) tracers.splice(j2, 1);
+    }
     for(var k = 0; k < floats.length; k++){
       floats[k].y -= 50 * dt; floats[k].life -= dt;
     }
@@ -1552,24 +1602,81 @@ OperatorArt.paintAll('assault');
   }
 
   /* ===== 繪圖 ===== */
-  function drawBG(){
-    ctx.fillStyle = '#10130c';
-    ctx.fillRect(0, 0, W, H);
-    ctx.strokeStyle = 'rgba(143,174,82,.08)';
-    ctx.lineWidth = 1;
-    for(var x = 0; x <= W; x += 48){ ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
-    for(var y = 0; y <= H; y += 48){ ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
-    ctx.strokeStyle = 'rgba(255,122,26,.5)';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(6, 6, W-12, H-12);
-    ctx.strokeStyle = 'rgba(255,122,26,.9)';
-    [[6,6,1,1],[W-6,6,-1,1],[6,H-6,1,-1],[W-6,H-6,-1,-1]].forEach(function(c){
-      ctx.beginPath();
-      ctx.moveTo(c[0] + 18*c[2], c[1]);
-      ctx.lineTo(c[0], c[1]);
-      ctx.lineTo(c[0], c[1] + 18*c[3]);
-      ctx.stroke();
+  /* v6：離屏烘焙工廠——戰術背景/掃描楔/紅色警戒暈/vignette/光點/槍口星芒，主迴圈零 createGradient/shadowBlur */
+  function bakeCv(w, h, fn){ var c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d')); return c; }
+  var BG_CV = bakeCv(W, H, function(g){
+    g.fillStyle = '#10130c'; g.fillRect(0, 0, W, H);
+    var lit = g.createRadialGradient(W/2, H/2, 60, W/2, H/2, H*0.85);   /* 中央探照光 */
+    lit.addColorStop(0, 'rgba(143,174,82,0.10)'); lit.addColorStop(1, 'rgba(0,0,0,0.22)');
+    g.fillStyle = lit; g.fillRect(0, 0, W, H);
+    g.strokeStyle = 'rgba(143,174,82,.08)'; g.lineWidth = 1;
+    for(var x = 0; x <= W; x += 48){ g.beginPath(); g.moveTo(x, 0); g.lineTo(x, H); g.stroke(); }
+    for(var y = 0; y <= H; y += 48){ g.beginPath(); g.moveTo(0, y); g.lineTo(W, y); g.stroke(); }
+    g.strokeStyle = 'rgba(143,174,82,.1)';                             /* 地形等高線 */
+    g.setLineDash([6, 8]);
+    [[190,150,70],[190,150,110],[740,400,60],[740,400,95],[520,110,45]].forEach(function(c){
+      g.beginPath(); g.arc(c[0], c[1], c[2], 0, Math.PI*2); g.stroke();
     });
+    g.setLineDash([]);
+    g.globalAlpha = 0.05; g.fillStyle = '#000';                        /* 掃描線質感 */
+    for(var sy = 0; sy < H; sy += 4) g.fillRect(0, sy, W, 1);
+    g.globalAlpha = 1;
+    g.strokeStyle = 'rgba(255,122,26,.5)'; g.lineWidth = 2;
+    g.strokeRect(6, 6, W-12, H-12);
+    g.strokeStyle = 'rgba(255,122,26,.9)';
+    [[6,6,1,1],[W-6,6,-1,1],[6,H-6,1,-1],[W-6,H-6,-1,-1]].forEach(function(c){
+      g.beginPath();
+      g.moveTo(c[0] + 18*c[2], c[1]);
+      g.lineTo(c[0], c[1]);
+      g.lineTo(c[0], c[1] + 18*c[3]);
+      g.stroke();
+    });
+    var vg = g.createRadialGradient(W/2, H/2, H*0.48, W/2, H/2, H*1.02);   /* vignette 一併烘進背景 */
+    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.3)');
+    g.fillStyle = vg; g.fillRect(0, 0, W, H);
+  });
+  var SWEEP_CV = bakeCv(640, 640, function(g){   /* 雷達掃描楔形 */
+    g.translate(320, 320);
+    for(var i = 0; i < 26; i++){                 /* 疊扇形近似漸層掃描尾跡 */
+      g.globalAlpha = 0.028 * (1 - i/26);
+      g.fillStyle = '#8fae52';
+      g.beginPath(); g.moveTo(0, 0); g.arc(0, 0, 315, -0.03 - i*0.05, 0.02 - i*0.05); g.closePath(); g.fill();
+    }
+  });
+  var RED_VIGN = bakeCv(W, H, function(g){
+    var rg = g.createRadialGradient(W/2, H/2, H*0.26, W/2, H/2, H*0.66);
+    rg.addColorStop(0, 'rgba(214,75,63,0)'); rg.addColorStop(1, 'rgba(214,75,63,0.8)');
+    g.fillStyle = rg; g.fillRect(0, 0, W, H);
+  });
+  function bakeGlowDot(color){
+    return bakeCv(28, 28, function(g){
+      var r = g.createRadialGradient(14, 14, 1.5, 14, 14, 13);
+      r.addColorStop(0, '#ffffff'); r.addColorStop(0.35, color); r.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = r; g.fillRect(0, 0, 28, 28);
+    });
+  }
+  var GLOW_RED = bakeGlowDot('#ff5c3d'), GLOW_GREEN = bakeGlowDot('#8fae52'), GLOW_WARM = bakeGlowDot('#ffb199');
+  var FLASH_CV = bakeCv(64, 64, function(g){     /* 槍口星芒 */
+    g.translate(32, 32);
+    var r = g.createRadialGradient(0, 0, 2, 0, 0, 30);
+    r.addColorStop(0, 'rgba(255,245,214,0.95)'); r.addColorStop(0.4, 'rgba(255,207,92,0.5)'); r.addColorStop(1, 'rgba(255,122,26,0)');
+    g.fillStyle = r;
+    g.beginPath();
+    for(var i = 0; i < 8; i++){
+      var a0 = i/8*Math.PI*2, rr = i%2===0 ? 30 : 10;
+      g.lineTo(Math.cos(a0)*rr, Math.sin(a0)*rr);
+    }
+    g.closePath(); g.fill();
+  });
+  var tracers = [];   /* v6：子彈曳光 */
+  function drawBG(){
+    ctx.drawImage(BG_CV, 0, 0);
+    /* v6：雷達掃描（緩慢旋轉，事件無關的環境動態） */
+    ctx.save();
+    ctx.translate(W/2, H/2);
+    ctx.rotate(performance.now()/1000 * 0.7);
+    ctx.drawImage(SWEEP_CV, -320, -320);
+    ctx.restore();
   }
 
   function drawCrate(e){
@@ -1595,11 +1702,13 @@ OperatorArt.paintAll('assault');
     ctx.moveTo(-22, -8); ctx.lineTo(-22-IX, -8-IY); ctx.lineTo(-22-IX, 20-IY); ctx.lineTo(-22, 20); ctx.closePath();
     ctx.fill();
 
-    /* 正面（漸層） */
-    var frontG = ctx.createLinearGradient(0, -8, 0, 22);
-    frontG.addColorStop(0, '#54643a');
-    frontG.addColorStop(1, '#2e3a20');
-    ctx.fillStyle = frontG;
+    /* 正面（漸層；v6：快取一次，主迴圈零 createGradient） */
+    if(!drawCrate._g){
+      drawCrate._g = ctx.createLinearGradient(0, -8, 0, 22);
+      drawCrate._g.addColorStop(0, '#54643a');
+      drawCrate._g.addColorStop(1, '#2e3a20');
+    }
+    ctx.fillStyle = drawCrate._g;
     ctx.fillRect(-22, -8, 44, 30);
     ctx.strokeStyle = '#ffcf5c';
     ctx.lineWidth = 2;
@@ -1626,11 +1735,8 @@ OperatorArt.paintAll('assault');
       ctx.beginPath(); ctx.arc(p[0], p[1], 1.6, 0, Math.PI*2); ctx.fill();
     });
 
-    /* 警示燈：存活時間越少越急促發光 */
-    ctx.fillStyle = urgent ? '#ff5c3d' : '#8fae52';
-    if(!REDUCED && urgent){ ctx.shadowColor = '#ff5c3d'; ctx.shadowBlur = 8; }
-    ctx.beginPath(); ctx.arc(14-IX, -8-IY+2, 2.6, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
+    /* 警示燈：存活時間越少越急促發光（v6：烘焙光暈點取代 shadowBlur） */
+    ctx.drawImage(urgent ? GLOW_RED : GLOW_GREEN, 14-IX-8, -8-IY+2-8, 16, 16);
 
     ctx.fillStyle = '#fff5d6';
     ctx.font = 'bold 12px monospace';
@@ -1679,12 +1785,14 @@ OperatorArt.paintAll('assault');
     }
     ctx.restore();
 
-    /* 機身：放射狀漸層做出球體光感 */
-    var bodyG = ctx.createRadialGradient(-4, -4, 2, 0, 0, 20);
-    bodyG.addColorStop(0, '#ff8a72');
-    bodyG.addColorStop(.55, '#d64b3f');
-    bodyG.addColorStop(1, '#7a2620');
-    ctx.fillStyle = bodyG;
+    /* 機身：放射狀漸層做出球體光感（v6：快取一次） */
+    if(!drawDrone._g){
+      drawDrone._g = ctx.createRadialGradient(-4, -4, 2, 0, 0, 20);
+      drawDrone._g.addColorStop(0, '#ff8a72');
+      drawDrone._g.addColorStop(.55, '#d64b3f');
+      drawDrone._g.addColorStop(1, '#7a2620');
+    }
+    ctx.fillStyle = drawDrone._g;
     ctx.beginPath(); ctx.arc(0, 0, 18, 0, Math.PI*2); ctx.fill();
     ctx.strokeStyle = '#3a1512'; ctx.lineWidth = 1.6; ctx.stroke();
 
@@ -1694,12 +1802,11 @@ OperatorArt.paintAll('assault');
     ctx.moveTo(dir*20, 0); ctx.lineTo(dir*10, -6); ctx.lineTo(dir*10, 6); ctx.closePath();
     ctx.fill();
 
-    /* 感應眼：脈動光暈，剩餘時間少時更急促 */
+    /* 感應眼：脈動光暈（v6：烘焙光暈取代 shadowBlur） */
     var eyePulse = urgent ? 1.4 : (1 + Math.sin(e.t*10)*0.15);
-    if(!REDUCED){ ctx.shadowColor = '#ffb199'; ctx.shadowBlur = 10 * eyePulse; }
+    ctx.drawImage(GLOW_WARM, -11*eyePulse, -11*eyePulse, 22*eyePulse, 22*eyePulse);
     ctx.fillStyle = '#fff3ec';
     ctx.beginPath(); ctx.arc(0, 0, 5*eyePulse, 0, Math.PI*2); ctx.fill();
-    ctx.shadowBlur = 0;
     ctx.fillStyle = '#3a1512';
     ctx.beginPath(); ctx.arc(0, 0, 2.4, 0, Math.PI*2); ctx.fill();
 
@@ -1772,6 +1879,10 @@ OperatorArt.paintAll('assault');
     if(muzzle.t > 0){
       ctx.strokeStyle = 'rgba(255,207,92,.9)';
       ctx.beginPath(); ctx.arc(0, 0, 14 + (0.08 - muzzle.t) * 300, 0, Math.PI*2); ctx.stroke();
+      ctx.globalAlpha = muzzle.t / 0.08;   /* v6：槍口星芒（烘焙精靈隨機旋轉） */
+      ctx.rotate(muzzle.t * 40);
+      ctx.drawImage(FLASH_CV, -26, -26, 52, 52);
+      ctx.globalAlpha = 1;
     }
     ctx.restore();
   }
@@ -1876,11 +1987,28 @@ OperatorArt.paintAll('assault');
       var e = ents[i];
       if(e.type === 'crate') drawCrate(e); else drawDrone(e);
     }
+    for(var tI = 0; tI < tracers.length; tI++){   /* v6：曳光 */
+      var tr = tracers[tI];
+      ctx.globalAlpha = tr.life / 0.1 * 0.8;
+      ctx.strokeStyle = '#ffcf5c'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.moveTo(tr.x1, tr.y1); ctx.lineTo(tr.x2, tr.y2); ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,245,214,0.9)'; ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(tr.x2 - (tr.x2-tr.x1)*0.2, tr.y2 - (tr.y2-tr.y1)*0.2);
+      ctx.lineTo(tr.x2, tr.y2); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
     for(var j = 0; j < parts.length; j++){
       var p = parts[j];
       ctx.globalAlpha = Math.max(0, p.life * 2);
       ctx.fillStyle = p.color;
-      ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+      if(p.casing){   /* v6：旋轉彈殼 */
+        ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+        ctx.fillRect(-3, -1.5, 6, 3);
+        ctx.restore();
+      } else {
+        ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+      }
     }
     ctx.globalAlpha = 1;
     for(var k = 0; k < floats.length; k++){
@@ -1897,14 +2025,11 @@ OperatorArt.paintAll('assault');
       ctx.fillStyle = 'rgba(255,255,255,' + (flash * 2) + ')';
       ctx.fillRect(0, 0, W, H);
     }
-    /* 時限告急：畫面級紅色脈動暈影，不只是數字變色，避免玩家盯著準星漏看時間 */
+    /* 時限告急：畫面級紅色脈動暈影（v6：改烘焙紅暈＋透明度脈動，零逐幀漸層） */
     if(!REDUCED && phaseT <= 3 && phaseT > 0){
-      var pulse = 0.10 + Math.abs(Math.sin(performance.now() / 140)) * 0.10;
-      var grad = ctx.createRadialGradient(W/2, H/2, H*0.26, W/2, H/2, H*0.66);
-      grad.addColorStop(0, 'rgba(214,75,63,0)');
-      grad.addColorStop(1, 'rgba(214,75,63,' + pulse.toFixed(3) + ')');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, W, H);
+      ctx.globalAlpha = 0.12 + Math.abs(Math.sin(performance.now() / 140)) * 0.13;
+      ctx.drawImage(RED_VIGN, 0, 0);
+      ctx.globalAlpha = 1;
     }
     drawHUD();
     drawCrosshair();
@@ -1931,6 +2056,7 @@ OperatorArt.paintAll('assault');
   };
 })();
 </script>
+
 
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){

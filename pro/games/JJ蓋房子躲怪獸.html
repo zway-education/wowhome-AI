@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5：搖桿加死區防手震飄移／建造列不再蓋住南牆／難度改鋸齒狀加入喘息夜／直式手機提示轉橫／城牆瀕危加入紅色警示與提示音 -->
+<!-- 專業AI升級 v6：日/夜整幅背景與草地離屏烘焙（樹影/銀河/小花石子）、日月烘焙光暈、螢火蟲/落葉氛圍層、vignette、程序化殘響＋晝鳥鳴夜蟋蟀氛圍音與ducking、怪物現身低吼（保留v5搖桿死區/喘息夜/瀕危警示與unstickPlayer解卡） -->
 <!-- +補強：角色精細化/觸控/大螢幕提醒 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
@@ -118,6 +118,49 @@ function drawSprite(key, x, y, size){
 
 // ===== 音效：DynamicsCompressor 母線 + 隨機音高 =====
 let AC = null, master = null, muted = false;
+let ambDay = null, ambNight = null, ambDuck = null, ambPhase = 'day';
+function makeAmbLoop(kind){
+  // v6：程序化氛圍循環——day＝微風+鳥鳴、night＝蟋蟀+暗風（4 秒無縫循環）
+  const sr = AC.sampleRate, len = sr*4, buf = AC.createBuffer(1, len, sr), d = buf.getChannelData(0);
+  let lp = 0;
+  for(let i=0;i<len;i++){
+    const t = i/sr, w = Math.random()*2-1;
+    lp += (w-lp)*(kind==='day'?0.02:0.012);
+    let v = lp*(0.6+0.4*Math.sin(t*1.9))*1.2;
+    if(kind==='night'){
+      const cyc = t%1.1;                                  // 蟋蟀：每 1.1 秒三連唧
+      const pi2 = Math.PI*2;
+      for(let c=0;c<3;c++){
+        const dt2 = cyc-0.12*c;
+        if(dt2>0 && dt2<0.05) v += Math.sin(pi2*4300*t)*Math.sin(dt2/0.05*Math.PI)*0.22;
+      }
+    } else {
+      const bt = t%2.3;                                   // 白天：偶爾一聲鳥啾
+      if(bt>0 && bt<0.16) v += Math.sin(Math.PI*2*(2100+900*Math.sin(bt*22))*t)*Math.sin(bt/0.16*Math.PI)*0.1;
+    }
+    d[i] = v;
+  }
+  const f = (sr*0.12)|0;
+  for(let i=0;i<f;i++){ const a=i/f; d[i]=d[i]*a+d[len-f+i]*(1-a); }
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const g = AC.createGain(); g.gain.value = 0;
+  src.connect(g); g.connect(ambDuck); src.start();
+  return g;
+}
+function setAmbPhase(p){
+  ambPhase = p;
+  if(!AC || !ambDay) return;
+  const t0 = AC.currentTime;
+  ambDay.gain.setTargetAtTime(muted?0:(p==='day'?0.05:0), t0, 0.8);
+  ambNight.gain.setTargetAtTime(muted?0:(p==='night'?0.045:0), t0, 0.8);
+}
+function duckAmb(){
+  if(!AC || !ambDuck || muted) return;
+  const t0 = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t0);
+  ambDuck.gain.setTargetAtTime(0.35, t0, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t0+0.12, 0.25);
+}
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
@@ -126,6 +169,22 @@ function audio(){
     const g = AC.createGain(); g.gain.value = 0.9;
     g.connect(comp).connect(AC.destination);
     master = g;
+    // v6：程序化殘響（generated impulse 戶外短殘響）
+    try{
+      const ir = AC.createBuffer(2, (AC.sampleRate*1.1)|0, AC.sampleRate);
+      for(let ch=0;ch<2;ch++){
+        const dd = ir.getChannelData(ch);
+        for(let i=0;i<dd.length;i++) dd[i] = (Math.random()*2-1)*Math.pow(1-i/dd.length, 3);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.13;
+      comp.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：日夜氛圍層
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1; ambDuck.connect(master);
+      ambDay = makeAmbLoop('day');
+      ambNight = makeAmbLoop('night');
+      setAmbPhase(ambPhase);
+    }catch(e){}
   }
   if(AC.state==='suspended') AC.resume();
   return AC;
@@ -135,6 +194,7 @@ addEventListener('keydown', audio, { once:true });
 function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
   if(muted) return;
   const ac = audio(); if(!ac||!master) return;
+  if(vol >= 0.12) duckAmb();   // v6：主音效壓低氛圍層
   const f = freq * (0.94 + Math.random()*0.12);   // 隨機音高 ±6%
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(f, ac.currentTime);
@@ -147,6 +207,7 @@ function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
 function noiseBurst(dur=0.2, vol=0.2){
   if(muted) return;
   const ac = audio(); if(!ac||!master) return;
+  if(vol >= 0.12) duckAmb();   // v6
   const buf = ac.createBuffer(1, Math.max(1, ac.sampleRate*dur|0), ac.sampleRate);
   const d = buf.getChannelData(0);
   for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
@@ -161,6 +222,7 @@ function chord(freqs, gap=80, dur=0.12, type='square', vol=0.12){
 document.getElementById('muteBtn').addEventListener('pointerdown', e=>{
   e.stopPropagation(); e.preventDefault(); muted = !muted;
   document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  setAmbPhase(ambPhase);   // v6：靜音同步氛圍層
 });
 
 // ===== 座標系（俯視方格）=====
@@ -343,6 +405,99 @@ function traceRoundRect(x,y,w,h,r){
   ctx.closePath();
 }
 
+// ===== v6：離屏烘焙（日/夜背景、草地棋盤、光暈、vignette）——主迴圈零 createGradient =====
+function bake(w,h,fn){ const c=document.createElement('canvas'); c.width=w; c.height=h; fn(c.getContext('2d')); return c; }
+function bakeBG(night){
+  return bake(GAME_W, GAME_H, g=>{
+    const sky=g.createLinearGradient(0,0,0,GAME_H);
+    sky.addColorStop(0, night?PALETTE.skyNight1:PALETTE.skyDay1);
+    sky.addColorStop(1, night?PALETTE.skyNight2:PALETTE.skyDay2);
+    g.fillStyle=sky; g.fillRect(0,0,GAME_W,GAME_H);
+    if(night){
+      for(let i=0;i<48;i++){ const sx=(i*97)%GAME_W, sy=(i*53)%150+8;
+        g.globalAlpha=0.5+((i*31)%50)/100; g.fillStyle='#fff'; g.fillRect(sx,sy,2,2); }
+      g.globalAlpha=1;
+      const mw=g.createLinearGradient(0,0,GAME_W,120);   // 淡淡星河
+      mw.addColorStop(0,'rgba(154,107,255,0)'); mw.addColorStop(0.5,'rgba(154,107,255,0.09)'); mw.addColorStop(1,'rgba(56,225,255,0)');
+      g.fillStyle=mw; g.fillRect(0,0,GAME_W,170);
+    }
+    g.fillStyle = night?hexLerp('#79c98f','#1a1440',0.85):'#79c98f';
+    g.beginPath(); g.moveTo(0,120);
+    for(let x=0;x<=GAME_W;x+=60) g.lineTo(x, 96+Math.sin(x*0.013)*26);
+    g.lineTo(GAME_W,140); g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
+    g.fillStyle = night?'#120e33':'#4c9c63';   // 遠方小樹剪影
+    for(let i=0;i<9;i++){
+      const tx=40+i*110+((i*37)%23), ty=96+Math.sin(tx*0.013)*26;
+      g.beginPath(); g.moveTo(tx-8,ty+4); g.lineTo(tx,ty-14); g.lineTo(tx+8,ty+4); g.closePath(); g.fill();
+      g.fillRect(tx-1.5,ty+2,3,5);
+    }
+    g.fillStyle = night?hexLerp('#5eb877','#171138',0.85):'#5eb877';
+    g.beginPath(); g.moveTo(0,160);
+    for(let x=0;x<=GAME_W;x+=60) g.lineTo(x, 140+Math.cos(x*0.02)*18);
+    g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
+  });
+}
+const BG_DAY = bakeBG(false), BG_NIGHT = bakeBG(true);
+function bakeGlow(color){
+  return bake(128,128,g=>{
+    const r=g.createRadialGradient(64,64,6,64,64,64);
+    r.addColorStop(0,color); r.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle=r; g.fillRect(0,0,128,128);
+  });
+}
+const GLOW_SUN = bakeGlow('rgba(255,230,140,0.8)'), GLOW_MOON = bakeGlow('rgba(190,210,255,0.55)');
+const VIGN_SPR = bake(GAME_W,GAME_H,g=>{
+  const v=g.createRadialGradient(GAME_W/2,GAME_H/2,GAME_H*0.5,GAME_W/2,GAME_H/2,GAME_H*1.05);
+  v.addColorStop(0,'rgba(0,0,0,0)'); v.addColorStop(1,'rgba(8,5,25,0.36)');
+  g.fillStyle=v; g.fillRect(0,0,GAME_W,GAME_H);
+});
+const GROUND_SPR = bake(GRID*CELL+2, GRID*CELL+2, g=>{
+  for(let gy=0;gy<GRID;gy++) for(let gx=0;gx<GRID;gx++){
+    const x=gx*CELL+1, y=gy*CELL+1;
+    g.fillStyle = ((gx+gy)%2===0)?PALETTE.grass1:PALETTE.grass2;
+    g.fillRect(x,y,CELL,CELL);
+    if((gx*7+gy*13)%5===0){ g.fillStyle='#2f8a47'; g.fillRect(x+CELL/2-8,y+CELL/2+4,3,6); g.fillRect(x+CELL/2+6,y+CELL/2-8,3,6); }
+    if((gx*11+gy*5)%7===0){ g.fillStyle='#e9f7b8'; g.fillRect(x+10,y+12,3,3); g.fillStyle='#ff9ecb'; g.fillRect(x+34,y+30,3,3); }
+    if((gx*13+gy*3)%6===0){ g.fillStyle='rgba(90,80,60,0.5)'; g.beginPath(); g.arc(x+40,y+14,2.4,0,Math.PI*2); g.fill(); }
+  }
+  g.strokeStyle='rgba(0,0,0,0.18)'; g.lineWidth=2;
+  g.strokeRect(1,1,GRID*CELL,GRID*CELL);
+});
+// v6：氛圍粒子層——白天落葉、夜晚螢火蟲
+const ambient=[];
+function updateAmbient(dt, nightAmt){
+  if(ambient.length<14 && Math.random()<dt*3){
+    if(nightAmt>0.5) ambient.push({kind:'fly', x:ORIGIN_X+Math.random()*GRID*CELL, y:ORIGIN_Y+Math.random()*GRID*CELL, t:Math.random()*7, life:4+Math.random()*3});
+    else ambient.push({kind:'leaf', x:Math.random()*GAME_W, y:-10, t:Math.random()*7, life:7});
+  }
+  for(let i=ambient.length-1;i>=0;i--){
+    const a=ambient[i];
+    a.t+=dt; a.life-=dt;
+    if(a.kind==='fly'){ a.x+=Math.sin(a.t*1.3)*20*dt; a.y+=Math.cos(a.t*1.7)*15*dt; }
+    else { a.y+=36*dt; a.x+=Math.sin(a.t*2)*24*dt; if(a.y>GAME_H-30) a.life=0; }
+    if(a.life<=0) ambient.splice(i,1);
+  }
+}
+function drawAmbient(nightAmt){
+  for(const a of ambient){
+    const fade=Math.min(1,a.life);
+    if(a.kind==='fly'){
+      const tw=0.35+0.65*Math.abs(Math.sin(a.t*3));
+      ctx.globalAlpha=fade*tw*nightAmt;
+      ctx.fillStyle='#d8ff8a';
+      ctx.fillRect(a.x-3,a.y-3,6,6);
+      ctx.globalAlpha*=0.4;
+      ctx.fillRect(a.x-6,a.y-6,12,12);
+    } else {
+      ctx.globalAlpha=fade*(1-nightAmt)*0.8;
+      ctx.save(); ctx.translate(a.x,a.y); ctx.rotate(a.t*2.4);
+      ctx.fillStyle='#7dbf5a'; ctx.fillRect(-4,-2,8,4);
+      ctx.restore();
+    }
+  }
+  ctx.globalAlpha=1;
+}
+
 function makeWalls(){
   const out=[]; const seen=new Set(); const N=GRID;
   const push=(gx,gy)=>{ const k=gx+','+gy; if(!seen.has(k)){seen.add(k); out.push({gx,gy,built:0,need:3});} };
@@ -448,6 +603,8 @@ function spawnWoodNodes(){
 function resetGame(){
   const L = LEVELS[levelIdx];
   wood = 6; day = 1; phase='day'; phaseTimer = L.dayLen;
+  setAmbPhase('day');   // v6
+  ambient.length = 0;
   walls = makeWalls();
   houseHpMax = walls.reduce((s,w)=>s+w.need,0);
   houseHp = 0;
@@ -484,6 +641,8 @@ function spawnMonster(){
   else { gx=Math.random()*N; gy=N+0.6; }
   const speed = def.speed * (1 + day*0.06 + Math.random()*0.12);
   monsters.push({type, gx, gy, speed, hp:def.hp, dead:false, hitFlash:0, target:null, squash:1, wob:Math.random()*6});
+  burst(isoX(gx,gy), isoY(gx,gy)-14, '#9a6bff', 8, 130);   // v6：現身煙霧＋低吼預警
+  beep(120+Math.random()*40, 0.2, 'sawtooth', 0.08, -40);
 }
 // 修正原作 BUG：殭屍只鎖定「已經有蓋」的牆；沒牆就直接追玩家（原作會呆站在空牆位）
 function nearestBuiltWall(m){
@@ -502,33 +661,20 @@ function setState(s){ state = s; if(s.enter) s.enter(); }
 
 // ===== 繪圖 =====
 function drawBackground(nightAmt){
-  const sky = ctx.createLinearGradient(0,0,0,GAME_H);
-  sky.addColorStop(0, hexLerp(PALETTE.skyDay1, PALETTE.skyNight1, nightAmt));
-  sky.addColorStop(1, hexLerp(PALETTE.skyDay2, PALETTE.skyNight2, nightAmt));
-  ctx.fillStyle = sky; ctx.fillRect(0,0,GAME_W,GAME_H);
-  // 遠景山丘（視差感的層次）
-  ctx.fillStyle = hexLerp('#79c98f','#1a1440',nightAmt*0.85);
-  ctx.beginPath(); ctx.moveTo(0,120);
-  for(let x=0;x<=GAME_W;x+=60) ctx.lineTo(x, 96 + Math.sin(x*0.013)*26);
-  ctx.lineTo(GAME_W,140); ctx.lineTo(GAME_W,GAME_H); ctx.lineTo(0,GAME_H); ctx.closePath(); ctx.fill();
-  ctx.fillStyle = hexLerp('#5eb877','#171138',nightAmt*0.85);
-  ctx.beginPath(); ctx.moveTo(0,160);
-  for(let x=0;x<=GAME_W;x+=60) ctx.lineTo(x, 140 + Math.cos(x*0.02)*18);
-  ctx.lineTo(GAME_W,GAME_H); ctx.lineTo(0,GAME_H); ctx.closePath(); ctx.fill();
-  // 星星
-  if(nightAmt>0.3){
-    ctx.fillStyle = `rgba(255,255,255,${(nightAmt-0.3)*0.9})`;
-    for(let i=0;i<48;i++){
-      const sx=(i*97)%GAME_W, sy=(i*53)%150+8;
-      ctx.fillRect(sx,sy,2,2);
-    }
+  // v6：日/夜整幅背景離屏烘焙，夜色用透明度交叉淡入（含星空/星河/樹影）
+  ctx.drawImage(BG_DAY, 0, 0);
+  if(nightAmt > 0.01){
+    ctx.globalAlpha = nightAmt;
+    ctx.drawImage(BG_NIGHT, 0, 0);
+    ctx.globalAlpha = 1;
   }
-  // 太陽 / 月亮沿弧線移動
+  // 太陽 / 月亮沿弧線移動（v6：加烘焙光暈）
   const L = LEVELS[levelIdx];
   const total = phase==='day'?L.dayLen:L.nightLen;
   const t = clamp(phaseTimer/total,0,1);
   const arcX = GAME_W*0.12 + (1-t)*GAME_W*0.76;
   const arcY = 70 - Math.sin((1-t)*Math.PI)*28;
+  ctx.drawImage(phase==='day'?GLOW_SUN:GLOW_MOON, arcX-64, arcY-64);
   drawSprite(phase==='day'?'sun':'moon', arcX, arcY, 52);
   // 白天雲朵
   if(nightAmt<0.6){
@@ -546,15 +692,14 @@ function drawBackground(nightAmt){
     ctx.globalAlpha=1;
   }
 }
-function drawGroundTile(gx,gy,nightAmt){
-  const x = isoX(gx,gy), y = isoY(gx,gy);
-  const base = ((gx+gy)%2===0) ? PALETTE.grass1 : PALETTE.grass2;
-  ctx.fillStyle = hexLerp(base, '#141033', nightAmt*0.6);
-  ctx.fillRect(x-CELL/2, y-CELL/2, CELL, CELL);
-  // 草地小點綴
-  if((gx*7+gy*13)%5===0){
-    ctx.fillStyle = hexLerp('#2f8a47','#0e0b28',nightAmt*0.6);
-    ctx.fillRect(x-8, y+4, 3, 6); ctx.fillRect(x+6, y-8, 3, 6);
+function drawGroundBoard(nightAmt){
+  // v6：草地棋盤烘焙成一張圖（含小花/石子），夜色用單筆疊色
+  ctx.drawImage(GROUND_SPR, ORIGIN_X-1, ORIGIN_Y-1);
+  if(nightAmt > 0.01){
+    ctx.globalAlpha = nightAmt*0.55;
+    ctx.fillStyle = '#141033';
+    ctx.fillRect(ORIGIN_X, ORIGIN_Y, GRID*CELL, GRID*CELL);
+    ctx.globalAlpha = 1;
   }
 }
 function drawWall(w, nightAmt){
@@ -1088,6 +1233,7 @@ const playState = {
     }
 
     updateParts(dt); updateFloat(dt);
+    updateAmbient(dt, phase==='night'?1:0);   // v6
     shake *= Math.pow(0.001, dt);
     flashT = Math.max(0, flashT-dt);
     houseHp = walls.reduce((s,w)=>s+w.built,0);
@@ -1098,9 +1244,7 @@ const playState = {
     const L = LEVELS[levelIdx];
     const nightAmt = phase==='night' ? 1 : (phaseTimer<3 ? 1-(phaseTimer/3) : 0);
     drawBackground(nightAmt);
-    for(let gy=0; gy<GRID; gy++)
-      for(let gx=0; gx<GRID; gx++)
-        drawGroundTile(gx,gy,nightAmt);
+    drawGroundBoard(nightAmt);
     const drawables = [];
     for(const w of walls) drawables.push({y:w.gy, draw:()=>drawWall(w,nightAmt)});
     if(phase==='day') for(const n of woodNodes) if(!n.taken) drawables.push({y:n.gy-0.1, draw:()=>drawWoodNode(n,performance.now()/1000)});
@@ -1110,12 +1254,14 @@ const playState = {
     for(const m of monsters) drawables.push({y:m.gy, draw:()=>drawMonster(m)});
     drawables.sort((a,b)=>a.y-b.y);
     for(const d of drawables) d.draw();
+    drawAmbient(nightAmt);   // v6：螢火蟲/落葉氛圍層
     drawParts();
     ctx.restore();
     if(phase==='night'){
       ctx.fillStyle='rgba(20,10,50,0.14)';
       ctx.fillRect(0,0,GAME_W,GAME_H);
     }
+    ctx.drawImage(VIGN_SPR, 0, 0);   // v6：vignette 聚焦
     if(flashT>0){
       ctx.fillStyle=`rgba(255,80,80,${flashT*2.4})`;
       ctx.fillRect(0,0,GAME_W,GAME_H);
@@ -1248,6 +1394,7 @@ function demolishWall(){
 
 function startNight(){
   const L = LEVELS[levelIdx];
+  setAmbPhase('night');   // v6：切換蟋蟀夜氛圍
   phase='night'; phaseTimer = L.nightLen; spawnTimer = 1.2;
   nightSpawned = 0;
   const baseQuota = 3 + day*2 + (levelIdx===3? Math.floor(day*0.8):levelIdx);
@@ -1266,6 +1413,7 @@ function startNight(){
 }
 function startDay(){
   const L = LEVELS[levelIdx];
+  setAmbPhase('day');   // v6：切回鳥鳴日氛圍
   day += 1; phase='day'; phaseTimer = L.dayLen;
   monsters = [];
   score += 20;  // 撐過一晚獎勵
@@ -1387,6 +1535,7 @@ function frame(now){
 setState(menuState);
 requestAnimationFrame(frame);
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

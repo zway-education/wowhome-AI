@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：飄落桃花瓣環境粒子、命中/必殺/KO衝擊波圓環、KO鏡頭推近慢演出、烘焙夕陽霞光光束+暗角、低血量血條脈動；程序化殘響ConvolverNode、山風蟲鳴氛圍層+ducking、靜音鈕同步關氛圍 -->
+<!-- v4：無盡模式、五回合挑戰、必殺氣力系統、雙人對戰 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -69,7 +70,8 @@ function fill2(fillStyle, lineStyle, lw){
 const FONT = '"Microsoft JhengHei","PingFang TC",sans-serif';
 
 /* ===== 音效（Web Audio 合成，零音檔）===== */
-let AC = null, master = null;
+let AC = null, master = null, revSend = null, ambGain = null, ambOn = false;
+const ambNodes = [];
 let muted = false;
 try{ muted = localStorage.getItem('wn_muted') === '1'; }catch(e){}
 function initAudio(){
@@ -77,14 +79,45 @@ function initAudio(){
     try{
       AC = new (window.AudioContext || window.webkitAudioContext)();
       // master + 限制器：連擊/必殺多音效齊發不削峰爆音
-      master = AC.createGain(); master.gain.value = 0.85;
+      master = AC.createGain(); master.gain.value = muted ? 0 : 0.85;
       const comp = AC.createDynamicsCompressor();
       comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
       comp.attack.value = 0.003; comp.release.value = 0.2;
       master.connect(comp); comp.connect(AC.destination);
+      /* v6：程序化殘響（generated impulse 山谷空間感） */
+      const conv = AC.createConvolver();
+      const n = Math.floor(AC.sampleRate * 1.4), buf = AC.createBuffer(2, n, AC.sampleRate);
+      for(let ch = 0; ch < 2; ch++){ const d = buf.getChannelData(ch);
+        for(let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 2.6); }
+      conv.buffer = buf;
+      revSend = AC.createGain(); revSend.gain.value = 0.22;
+      revSend.connect(conv); conv.connect(master);
+      /* v6：山風氛圍層（主音效觸發 ducking） */
+      ambGain = AC.createGain(); ambGain.gain.value = 1; ambGain.connect(master);
+      startAmbience();
     }catch(e){}
   }
   if(AC && AC.state === 'suspended') AC.resume();
+}
+function startAmbience(){
+  if(!AC || !ambGain || ambOn) return;
+  ambOn = true;
+  const n = AC.sampleRate * 2, buf = AC.createBuffer(1, n, AC.sampleRate), d = buf.getChannelData(0);
+  for(let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const filt = AC.createBiquadFilter(); filt.type = 'bandpass'; filt.frequency.value = 400; filt.Q.value = 0.6;
+  const g = AC.createGain(); g.gain.value = 0.03;
+  const lfo = AC.createOscillator(), lg = AC.createGain();
+  lfo.frequency.value = 0.12; lg.gain.value = 190;
+  lfo.connect(lg); lg.connect(filt.frequency);
+  src.connect(filt); filt.connect(g); g.connect(ambGain);
+  src.start(); lfo.start(); ambNodes.push(src, lfo, g);
+}
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime, g = ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, 1), t);
+  g.linearRampToValueAtTime(0.12, t + 0.05); g.linearRampToValueAtTime(1, t + 1.1);
 }
 function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(muted || !AC) return;
@@ -95,7 +128,7 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), AC.currentTime + dur);
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  o.connect(g).connect(master);
+  o.connect(g); g.connect(master); if(revSend) g.connect(revSend);
   o.start();
   o.stop(AC.currentTime + dur);
 }
@@ -110,7 +143,7 @@ function noise(dur = 0.15, vol = 0.2){
   const g = AC.createGain();
   g.gain.setValueAtTime(vol, AC.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
-  src.connect(g).connect(master);
+  src.connect(g); g.connect(master); if(revSend) g.connect(revSend);
   src.start();
 }
 const sfx = {
@@ -118,20 +151,22 @@ const sfx = {
   swing(){ beep(340, 0.08, 'sawtooth', 0.06, -170); },
   hit(){ noise(0.1, 0.16); beep(170, 0.12, 'square', 0.13, -70); },
   hurt(){ beep(150, 0.22, 'sawtooth', 0.12, -90); },
-  ko(){ noise(0.4, 0.22); beep(90, 0.5, 'sawtooth', 0.16, -40); },
+  ko(){ duckAmb(); noise(0.4, 0.22); beep(90, 0.5, 'sawtooth', 0.16, -40); },
   ui(){ beep(660, 0.06, 'square', 0.08); },
   round(){
+    duckAmb();
     beep(523, 0.1, 'square', 0.1);
     setTimeout(() => beep(659, 0.1, 'square', 0.1), 90);
     setTimeout(() => beep(784, 0.16, 'square', 0.1), 180);
   },
-  special(){ noise(0.25, 0.2); beep(180, 0.4, 'sawtooth', 0.14, 520); setTimeout(() => beep(880, 0.25, 'square', 0.12, 300), 140); },
+  special(){ duckAmb(); noise(0.25, 0.2); beep(180, 0.4, 'sawtooth', 0.14, 520); setTimeout(() => beep(880, 0.25, 'square', 0.12, 300), 140); },
   spReady(){ beep(880, 0.09, 'square', 0.1, 220); setTimeout(() => beep(1175, 0.14, 'square', 0.09), 90); },
-  win(){ [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.1), i * 110)); },
-  lose(){ [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 150)); }
+  win(){ duckAmb(); [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.18, 'square', 0.1), i * 110)); },
+  lose(){ duckAmb(); [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.22, 'triangle', 0.12), i * 150)); }
 };
 function toggleMute(){
   muted = !muted;
+  if(master) master.gain.value = muted ? 0 : 0.85;   // v6：靜音同步關掉氛圍層與殘響尾音
   try{ localStorage.setItem('wn_muted', muted ? '1' : '0'); }catch(e){}
 }
 
@@ -263,6 +298,68 @@ function drawFloaters(){
   ctx.globalAlpha = 1;
 }
 
+/* ===== v6：飄落桃花瓣（花果山氛圍粒子） ===== */
+const petals = [];
+for(let i = 0; i < 15; i++) petals.push({ x: Math.random() * GAME_W, y: Math.random() * GAME_H, z: 0.4 + Math.random() * 0.6, ph: Math.random() * 9, rot: Math.random() * 6 });
+function updatePetals(dt){
+  for(const p of petals){
+    p.ph += dt; p.rot += dt * (1 + p.z);
+    p.y += (16 + 26 * p.z) * dt;
+    p.x += Math.sin(p.ph * 1.4) * 22 * dt - 8 * p.z * dt;
+    if(p.y > GAME_H + 8){ p.y = -10; p.x = Math.random() * GAME_W; }
+    if(p.x < -10) p.x = GAME_W + 10;
+  }
+}
+function drawPetals(){
+  for(const p of petals){
+    ctx.save();
+    ctx.translate(p.x, p.y);
+    ctx.rotate(p.rot);
+    ctx.globalAlpha = 0.5 + 0.3 * p.z;
+    ctx.fillStyle = p.z > 0.7 ? '#ffc4d0' : '#e89ab0';
+    ctx.beginPath(); ctx.ellipse(0, 0, 4.6 * p.z, 2.6 * p.z, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+/* ===== v6：衝擊波圓環（命中/必殺/KO） ===== */
+const rings = [];
+function addRing(x, y, color, maxR, dur){ rings.push({ x, y, color, maxR, t: 0, dur: dur || 0.4 }); }
+function updateRings(dt){
+  for(let i = rings.length - 1; i >= 0; i--){ rings[i].t += dt; if(rings[i].t >= rings[i].dur) rings.splice(i, 1); }
+}
+function drawRings(){
+  for(const r of rings){
+    const p = r.t / r.dur, e = easeOutCubic(p);
+    ctx.globalAlpha = (1 - p) * 0.85;
+    ctx.strokeStyle = r.color; ctx.lineWidth = 3.5 + (1 - p) * 3.5;
+    ctx.beginPath(); ctx.arc(r.x, r.y, 10 + (r.maxR - 10) * e, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
+/* ===== v6：KO 鏡頭推近 ===== */
+let koZoom = 0, koZoomX = GAME_W / 2, koZoomY = GAME_H / 2;
+/* ===== v6：烘焙暗角 ===== */
+const vigCv = document.createElement('canvas');
+vigCv.width = GAME_W; vigCv.height = GAME_H;
+(function(){
+  const c = vigCv.getContext('2d');
+  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.48, GAME_W / 2, GAME_H / 2, GAME_H * 0.98);
+  g.addColorStop(0, 'rgba(18,8,40,0)'); g.addColorStop(1, 'rgba(18,8,40,.42)');
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
+})();
+let cricketT = 3;
+function updateCrickets(dt){       // v6：黃昏蟲鳴（隨機三連短音）
+  cricketT -= dt;
+  if(cricketT <= 0){
+    cricketT = 2 + Math.random() * 4;
+    if(AC && !muted){
+      const f = 3600 + Math.random() * 900;
+      for(let i = 0; i < 3; i++) setTimeout(() => beep(f, 0.03, 'sine', 0.015), i * 75);
+    }
+  }
+}
+
 /* ===== 全域遊戲狀態 ===== */
 let stateName = 'title';
 let stateT = 0;
@@ -388,6 +485,7 @@ function applyHit(att, def){
   const hx = (att.x + def.x) / 2, hy = def.y - 72;
   burst(hx, hy, '#ffd75e', sp ? 22 : 10, sp ? 360 : 270, 0.45);
   burst(hx, hy, '#ff6b4a', sp ? 14 : 6, 220, 0.35);
+  addRing(hx, hy, sp ? '#ffcf4d' : '#ffe9ad', sp ? 120 : 62, sp ? 0.5 : 0.35);   // v6：命中衝擊波
   addFloater(def.x, def.y - 128, (sp ? '必殺 -' : '-') + dmg, sp ? '#ffcf4d' : '#ff9a86', sp ? 30 : 24);
   freeze = Math.max(freeze, sp ? 0.12 : 0.05);
   shake = Math.max(shake, sp ? 11 : 6);
@@ -399,6 +497,8 @@ function applyHit(att, def){
     freeze = 0.14;
     shake = 12;
     burst(def.x, def.y - 60, def === p1 ? '#ff8a5c' : '#7ad1ff', 26, 340, 0.7);
+    addRing(def.x, def.y - 60, '#fff', 200, 0.6);                // v6：KO 衝擊波
+    koZoom = 1; koZoomX = def.x; koZoomY = def.y - 60;           // v6：KO 鏡頭推近
     sfx.ko();
     phase = 'ko'; phaseT = 0;
   }else if(def === p1){
@@ -462,6 +562,7 @@ function updateFighter(f, opp, inp, dt){
     shake = Math.max(shake, 5);
     addFloater(f.x, f.y - 150, f.kind === 'wukong' ? '如意棒・橫掃千軍！' : '火尖槍・烈焰突刺！', '#ffcf4d', 24);
     burst(f.x, f.y - 60, f.kind === 'wukong' ? '#ffd75e' : '#ff8c3a', 20, 300, 0.6);
+    addRing(f.x, f.y - 60, f.kind === 'wukong' ? '#ffd75e' : '#ff8c3a', 150, 0.55);   // v6：必殺發動衝擊波
     sfx.special();
   }
   /* 一般攻擊 */
@@ -586,6 +687,17 @@ skyCv.width = GAME_W; skyCv.height = GAME_H;
   const sunGrad = c.createRadialGradient(sunX - 8, sunY - 10, 5, sunX, sunY, 42);
   sunGrad.addColorStop(0, '#fff3d0'); sunGrad.addColorStop(1, '#ffc766');
   c.fillStyle = sunGrad; c.beginPath(); c.arc(sunX, sunY, 42, 0, Math.PI * 2); c.fill();
+  /* v6：烘焙夕陽霞光光束（往左下灑落） */
+  for(const [ang, len, wdt, al] of [[2.55, 620, 60, 0.06], [2.8, 540, 38, 0.05], [2.32, 500, 30, 0.045]]){
+    c.save();
+    c.translate(sunX, sunY); c.rotate(ang);
+    const bg2 = c.createLinearGradient(0, 0, len, 0);
+    bg2.addColorStop(0, 'rgba(255,225,160,' + al + ')'); bg2.addColorStop(1, 'rgba(255,225,160,0)');
+    c.fillStyle = bg2;
+    c.beginPath(); c.moveTo(46, -wdt * 0.28); c.lineTo(len, -wdt); c.lineTo(len, wdt); c.lineTo(46, wdt * 0.28);
+    c.closePath(); c.fill();
+    c.restore();
+  }
 })();
 const grdCv = document.createElement('canvas');
 grdCv.width = GAME_W; grdCv.height = GAME_H - GROUND_Y;
@@ -1109,7 +1221,10 @@ function drawHpBar(x, y, w, h, f, cTop, cBot, label, alignRight){
   else ctx.fillRect(x, y, realW, h);
   ctx.restore();
   rr(x, y, w, h, 6);
-  ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+  /* v6：低血量邊框脈動警示 */
+  const low = f.hp > 0 && f.hp / f.maxHp < 0.3;
+  ctx.strokeStyle = low && Math.floor(T * 6) % 2 ? '#ff5a5a' : '#fff';
+  ctx.lineWidth = low ? 3 : 2;
   ctx.stroke();
 }
 function drawButton(x, y, w, h, label, cb, primary){
@@ -1224,14 +1339,23 @@ function drawTouchUI(){
 function drawWorld(){
   ctx.save();
   ctx.translate((Math.random() * 2 - 1) * shake, (Math.random() * 2 - 1) * shake);
+  if(koZoom > 0){                                  // v6：KO 鏡頭推近（只縮放世界，不影響 UI）
+    const s = 1 + easeOutCubic(koZoom) * 0.13;
+    ctx.translate(koZoomX, koZoomY);
+    ctx.scale(s, s);
+    ctx.translate(-koZoomX, -koZoomY);
+  }
   drawBG();
   drawFighter(p2);
   drawFighter(p1);
   drawParts();
+  drawRings();                                     // v6：衝擊波圓環
   drawFloaters();
+  drawPetals();                                    // v6：飄落桃花瓣
   /* 氛圍統一色調 */
   ctx.fillStyle = 'rgba(30,15,70,.08)'; ctx.fillRect(-20, -20, GAME_W + 40, GAME_H + 40);
   ctx.restore();
+  ctx.drawImage(vigCv, 0, 0);                      // v6：暗角
 }
 function bigText(txt, y, size, color, scaleK){
   ctx.save();
@@ -1394,7 +1518,7 @@ function overDraw(){
 }
 
 /* 測試掛鉤（自動化冒煙測試用，不影響遊戲） */
-window.__smoke = () => ({ scene: stateName, phase, mode, round, wins1, score, cleared, bestEndless, x: p1.x, atkT: p1.atkTimer, sp: p1.sp, oppHp: p2.hp, parts: parts.length });
+window.__smoke = () => ({ scene: stateName, phase, mode, round, wins1, score, cleared, bestEndless, x: p1.x, atkT: p1.atkTimer, sp: p1.sp, oppHp: p2.hp, parts: parts.length, ambN: ambNodes.length, koZoom });
 window.__startMode = m => startGame(m); // 測試專用：直接進入指定模式
 
 /* ===== 主迴圈：固定時間步進 60Hz ===== */
@@ -1419,6 +1543,10 @@ function frame(now){
     else if(stateName === 'over') overT += STEP;
     updateParts(STEP);
     updateFloaters(STEP);
+    updatePetals(STEP);                            // v6：花瓣/圓環/鏡頭/蟲鳴
+    updateRings(STEP);
+    koZoom = Math.max(0, koZoom - STEP * 0.8);
+    updateCrickets(STEP);
   }
   uiButtons = [];
   if(stateName === 'title') titleDraw();

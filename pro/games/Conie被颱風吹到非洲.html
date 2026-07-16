@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：離屏烘焙漸層雲朵/金幣精靈、颱風雨幕+沙漠熱浪+草原鳥群、烘焙vignette、程序化殘響+風聲氛圍層(隨難度增強)與ducking、禿鷹俯衝鳴叫 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -136,7 +136,7 @@ const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2)
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 
 // ---------- 音效：Web Audio 合成（零音檔）----------
-let AC = null, MASTER = null;
+let AC = null, MASTER = null, windGain = null, ambDuck = null;
 let muted = localStorage.getItem('conie_africa_muted') === '1';
 function audio(){
   if(!AC){
@@ -147,10 +147,46 @@ function audio(){
       MASTER.threshold.value = -18; MASTER.knee.value = 24; MASTER.ratio.value = 8;
       const mg = AC.createGain(); mg.gain.value = 0.9;
       MASTER.connect(mg); mg.connect(AC.destination);
+      // v6：程序化殘響——generated impulse，音效帶開闊天空感
+      const ir = AC.createBuffer(2, (AC.sampleRate * 1.2) | 0, AC.sampleRate);
+      for(let ch = 0; ch < 2; ch++){
+        const d = ir.getChannelData(ch);
+        for(let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.8);
+      }
+      const conv = AC.createConvolver(); conv.buffer = ir;
+      const wet = AC.createGain(); wet.gain.value = 0.14;
+      MASTER.connect(conv); conv.connect(wet); wet.connect(AC.destination);
+      // v6：風聲氛圍層（低通噪聲循環，強度隨遊戲速度，主音效時 ducking）
+      const len = AC.sampleRate * 3, buf = AC.createBuffer(1, len, AC.sampleRate);
+      const wd = buf.getChannelData(0);
+      let lp = 0;
+      for(let i = 0; i < len; i++){
+        const tt = i / AC.sampleRate, w = Math.random() * 2 - 1;
+        lp += (w - lp) * 0.03;
+        wd[i] = lp * (0.65 + 0.35 * Math.sin(tt * 2.9) + 0.15 * Math.sin(tt * 9.1)) * 1.6;
+      }
+      const f6 = (AC.sampleRate * 0.12) | 0;
+      for(let i = 0; i < f6; i++){ const a = i / f6; wd[i] = wd[i] * a + wd[len - f6 + i] * (1 - a); }
+      const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+      windGain = AC.createGain(); windGain.gain.value = 0;
+      ambDuck = AC.createGain(); ambDuck.gain.value = 1;
+      src.connect(windGain); windGain.connect(ambDuck); ambDuck.connect(mg);
+      src.start();
     } catch(e){ return null; }
   }
   if(AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function setWind(level){
+  if(!AC || !windGain) return;
+  windGain.gain.setTargetAtTime(muted ? 0 : level, AC.currentTime, 0.5);
+}
+function duckAmb(){
+  if(!AC || !ambDuck || muted) return;
+  const t0 = AC.currentTime;
+  ambDuck.gain.cancelScheduledValues(t0);
+  ambDuck.gain.setTargetAtTime(0.35, t0, 0.015);
+  ambDuck.gain.setTargetAtTime(1, t0 + 0.12, 0.25);
 }
 addEventListener('pointerdown', audio, { once:true });
 addEventListener('keydown', audio, { once:true });
@@ -159,6 +195,7 @@ function beep(freq, dur, type, vol, slide, delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
   dur = dur || 0.1; type = type || 'square'; vol = vol || 0.12; slide = slide || 0; delay = delay || 0;
+  if(vol >= 0.12) duckAmb();   // v6：主音效壓低風聲層
   freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，聽感不機械
   const t0 = ac.currentTime + delay;
   const o = ac.createOscillator(), g = ac.createGain();
@@ -175,6 +212,7 @@ function noiseBurst(dur, vol, cutoff, delay){
   if(muted) return;
   const ac = audio(); if(!ac) return;
   dur = dur || 0.3; vol = vol || 0.25; cutoff = cutoff || 900; delay = delay || 0;
+  if(vol >= 0.12) duckAmb();   // v6
   const n = Math.floor(ac.sampleRate * dur);
   const buf = ac.createBuffer(1, n, ac.sampleRate);
   const d = buf.getChannelData(0);
@@ -205,7 +243,8 @@ const sfx = {
     notes.forEach((f, i) => beep(f, 0.16, 'square', 0.12, 0, i * 0.12));
     noiseBurst(0.6, 0.1, 2500, 0.5);
   },
-  lose(){ beep(300, 0.3, 'sawtooth', 0.16, -180); beep(200, 0.5, 'sawtooth', 0.14, -120, 0.26); }
+  lose(){ beep(300, 0.3, 'sawtooth', 0.16, -180); beep(200, 0.5, 'sawtooth', 0.14, -120, 0.26); },
+  vulture(){ beep(1450, 0.26, 'sawtooth', 0.06, -700); beep(1150, 0.2, 'sawtooth', 0.05, -500, 0.18); }   // v6：禿鷹鳴叫
 };
 
 // ---------- DOM 參照 ----------
@@ -293,6 +332,7 @@ let pows = [];                       // v2：道具（🛡護盾 / ⭐無敵衝�
 let banner = null;                   // 里程碑大字
 let spawnT = 0, coinT = 0, heartT = 0, powT = 0, powIdx = 0;
 let playT = 0, finale = false;       // v2：開場提示計時 / 最後衝刺
+let windT6 = 0;                      // v6：風聲層校準計時
 
 // 里程碑
 let milestones;
@@ -323,6 +363,67 @@ function initClouds(){
 const windLines = [];
 for(let i = 0; i < 12; i++) windLines.push({ x: Math.random() * GAME_W, y: Math.random() * GAME_H, len: 40 + Math.random() * 90, sp: 1.4 + Math.random() * 1.2 });
 initClouds();
+
+// ---------- v6：離屏烘焙精靈（主迴圈零 createGradient） ----------
+function bake(w, h, fn){ const c = document.createElement('canvas'); c.width = w; c.height = h; fn(c.getContext('2d')); return c; }
+function bakeCloud(top, mid, shadow){
+  return bake(220, 130, g => {
+    const grad = g.createLinearGradient(0, 12, 0, 118);
+    grad.addColorStop(0, top); grad.addColorStop(0.7, mid); grad.addColorStop(1, shadow);
+    g.fillStyle = grad;
+    g.beginPath();
+    g.ellipse(110, 62, 74, 38, 0, 0, TAU);
+    g.ellipse(62, 74, 44, 26, 0, 0, TAU);
+    g.ellipse(158, 74, 44, 26, 0, 0, TAU);
+    g.ellipse(94, 40, 38, 27, 0, 0, TAU);
+    g.fill();
+    g.globalAlpha = 0.45; g.fillStyle = shadow;   // 底部陰影帶＝立體感
+    g.beginPath(); g.ellipse(110, 90, 72, 14, 0, 0, TAU); g.fill();
+    g.globalAlpha = 0.5; g.fillStyle = '#ffffff'; // 頂部受光
+    g.beginPath(); g.ellipse(92, 32, 30, 12, -0.15, 0, TAU); g.fill();
+  });
+}
+const CLOUD_WHITE = bakeCloud('#ffffff', '#eef4fc', '#c3d3ea');   // 一般白雲
+const CLOUD_WARM  = bakeCloud('#fff6e6', '#f4dcc0', '#d9b892');   // 沙漠暖陽雲
+const CLOUD_DARK  = bakeCloud('#6a6d92', '#3a3c58', '#26283e');   // 烏雲障礙
+const CLOUD_STORM = bakeCloud('#565878', '#2c2c48', '#1c1d32');   // 雷雲
+const COIN_SPR = bake(28, 28, g => {
+  const grad = g.createRadialGradient(10, 9, 2, 14, 14, 14);
+  grad.addColorStop(0, '#fff3b0'); grad.addColorStop(0.55, '#ffd23f'); grad.addColorStop(1, '#d9a010');
+  g.fillStyle = grad; g.beginPath(); g.arc(14, 14, 12, 0, TAU); g.fill();
+  g.strokeStyle = '#b8860b'; g.lineWidth = 2; g.stroke();
+  g.fillStyle = '#b8860b'; g.font = 'bold 12px sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('¢', 14, 15);
+});
+const VIGN_SPR = bake(GAME_W, GAME_H, g => {
+  const v = g.createRadialGradient(GAME_W/2, GAME_H/2, GAME_H*0.46, GAME_W/2, GAME_H/2, GAME_H*1.02);
+  v.addColorStop(0, 'rgba(0,0,0,0)'); v.addColorStop(1, 'rgba(10,8,30,0.34)');
+  g.fillStyle = v; g.fillRect(0, 0, GAME_W, GAME_H);
+});
+// v6：颱風雨幕（臺灣風雨段限定，隨進度淡出）
+const rainDrops = [];
+for(let i = 0; i < 70; i++) rainDrops.push({ x: Math.random()*GAME_W, y: Math.random()*GAME_H, l: 13 + Math.random()*14, sp: 560 + Math.random()*280 });
+function rainAlpha(){
+  if(mode !== 'journey') return 0;
+  return clamp((0.22 - progress()) / 0.22, 0, 1) * (state === 'menu' ? 0.35 : 0.5);
+}
+function updateRain(dt){
+  for(const r of rainDrops){
+    r.x -= r.sp * 0.45 * dt; r.y += r.sp * dt;
+    if(r.y > GAME_H + 20 || r.x < -20){ r.x = Math.random()*(GAME_W + 200); r.y = -20; }
+  }
+}
+function drawRain(){
+  const a = rainAlpha();
+  if(a <= 0.01) return;
+  ctx.strokeStyle = 'rgba(190,220,255,' + a.toFixed(2) + ')';
+  ctx.lineWidth = 1.6; ctx.beginPath();
+  for(const r of rainDrops){
+    ctx.moveTo(r.x, r.y);
+    ctx.lineTo(r.x - r.l * 0.45, r.y - r.l);
+  }
+  ctx.stroke();
+}
 
 // ---------- 進度與速度 ----------
 function progress(){ return clamp(dist / GOAL, 0, 1); }          // journey：抵達非洲 0→1
@@ -409,6 +510,7 @@ function spawnObstacle(){
       phase: 'idle', pt: rand(0.2, 0.9), boltLen: rand(150, 230), boomed: false });
   } else { // vulture 禿鷹
     obstacles.push({ kind, x: GAME_W + 50, y, r: 20, flap: rand(0, TAU), sp: rand(90, 150), home: rand(50, 85) });
+    sfx.vulture();   // v6：登場鳴叫預警
   }
 }
 function spawnWall(){
@@ -805,6 +907,8 @@ function drawBackground(){
   // 視差雲層（遠 → 近前兩層；最近一層蓋在角色前，於 drawFront 畫）
   for(let L = 0; L < 2; L++) drawCloudLayer(L, p);
 
+  drawRain();   // v6：颱風雨幕（臺灣段）
+
   // 速度線（最後衝刺時更強烈）
   ctx.strokeStyle = finale ? 'rgba(255,255,255,0.5)' : 'rgba(255,255,255,0.28)';
   ctx.lineWidth = finale ? 3 : 2;
@@ -818,15 +922,13 @@ function drawBackground(){
   ctx.globalAlpha = 1;
 }
 function drawCloudLayer(L, p){
-  const tint = p > 0.5 ? '255,240,214' : '255,255,255';
+  // v6：烘焙漸層雲精靈（受光頂/陰影底），沙漠段換暖色雲
+  const spr = p > 0.5 ? CLOUD_WARM : CLOUD_WHITE;
   for(const cl of cloudLayers[L]){
-    ctx.fillStyle = 'rgba(' + tint + ',' + cl.a.toFixed(2) + ')';
-    ctx.beginPath();
-    ctx.ellipse(cl.x, cl.y, cl.s, cl.s * 0.52, 0, 0, TAU);
-    ctx.ellipse(cl.x - cl.s * 0.55, cl.y + cl.s * 0.12, cl.s * 0.6, cl.s * 0.34, 0, 0, TAU);
-    ctx.ellipse(cl.x + cl.s * 0.55, cl.y + cl.s * 0.12, cl.s * 0.6, cl.s * 0.34, 0, 0, TAU);
-    ctx.fill();
+    ctx.globalAlpha = clamp(cl.a * 2.4, 0, 0.95);
+    ctx.drawImage(spr, cl.x - cl.s * 1.15, cl.y - cl.s * 0.68, cl.s * 2.3, cl.s * 1.36);
   }
+  ctx.globalAlpha = 1;
 }
 function moveClouds(dt, speedMul){
   const sc = scrollSpeed() * (speedMul === undefined ? 1 : speedMul);
@@ -840,6 +942,7 @@ function moveClouds(dt, speedMul){
     w.x -= scrollSpeed() * w.sp * dt * (speedMul === undefined ? 1 : speedMul);
     if(w.x < -w.len){ w.x = GAME_W + rand(0, 120); w.y = Math.random() * GAME_H; }
   }
+  updateRain(dt);   // v6
 }
 
 function drawGround(){
@@ -874,6 +977,20 @@ function drawGround(){
     }
     ctx.globalAlpha = 1;
   }
+  // v6：沙漠熱浪（地平線上方微幅波動光帶）
+  if(w.desert > 0.3){
+    ctx.globalAlpha = w.desert * 0.16;
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2;
+    for(let s2 = 0; s2 < 2; s2++){
+      ctx.beginPath();
+      for(let x = 0; x <= GAME_W; x += 32){
+        const yy = gy - 12 - s2 * 15 + Math.sin(t * (2.2 + s2) + x * 0.03) * 3;
+        x === 0 ? ctx.moveTo(x, yy) : ctx.lineTo(x, yy);
+      }
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
   // 草原草叢
   if(w.savanna > 0.02){
     ctx.globalAlpha = w.savanna;
@@ -894,6 +1011,22 @@ function drawGround(){
 
 function drawLandmarks(){
   const p = progress();
+  // v6：草原段遠方鳥群（氛圍層）
+  const w6 = stageWeights(worldP());
+  if(w6.savanna > 0.2){
+    ctx.strokeStyle = 'rgba(45,40,30,' + (w6.savanna * 0.6).toFixed(2) + ')';
+    ctx.lineWidth = 2; ctx.lineCap = 'round';
+    for(let i = 0; i < 5; i++){
+      const bx = ((i * 190 - dist * 0.25) % (GAME_W + 200) + (GAME_W + 200)) % (GAME_W + 200) - 100;
+      const by = 84 + ((i * 53) % 74) + Math.sin(t * 1.6 + i) * 5;
+      const fl = Math.sin(t * 6 + i * 1.7) * 4;
+      ctx.beginPath();
+      ctx.moveTo(bx - 7, by - fl * 0.4);
+      ctx.quadraticCurveTo(bx, by - 4 - fl, bx, by);
+      ctx.quadraticCurveTo(bx, by - 4 - fl, bx + 7, by - fl * 0.4);
+      ctx.stroke();
+    }
+  }
   // 臺北 101 剪影（出發時）
   const x101 = 240 - dist * 0.12;
   if(x101 > -60){
@@ -963,12 +1096,8 @@ function drawObstacles(){
   for(const o of obstacles){
     if(o.kind === 'cloud'){
       const y = o.y + Math.sin(o.wob) * 6;
-      ctx.fillStyle = 'rgba(52,54,76,0.92)';
-      ctx.beginPath();
-      ctx.arc(o.x, y, o.r, 0, TAU);
-      ctx.arc(o.x - o.r * 0.62, y + o.r * 0.22, o.r * 0.68, 0, TAU);
-      ctx.arc(o.x + o.r * 0.62, y + o.r * 0.22, o.r * 0.68, 0, TAU);
-      ctx.fill();
+      // v6：烘焙漸層烏雲精靈（立體受光）
+      ctx.drawImage(CLOUD_DARK, o.x - o.r * 1.55, y - o.r * 0.98, o.r * 3.1, o.r * 1.86);
       // 生氣的眼睛（剪影可辨識為敵人）
       ctx.fillStyle = '#fff';
       ctx.beginPath();
@@ -1000,12 +1129,14 @@ function drawObstacles(){
       const y = o.y + Math.sin(o.wob) * 6;
       const warn = o.phase === 'warn';
       const bolt = o.phase === 'bolt';
-      ctx.fillStyle = warn && Math.floor(t * 12) % 2 === 0 ? 'rgba(120,110,160,0.95)' : 'rgba(38,38,60,0.95)';
-      ctx.beginPath();
-      ctx.arc(o.x, y, o.r, 0, TAU);
-      ctx.arc(o.x - o.r * 0.6, y + o.r * 0.25, o.r * 0.66, 0, TAU);
-      ctx.arc(o.x + o.r * 0.6, y + o.r * 0.25, o.r * 0.66, 0, TAU);
-      ctx.fill();
+      // v6：烘焙雷雲精靈＋預警內部閃光
+      ctx.drawImage(CLOUD_STORM, o.x - o.r * 1.55, y - o.r * 0.98, o.r * 3.1, o.r * 1.86);
+      if(warn && Math.floor(t * 12) % 2 === 0){
+        ctx.globalAlpha = 0.45;
+        ctx.fillStyle = '#cfc4ff';
+        ctx.beginPath(); ctx.ellipse(o.x, y + o.r * 0.1, o.r * 0.85, o.r * 0.55, 0, 0, TAU); ctx.fill();
+        ctx.globalAlpha = 1;
+      }
       // 警告小閃電圖示
       if(warn){
         ctx.fillStyle = '#fff35c';
@@ -1075,16 +1206,15 @@ function drawCoins(){
     ctx.save();
     ctx.translate(c.x, y);
     ctx.scale(squash, 1);
-    ctx.fillStyle = '#ffd23f';
-    ctx.strokeStyle = '#b8860b';
-    ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.arc(0, 0, c.r, 0, TAU); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = '#b8860b';
-    ctx.font = 'bold 11px sans-serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('¢', 0, 1);
-    ctx.textBaseline = 'alphabetic';
+    ctx.drawImage(COIN_SPR, -14, -14);   // v6：烘焙金幣（漸層受光）
     ctx.restore();
+    if(Math.sin(c.wob * 1.7) > 0.94){    // v6：偶發星芒閃光
+      ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(c.x - 7, y - 8); ctx.lineTo(c.x - 1, y - 8);
+      ctx.moveTo(c.x - 4, y - 11); ctx.lineTo(c.x - 4, y - 5);
+      ctx.stroke();
+    }
   }
 }
 function drawPows(){   // v2：道具（發光圓泡＋圖示）
@@ -1247,6 +1377,7 @@ function drawBanner(){
 
 // ---------- 全畫面特效 ----------
 function drawScreenFx(){
+  ctx.drawImage(VIGN_SPR, 0, 0);   // v6：烘焙 vignette 聚焦視線
   if(flash > 0){
     ctx.fillStyle = 'rgba(255,255,255,' + (flash * 2).toFixed(2) + ')';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
@@ -1342,6 +1473,13 @@ function update(dt){
     if(endWon) confetti();
   }
 
+  // v6：風聲層隨狀態/速度起伏（每 0.5 秒校準一次）
+  windT6 -= dt;
+  if(windT6 <= 0){
+    windT6 = 0.5;
+    setWind(state === 'play' ? 0.045 + clamp(difficulty(), 0, 1.5) * 0.035 + (finale ? 0.03 : 0) : 0.018);
+  }
+
   // 分數滾動緩動
   dispScore += (score - dispScore) * Math.min(1, 8 * dt);
   if(state === 'play'){
@@ -1419,6 +1557,7 @@ function toggleMute(){
   muted = !muted;
   localStorage.setItem('conie_africa_muted', muted ? '1' : '0');
   muteBtn.textContent = muted ? '🔇' : '🔊';
+  if(muted) setWind(0);   // v6：靜音立即關閉風聲層
   if(!muted) sfx.click();
 }
 muteBtn.addEventListener('click', toggleMute);

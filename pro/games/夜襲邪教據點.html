@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：螢火蟲光暈精靈化+營火裊裊炊煙+火光additive bloom、月亮烘焙進疊層(移除每幀漸層)、被發現時紅色警戒暗角脈動；程序化殘響ConvolverNode、夜風蟋蟀氛圍層+追擊緊張低鳴切換+營火劈啪+ducking -->
+<!-- v4：無盡夜襲模式、頭目信徒、無聲連殺加分、三晚劇情 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -58,7 +59,8 @@ function roundRect(x, y, w, h, r) {
 }
 
 // ---------- 音效 ----------
-let AC = null, master = null, muted = false;
+let AC = null, master = null, muted = false, revSend = null, ambGain = null, ambOn = '';
+const ambNodes = [];
 function audio() {
   if (!AC) {
     try {
@@ -69,10 +71,53 @@ function audio() {
       comp.threshold.value = -12; comp.knee.value = 24; comp.ratio.value = 8;
       comp.attack.value = 0.003; comp.release.value = 0.2;
       master.connect(comp); comp.connect(AC.destination);
+      // v6：程序化殘響（generated impulse，夜間野外微空間感）
+      const conv = AC.createConvolver();
+      const n = Math.floor(AC.sampleRate * 1.1), buf = AC.createBuffer(2, n, AC.sampleRate);
+      for (let ch = 0; ch < 2; ch++) { const d = buf.getChannelData(ch);
+        for (let i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / n, 3.2); }
+      conv.buffer = buf;
+      revSend = AC.createGain(); revSend.gain.value = 0.2;
+      revSend.connect(conv); conv.connect(master);
+      // v6：氛圍母線（夜風/追擊低鳴，主音效觸發 ducking）
+      ambGain = AC.createGain(); ambGain.gain.value = 1; ambGain.connect(master);
+      setAmbience('night');
     } catch (err) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function setAmbience(mode) {
+  if (!AC || !ambGain || ambOn === mode) return;
+  for (const nd of ambNodes) { try { nd.stop(); } catch (e) {} try { nd.disconnect(); } catch (e) {} }
+  ambNodes.length = 0; ambOn = mode;
+  const n = AC.sampleRate * 2, buf = AC.createBuffer(1, n, AC.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+  const src = AC.createBufferSource(); src.buffer = buf; src.loop = true;
+  const filt = AC.createBiquadFilter(); const g = AC.createGain();
+  filt.type = 'bandpass'; filt.frequency.value = 330; filt.Q.value = 0.7; g.gain.value = 0.032;
+  const lfo = AC.createOscillator(), lg = AC.createGain();
+  lfo.frequency.value = 0.1; lg.gain.value = 150;
+  lfo.connect(lg); lg.connect(filt.frequency);
+  src.connect(filt); filt.connect(g); g.connect(ambGain);
+  src.start(); lfo.start(); ambNodes.push(src, lfo, g);
+  if (mode === 'danger') {                 // 追擊中：緊張低鳴
+    const o1 = AC.createOscillator(), o2 = AC.createOscillator();
+    o1.type = 'sawtooth'; o1.frequency.value = 52; o2.type = 'sawtooth'; o2.frequency.value = 78;
+    const bf = AC.createBiquadFilter(); bf.type = 'lowpass'; bf.frequency.value = 180;
+    const bg2 = AC.createGain(); bg2.gain.value = 0.04;
+    const blfo = AC.createOscillator(), blg = AC.createGain();
+    blfo.frequency.value = 0.6; blg.gain.value = 0.016;
+    blfo.connect(blg); blg.connect(bg2.gain);
+    o1.connect(bf); o2.connect(bf); bf.connect(bg2); bg2.connect(ambGain);
+    o1.start(); o2.start(); blfo.start(); ambNodes.push(o1, o2, blfo, bg2);
+  }
+}
+function duckAmb() {
+  if (!AC || !ambGain) return;
+  const t = AC.currentTime, g = ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value, 1), t);
+  g.linearRampToValueAtTime(0.12, t + 0.05); g.linearRampToValueAtTime(1, t + 1.1);
 }
 function setMuted(m) { muted = m; if (master) master.gain.value = muted ? 0 : 0.85; }
 function beep(freq, dur, type, vol, slide) {
@@ -85,7 +130,7 @@ function beep(freq, dur, type, vol, slide) {
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(master);
+  o.connect(g); g.connect(master); if (revSend) g.connect(revSend);
   o.start(); o.stop(ac.currentTime + dur);
 }
 function noise(dur, vol) {
@@ -98,20 +143,20 @@ function noise(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.09, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(master);
+  src.connect(g); g.connect(master); if (revSend) g.connect(revSend);
   src.start();
 }
 const sfx = {
   click() { beep(520, 0.06, 'square', 0.08); },
   swing() { noise(0.08, 0.07); beep(300, 0.07, 'triangle', 0.05, -120); },
   hit() { beep(210, 0.09, 'square', 0.13, -70); noise(0.05, 0.09); },
-  takedown() { beep(140, 0.16, 'sawtooth', 0.14, -60); noise(0.12, 0.11); },
-  alert() { beep(660, 0.09, 'square', 0.12, 200); setTimeout(() => beep(880, 0.12, 'square', 0.11), 90); },
-  hurt() { beep(230, 0.24, 'sawtooth', 0.14, -140); },
+  takedown() { duckAmb(); beep(140, 0.16, 'sawtooth', 0.14, -60); noise(0.12, 0.11); },
+  alert() { duckAmb(); beep(660, 0.09, 'square', 0.12, 200); setTimeout(() => beep(880, 0.12, 'square', 0.11), 90); },
+  hurt() { duckAmb(); beep(230, 0.24, 'sawtooth', 0.14, -140); },
   eat() { beep(330, 0.07, 'triangle', 0.1); setTimeout(() => beep(440, 0.09, 'triangle', 0.1), 80); },
-  loot() { [784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.1), i * 80)); },
-  night() { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.1), i * 90)); },
-  lose() { [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 140)); },
+  loot() { duckAmb(); [784, 988, 1319].forEach((f, i) => setTimeout(() => beep(f, 0.12, 'square', 0.1), i * 80)); },
+  night() { duckAmb(); [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => beep(f, 0.14, 'square', 0.1), i * 90)); },
+  lose() { duckAmb(); [392, 330, 262, 196].forEach((f, i) => setTimeout(() => beep(f, 0.2, 'triangle', 0.12), i * 140)); },
   step() { noise(0.03, 0.03); }
 };
 
@@ -204,7 +249,10 @@ for (let i = 0; i < 10; i++) trees.push({ x: rnd(0, GAME_W), y: Math.random() < 
 const fogs = [];
 for (let i = 0; i < 7; i++) fogs.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H), r: rnd(90, 180), v: rnd(6, 14) * (i % 2 ? 1 : 0.5), a: rnd(0.05, 0.11) });
 const flies = [];
-for (let i = 0; i < 9; i++) flies.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H), ph: rnd(0, 9), sp: rnd(0.5, 1.2) });
+for (let i = 0; i < 14; i++) flies.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H), ph: rnd(0, 9), sp: rnd(0.5, 1.2) });
+// v6：營火炊煙
+const smokes = [];
+let smokeT = 0, crackleT = 1, dangerLvl = 0;
 
 function drawTree(t) {
   const sway = Math.sin(bgTime * 0.7 + t.ph) * 3;
@@ -284,14 +332,19 @@ function makeConeSprite(rgb) {
 }
 const coneCalm = makeConeSprite('201,161,90');
 const coneAlert = makeConeSprite('226,73,63');
+// v6：螢火蟲光暈 / 炊煙 精靈
+const flyGlowCv = makeRadialSprite(32, '200,255,140', 0.9);
+const smokeCv = makeRadialSprite(64, '125,135,125', 0.5);
 function drawFire() {
   const t = bgTime;
   const flick = Math.sin(t * 14) * 3 + Math.sin(t * 7) * 2;
-  // 地面光暈（閃爍，貼圖縮放）
-  const ga = 0.34 + Math.sin(t * 9) * 0.05;
+  // 地面光暈（閃爍，貼圖縮放；v6 改 additive 疊加，火光更熱）
+  const ga = 0.3 + Math.sin(t * 9) * 0.05;
   const gr = 170 + flick * 4;
+  ctx.globalCompositeOperation = 'lighter';
   ctx.globalAlpha = ga;
   ctx.drawImage(fireGlowCv, FIRE.x - gr, FIRE.y - gr, gr * 2, gr * 2);
+  ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
   // 焦黑柴薪
   ctx.fillStyle = '#1a0f08';
@@ -766,6 +819,24 @@ vigCv.width = GAME_W; vigCv.height = GAME_H;
   vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(0,0,0,0.5)');
   c.fillStyle = vg;
   c.fillRect(0, 0, GAME_W, GAME_H);
+  // v6：月亮烘焙進疊層（所有畫面都有月亮，並移除標題每幀重建的月亮漸層）
+  const mg2 = c.createRadialGradient(830, 70, 5, 830, 70, 70);
+  mg2.addColorStop(0, 'rgba(255,253,243,0.5)'); mg2.addColorStop(1, 'rgba(255,253,243,0)');
+  c.fillStyle = mg2;
+  c.beginPath(); c.arc(830, 70, 70, 0, 6.29); c.fill();
+  c.fillStyle = '#fffdf3';
+  c.beginPath(); c.arc(830, 70, 26, 0, 6.29); c.fill();
+  c.fillStyle = 'rgba(205,199,168,0.6)';
+  c.beginPath(); c.arc(822, 64, 6, 0, 6.29); c.arc(838, 78, 4, 0, 6.29); c.fill();
+})();
+// v6：紅色警戒暗角（被追擊時脈動）
+const dangerCv = document.createElement('canvas');
+dangerCv.width = GAME_W; dangerCv.height = GAME_H;
+(function () {
+  const c = dangerCv.getContext('2d');
+  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.38, GAME_W / 2, GAME_H / 2, GAME_H * 0.92);
+  g.addColorStop(0, 'rgba(180,30,20,0)'); g.addColorStop(1, 'rgba(180,30,20,0.42)');
+  c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
 })();
 function drawScene(lootGlow) {
   ctx.drawImage(groundCv, 0, 0);
@@ -782,16 +853,24 @@ function drawAtmosphere() {
     ctx.drawImage(fogCv, f.x - f.r, f.y - f.r, f.r * 2, f.r * 2);
   }
   ctx.globalAlpha = 1;
-  // 螢火蟲
+  // v6：炊煙（柔霧精靈、上升擴散）
+  for (const s of smokes) {
+    ctx.globalAlpha = clamp(s.life / 1.7, 0, 1) * 0.32;
+    ctx.drawImage(smokeCv, s.x - s.r, s.y - s.r, s.r * 2, s.r * 2);
+  }
+  ctx.globalAlpha = 1;
+  // 螢火蟲（v6：光暈精靈 additive、呼吸明滅）
+  ctx.globalCompositeOperation = 'lighter';
   for (const fy2 of flies) {
     const fx = fy2.x + Math.sin(bgTime * fy2.sp + fy2.ph) * 30;
     const fyy = fy2.y + Math.cos(bgTime * fy2.sp * 0.7 + fy2.ph) * 20;
-    ctx.globalAlpha = 0.4 + 0.6 * Math.abs(Math.sin(bgTime * 2 + fy2.ph));
-    ctx.fillStyle = '#d8e8a0';
-    ctx.fillRect(fx, fyy, 2.5, 2.5);
+    const k = 9 + 3 * Math.sin(bgTime * 2.3 + fy2.ph);
+    ctx.globalAlpha = 0.25 + 0.5 * Math.abs(Math.sin(bgTime * 2 + fy2.ph));
+    ctx.drawImage(flyGlowCv, fx - k / 2, fyy - k / 2, k, k);
   }
+  ctx.globalCompositeOperation = 'source-over';
   ctx.globalAlpha = 1;
-  // 月光角落 + 暗角（預繪疊層）
+  // 月光角落 + 暗角 + 月亮（預繪疊層）
   ctx.drawImage(vigCv, 0, 0);
 }
 function fogUpdate(dt) {
@@ -800,6 +879,17 @@ function fogUpdate(dt) {
     f.x += f.v * dt;
     if (f.x - f.r > GAME_W) f.x = -f.r;
   }
+  // v6：炊煙生成與飄散
+  smokeT -= dt;
+  if (smokeT <= 0) { smokeT = 0.3; smokes.push({ x: FIRE.x + rnd(-4, 4), y: FIRE.y - 52, r: rnd(8, 12), life: 1.7 }); }
+  for (let i = smokes.length - 1; i >= 0; i--) {
+    const s = smokes[i];
+    s.y -= 27 * dt; s.x += Math.sin(bgTime * 2 + s.y * 0.06) * 9 * dt; s.r += 10 * dt; s.life -= dt;
+    if (s.life <= 0) smokes.splice(i, 1);
+  }
+  // v6：營火隨機劈啪
+  crackleT -= dt;
+  if (crackleT <= 0) { crackleT = rnd(0.25, 0.9); if (AC && !muted) noise(0.025, 0.02 + Math.random() * 0.035); }
 }
 
 // ===== 標題 =====
@@ -817,16 +907,7 @@ const titleState = {
     drawFigure(CAMP.x + 70, CAMP.y + 80, 2.6, { color: PAL.cult, trim: PAL.cultTrim, eyes: true, ph: 3 });
     drawFire();
     drawFigure(150, 460, -0.9, { color: PAL.player, trim: PAL.playerTrim, ph: 0 });
-    drawAtmosphere();
-    // 月亮
-    const mg2 = ctx.createRadialGradient(830, 70, 5, 830, 70, 70);
-    mg2.addColorStop(0, 'rgba(255,253,243,0.5)'); mg2.addColorStop(1, 'rgba(255,253,243,0)');
-    ctx.fillStyle = mg2;
-    ctx.beginPath(); ctx.arc(830, 70, 70, 0, 6.29); ctx.fill();
-    ctx.fillStyle = '#fffdf3';
-    ctx.beginPath(); ctx.arc(830, 70, 26, 0, 6.29); ctx.fill();
-    ctx.fillStyle = 'rgba(205,199,168,0.6)';
-    ctx.beginPath(); ctx.arc(822, 64, 6, 0, 6.29); ctx.arc(838, 78, 4, 0, 6.29); ctx.fill();
+    drawAtmosphere();   // v6：月亮已烘焙進疊層
     // 標題
     const ts = easeOutBack(clamp(this.t / 0.7, 0, 1));
     ctx.save();
@@ -902,7 +983,8 @@ function startGame(m) {
   sfx.click();
   day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0; won = false;
   player.hp = 3; player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
-  parts.length = 0; floaters.length = 0;
+  parts.length = 0; floaters.length = 0; dangerLvl = 0;
+  setAmbience('night');
   spawnNight();
   setState(playState);
 }
@@ -1019,6 +1101,10 @@ const playState = {
         }
       }
     }
+    // v6：警戒等級（紅色暗角脈動＋緊張低鳴氛圍切換）
+    const anyChase = player.hp > 0 && cultists.some(c => !c.dead && c.chaseT > 0);
+    dangerLvl += ((anyChase ? 1 : 0) - dangerLvl) * 3 * dt;
+    setAmbience(anyChase ? 'danger' : 'night');
     // 撤離判定
     if (phase === 'retreat' && Math.hypot(player.x - CAMP.x, (player.y - CAMP.y) * 1.15) > ESCAPE_R) {
       nights++; day++;
@@ -1104,6 +1190,11 @@ const playState = {
     drawFloaters();
     drawAtmosphere();
     ctx.restore();
+    if (dangerLvl > 0.03) {           // v6：被追擊時紅色警戒暗角脈動
+      ctx.globalAlpha = clamp(dangerLvl, 0, 1) * (0.6 + Math.sin(bgTime * 6) * 0.25);
+      ctx.drawImage(dangerCv, 0, 0);
+      ctx.globalAlpha = 1;
+    }
     drawHUD(this);
     // 開場/過夜橫幅
     if (this.banner > 0) {
@@ -1256,7 +1347,7 @@ function muteButton() {
 
 // ===== 結算 =====
 const overState = {
-  enter() { this.t = 0; },
+  enter() { this.t = 0; setAmbience('night'); },
   onKey(code) { if (this.t > 0.5 && (code === 'Space' || code === 'Enter' || code === 'KeyE')) startGame(mode); },
   update(dt) { this.t += dt; fogUpdate(dt); },
   draw() {
@@ -1348,7 +1439,7 @@ function frame(now) {
   state.draw();
 }
 // 測試掛鉤（自動化冒煙測試用，不影響遊戲）
-window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : 'title', x: player.x, y: player.y, stam: player.stam, atkT: player.atkT });
+window.__smoke = () => ({ scene: state === playState ? 'play' : state === overState ? 'over' : 'title', x: player.x, y: player.y, stam: player.stam, atkT: player.atkT, ambN: ambNodes.length, ambOn, danger: dangerLvl });
 setState(titleState);
 requestAnimationFrame(frame);
 </script>

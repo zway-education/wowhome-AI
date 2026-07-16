@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v5：新增hit-stop打擊停頓／貓咪壓扁伸展／機器人空手撞擊回饋對稱化／畫面淡入轉場／選關鍵盤游標／飄字陣列防爆量 -->
+<!-- 專業AI升級 v6：暖色餐廳氛圍升級——空氣中漂浮暖塵埃＋送餐成功桌面金色光暈(加法bloom)＋奔跑腳下揚塵＋地板木紋質地烘焙＋暖色vignette；音效新增程序化小空間殘響ConvolverNode與廚房氛圍循環(爐火嘶嘶+隨機鍋碗輕響、失敗/結算ducking)；機器人與標題漸層快取零createGradient -->
+<!-- v5：新增hit-stop打擊停頓／貓咪壓扁伸展／機器人空手撞擊回饋對稱化／畫面淡入轉場／選關鍵盤游標／飄字陣列防爆量 -->
 <!-- +補強：角色精細化(漸層陰影/高光/腮紅/前掌/表情兩態＋離屏sprite快取)／觸控稽核確認／大螢幕提醒浮層 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
@@ -124,7 +125,8 @@ function drawFoodIcon(key, x, y, size){
 }
 
 /* ===================== 音效：Web Audio＋壓縮母線 ===================== */
-let AC = null, master = null;
+let AC = null, master = null, ambGain = null, ambOut = null;
+const AMB_BASE = 0.035;
 let muted = localStorage.getItem('catrest2_mute') === '1';
 function audio(){
   if(!AC){
@@ -134,9 +136,61 @@ function audio(){
     comp.attack.value = 0.003; comp.release.value = 0.2;
     master = AC.createGain(); master.gain.value = 0.9;
     master.connect(comp); comp.connect(AC.destination);
+    /* v6：程序化小空間殘響——generated impulse ConvolverNode（溫暖室內尾音） */
+    try{
+      const sr = AC.sampleRate, len = Math.floor(sr*1.2);
+      const imp = AC.createBuffer(2, len, sr);
+      for(let ch=0; ch<2; ch++){
+        const d = imp.getChannelData(ch);
+        for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 2.6);
+      }
+      const conv = AC.createConvolver(); conv.buffer = imp;
+      const wet = AC.createGain(); wet.gain.value = 0.15;
+      master.connect(conv); conv.connect(wet); wet.connect(comp);
+    }catch(e){}
+    /* v6：廚房氛圍循環——帶通噪聲模擬爐火嘶嘶＋LFO起伏＋隨機鍋碗輕響 */
+    try{
+      const sr = AC.sampleRate, alen = Math.floor(sr*2.2);
+      const abuf = AC.createBuffer(1, alen, sr);
+      const ad = abuf.getChannelData(0); let v = 0;
+      for(let i=0;i<alen;i++){ v = v*0.975 + (Math.random()*2-1)*0.08; ad[i] = v*1.9; }
+      const src = AC.createBufferSource(); src.buffer = abuf; src.loop = true;
+      const bp = AC.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 2400; bp.Q.value = 0.35;
+      ambGain = AC.createGain(); ambGain.gain.value = AMB_BASE;
+      const lfo = AC.createOscillator(); lfo.frequency.value = 0.16;
+      const lg = AC.createGain(); lg.gain.value = AMB_BASE*0.45;
+      lfo.connect(lg); lg.connect(ambGain.gain);
+      ambOut = AC.createGain(); ambOut.gain.value = muted ? 0 : 1;
+      src.connect(bp); bp.connect(ambGain); ambGain.connect(ambOut); ambOut.connect(comp);
+      src.start(); lfo.start();
+      clinkLoop();
+    }catch(e){}
   }
   if(AC.state === 'suspended') AC.resume();
   return AC;
+}
+/* v6：大事件時氛圍 ducking */
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime;
+  ambGain.gain.cancelScheduledValues(t);
+  ambGain.gain.setValueAtTime(Math.max(0.001, ambGain.gain.value), t);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE*0.2, t+0.05);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE, t+1.2);
+}
+/* v6：隨機鍋碗輕響（營業中每 4~9 秒一聲） */
+let clinkStarted = false;
+function clinkLoop(){
+  if(clinkStarted) return; clinkStarted = true;
+  (function next(){
+    setTimeout(()=>{
+      if(state===playState && !muted){
+        beep(1700+Math.random()*800, 0.04, 'sine', 0.03);
+        if(Math.random()<0.35) setTimeout(()=>beep(2300+Math.random()*600,0.03,'sine',0.02), 70);
+      }
+      next();
+    }, 4000+Math.random()*5000);
+  })();
 }
 addEventListener('pointerdown', audio, { once:true });
 addEventListener('keydown', audio, { once:true });
@@ -158,14 +212,17 @@ const sfx = {
                if(c>1) setTimeout(()=>beep(1568,0.14,'square',0.13),140); },
   perfect: ()=>{ [1319,1568,2093].forEach((f,i)=>setTimeout(()=>beep(f,0.1,'square',0.12),i*70)); },
   deny   : ()=>beep(180,0.08,'sawtooth',0.11),
-  expire : ()=>beep(160,0.28,'sawtooth',0.15,-90),
+  expire : ()=>{ duckAmb(); beep(160,0.28,'sawtooth',0.15,-90); },
   bump   : ()=>{ beep(120,0.15,'sawtooth',0.14,-60); },
   tick   : ()=>beep(880,0.05,'square',0.08),
   star   : n=>beep(784+n*180,0.18,'square',0.14,120),
-  win    : ()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.13),i*110)); },
-  lose   : ()=>{ beep(300,0.2,'square',0.12,-150); setTimeout(()=>beep(220,0.3,'square',0.12,-150),180); },
+  win    : ()=>{ duckAmb(); [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.13),i*110)); },
+  lose   : ()=>{ duckAmb(); beep(300,0.2,'square',0.12,-150); setTimeout(()=>beep(220,0.3,'square',0.12,-150),180); },
 };
-function toggleMute(){ muted = !muted; localStorage.setItem('catrest2_mute', muted?'1':'0'); }
+function toggleMute(){
+  muted = !muted; localStorage.setItem('catrest2_mute', muted?'1':'0');
+  if(ambOut) ambOut.gain.value = muted ? 0 : 1;   /* v6：氛圍層跟著靜音 */
+}
 const MUTE_BTN = { x:GAME_W-58, y:10, w:48, h:48 };
 
 /* ===================== 輸入：鍵盤＋浮動搖桿＋點擊 ===================== */
@@ -355,6 +412,18 @@ function bakeScene(day){
   const eg = g.createLinearGradient(0,projY(COLS,ROWS)-10,0,GAME_H);
   eg.addColorStop(0,'rgba(0,0,0,0)'); eg.addColorStop(1,'rgba(0,0,0,0.5)');
   g.fillStyle=eg; g.fillRect(0,projY(COLS,ROWS)-10,GAME_W,GAME_H);
+  /* v6：地板木紋細點質地（烘焙一次，零運行成本） */
+  g.save();
+  g.beginPath();
+  g.moveTo(projX(0,0),projY(0,0)); g.lineTo(projX(COLS,0),projY(COLS,0));
+  g.lineTo(projX(COLS,ROWS),projY(COLS,ROWS)); g.lineTo(projX(0,ROWS),projY(0,ROWS));
+  g.closePath(); g.clip();
+  for(let i=0;i<520;i++){
+    const gx = Math.random()*COLS, gy = Math.random()*ROWS;
+    g.fillStyle = Math.random()<0.5 ? 'rgba(255,230,190,.05)' : 'rgba(40,18,4,.09)';
+    g.fillRect(projX(gx,gy), projY(gx,gy), 2+Math.random()*6, 1.3);
+  }
+  g.restore();
 }
 
 /* ===================== 粒子（swap-pop）與飄字 ===================== */
@@ -401,6 +470,46 @@ function drawFloats(){
     ctx.fillStyle=f.color; ctx.fillText(f.text,f.x,f.y);
   }
   ctx.globalAlpha=1;
+}
+
+/* ===== v6：漸層快取＋暖色氛圍（漂浮塵埃/送餐光暈/vignette） ===== */
+const _gc = new Map();
+function cg(key, maker){
+  let g = _gc.get(key);
+  if(!g){ g = maker(); _gc.set(key, g); }
+  return g;
+}
+const tableGlowC = (function(){
+  const c = document.createElement('canvas'); c.width = c.height = 140;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(70,70,4, 70,70,70);
+  gr.addColorStop(0,'rgba(255,220,120,.65)'); gr.addColorStop(1,'rgba(255,220,120,0)');
+  g.fillStyle = gr; g.fillRect(0,0,140,140);
+  return c;
+})();
+const vignetteC = (function(){
+  const c = document.createElement('canvas'); c.width = 480; c.height = 270;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(240,130,145, 240,135,325);
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(0.72,'rgba(40,18,6,.08)'); gr.addColorStop(1,'rgba(28,12,4,.4)');
+  g.fillStyle = gr; g.fillRect(0,0,480,270);
+  return c;
+})();
+const motes = [];
+for(let i=0;i<18;i++) motes.push({ x:Math.random()*GAME_W, y:90+Math.random()*360, vx:4+Math.random()*9, ph:Math.random()*Math.PI*2 });
+function updateMotes(dt){
+  for(const m of motes){
+    m.x += m.vx*dt; m.ph += dt;
+    if(m.x > GAME_W+10){ m.x = -10; m.y = 90+Math.random()*360; }
+  }
+}
+function drawMotes(){
+  ctx.fillStyle = '#ffe9c0';
+  for(const m of motes){
+    ctx.globalAlpha = 0.07 + 0.09*(0.5+0.5*Math.sin(m.ph*1.9));
+    ctx.fillRect(m.x, m.y + Math.sin(m.ph)*7, 2.2, 2.2);
+  }
+  ctx.globalAlpha = 1;
 }
 
 /* ===================== 遊戲狀態 ===================== */
@@ -482,9 +591,12 @@ const menuState = {
     ctx.textAlign='center';
     ctx.font='bold 50px sans-serif';
     ctx.fillStyle='#2a1206'; ctx.fillText('貓咪餐廳送餐大冒險', GAME_W/2+3, 143);
-    const tg = ctx.createLinearGradient(GAME_W/2-220,0,GAME_W/2+220,0);
-    tg.addColorStop(0,'#ffcf5c'); tg.addColorStop(0.5,'#ffa72e'); tg.addColorStop(1,'#ff7e3d');
-    ctx.fillStyle=tg; ctx.fillText('貓咪餐廳送餐大冒險', GAME_W/2, 140);
+    ctx.fillStyle = cg('title', () => {
+      const tg = ctx.createLinearGradient(GAME_W/2-220,0,GAME_W/2+220,0);
+      tg.addColorStop(0,'#ffcf5c'); tg.addColorStop(0.5,'#ffa72e'); tg.addColorStop(1,'#ff7e3d');
+      return tg;
+    });
+    ctx.fillText('貓咪餐廳送餐大冒險', GAME_W/2, 140);
     ctx.font='bold 18px sans-serif'; ctx.fillStyle='#8fffb0';
     ctx.fillText('5 個營業日挑戰・收集 15 顆星星！', GAME_W/2, 178);
     ctx.font='16px sans-serif'; ctx.fillStyle='#fff5e6';
@@ -604,6 +716,14 @@ function updatePlay(dt){
   if(len>0.01){ dx/=len; dy/=len; }
   moveWithCollision(player, dx, dy, dt, 4.6);
   player.bob = Math.sin(performance.now()/140) * (len>0.05?3:1);
+  /* v6：奔跑腳下揚塵——移動中週期性揚起小塵埃 */
+  player._dustT = (player._dustT||0) - dt;
+  if(len > 0.05 && player._dustT <= 0){
+    player._dustT = 0.14;
+    if(parts.length < 260)
+      parts.push({ x:projX(player.x,player.y)-dx*10, y:projY(player.x,player.y)+2,
+        vx:-dx*40+(Math.random()*2-1)*14, vy:-18-Math.random()*18, life:0.35, color:'rgba(230,205,170,.55)' });
+  }
 
   if(player.bumpCd>0) player.bumpCd -= dt;
 
@@ -1034,15 +1154,20 @@ function drawRobot(sx, sy){
   ctx.globalAlpha=0.35; ctx.fillStyle='#000';
   ctx.beginPath(); ctx.ellipse(0,2-idleBob,22,8,0,0,Math.PI*2); ctx.fill();
   ctx.globalAlpha=1;
-  // 圓盤機身（漸層：上方受光／邊緣背光，模擬金屬感）
-  const bodyGrad = ctx.createRadialGradient(-7,-15,3,0,-8,27);
-  bodyGrad.addColorStop(0,'#93a7b6'); bodyGrad.addColorStop(0.6,'#5a6b7a'); bodyGrad.addColorStop(1,'#333d45');
+  // 圓盤機身（漸層：上方受光／邊緣背光，模擬金屬感）——v6：局部座標固定 → 快取
+  const bodyGrad = cg('robotBody', () => {
+    const gr = ctx.createRadialGradient(-7,-15,3,0,-8,27);
+    gr.addColorStop(0,'#93a7b6'); gr.addColorStop(0.6,'#5a6b7a'); gr.addColorStop(1,'#333d45');
+    return gr;
+  });
   ctx.fillStyle = alarmed ? shade('#5a6b7a',-0.1) : bodyGrad;
   ctx.beginPath(); ctx.ellipse(0,-8,22,12,0,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#232b32'; ctx.lineWidth=2; ctx.stroke();
-  const topGrad = ctx.createRadialGradient(-5,-16,2,0,-12,19);
-  topGrad.addColorStop(0,'#b2c4d1'); topGrad.addColorStop(1,'#6c7f8d');
-  ctx.fillStyle=topGrad;
+  ctx.fillStyle = cg('robotTop', () => {
+    const gr = ctx.createRadialGradient(-5,-16,2,0,-12,19);
+    gr.addColorStop(0,'#b2c4d1'); gr.addColorStop(1,'#6c7f8d');
+    return gr;
+  });
   ctx.beginPath(); ctx.ellipse(0,-12,18,9,0,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='rgba(255,255,255,.3)'; ctx.lineWidth=1;
   ctx.beginPath(); ctx.ellipse(0,-12,18,9,Math.PI,0,Math.PI); ctx.stroke();  // 上緣高光弧（環境光遮蔽對比）
@@ -1112,6 +1237,16 @@ function drawPlay(){
         ctx.fillStyle='rgba(255,231,138,0.25)';
         diamondPathOn(ctx,t.gx,t.gy); ctx.fill();
       }
+      /* v6：送餐成功桌面金色光暈（加法 bloom，隨 servedFlash 淡出） */
+      if(t.servedFlash > 0){
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = Math.min(1, t.servedFlash/0.6);
+        const gs = 100 + (0.6-t.servedFlash)*90;
+        ctx.drawImage(tableGlowC, cx-gs/2, cy-38-gs/2, gs, gs);
+        ctx.restore();
+        ctx.globalAlpha = 1;
+      }
       drawCustomerCat(t, cx, cy-24);
       drawOrderBubble(t, cx, cy-24);
     }});
@@ -1133,6 +1268,7 @@ function drawPlay(){
   drawables.sort((a,b)=>a.depth-b.depth);
   for(const d of drawables) d.draw();
 
+  drawMotes();   /* v6：暖色漂浮塵埃 */
   drawParts(); drawFloats();
   ctx.restore();
 
@@ -1265,10 +1401,12 @@ function frame(now){
     acc += realDt;
     while(acc >= STEP){
       state.update(STEP);
+      updateMotes(STEP);
       acc -= STEP;
     }
   }
   state.draw();
+  ctx.drawImage(vignetteC, 0, 0, GAME_W, GAME_H);   /* v6：暖色暗角 */
   // 畫面狀態切換淡入（避免標題／選關／遊玩／結算之間的硬切）
   const te = (now - transitionStart) / 1000;
   if(te < 0.22){
@@ -1312,6 +1450,7 @@ window.__addScore = n => { if(state===playState) score += n; };
 window.__tables = () => tables ? tables.map(t=>({gx:t.gx,gy:t.gy,order:t.order})) : [];
 window.__setOrder = (i,f) => { if(tables && tables[i]){ tables[i].order=f; tables[i].vip=false; tables[i].maxPatience=20; tables[i].patience=20; } };
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

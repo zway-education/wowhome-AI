@@ -1,6 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v5：觸控返回鍵(鍵盤/觸控操作對等)＋非回合誤觸給予提示回饋＋手機直向遊玩提示＋道館難度曲線平滑化＋低血量警示脈動 -->
-<!-- +補強：角色精細化(漸層陰影/輪廓線/表情calm-hurt-happy/呼吸待機/進場跳步落地squash-stretch/真正非等比例壓縮伸展渲染) ／觸控可玩性複查(標題操作說明拆兩行) ／大螢幕提醒浮層(手機限定,一session一次) -->
+<!-- 專業AI升級 v6：道館主題環境光塵粒子(隨道館換色)、烘焙陽光光束+暗角vignette、出戰者屬性色腳底光暈、每次命中屬性色衝擊波圓環；程序化殘響ConvolverNode、體育館觀眾低語氛圍層+絕招/勝利歡呼聲浪+ducking -->
+<!-- v5：觸控返回鍵、誤觸提示回饋、直向提示、難度平滑化、低血量脈動、表情系統 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="utf-8">
@@ -104,17 +104,58 @@ addEventListener('resize', resize); resize();
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 
 /* ===== 音效：壓縮器母線＋隨機音高 ===== */
-let AC=null, master=null, muted=false;
+let AC=null, master=null, muted=false, revSend=null, ambGain=null;
+const ambNodes=[];
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
     const comp = AC.createDynamicsCompressor();
     comp.threshold.value=-16; comp.knee.value=24; comp.ratio.value=8;
-    master = AC.createGain(); master.gain.value=0.9;
+    master = AC.createGain(); master.gain.value=muted?0:0.9;
     master.connect(comp).connect(AC.destination);
+    // v6：程序化殘響（generated impulse 體育館空間感）
+    const conv=AC.createConvolver();
+    const n=Math.floor(AC.sampleRate*1.5), buf=AC.createBuffer(2,n,AC.sampleRate);
+    for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
+      for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2.5); }
+    conv.buffer=buf;
+    revSend=AC.createGain(); revSend.gain.value=0.22;
+    revSend.connect(conv); conv.connect(master);
+    // v6：觀眾低語氛圍層（主音效觸發 ducking）
+    ambGain=AC.createGain(); ambGain.gain.value=1; ambGain.connect(master);
+    const n2=AC.sampleRate*2, buf2=AC.createBuffer(1,n2,AC.sampleRate), d2=buf2.getChannelData(0);
+    for(let i=0;i<n2;i++) d2[i]=Math.random()*2-1;
+    const src=AC.createBufferSource(); src.buffer=buf2; src.loop=true;
+    const filt=AC.createBiquadFilter(); filt.type='bandpass'; filt.frequency.value=520; filt.Q.value=0.4;
+    const g=AC.createGain(); g.gain.value=0.02;
+    const lfo=AC.createOscillator(), lg=AC.createGain();
+    lfo.frequency.value=0.17; lg.gain.value=0.008;
+    lfo.connect(lg); lg.connect(g.gain);
+    src.connect(filt); filt.connect(g); g.connect(ambGain);
+    src.start(); lfo.start(); ambNodes.push(src,lfo,g);
   }
   if(AC.state==='suspended') AC.resume();
   return AC;
+}
+function duckAmb(){
+  if(!AC||!ambGain) return;
+  const t=AC.currentTime, g=ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value,1),t);
+  g.linearRampToValueAtTime(0.15,t+0.05); g.linearRampToValueAtTime(1,t+1);
+}
+function cheer(big){                    // v6：觀眾歡呼聲浪（絕佳/絕招/勝利）
+  if(muted||!AC) return;
+  const n=Math.floor(AC.sampleRate*1.2), buf=AC.createBuffer(1,n,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const s=AC.createBufferSource(); s.buffer=buf; s.loop=true;
+  const f=AC.createBiquadFilter(); f.type='bandpass'; f.frequency.value=big?950:820; f.Q.value=0.5;
+  const g=AC.createGain();
+  const t=AC.currentTime, peak=big?0.12:0.06, dur=big?1.3:0.7;
+  g.gain.setValueAtTime(0.001,t);
+  g.gain.exponentialRampToValueAtTime(peak,t+0.16);
+  g.gain.exponentialRampToValueAtTime(0.001,t+dur);
+  s.connect(f); f.connect(g); g.connect(master);
+  s.start(); s.stop(t+dur+0.05);
 }
 addEventListener('pointerdown', audio, {once:true});
 addEventListener('keydown', audio, {once:true});
@@ -126,7 +167,8 @@ function beep(freq=440,dur=0.1,type='square',vol=0.15,slide=0){
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide),ac.currentTime+dur);
   g.gain.setValueAtTime(vol,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+dur);
-  o.connect(g).connect(master); o.start(); o.stop(ac.currentTime+dur);
+  o.connect(g); g.connect(master); if(revSend) g.connect(revSend);
+  o.start(); o.stop(ac.currentTime+dur);
 }
 function noiseS(dur=0.15,vol=0.12){
   if(muted||!AC) return;
@@ -135,22 +177,24 @@ function noiseS(dur=0.15,vol=0.12){
   for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
   const s=ac.createBufferSource(); s.buffer=buf;
   const g=ac.createGain(); g.gain.value=vol;
-  s.connect(g).connect(master); s.start();
+  s.connect(g); g.connect(master); if(revSend) g.connect(revSend);
+  s.start();
 }
 const sfxHit=()=>{ beep(160,0.09,'square',0.18,-80); noiseS(0.08,0.1); };
-const sfxSpecial=()=>{ beep(660,0.08,'square',0.16,300); setTimeout(()=>beep(880,0.12,'square',0.16,200),70); noiseS(0.14,0.1); };
+const sfxSpecial=()=>{ duckAmb(); beep(660,0.08,'square',0.16,300); setTimeout(()=>beep(880,0.12,'square',0.16,200),70); noiseS(0.14,0.1); };
 const sfxCharge=()=>beep(220,0.3,'sine',0.1,420);
 const sfxHeal=()=>{ beep(988,0.09,'sine',0.15); setTimeout(()=>beep(1319,0.15,'sine',0.15),90); };
 const sfxGuard=()=>beep(420,0.14,'triangle',0.13,80);
 const sfxSelect=()=>beep(500,0.05,'square',0.1);
 const sfxDeny=()=>beep(150,0.12,'sawtooth',0.11,-50);
-const sfxWin=()=>[523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.15),i*110));
-const sfxLose=()=>beep(300,0.4,'sawtooth',0.16,-220);
+const sfxWin=()=>{ duckAmb(); cheer(true); [523,659,784,1046,1318].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.15),i*110)); };
+const sfxLose=()=>{ duckAmb(); beep(300,0.4,'sawtooth',0.16,-220); };
 const sfxStar=()=>{ beep(1320,0.12,'triangle',0.14); setTimeout(()=>beep(1760,0.2,'triangle',0.14),90); };
 const sfxSuper=()=>{ beep(880,0.1,'square',0.14,300); setTimeout(()=>beep(1175,0.16,'square',0.14),80); };
 const sfxWait=()=>beep(280,0.055,'sine',0.07);   // v5：非回合誤觸的輕量「請稍候」提示音（不像sfxDeny那樣刺耳，避免玩家誤以為做錯事）
 document.getElementById('muteBtn').addEventListener('click',()=>{
   muted=!muted;
+  if(master) master.gain.value=muted?0:0.9;   // v6：靜音同步關掉觀眾氛圍層與殘響尾音
   document.getElementById('icoOn').style.display=muted?'none':'block';
   document.getElementById('icoOff').style.display=muted?'block':'none';
 });
@@ -543,8 +587,62 @@ function bakeSky(gym){
   [[90,70,46],[150,90,34],[520,50,40],[580,72,28],[300,130,26],[750,150,36]].forEach(([cx,cy,r])=>{
     c.beginPath(); c.ellipse(cx,cy,r,r*0.6,0,0,7); c.fill();
   });
+  // v6：烘焙陽光斜射光束＋地平線霞光
+  for(const [ang,len,wdt,al] of [[2.5,600,54,0.07],[2.75,520,34,0.055],[2.3,480,28,0.05]]){
+    c.save();
+    c.translate(GAME_W*0.82,90); c.rotate(ang);
+    const bg2=c.createLinearGradient(0,0,len,0);
+    bg2.addColorStop(0,'rgba(255,248,220,'+al+')'); bg2.addColorStop(1,'rgba(255,248,220,0)');
+    c.fillStyle=bg2;
+    c.beginPath(); c.moveTo(38,-wdt*0.28); c.lineTo(len,-wdt); c.lineTo(len,wdt); c.lineTo(38,wdt*0.28);
+    c.closePath(); c.fill();
+    c.restore();
+  }
+  const hz=c.createLinearGradient(0,GAME_H-160,0,GAME_H);
+  hz.addColorStop(0,'rgba(255,255,255,0)'); hz.addColorStop(1,'rgba(255,255,255,.18)');
+  c.fillStyle=hz; c.fillRect(0,GAME_H-160,GAME_W,160);
+  moteColor=gym.sun;                       // v6：環境光塵跟著道館主題換色
 }
+let moteColor='#fff3c4';                   // v6：需在首次 bakeSky 之前宣告
 bakeSky(GYMS[0]);
+/* ===== v6：烘焙發光點精靈（快取）＋環境光塵＋暗角 ===== */
+const spotCache=new Map();
+function spotOf(color){
+  let cv=spotCache.get(color);
+  if(!cv){
+    cv=document.createElement('canvas'); cv.width=cv.height=48;
+    const c=cv.getContext('2d');
+    const g=c.createRadialGradient(24,24,0,24,24,24);
+    g.addColorStop(0,color); g.addColorStop(1,'rgba(0,0,0,0)');
+    c.globalAlpha=0.85; c.fillStyle=g; c.fillRect(0,0,48,48);
+    spotCache.set(color,cv);
+  }
+  return cv;
+}
+const motes=[];
+for(let i=0;i<20;i++) motes.push({x:Math.random()*GAME_W,y:Math.random()*GAME_H,z:0.4+Math.random()*0.6,ph:Math.random()*9});
+function drawMotes(dt){
+  ctx.globalCompositeOperation='lighter';
+  const spr=spotOf(moteColor);
+  for(const m of motes){
+    m.ph+=dt;
+    m.y-=(7+13*m.z)*dt; m.x+=Math.sin(m.ph*1.3)*11*dt;
+    if(m.y<-8){ m.y=GAME_H+8; m.x=Math.random()*GAME_W; }
+    if(m.x<-8) m.x=GAME_W+8; else if(m.x>GAME_W+8) m.x=-8;
+    const k=12*m.z;
+    ctx.globalAlpha=(0.14+0.2*m.z)*(0.7+0.3*Math.sin(m.ph*3));
+    ctx.drawImage(spr,m.x-k/2,m.y-k/2,k,k);
+  }
+  ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+}
+const vigCv=document.createElement('canvas');
+vigCv.width=GAME_W; vigCv.height=GAME_H;
+(function(){
+  const c=vigCv.getContext('2d');
+  const g=c.createRadialGradient(GAME_W/2,GAME_H/2,GAME_H*0.5,GAME_W/2,GAME_H/2,GAME_H*0.98);
+  g.addColorStop(0,'rgba(15,18,40,0)'); g.addColorStop(1,'rgba(15,18,40,.34)');
+  c.fillStyle=g; c.fillRect(0,0,GAME_W,GAME_H);
+})();
 
 /* ===== 戰鬥實體 ===== */
 function makeFighter(def, x, isPlayer, hpMul, atkMul){
@@ -620,8 +718,9 @@ function applyHit(att,def2,base,isSpecial){
   def2.expr='hurt'; def2.exprT=0.55;   // v5補強：受擊表情
   shake=isSpecial?10:5; freeze=isSpecial?0.1:0.05;
   burst(def2.baseX,def2.y-40,isSpecial?PALETTE.yellow:PALETTE.pink,isSpecial?24:12,isSpecial?300:220);
+  fx.push({type:'ring',t:0,dur:0.42,x:def2.baseX,y:def2.y-30,r:isSpecial?230:130,color:TYPES[att.def.type].color});   // v6：屬性色衝擊波
   addFloat(def2.baseX,def2.y-90,'-'+dmg,isSpecial?PALETTE.yellow:'#fff',isSpecial);
-  if(mul>1){ addFloat(def2.baseX,def2.y-124,'效果絕佳！',PALETTE.cyan,true); sfxSuper(); }
+  if(mul>1){ addFloat(def2.baseX,def2.y-124,'效果絕佳！',PALETTE.cyan,true); sfxSuper(); cheer(false); }
   else if(mul<1){ addFloat(def2.baseX,def2.y-124,'效果不太好…','#b9b9c9'); }
   if(def2.guard){ addFloat(def2.baseX,def2.y-56,'防禦！',TYPES[def2.def.type].color); sfxGuard(); }
   if(isSpecial) sfxSpecial(); else sfxHit();
@@ -740,6 +839,7 @@ const titleState={
   },
   draw(){
     ctx.drawImage(skyCv,0,0);
+    drawMotes(1/60);
     ctx.fillStyle='rgba(0,0,0,0.22)';
     ctx.beginPath(); ctx.ellipse(GAME_W/2,430,430,58,0,0,7); ctx.fill();
     const bob=Math.sin(this.t*2.4)*6;
@@ -786,6 +886,7 @@ const gymState={
   },
   draw(){
     ctx.drawImage(skyCv,0,0);
+    drawMotes(1/60);
     ctx.textAlign='center';
     ctx.font='bold 38px sans-serif';
     drawTextOutline('挑戰五大道館',GAME_W/2,64,'#1f5fae','rgba(255,255,255,0.9)',6);
@@ -845,6 +946,7 @@ const pickState={
   },
   draw(){
     ctx.drawImage(skyCv,0,0);
+    drawMotes(1/60);
     const gym=GYMS[curGym], foe=FIGHTERS[gym.foe];
     ctx.textAlign='center';
     ctx.font='bold 32px sans-serif';
@@ -1020,6 +1122,7 @@ const battleState={
   },
   draw(){
     ctx.drawImage(skyCv,0,0);
+    drawMotes(1/60);
     ctx.save();
     ctx.translate((Math.random()*2-1)*shake,(Math.random()*2-1)*shake);
     ctx.fillStyle='rgba(0,0,0,0.25)';
@@ -1027,6 +1130,16 @@ const battleState={
     // 擂臺圈
     ctx.strokeStyle='rgba(255,255,255,0.35)'; ctx.lineWidth=4;
     ctx.beginPath(); ctx.ellipse(GAME_W/2,420,360,46,0,0,7); ctx.stroke();
+    // v6：出戰者腳底屬性色光暈（additive，烘焙精靈）
+    ctx.globalCompositeOperation='lighter';
+    for(const f of [player,enemy]){
+      if(f.koT>0) continue;
+      const spr=spotOf(TYPES[f.def.type].color);
+      const gw=150+Math.sin(f.idleT*2.3)*10;
+      ctx.globalAlpha=0.32;
+      ctx.drawImage(spr,f.baseX+f.offsetX-gw/2,f.y+40-gw*0.22,gw,gw*0.44);
+    }
+    ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
     for(const f of [player,enemy]){
       ctx.save();
       const ko=f.koT>0?Math.min(1,f.koT):0;
@@ -1057,6 +1170,7 @@ const battleState={
     drawParts();
     drawFloats();
     ctx.restore();
+    ctx.drawImage(vigCv,0,0);                        // v6：暗角
     if(whiteFlash>0){ ctx.fillStyle='rgba(255,255,240,'+(whiteFlash*1.4)+')'; ctx.fillRect(0,0,GAME_W,GAME_H); }
     drawHpBar(player,205,52,300);
     drawHpBar(enemy,GAME_W-205,52,300);
@@ -1193,7 +1307,7 @@ window.__test=()=>({ state:stateName(), gym:curGym, stars:save.stars.slice(), un
   playerHp:player?player.hp:0, playerMax:player?player.maxHp:0, enemyHp:enemy?enemy.hp:0,
   turn:state===battleState?(battleState.playerTurn?'player':'enemy'):'', busy:turnBusy,
   ended:state===battleState?battleState.ended:false, won:state===battleState?!!battleState.won:false,
-  itemLeft:itemUses.player, usedItem });
+  itemLeft:itemUses.player, usedItem, ambN:ambNodes.length });
 window.__weaken=n=>{ if(enemy) enemy.hp=Math.min(enemy.hp,n||5); };
 window.__healP=()=>{ if(player){ player.hp=player.maxHp; } };
 </script>

@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v5：路線瞄準佈陣＋直向裝置提示＋難度喘息節奏＋狀態淡入淡出＋連擊系統 -->
+<!-- 專業AI升級 v6：霓虹夜戰氛圍全面升級——戰場漂浮霓虹螢火(加法光暈)＋基地霓虹脈動光暈＋砲彈拖尾光與連殺/王者擊破擴散光環＋紫色暗角vignette與擊殺螢幕閃光；音效新增程序化殘響ConvolverNode與夜城低鳴氛圍循環(大事件ducking)；標題/路線漸層快取零createGradient -->
+<!-- v5：路線瞄準佈陣＋直向裝置提示＋難度喘息節奏＋狀態淡入淡出＋連擊系統 -->
 <!-- +補強：角色精細化／觸控／大螢幕提醒 -->
 <html lang="zh-Hant">
 <head>
@@ -119,7 +120,8 @@ function rr(c,x,y,w,h,r){
 }
 
 /* ===================== 音效：Web Audio 合成＋壓縮母線 ===================== */
-let AC = null, master = null;
+let AC = null, master = null, ambGain = null, ambOut = null;
+const AMB_BASE = 0.045;
 let muted = localStorage.getItem('catwars2_mute') === '1';
 function audio(){
   if(!AC){
@@ -129,9 +131,46 @@ function audio(){
     comp.attack.value = 0.003; comp.release.value = 0.2;
     master = AC.createGain(); master.gain.value = 0.9;
     master.connect(comp); comp.connect(AC.destination);
+    /* v6：程序化殘響——generated impulse ConvolverNode（夜空屋頂的開闊尾音） */
+    try{
+      const sr = AC.sampleRate, len = Math.floor(sr*1.5);
+      const imp = AC.createBuffer(2, len, sr);
+      for(let ch=0; ch<2; ch++){
+        const d = imp.getChannelData(ch);
+        for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 2.7);
+      }
+      const conv = AC.createConvolver(); conv.buffer = imp;
+      const wet = AC.createGain(); wet.gain.value = 0.18;
+      master.connect(conv); conv.connect(wet); wet.connect(comp);
+    }catch(e){}
+    /* v6：夜城氛圍層——低通棕噪聲低鳴＋LFO 起伏，主音效時 ducking */
+    try{
+      const sr = AC.sampleRate, alen = Math.floor(sr*2.4);
+      const abuf = AC.createBuffer(1, alen, sr);
+      const ad = abuf.getChannelData(0); let v = 0;
+      for(let i=0;i<alen;i++){ v = v*0.986 + (Math.random()*2-1)*0.055; ad[i] = v*2.4; }
+      const src = AC.createBufferSource(); src.buffer = abuf; src.loop = true;
+      const lp = AC.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 220; lp.Q.value = 0.5;
+      ambGain = AC.createGain(); ambGain.gain.value = AMB_BASE;
+      const lfo = AC.createOscillator(); lfo.frequency.value = 0.08;
+      const lg = AC.createGain(); lg.gain.value = AMB_BASE*0.4;
+      lfo.connect(lg); lg.connect(ambGain.gain);
+      ambOut = AC.createGain(); ambOut.gain.value = muted ? 0 : 1;
+      src.connect(lp); lp.connect(ambGain); ambGain.connect(ambOut); ambOut.connect(comp);
+      src.start(); lfo.start();
+    }catch(e){}
   }
   if(AC.state === 'suspended') AC.resume();
   return AC;
+}
+/* v6：大事件時氛圍 ducking */
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t = AC.currentTime;
+  ambGain.gain.cancelScheduledValues(t);
+  ambGain.gain.setValueAtTime(Math.max(0.001, ambGain.gain.value), t);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE*0.22, t+0.05);
+  ambGain.gain.linearRampToValueAtTime(AMB_BASE, t+1.2);
 }
 addEventListener('pointerdown', audio, { once:true });
 addEventListener('keydown', audio, { once:true });
@@ -165,9 +204,9 @@ const sfx = {
   shoot : ()=>beep(760,0.06,'square',0.07,220),
   deny  : ()=>beep(150,0.09,'sawtooth',0.1,-40),
   baseHit:()=>{ beep(120,0.12,'sawtooth',0.13,-50); noiseHit(0.12,0.1); },
-  boss  : ()=>{ beep(90,0.5,'sawtooth',0.2,-40); noiseHit(0.4,0.16); },
-  win   : ()=>{ [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.14),i*110)); },
-  lose  : ()=>{ beep(300,0.3,'sawtooth',0.14,-200); setTimeout(()=>beep(210,0.4,'sawtooth',0.12,-150),200); },
+  boss  : ()=>{ duckAmb(); beep(90,0.5,'sawtooth',0.2,-40); noiseHit(0.4,0.16); },
+  win   : ()=>{ duckAmb(); [523,659,784,1047].forEach((f,i)=>setTimeout(()=>beep(f,0.16,'square',0.14),i*110)); },
+  lose  : ()=>{ duckAmb(); beep(300,0.3,'sawtooth',0.14,-200); setTimeout(()=>beep(210,0.4,'sawtooth',0.12,-150),200); },
   coin  : ()=>{ beep(988,0.06,'square',0.1); setTimeout(()=>beep(1319,0.1,'square',0.1),70); },
   spin  : ()=>beep(320,0.1,'sine',0.09,180),
   reveal: r=>{
@@ -219,6 +258,7 @@ addEventListener('keydown', e=>{
 function toggleMute(){
   muted = !muted;
   localStorage.setItem('catwars2_mute', muted?'1':'0');
+  if(ambOut) ambOut.gain.value = muted ? 0 : 1;   /* v6：氛圍層跟著靜音 */
 }
 const MUTE_BTN = { x:GAME_W-58, y:10, w:48, h:48 };
 
@@ -277,6 +317,65 @@ function makeGlow(color, size){
 const glowCyan = makeGlow('rgba(0,240,255,0.55)',64);
 const glowPink = makeGlow('rgba(255,41,117,0.55)',64);
 const glowGold = makeGlow('rgba(255,207,92,0.6)',64);
+/* v6：漸層快取（主迴圈零 createGradient） */
+const _gc = new Map();
+function cg(key, maker){
+  let g = _gc.get(key);
+  if(!g){ g = maker(); _gc.set(key, g); }
+  return g;
+}
+/* v6：紫夜暗角 vignette（低解析烘焙，每幀一次 drawImage） */
+const vignetteC = (function(){
+  const c = document.createElement('canvas'); c.width = 480; c.height = 270;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(240,132,140, 240,135,320);
+  gr.addColorStop(0,'rgba(0,0,0,0)'); gr.addColorStop(0.72,'rgba(13,2,33,.1)'); gr.addColorStop(1,'rgba(8,1,22,.42)');
+  g.fillStyle = gr; g.fillRect(0,0,480,270);
+  return c;
+})();
+/* v6：戰場霓虹螢火——加法光暈微粒緩慢漂浮（氛圍層） */
+const fireflies = [];
+for(let i=0;i<18;i++) fireflies.push({
+  x: Math.random()*GAME_W, y: 130+Math.random()*300,
+  vx: (Math.random()<0.5?-1:1)*(4+Math.random()*9), ph: Math.random()*Math.PI*2,
+  pink: Math.random()<0.4
+});
+/* v6：連殺/王者擊破擴散光環＋螢幕閃光 */
+const rings = [];
+let screenFlashT = 0, screenFlashCol = '255,255,255';
+function addRing(x,y,color,maxR){ rings.push({x,y,r:10,maxR:maxR||70,color,life:0.45,max:0.45}); }
+function updateAtmoFx(dt){
+  for(const f of fireflies){
+    f.x += f.vx*dt; f.ph += dt;
+    f.y += Math.sin(f.ph*1.3)*10*dt;
+    if(f.x < -12) f.x = GAME_W+12; else if(f.x > GAME_W+12) f.x = -12;
+    if(f.y < 120) f.y = 120; else if(f.y > 445) f.y = 445;
+  }
+  for(let i=rings.length-1;i>=0;i--){
+    const r = rings[i];
+    r.life -= dt; r.r += (r.maxR-r.r)*8*dt;
+    if(r.life<=0){ rings[i]=rings[rings.length-1]; rings.pop(); }
+  }
+  if(screenFlashT>0) screenFlashT -= dt;
+}
+function drawFireflies(){
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for(const f of fireflies){
+    ctx.globalAlpha = 0.16 + 0.2*(0.5+0.5*Math.sin(f.ph*2.2));
+    ctx.drawImage(f.pink?glowPink:glowCyan, f.x-8, f.y-8, 16, 16);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+function drawRings(){
+  for(const r of rings){
+    ctx.globalAlpha = Math.max(0, r.life/r.max);
+    ctx.strokeStyle = r.color; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, Math.PI*2); ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+}
 
 const COL = { bg:'#0d0221', bg2:'#261447', pink:'#ff2975', cyan:'#00f0ff', yellow:'#fff700', white:'#f6f6f6' };
 const FIELD_TOP = 108, FIELD_BOT = 452;
@@ -522,6 +621,7 @@ const menuState = {
   draw(){
     ctx.drawImage(bgCanvas,0,0);
     drawSkyMotion(performance.now()/1000);
+    drawFireflies();
     // 標題貓咪儀隊
     for(let i=0;i<4;i++){
       drawCatBody(150+i*60, 218, CAT_TYPES[i], 1, Math.sin(performance.now()/300+i)*2, 0, false, collection[i]);
@@ -531,9 +631,12 @@ const menuState = {
     ctx.textAlign='center';
     ctx.font='bold 54px sans-serif';
     ctx.fillStyle='#000'; ctx.fillText('貓咪大戰爭', GAME_W/2+3, 93);
-    const tg = ctx.createLinearGradient(GAME_W/2-140,0,GAME_W/2+140,0);
-    tg.addColorStop(0,COL.cyan); tg.addColorStop(0.5,'#9a6bff'); tg.addColorStop(1,COL.pink);
-    ctx.fillStyle=tg; ctx.fillText('貓咪大戰爭', GAME_W/2, 90);
+    ctx.fillStyle = cg('title', ()=>{
+      const tg = ctx.createLinearGradient(GAME_W/2-140,0,GAME_W/2+140,0);
+      tg.addColorStop(0,COL.cyan); tg.addColorStop(0.5,'#9a6bff'); tg.addColorStop(1,COL.pink);
+      return tg;
+    });
+    ctx.fillText('貓咪大戰爭', GAME_W/2, 90);
     ctx.font='bold 17px sans-serif'; ctx.fillStyle=COL.yellow;
     ctx.fillText('霓虹屋頂 4 路線大作戰 × 轉蛋收藏', GAME_W/2, 122);
     ctx.font='15px sans-serif'; ctx.fillStyle='#dcd2f5';
@@ -717,6 +820,7 @@ const playState = {
   draw(){
     ctx.drawImage(bgCanvas,0,0);
     drawSkyMotion(performance.now()/1000);
+    drawFireflies();
     ctx.save();
     ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
 
@@ -726,12 +830,22 @@ const playState = {
 
     const sorted = entities.slice().sort((a,b)=>a.y-b.y);
     for(const e of sorted) drawUnit(e);
+    /* v6：砲彈拖尾光＋主體（加法疊印） */
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
     for(const s of shots){
+      ctx.globalAlpha = 0.45;
+      ctx.drawImage(glowGold, s.x-44, s.y-11, 40, 22);
+      ctx.globalAlpha = 1;
       ctx.drawImage(glowGold, s.x-16, s.y-16, 32, 32);
+    }
+    ctx.restore();
+    for(const s of shots){
       ctx.fillStyle='#fff3c9';
       ctx.beginPath(); ctx.ellipse(s.x,s.y,9,4,0,0,Math.PI*2); ctx.fill();
       ctx.strokeStyle='#d99a2b'; ctx.lineWidth=1.5; ctx.stroke();
     }
+    drawRings();
     drawParts(); drawFloats();
     ctx.restore();
 
@@ -776,12 +890,19 @@ function hitUnit(target, atk, side){
       coins = Math.min(999, coins+gained);
       score += gained*10 + (combo>=3 ? combo*2 : 0);
       addFloat(target.x, target.y-46, '+'+gained+' 魚幣', COL.yellow);
-      if(combo>=3) addFloat(target.x, target.y-66, combo+' 連殺！', combo>=6?'#ffcf5c':'#ff9dd6', combo>=6);
+      if(combo>=3){
+        addFloat(target.x, target.y-66, combo+' 連殺！', combo>=6?'#ffcf5c':'#ff9dd6', combo>=6);
+        addRing(target.x, target.y-24, combo>=6?'#ffcf5c':'#ff9dd6', 60+combo*6);   /* v6：連殺擴散光環 */
+      }
       sfx.kill(1 + Math.min(combo,8)*0.05);
       if(target.type.kind==='boss'){
         bossAlive = false;
         shake = 12;
         addFloat(target.x, target.y-70, '擊敗蝙蝠王！', '#d64bff', true);
+        addRing(target.x, target.y-40, '#d64bff', 150);      /* v6：王者擊破大光環＋螢幕閃光 */
+        addRing(target.x, target.y-40, '#ffcf5c', 100);
+        screenFlashT = 0.16; screenFlashCol = '214,75,255';
+        duckAmb();
       }
     } else {
       addFloat(target.x, target.y-46, '喵嗚…', 'rgba(255,255,255,0.8)');
@@ -959,6 +1080,13 @@ function drawBase(x, side){
   ctx.save();
   ctx.translate(x, 300);
   if(flash>0){ ctx.translate((Math.random()*2-1)*flash*4, 0); }
+  /* v6：基地霓虹脈動光暈（加法疊印，受擊時增亮） */
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.3 + 0.14*Math.sin(performance.now()/420 + (isPlayer?0:2)) + flash*0.45;
+  ctx.drawImage(isPlayer?glowCyan:glowPink, -85, -175, 170, 300);
+  ctx.restore();
+  ctx.globalAlpha = 1;
   if(isPlayer){
     // 貓咪塔：罐頭堆＋大貓臉旗
     ctx.fillStyle='#1c3a4d'; rr(ctx,-34,-120,68,240,10); ctx.fill();
@@ -1023,9 +1151,11 @@ function drawLaneAim(){
   const pulse = 0.5+0.3*Math.sin(performance.now()/120);
   ctx.save();
   ctx.globalAlpha = Math.min(1,targetLaneT)*pulse;
-  const grad = ctx.createLinearGradient(BASE_X_LEFT,0,BASE_X_RIGHT,0);
-  grad.addColorStop(0,'rgba(255,207,92,0)'); grad.addColorStop(0.5,'rgba(255,207,92,0.55)'); grad.addColorStop(1,'rgba(255,207,92,0)');
-  ctx.fillStyle = grad;
+  ctx.fillStyle = cg('laneAim', ()=>{
+    const grad = ctx.createLinearGradient(BASE_X_LEFT,0,BASE_X_RIGHT,0);
+    grad.addColorStop(0,'rgba(255,207,92,0)'); grad.addColorStop(0.5,'rgba(255,207,92,0.55)'); grad.addColorStop(1,'rgba(255,207,92,0)');
+    return grad;
+  });
   ctx.fillRect(BASE_X_LEFT, y-20, BASE_X_RIGHT-BASE_X_LEFT, 40);
   ctx.globalAlpha = Math.min(1,targetLaneT);
   ctx.fillStyle = COL.yellow;
@@ -1537,9 +1667,16 @@ function frame(now){
   last = now;
   while(acc >= STEP){
     state.update(STEP);
+    updateAtmoFx(STEP);
     acc -= STEP;
   }
   state.draw();
+  /* v6：螢幕後製——紫夜暗角＋事件式短促閃光 */
+  ctx.drawImage(vignetteC, 0, 0, GAME_W, GAME_H);
+  if(screenFlashT > 0){
+    ctx.fillStyle = 'rgba('+screenFlashCol+','+(clamp(screenFlashT/0.16,0,1)*0.32)+')';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
   drawPortraitHint();
   // 狀態切換淡入淡出：每次 setState 都會把 transitionT 拉回 1，這裡負責淡出
   if(transitionT > 0){
@@ -1561,6 +1698,7 @@ window.__dbg = () => ({
 window.__forceWin = () => { if(state===playState){ baseHpRight = 0; } };
 window.__forceLose = () => { if(state===playState){ baseHpLeft = 0; } };
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */

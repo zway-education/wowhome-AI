@@ -1,6 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5：UI轉場漸動化(標題/結算不再瞬移)、Boss登場加14px震動與專屬音效、玩家與床陣亡加大爆粒子+0.3秒延遲切換、極限模式鎖定鍵加視覺回饋、直式裝置轉向提示 -->
-<!-- +補強：角色精細化(表情狀態/邊緣輪廓線/頭頂高光)、觸控可玩性複查、手機大螢幕提醒浮層 -->
+<!-- 專業AI升級 v6：烘焙極光月暈/火山熱霞天空、全場環境粒子(飄雪/餘燼)、烘焙光暈bloom(冰彈/火焰/旗標/熔岩熱浪)、HUD血條緩動+低血脈動；程序化殘響ConvolverNode、風聲/熔岩氛圍層+主音效ducking+熔岩劈啪聲 -->
+<!-- v5：UI轉場漸動化、Boss登場震動與專屬音效、大爆粒子、角色表情/輪廓線/高光、直式轉向提示、手機大螢幕提醒 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -189,6 +189,38 @@ function bakeOverlays(mode){
     c.fillRect(x,y,1+(i%2),1+(i%2));
   }
   c.globalAlpha = 1;
+  if(mode==='ice'){                             // v6：烘焙極光緞帶＋月亮光暈
+    for(let band=0;band<3;band++){
+      const by=H*(0.10+band*0.09), amp=H*0.035;
+      const hue = band===1 ? 'rgba(90,255,190,' : 'rgba(80,190,255,';
+      c.beginPath();
+      for(let x=0;x<=W;x+=24) c.lineTo(x, by+Math.sin(x*0.008+band*2.1)*amp);
+      for(let x=W;x>=0;x-=24) c.lineTo(x, by+Math.sin(x*0.008+band*2.1)*amp + H*0.055+band*8);
+      c.closePath();
+      const lg=c.createLinearGradient(0,by-amp,0,by+H*0.09);
+      lg.addColorStop(0,hue+'0)'); lg.addColorStop(0.5,hue+'.15)'); lg.addColorStop(1,hue+'0)');
+      c.fillStyle=lg; c.fill();
+    }
+    const mx=W*0.78, my=H*0.15, mr=Math.min(W,H)*0.045;
+    const hg=c.createRadialGradient(mx,my,mr*0.4,mx,my,mr*3.6);
+    hg.addColorStop(0,'rgba(200,235,255,.45)'); hg.addColorStop(1,'rgba(200,235,255,0)');
+    c.fillStyle=hg; c.beginPath(); c.arc(mx,my,mr*3.6,0,Math.PI*2); c.fill();
+    c.fillStyle='#eaf6ff'; c.beginPath(); c.arc(mx,my,mr,0,Math.PI*2); c.fill();
+    c.fillStyle='rgba(160,200,230,.5)'; c.beginPath(); c.arc(mx-mr*0.3,my+mr*0.15,mr*0.24,0,Math.PI*2); c.fill();
+  } else {                                      // v6：烘焙火山剪影＋地平線熱霞
+    const hz=H*0.62;
+    const hg=c.createLinearGradient(0,H*0.36,0,hz);
+    hg.addColorStop(0,'rgba(255,90,20,0)'); hg.addColorStop(1,'rgba(255,110,30,.3)');
+    c.fillStyle=hg; c.fillRect(0,H*0.36,W,hz-H*0.36);
+    for(const v of [[0.16,0.36,0.22],[0.52,0.30,0.15],[0.84,0.32,0.19]]){
+      const vx=W*v[0], vw=W*v[1], vh=H*v[2];
+      const gg=c.createRadialGradient(vx,hz-vh,2,vx,hz-vh,W*0.045);
+      gg.addColorStop(0,'rgba(255,150,50,.85)'); gg.addColorStop(1,'rgba(255,150,50,0)');
+      c.fillStyle=gg; c.beginPath(); c.arc(vx,hz-vh,W*0.045,0,Math.PI*2); c.fill();
+      c.fillStyle='#150300';
+      c.beginPath(); c.moveTo(vx-vw/2,hz); c.lineTo(vx,hz-vh); c.lineTo(vx+vw/2,hz); c.closePath(); c.fill();
+    }
+  }
   vigCv = document.createElement('canvas'); vigCv.width = Math.max(2,W); vigCv.height = Math.max(2,H);
   const v = vigCv.getContext('2d');
   const rg = v.createRadialGradient(W/2,H/2,Math.min(W,H)*0.42,W/2,H/2,Math.max(W,H)*0.72);
@@ -203,23 +235,112 @@ function resize(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
   FOCAL = Math.min(W,H)*1.08;
   bakeOverlays(APP.mode==='fire'?'fire':'ice');
+  initAmb();
 }
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const lerp=(a,b,t)=>a+(b-a)*t;
 const rand=(a,b)=>a+Math.random()*(b-a);
 
+/* ================= v6：烘焙光暈精靈（bloom 疊加，主迴圈零漸層建立） ================= */
+function makeGlow(size,r,g,b){
+  const cv=document.createElement('canvas'); cv.width=cv.height=size;
+  const c=cv.getContext('2d');
+  const gr=c.createRadialGradient(size/2,size/2,0,size/2,size/2,size/2);
+  gr.addColorStop(0,`rgba(${r},${g},${b},1)`);
+  gr.addColorStop(0.4,`rgba(${r},${g},${b},.42)`);
+  gr.addColorStop(1,`rgba(${r},${g},${b},0)`);
+  c.fillStyle=gr; c.fillRect(0,0,size,size);
+  return cv;
+}
+const glowIce=makeGlow(64,130,220,255), glowFire=makeGlow(64,255,140,45),
+      glowGold=makeGlow(64,255,215,90), glowGreen=makeGlow(64,110,235,150),
+      glowSnow=makeGlow(24,235,245,255), glowEmber=makeGlow(24,255,160,60);
+const heatCv=(()=>{ // 熔岩熱浪帶（螢幕空間、烘焙）
+  const cv=document.createElement('canvas'); cv.width=8; cv.height=256;
+  const c=cv.getContext('2d');
+  const g=c.createLinearGradient(0,0,0,256);
+  g.addColorStop(0,'rgba(255,100,25,0)'); g.addColorStop(1,'rgba(255,120,35,.5)');
+  c.fillStyle=g; c.fillRect(0,0,8,256); return cv;
+})();
+function drawGlow(spr,wx,wy,wz,size,alpha){
+  const s=projPoint(wx,wy,wz); if(!s) return;
+  const k=size*s.s;
+  ctx.globalAlpha=Math.min(1,alpha);
+  ctx.drawImage(spr,s.x-k/2,s.y-k/2,k,k);
+}
+
+/* ================= v6：全場環境粒子（冰=飄雪、火=上升餘燼） ================= */
+const amb=[];
+function initAmb(){
+  amb.length=0;
+  const n=clamp(Math.round(W*H/16000),36,90);
+  for(let i=0;i<n;i++) amb.push({x:Math.random()*W,y:Math.random()*H,z:0.35+Math.random()*0.75,ph:Math.random()*9});
+}
+function drawAmb(dt){
+  const fire = APP.state==='fire';
+  for(const a of amb){
+    a.ph+=dt;
+    if(fire){ a.y-=(20+46*a.z)*dt; a.x+=Math.sin(a.ph*2.3)*16*dt; if(a.y<-10){ a.y=H+10; a.x=Math.random()*W; } }
+    else { a.y+=(14+36*a.z)*dt; a.x+=Math.sin(a.ph*1.4)*12*dt; if(a.y>H+10){ a.y=-10; a.x=Math.random()*W; } }
+    if(a.x<-12) a.x=W+12; else if(a.x>W+12) a.x=-12;
+  }
+  ctx.globalCompositeOperation = fire?'lighter':'source-over';
+  for(const a of amb){
+    const k=(fire?13:10)*a.z;
+    ctx.globalAlpha = fire ? (0.22+0.3*a.z)*(0.7+0.3*Math.sin(a.ph*6)) : 0.18+0.4*a.z;
+    ctx.drawImage(fire?glowEmber:glowSnow, a.x-k/2, a.y-k/2, k, k);
+  }
+  ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
+}
+
 /* ================= 音效：壓縮器母線＋隨機音高 ================= */
-let AC=null, master=null, muted=false;
+let AC=null, master=null, muted=false, revSend=null, ambGain=null, ambOn='';
+const ambNodes=[];
 function audio(){
   if(!AC){
     AC = new (window.AudioContext||window.webkitAudioContext)();
     const comp = AC.createDynamicsCompressor();
     comp.threshold.value=-18; comp.knee.value=24; comp.ratio.value=8;
-    master = AC.createGain(); master.gain.value=0.9;
+    master = AC.createGain(); master.gain.value = muted?0:0.9;
     master.connect(comp).connect(AC.destination);
+    // v6：程序化殘響（generated impulse 小廳堂，所有音效帶空間感）
+    const conv=AC.createConvolver();
+    const n=Math.floor(AC.sampleRate*1.3), buf=AC.createBuffer(2,n,AC.sampleRate);
+    for(let ch=0;ch<2;ch++){ const d=buf.getChannelData(ch);
+      for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/n,2.8); }
+    conv.buffer=buf;
+    revSend=AC.createGain(); revSend.gain.value=0.24;
+    revSend.connect(conv); conv.connect(master);
+    // v6：氛圍母線（風聲/熔岩隆隆，主音效觸發 ducking）
+    ambGain=AC.createGain(); ambGain.gain.value=1; ambGain.connect(master);
+    setAmbience(APP.state==='fire'?'fire':'ice');
   }
   if(AC.state==='suspended') AC.resume();
   return AC;
+}
+function setAmbience(mode){
+  if(!AC || !ambGain || ambOn===mode) return;
+  for(const nd of ambNodes){ try{ nd.stop(); }catch(e){} try{ nd.disconnect(); }catch(e){} }
+  ambNodes.length=0; ambOn=mode;
+  const n=AC.sampleRate*2, buf=AC.createBuffer(1,n,AC.sampleRate), d=buf.getChannelData(0);
+  for(let i=0;i<n;i++) d[i]=Math.random()*2-1;
+  const src=AC.createBufferSource(); src.buffer=buf; src.loop=true;
+  const filt=AC.createBiquadFilter(); const g=AC.createGain();
+  if(mode==='fire'){ filt.type='lowpass'; filt.frequency.value=140; filt.Q.value=0.8; g.gain.value=0.13; }
+  else { filt.type='bandpass'; filt.frequency.value=320; filt.Q.value=0.7; g.gain.value=0.05; }
+  const lfo=AC.createOscillator(), lg=AC.createGain();
+  lfo.frequency.value = mode==='fire'?0.35:0.12;
+  lg.gain.value = mode==='fire'?55:170;
+  lfo.connect(lg); lg.connect(filt.frequency);
+  src.connect(filt); filt.connect(g); g.connect(ambGain);
+  src.start(); lfo.start();
+  ambNodes.push(src,lfo,g);
+}
+function duckAmb(){
+  if(!AC || !ambGain) return;
+  const t=AC.currentTime, g=ambGain.gain;
+  g.cancelScheduledValues(t); g.setValueAtTime(Math.min(g.value,1),t);
+  g.linearRampToValueAtTime(0.12,t+0.05); g.linearRampToValueAtTime(1,t+1.2);
 }
 addEventListener('pointerdown', audio, {once:true});
 addEventListener('keydown', audio, {once:true});
@@ -231,7 +352,8 @@ function beep(freq=440,dur=0.12,type='square',vol=0.14,slide=0){
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide),ac.currentTime+dur);
   g.gain.setValueAtTime(vol,ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001,ac.currentTime+dur);
-  o.connect(g).connect(master); o.start(); o.stop(ac.currentTime+dur);
+  o.connect(g); g.connect(master); if(revSend) g.connect(revSend);
+  o.start(); o.stop(ac.currentTime+dur);
 }
 function noise(dur=0.2,vol=0.12){
   if(muted||!AC) return;
@@ -240,27 +362,29 @@ function noise(dur=0.2,vol=0.12){
   for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
   const s=ac.createBufferSource(); s.buffer=buf;
   const g=ac.createGain(); g.gain.value=vol;
-  s.connect(g).connect(master); s.start();
+  s.connect(g); g.connect(master); if(revSend) g.connect(revSend);
+  s.start();
 }
 const sfx = {
   shoot:()=>beep(760,0.12,'triangle',0.16,640),
   hit:()=>{ beep(230,0.16,'sawtooth',0.2,-150); beep(1200,0.06,'square',0.1,-600); },
   freeze:()=>beep(1500,0.22,'sine',0.13,1000),
-  kill:()=>{ noise(0.16,0.12); beep(660,0.1,'square',0.15); setTimeout(()=>beep(990,0.14,'square',0.15),80); },
-  hurt:()=>{ beep(150,0.24,'sawtooth',0.22,-90); noise(0.18,0.1); },
-  bed:()=>{ beep(110,0.3,'sawtooth',0.2,-60); },
+  kill:()=>{ duckAmb(); noise(0.16,0.12); beep(660,0.1,'square',0.15); setTimeout(()=>beep(990,0.14,'square',0.15),80); },
+  hurt:()=>{ duckAmb(); beep(150,0.24,'sawtooth',0.22,-90); noise(0.18,0.1); },
+  bed:()=>{ duckAmb(); beep(110,0.3,'sawtooth',0.2,-60); },
   jump:()=>beep(230,0.14,'square',0.12,380),
   land:()=>beep(120,0.06,'triangle',0.1),
   cp:()=>{ beep(700,0.09,'square',0.14); setTimeout(()=>beep(980,0.14,'square',0.14),90); },
-  fall:()=>{ beep(320,0.3,'sawtooth',0.16,-260); noise(0.25,0.14); },
-  win:()=>{ [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,0.18,'square',0.15),i*110)); },
-  lose:()=>{ [440,330,220].forEach((f,i)=>setTimeout(()=>beep(f,0.28,'sawtooth',0.16,-f*0.4),i*140)); },
+  fall:()=>{ duckAmb(); beep(320,0.3,'sawtooth',0.16,-260); noise(0.25,0.14); },
+  win:()=>{ duckAmb(); [523,659,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,0.18,'square',0.15),i*110)); },
+  lose:()=>{ duckAmb(); [440,330,220].forEach((f,i)=>setTimeout(()=>beep(f,0.28,'sawtooth',0.16,-f*0.4),i*140)); },
   ui:()=>beep(520,0.06,'triangle',0.1),
   wave:()=>{ beep(392,0.14,'square',0.14); setTimeout(()=>beep(523,0.2,'square',0.14),120); },
-  boss:()=>{ noise(0.3,0.16); beep(90,0.4,'sawtooth',0.22,-40); setTimeout(()=>beep(70,0.5,'sawtooth',0.2,-30),150); },
+  boss:()=>{ duckAmb(); noise(0.3,0.16); beep(90,0.4,'sawtooth',0.22,-40); setTimeout(()=>beep(70,0.5,'sawtooth',0.2,-30),150); },
 };
 document.getElementById('muteBtn').addEventListener('click',()=>{
   muted=!muted;
+  if(master) master.gain.value = muted?0:0.9;   // v6：靜音同時關掉氛圍層與殘響尾音
   document.getElementById('icoOn').style.display = muted?'none':'block';
   document.getElementById('icoOff').style.display = muted?'block':'none';
 });
@@ -551,6 +675,7 @@ const ICE={
     this.camYaw=Math.PI; input.yawD=0; input.pitchD=0;
     this.enemies.length=0; this.bolts.length=0;
     this.bedHp=100; this.score=0; this.wave=0; this.dying=0; this.dyWin=false;
+    this.dispHp=100; this.dispBed=100;
     this.startWave(0);
   },
   startWave(i){
@@ -760,12 +885,24 @@ const ICE={
     for(const b of this.bolts)
       emitBox(b.x,b.y,b.z, 14,14,14, b.spin, [189,245,255], {emissive:true,flicker:0.1});
     flushFaces(); drawP3();
+    // v6：烘焙光暈 bloom（冰彈冷光、火焰怪熱光、冰晶微光）
+    ctx.globalCompositeOperation='lighter';
+    for(const b of this.bolts) drawGlow(glowIce,b.x,b.y,b.z,110,0.8);
+    for(const e of this.enemies)
+      drawGlow(e.frozen>0?glowIce:glowFire, e.x, 84*e.size, e.z, 140*e.size, 0.5);
+    for(const c of [[300,-240,36],[-330,180,46],[-80,-350,30],[240,300,40]])
+      drawGlow(glowIce, c[0], c[2]*1.2, c[1], c[2]*4, 0.3);
+    ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
     // 準星
     ctx.strokeStyle='rgba(189,238,255,.9)'; ctx.lineWidth=2;
     ctx.beginPath(); ctx.moveTo(W/2-11,H/2); ctx.lineTo(W/2+11,H/2); ctx.moveTo(W/2,H/2-11); ctx.lineTo(W/2,H/2+11); ctx.stroke();
-    // HUD
-    hudBar(14,66,150,'冰人',p.hp/100,'#2fd8e8');
-    hudBar(14,104,150,'床耐久',this.bedHp/100,'#ff9d2e');
+    // HUD（v6：血條緩動＋低血量脈動警示）
+    this.dispHp += (p.hp-this.dispHp)*0.14;
+    this.dispBed += (this.bedHp-this.dispBed)*0.14;
+    hudBar(14,66,150,'冰人',this.dispHp/100,
+      p.hp<35 ? (Math.sin(elapsed*9)>0?'#ff5040':'#ff8a70') : '#2fd8e8');
+    hudBar(14,104,150,'床耐久',this.dispBed/100,
+      this.bedHp<35 ? (Math.sin(elapsed*9)>0?'#ff5040':'#ffb080') : '#ff9d2e');
     ctx.textAlign='right'; ctx.font='bold 18px sans-serif'; ctx.fillStyle='#ffd23f';
     ctx.fillText('分數 '+this.score, W-70, 30);
     ctx.fillStyle='#dfeeff'; ctx.font='15px sans-serif';
@@ -833,6 +970,7 @@ const FIRE={
     Object.assign(this.p,{x:s.x,y:16,z:s.z,vx:0,vy:0,vz:0,face:0,grounded:true,sx:1,sy:1});
     this.camYaw=0; input.yawD=0; input.pitchD=0;
     this.time=0; this.cp=0; this.falls=0; this.jumpBuf=0; this.hurtT=0; this.happyT=0;
+    this.crackT=0.5;
     cam.x=s.x; cam.z=s.z-340; cam.y=250;
   },
   respawnP(){
@@ -848,6 +986,8 @@ const FIRE={
     const p=this.p;
     this.time+=dt;
     this.hurtT=Math.max(0,this.hurtT-dt); this.happyT=Math.max(0,this.happyT-dt);
+    this.crackT-=dt;                       // v6：熔岩隨機劈啪聲
+    if(this.crackT<=0){ this.crackT=rand(0.15,0.7); if(AC&&!muted) noise(0.03,0.03+Math.random()*0.05); }
     this.camYaw += input.yawD; input.yawD=0;
     if(keys.ArrowLeft) this.camYaw-=1.9*dt;
     if(keys.ArrowRight) this.camYaw+=1.9*dt;
@@ -986,6 +1126,16 @@ const FIRE={
       expr: this.hurtT>0?'hurt':(this.happyT>0?'happy':'normal'),
     });
     flushFaces(); drawP3();
+    // v6：烘焙光暈 bloom（旗標金光、終點綠光、火人頭焰、熔岩熱浪帶）
+    ctx.globalCompositeOperation='lighter';
+    for(const pl of this.plats){
+      if(pl.type==='checkpoint') drawGlow(glowGold, pl.x+16, pl.y+72, pl.z-pl.d/2+14, 120, 0.5);
+      else if(pl.type==='finish') drawGlow(glowGreen, pl.x, pl.y+130, pl.z, 240, 0.55);
+    }
+    drawGlow(glowFire, p.x, p.y+86, p.z, 130, 0.55);
+    ctx.globalAlpha=0.4+Math.sin(t*2.2)*0.1;
+    ctx.drawImage(heatCv,0,H*0.6,W,H*0.4);
+    ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
     // HUD
     ctx.fillStyle='rgba(20,5,0,.55)';
     ctx.beginPath(); ctx.roundRect(12,66,252,58,10); ctx.fill();
@@ -1028,6 +1178,7 @@ function startGame(){
   audio(); sfx.ui();
   APP.state=APP.sel; APP.mode=APP.sel; APP.phase='play';
   bakeOverlays(APP.mode==='fire'?'fire':'ice');
+  setAmbience(APP.mode==='fire'?'fire':'ice');
   if(APP.mode==='ice') ICE.reset(); else FIRE.reset();
   hintT=0; elapsed=0; P3.length=0; floaters.length=0; shake=0; freeze=0; hitFlash=0;
   $('title').classList.add('hidden'); $('end').classList.add('hidden');
@@ -1037,6 +1188,7 @@ function startGame(){
 function toTitle(){
   APP.state='title'; APP.phase='play';
   bakeOverlays('ice');
+  setAmbience('ice');
   $('title').classList.remove('hidden'); $('end').classList.add('hidden');
   $('backBtn').classList.add('hidden');
   refreshTitle();
@@ -1131,6 +1283,10 @@ function drawAttract(dt){
   emitHumanoid(140,0,80,attractT,attractT*6,{size:1.05,body:[47,164,220],limb:[26,84,140],head:[224,244,255],eye:[16,40,70],badge:[189,238,255],ice:true});
   emitHumanoid(-170,0,-60,-attractT,attractT*6,{size:1.05,body:[214,60,30],limb:[130,34,16],head:[255,140,60],eye:[255,246,190],badge:[255,210,60],angry:true,flame:true});
   flushFaces();
+  ctx.globalCompositeOperation='lighter';        // v6：標題角色頭頂光暈
+  drawGlow(glowIce,140,88,80,130,0.45);
+  drawGlow(glowFire,-170,88,-60,140,0.5);
+  ctx.globalCompositeOperation='source-over'; ctx.globalAlpha=1;
 }
 
 /* ================= 主迴圈：固定時間步進 ================= */
@@ -1159,6 +1315,7 @@ function frame(now){
   else if(APP.state==='ice'){ ICE.draw(); }
   else { FIRE.draw(); }
   ctx.restore();
+  drawAmb(STEP);                                  // v6：環境粒子層（雪花/餘燼）
   if(APP.state!=='title'){
     drawFloaters(STEP);
     if(APP.phase==='play'){ drawHint(); drawTouchUI(); }
@@ -1193,7 +1350,7 @@ requestAnimationFrame(()=>requestAnimationFrame(initBigScreenHint));
 
 /* ================= 測試掛鉤（QA 自動化） ================= */
 window.__test = () => ({
-  state:APP.state, phase:APP.phase, hard:APP.hard, unlocked:save.cleared,
+  state:APP.state, phase:APP.phase, hard:APP.hard, unlocked:save.cleared, ambN:ambNodes.length, ambOn,
   wave:ICE.wave, enemies:ICE.enemies.length, queue:ICE.waveQueue, bedHp:ICE.bedHp, score:ICE.score,
   ipx:ICE.player.x, ipz:ICE.player.z, bolts:ICE.bolts.length,
   fpx:FIRE.p.x, fpy:FIRE.p.y, fpz:FIRE.p.z, time:FIRE.time, cp:FIRE.cp, falls:FIRE.falls,
@@ -1201,6 +1358,7 @@ window.__test = () => ({
 window.__killAll = () => { for(const e of ICE.enemies.slice()) { e.hp=0; ICE.score+=e.boss?500:100; ICE.enemies.splice(ICE.enemies.indexOf(e),1); } ICE.waveQueue=0; ICE.banner=0; };
 window.__warp = i => { const pl=FIRE.plats[i<0?FIRE.plats.length+i:i]; if(pl){ Object.assign(FIRE.p,{x:pl.x,y:20,z:pl.z,vx:0,vy:0,vz:0}); cam.x=pl.x; cam.z=pl.z-330; } };
 </script>
+
 <script>/* AI-CAMP-STATS-BEACON */
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */
