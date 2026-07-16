@@ -253,9 +253,10 @@
   <h1>恐怖校園追逐</h1>
   <div class="howto">
     深夜的學校有長走廊、教室、保健室和圖書室，找到另一端的<b>逃生門</b>離開！
-    途中撿起<b>球棒</b>可揮擊擊暈恐怖阿嬤,危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
+    你手上有一支<b>球棒</b>,揮擊可擊暈恐怖阿嬤,危急時躲進<b>櫃子</b>裡,但她偶爾會翻找櫃子……<br>
     走廊是環狀的，被追時繞另一條路！阿嬤頭上出現<b>❗</b>就是要蓄力衝刺了,趕快閃進轉角！
-    用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br><br>
+    用球棒打她會<b>滑倒躺平</b>,追丟你時還會東張西望……小地圖會隨探索慢慢點亮。<br>
+    🎧 <b>建議戴耳機</b>：3D 環繞音效,耳語、腳步與阿嬤的聲音會從真實方位傳來。<br><br>
     <b>電腦</b>：方向鍵/WASD 移動、點畫面鎖定滑鼠後移動滑鼠看方向（Esc 解鎖）、空白鍵揮擊、Shift 跳、E 躲進/離開櫃子<br>
     <b>平板/手機</b>：左下方向按鈕移動轉向、右下「揮擊／跳／躲」按鈕、拖曳畫面看方向
   </div>
@@ -269,7 +270,7 @@
 </div>
 <button id="muteBtn">🔊</button>
 <div id="minimapWrap"><canvas id="minimap" width="120" height="96"></canvas></div>
-<div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">尚未拿到球棒</span></div>
+<div id="hud">逃出恐怖校園 · 存活時間: <span id="timer">0.0</span> 秒 · <span id="weaponStatus">持有球棒 (按空白鍵/揮擊鍵)</span></div>
 <div id="crosshair"></div>
 <div id="interactPrompt"></div>
 <div id="hideOverlay"><span id="hideOverlayText">🗄️ 躲藏中……恐怖阿嬤找不到你</span><br>按 E / 「出來」鍵離開</div>
@@ -421,7 +422,7 @@ function mulberry32(a) {
 }
 const WT_BRICK = 0, WT_TILE = 1, WT_LOCKER = 2, WT_BULLETIN = 3, WT_WINDOW = 4, WT_BOARD = 5, WT_SHELF = 6;
 const ROOM_WALL = { classroom: WT_BOARD, lab: WT_TILE, nurse: WT_TILE, library: WT_SHELF, storage: WT_LOCKER };
-const SCHOOL = { w: 32, h: 22, vx: [2, 15, 28], hy: [2, 18], roomTypes: ['classroom', 'nurse', 'classroom', 'library'] };
+const SCHOOL = { w: 46, h: 32, vx: [2, 16, 30, 43], hy: [2, 15, 28], roomTypes: ['classroom', 'nurse', 'classroom', 'library', 'classroom', 'storage'] };
 
 let solid, wallType, gridW, gridH, wallSeed;
 let decor = [];
@@ -584,17 +585,27 @@ function genSchool(cfg, seed) {
     if (!solid[cy][x] && Math.hypot(x - 3, cy - 3) > 4) cabinets.push({ x: x + 0.5, y: cy + 0.5 });
   }
 
-  // 出生點（左上）/ 阿嬤（左下錯開）/ 逃生門（右下對角）/ 球棒（中途房間）
+  // 出生點（左上）/ 阿嬤（左下錯開）/ 逃生門（隨機遠處）/ 球棒（中途房間）
   const spawnT = { x: 3, y: 3 };
-  const exitT = { x: gridW - 3, y: gridH - 3 };
   const grannyT = { x: 3, y: gridH - 3 };
   const carveTo = (tx, ty) => {
     for (let x = Math.min(3, tx); x <= Math.max(3, tx); x++) open(x, 3);
     for (let y = Math.min(3, ty); y <= Math.max(3, ty); y++) open(tx, y);
   };
   let dist = tileDistField(spawnT.x, spawnT.y);
-  if (dist[exitT.y * gridW + exitT.x] < 0) { carveTo(exitT.x, exitT.y); dist = tileDistField(spawnT.x, spawnT.y); }
   if (dist[grannyT.y * gridW + grannyT.x] < 0) { carveTo(grannyT.x, grannyT.y); dist = tileDistField(spawnT.x, spawnT.y); }
+  // 逃生門隨機：從「距出生點 ≥65% 最遠距離」的可走格中挑一格,每局位置都不同
+  let maxD = 0;
+  for (let i = 0; i < dist.length; i++) if (dist[i] > maxD) maxD = dist[i];
+  const exitCandidates = [];
+  for (let y = 2; y < gridH - 2; y++) for (let x = 2; x < gridW - 2; x++) {
+    const d = dist[y * gridW + x];
+    if (d >= maxD * 0.65) exitCandidates.push({ x, y });
+  }
+  const exitT = exitCandidates.length
+    ? exitCandidates[Math.floor(rnd() * exitCandidates.length)]
+    : { x: gridW - 3, y: gridH - 3 };
+  if (dist[exitT.y * gridW + exitT.x] < 0) { carveTo(exitT.x, exitT.y); dist = tileDistField(spawnT.x, spawnT.y); }
   const exitD = dist[exitT.y * gridW + exitT.x];
   let batRoom = null, bestDiff = Infinity;
   for (const r of rooms) {
@@ -832,6 +843,193 @@ function ensureAudio() {
 let lastThumpTime = -Infinity;
 let screamedRecently = false;
 
+// 恐怖環境音：持續低頻嗡鳴（緩慢顫音）,靜音時關閉
+let ambientNodes = null;
+let nextScareAt = 0;
+function startAmbient() {
+  if (!audioCtx || ambientNodes || muted) return;
+  const t = audioCtx.currentTime;
+  // 低音墊：兩顆微失諧鋸齒波,低通後緩慢顫動,像遠處空調/深淵嗡鳴
+  const master = audioCtx.createGain();
+  master.gain.setValueAtTime(0.001, t);
+  master.gain.exponentialRampToValueAtTime(0.9, t + 2.5);
+  master.connect(audioCtx.destination);
+  const drone = audioCtx.createOscillator();
+  drone.type = 'sawtooth';
+  drone.frequency.setValueAtTime(48, t);
+  const drone2 = audioCtx.createOscillator();
+  drone2.type = 'sawtooth';
+  drone2.frequency.setValueAtTime(48.7, t); // 微失諧產生拍頻
+  const droneFilter = audioCtx.createBiquadFilter();
+  droneFilter.type = 'lowpass';
+  droneFilter.frequency.setValueAtTime(130, t);
+  const droneGain = audioCtx.createGain();
+  droneGain.gain.setValueAtTime(0.035, t);
+  const lfo = audioCtx.createOscillator();
+  lfo.frequency.setValueAtTime(0.17, t);
+  const lfoGain = audioCtx.createGain();
+  lfoGain.gain.setValueAtTime(7, t);
+  lfo.connect(lfoGain).connect(drone.frequency);
+  drone.connect(droneFilter);
+  drone2.connect(droneFilter);
+  droneFilter.connect(droneGain).connect(master);
+  drone.start(t); drone2.start(t); lfo.start(t);
+
+  // 陰森音樂盒：A 小調緩慢旋律,失諧疊音＋回音,循環播放
+  // 旋律（A3=220 為根音,自由節拍,含長休止讓氣氛喘息）
+  const MELODY = [
+    [220.0, 1.6], [261.63, 1.6], [246.94, 2.4], [0, 1.2],
+    [220.0, 1.6], [174.61, 1.6], [164.81, 3.2], [0, 2.4],
+    [261.63, 1.6], [246.94, 1.6], [220.0, 2.4], [0, 1.2],
+    [146.83, 1.6], [164.81, 1.6], [220.0, 4.0], [0, 3.2],
+  ];
+  const echo = audioCtx.createDelay(1.2);
+  echo.delayTime.setValueAtTime(0.55, t);
+  const echoFb = audioCtx.createGain();
+  echoFb.gain.setValueAtTime(0.42, t);
+  const echoOut = audioCtx.createGain();
+  echoOut.gain.setValueAtTime(0.5, t);
+  echo.connect(echoFb).connect(echo);
+  echo.connect(echoOut).connect(master);
+
+  let melodyTimer = null;
+  let noteIdx = 0;
+  function pluck(freq, when) {
+    // 音樂盒音色：正弦基音＋2.01倍泛音（微失諧,更詭異）,快起音長衰減
+    for (const [mult, vol] of [[1, 0.05], [2.01, 0.02], [3.02, 0.008]]) {
+      const osc = audioCtx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(freq * mult, when);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(vol, when + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 2.2);
+      osc.connect(g);
+      g.connect(master);
+      g.connect(echo);
+      osc.start(when);
+      osc.stop(when + 2.3);
+    }
+  }
+  function scheduleNext() {
+    if (!ambientNodes) return;
+    const [freq, dur] = MELODY[noteIdx % MELODY.length];
+    noteIdx++;
+    if (freq > 0) pluck(freq, audioCtx.currentTime + 0.05);
+    melodyTimer = setTimeout(scheduleNext, dur * 1000);
+    ambientNodes.melodyTimer = melodyTimer;
+  }
+  ambientNodes = { drone, drone2, lfo, master, melodyTimer };
+  setTimeout(scheduleNext, 1200);
+}
+function stopAmbient() {
+  if (!ambientNodes) return;
+  const t = audioCtx.currentTime;
+  clearTimeout(ambientNodes.melodyTimer);
+  ambientNodes.master.gain.exponentialRampToValueAtTime(0.001, t + 0.4);
+  ambientNodes.drone.stop(t + 0.5);
+  ambientNodes.drone2.stop(t + 0.5);
+  ambientNodes.lfo.stop(t + 0.5);
+  ambientNodes = null;
+}
+// ---- 3D 環繞（holophonic）音效工具：HRTF 定位,戴耳機聲音會繞著頭移動 ----
+function makePanner(x, z) {
+  const p = audioCtx.createPanner();
+  p.panningModel = 'HRTF';
+  p.distanceModel = 'inverse';
+  p.refDistance = 0.5;
+  p.positionX.value = x; p.positionY.value = 0; p.positionZ.value = z;
+  return p;
+}
+// 依（相對玩家的）方向角與距離擺放音源：前方為 -Z,右方為 +X
+function panPos(relAngle, dist) {
+  return { x: Math.sin(relAngle) * dist, z: -Math.cos(relAngle) * dist };
+}
+
+// 隨機 3D 驚嚇聲：耳語繞頭一圈 / 腳步從背後走過 / 耳邊呼吸
+function randomScare() {
+  if (!audioCtx || muted) return;
+  const t = audioCtx.currentTime;
+  const pick = Math.random();
+  if (pick < 0.34) {
+    // 氣音耳語,4 秒繞頭一圈
+    const dur = 4, n = Math.floor(audioCtx.sampleRate * dur);
+    const buf = audioCtx.createBuffer(1, n, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    let env = 0;
+    for (let i = 0; i < n; i++) {
+      // 斷續的氣音節奏,像聽不清的低語
+      if (i % 2000 === 0) env = Math.random() < 0.6 ? 0.4 + Math.random() * 0.6 : 0.05;
+      d[i] = (Math.random() * 2 - 1) * env;
+    }
+    const src = audioCtx.createBufferSource(); src.buffer = buf;
+    const f = audioCtx.createBiquadFilter();
+    f.type = 'bandpass'; f.Q.value = 2.5;
+    f.frequency.setValueAtTime(2400, t);
+    const p = makePanner(1.2, 0.4);
+    const startA = Math.random() * Math.PI * 2;
+    for (let k = 0; k <= 16; k++) {
+      const a = startA + (k / 16) * Math.PI * 2;
+      const pos = panPos(a, 1.1);
+      p.positionX.linearRampToValueAtTime(pos.x, t + (k / 16) * dur);
+      p.positionZ.linearRampToValueAtTime(pos.z, t + (k / 16) * dur);
+    }
+    const g = audioCtx.createGain();
+    g.gain.setValueAtTime(0.001, t);
+    g.gain.exponentialRampToValueAtTime(0.14, t + 0.5);
+    g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+    src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
+    src.start(t);
+  } else if (pick < 0.67) {
+    // 腳步聲從左後方走到右後方
+    const steps = 5 + Math.floor(Math.random() * 3);
+    const side = Math.random() < 0.5 ? 1 : -1;
+    for (let i = 0; i < steps; i++) {
+      const when = t + i * (0.42 + Math.random() * 0.08);
+      const prog = i / (steps - 1);
+      const a = Math.PI + side * (0.7 - prog * 1.4); // 背後掃過
+      const pos = panPos(a, 1.6);
+      const n2 = Math.floor(audioCtx.sampleRate * 0.09);
+      const buf = audioCtx.createBuffer(1, n2, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let j = 0; j < n2; j++) d[j] = (Math.random() * 2 - 1) * Math.pow(1 - j / n2, 4);
+      const src = audioCtx.createBufferSource(); src.buffer = buf;
+      const f = audioCtx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.setValueAtTime(420, when);
+      const p = makePanner(pos.x, pos.z);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.5, when);
+      src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
+      src.start(when);
+    }
+  } else {
+    // 貼著單側耳朵的呼吸聲（三口氣,越來越近）
+    const side = Math.random() < 0.5 ? 1 : -1;
+    for (let b = 0; b < 3; b++) {
+      const when = t + b * 1.4;
+      const dur = 1.1, n2 = Math.floor(audioCtx.sampleRate * dur);
+      const buf = audioCtx.createBuffer(1, n2, audioCtx.sampleRate);
+      const d = buf.getChannelData(0);
+      for (let j = 0; j < n2; j++) {
+        const ph = j / n2;
+        const env = Math.sin(ph * Math.PI) * (ph < 0.5 ? 1 : 0.7);
+        d[j] = (Math.random() * 2 - 1) * env;
+      }
+      const src = audioCtx.createBufferSource(); src.buffer = buf;
+      const f = audioCtx.createBiquadFilter();
+      f.type = 'bandpass'; f.Q.value = 1.2;
+      f.frequency.setValueAtTime(700, when);
+      const p = makePanner(side * (0.7 - b * 0.18), 0.15);
+      const g = audioCtx.createGain();
+      g.gain.setValueAtTime(0.001, when);
+      g.gain.exponentialRampToValueAtTime(0.1 + b * 0.05, when + dur * 0.4);
+      g.gain.exponentialRampToValueAtTime(0.001, when + dur);
+      src.connect(f).connect(g).connect(p).connect(audioCtx.destination);
+      src.start(when);
+    }
+  }
+}
+
 function playJumpSound() {
   if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
@@ -899,6 +1097,14 @@ function playWinFanfare() {
   });
 }
 
+// 阿嬤相對玩家的方位（給 3D 定位用）；她不在時回傳正前方遠處
+function chaserRelPos(maxDist) {
+  if (typeof chaser === 'undefined') return { x: 0, z: -1.5 };
+  const rel = Math.atan2(chaser.y - player.y, chaser.x - player.x) - player.angle;
+  const d = clamp(Math.hypot(chaser.x - player.x, chaser.y - player.y) * 0.35, 0.4, maxDist || 3);
+  return panPos(rel, d);
+}
+
 function playThump(vol) {
   if (!audioCtx || muted) return;
   const t = audioCtx.currentTime;
@@ -908,7 +1114,9 @@ function playThump(vol) {
   osc.frequency.exponentialRampToValueAtTime(38, t + 0.16);
   gain.gain.setValueAtTime(vol, t);
   gain.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-  osc.connect(gain).connect(audioCtx.destination);
+  const pos = chaserRelPos(2.5);
+  const p = makePanner(pos.x, pos.z);
+  osc.connect(gain).connect(p).connect(audioCtx.destination);
   osc.start(t);
   osc.stop(t + 0.24);
 }
@@ -929,11 +1137,18 @@ function playScream() {
   filter.frequency.exponentialRampToValueAtTime(500, t + dur);
   const gain = audioCtx.createGain();
   gain.gain.setValueAtTime(0.55, t);
-  noise.connect(filter).connect(gain).connect(audioCtx.destination);
+  const pos = chaserRelPos(1.2);
+  const p = makePanner(pos.x, pos.z);
+  noise.connect(filter).connect(gain).connect(p).connect(audioCtx.destination);
   noise.start(t);
 }
 
 function updateDreadAudio(dread, chaserDist) {
+  if (audioCtx && !muted && !ambientNodes) startAmbient();
+  if (elapsed > nextScareAt) {
+    if (nextScareAt > 0) randomScare();
+    nextScareAt = elapsed + 6 + Math.random() * 8;
+  }
   if (dread > 0.03) {
     const interval = 1.1 - dread * 0.75;
     if (elapsed - lastThumpTime > interval) {
@@ -1079,11 +1294,11 @@ function reset() {
   chaser.angryUntil = 0;
   shakeMag = 0;
 
-  weapon.x = genInfo.batPos.x; weapon.y = genInfo.batPos.y; weapon.collected = false;
-  hasWeapon = false;
+  weapon.x = genInfo.batPos.x; weapon.y = genInfo.batPos.y; weapon.collected = true;
+  hasWeapon = true;
   lastSwingTime = -Infinity;
   swingFlashUntil = -Infinity;
-  weaponStatusEl.textContent = '尚未拿到球棒';
+  weaponStatusEl.textContent = '持有球棒 (按空白鍵/揮擊鍵)';
 
   exit.x = genInfo.exit.x; exit.y = genInfo.exit.y;
 
@@ -1383,8 +1598,9 @@ function drawScene() {
   for (const s of sprites) drawSprite(s, RAY_COUNT, s.kind);
   if (dying) drawDeathCloseup(dyingT, w, h, horizon);
 
+  if (hasWeapon && !dying && !player.hiding) drawHeldBat(w, h);
   if (elapsed < swingFlashUntil) {
-    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)';
     ctx.lineWidth = 8;
     ctx.beginPath();
     ctx.arc(w / 2, h * 0.85, 90, Math.PI, Math.PI * 2);
@@ -1404,6 +1620,81 @@ function drawScene() {
   updateDreadAudio(dread, chaserDist);
 }
 
+// 第一人稱手持球棒：漸細棒身、木紋、握把纏帶,揮擊時弧線掃過畫面
+function drawHeldBat(w, h) {
+  const swingP = clamp((elapsed - lastSwingTime) / 0.35, 0, 1);
+  const swinging = swingP < 1;
+  // 待機輕微呼吸晃動；揮擊時從右往左掃一道弧
+  const idleSway = Math.sin(elapsed * 1.8) * 0.03;
+  const swingK = swinging ? Math.sin(swingP * Math.PI) : 0;
+  const swingAngle = swingK * -1.15;
+  const px = w * (0.78 - swingK * 0.3);
+  const py = h * (1.04 - swingK * 0.22);
+  const L = h * 0.52; // 球棒總長
+  ctx.save();
+  ctx.translate(px, py);
+  ctx.rotate(-0.62 + idleSway + swingAngle);
+
+  // 棒身（從握把往棒頭漸寬）,木質縱向漸層
+  const wood = ctx.createLinearGradient(-L * 0.05, 0, L * 0.06, 0);
+  wood.addColorStop(0, '#8a6534');
+  wood.addColorStop(0.45, '#c99e5f');
+  wood.addColorStop(0.55, '#d8b276');
+  wood.addColorStop(1, '#7d5a2c');
+  ctx.fillStyle = wood;
+  ctx.beginPath();
+  ctx.moveTo(-L * 0.016, 0);                       // 握把底
+  ctx.lineTo(-L * 0.02, -L * 0.38);                // 握把上端
+  ctx.quadraticCurveTo(-L * 0.05, -L * 0.62, -L * 0.052, -L * 0.8); // 漸寬
+  ctx.quadraticCurveTo(-L * 0.05, -L * 0.97, 0, -L * 0.985);        // 圓棒頭左
+  ctx.quadraticCurveTo(L * 0.05, -L * 0.97, L * 0.052, -L * 0.8);   // 圓棒頭右
+  ctx.quadraticCurveTo(L * 0.05, -L * 0.62, L * 0.02, -L * 0.38);
+  ctx.lineTo(L * 0.016, 0);
+  ctx.closePath();
+  ctx.fill();
+  // 木紋（幾條淡色縱向細線）
+  ctx.strokeStyle = 'rgba(90,58,26,0.5)';
+  ctx.lineWidth = Math.max(1, L * 0.004);
+  for (const k of [-0.55, -0.2, 0.25, 0.6]) {
+    ctx.beginPath();
+    ctx.moveTo(L * 0.012 * k, -L * 0.1);
+    ctx.quadraticCurveTo(L * 0.045 * k, -L * 0.55, L * 0.03 * k, -L * 0.95);
+    ctx.stroke();
+  }
+  // 棒頭高光
+  ctx.fillStyle = 'rgba(255,240,200,0.18)';
+  ctx.beginPath();
+  ctx.ellipse(-L * 0.02, -L * 0.82, L * 0.012, L * 0.13, 0.05, 0, Math.PI * 2);
+  ctx.fill();
+  // 握把纏帶（深色斜紋）
+  ctx.fillStyle = '#2e2018';
+  ctx.fillRect(-L * 0.022, -L * 0.36, L * 0.044, L * 0.34);
+  ctx.strokeStyle = 'rgba(0,0,0,0.45)';
+  ctx.lineWidth = Math.max(1, L * 0.006);
+  for (let i = 0; i < 7; i++) {
+    const yy = -L * 0.34 + i * L * 0.045;
+    ctx.beginPath();
+    ctx.moveTo(-L * 0.022, yy);
+    ctx.lineTo(L * 0.022, yy + L * 0.02);
+    ctx.stroke();
+  }
+  // 底部圓突 knob
+  ctx.fillStyle = '#6e4a24';
+  ctx.beginPath();
+  ctx.ellipse(0, L * 0.004, L * 0.034, L * 0.016, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // 揮擊殘影
+  if (swinging) {
+    ctx.strokeStyle = `rgba(255,255,255,${(1 - swingP) * 0.4})`;
+    ctx.lineWidth = L * 0.05;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.arc(0, 0, L * 0.85, -Math.PI * 0.65, -Math.PI * 0.35);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 function drawDeathCloseup(t, w, h, horizon) {
   const size = h * (1.3 + t * 0.6);
   const lunge = Math.min(1, t / 0.35);
@@ -1420,16 +1711,38 @@ function drawDeathCloseup(t, w, h, horizon) {
   ctx.lineTo(-size * 0.4, size * 0.55);
   ctx.closePath();
   ctx.fill();
+  // 歪斜逼近的頭：黑洞嘴大張、紅眼一亮一暗、白髮垂落
+  ctx.save();
+  ctx.translate(-size * 0.03, -size * 0.5);
+  ctx.rotate(0.25 + Math.sin(elapsed * 6) * 0.05);
   ctx.beginPath();
-  ctx.arc(-size * 0.03, -size * 0.5, size * 0.11, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, size * 0.105, size * 0.125, 0, 0, Math.PI * 2);
   ctx.fillStyle = `rgba(150,135,110,${shade})`;
+  ctx.fill();
+  const mouthOpen = 0.7 + 0.3 * Math.sin(elapsed * 12);
+  ctx.beginPath();
+  ctx.ellipse(0, size * 0.055, size * 0.035, size * 0.055 * mouthOpen, 0, 0, Math.PI * 2);
+  ctx.fillStyle = '#000';
   ctx.fill();
   const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 16);
   ctx.fillStyle = `rgba(255,${Math.floor(10 + eyeGlow * 20)},0,1)`;
   ctx.beginPath();
-  ctx.arc(-size * 0.07, -size * 0.505, size * 0.02, 0, Math.PI * 2);
-  ctx.arc(size * 0.01, -size * 0.505, size * 0.02, 0, Math.PI * 2);
+  ctx.arc(-size * 0.04, -size * 0.02, size * 0.021, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = `rgba(255,${Math.floor(10 + (1 - eyeGlow) * 20)},0,1)`;
+  ctx.beginPath();
+  ctx.arc(size * 0.038, -size * 0.025, size * 0.017, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(170,165,155,0.75)';
+  ctx.lineWidth = Math.max(1, size * 0.008);
+  for (let hh = 0; hh < 6; hh++) {
+    const hx0 = -size * 0.08 + hh * size * 0.027;
+    ctx.beginPath();
+    ctx.moveTo(hx0, -size * 0.09);
+    ctx.quadraticCurveTo(hx0 + Math.sin(elapsed * 3 + hh) * size * 0.02, size * 0.12, hx0 + Math.sin(elapsed * 2 + hh * 2) * size * 0.035, size * 0.27);
+    ctx.stroke();
+  }
+  ctx.restore();
   ctx.restore();
 
   // slash strike marks appear at two hit beats
@@ -1547,42 +1860,71 @@ function drawSprite(entity, RAY_COUNT, kind) {
       ctx.arc((dot - 1) * size * 0.07, size * 0.12 + (dot % 2) * size * 0.1, size * 0.014, 0, Math.PI * 2);
       ctx.fill();
     }
-    // 兩隻伸出的手
+    // 兩隻瘦長爪手,五指張開向前抓
     ctx.strokeStyle = bodyColor;
-    ctx.lineWidth = Math.max(1, size * 0.03);
-    ctx.beginPath();
-    ctx.moveTo(size * 0.2, -size * 0.1);
-    ctx.lineTo(size * 0.42, size * 0.05);
-    ctx.lineTo(size * 0.5, -size * 0.02);
-    ctx.moveTo(-size * 0.18, -size * 0.08);
-    ctx.lineTo(-size * 0.38, size * 0.08);
-    ctx.stroke();
-    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
-    ctx.beginPath();
-    ctx.arc(size * 0.5, -size * 0.02, size * 0.028, 0, Math.PI * 2);
-    ctx.arc(-size * 0.38, size * 0.08, size * 0.026, 0, Math.PI * 2);
-    ctx.fill();
-    // head：困惑時左右東張西望
+    ctx.lineWidth = Math.max(1, size * 0.022);
+    ctx.lineCap = 'round';
+    for (const dir of [1, -1]) {
+      const hx = dir * size * (dir > 0 ? 0.44 : 0.38);
+      const hy = dir > 0 ? -size * 0.0 : size * 0.06;
+      ctx.beginPath();
+      ctx.moveTo(dir * size * 0.18, -size * 0.09);
+      ctx.lineTo(hx, hy);
+      ctx.stroke();
+      for (let f = 0; f < 5; f++) {
+        const fa = (f - 2) * 0.3 + dir * 0.5 + Math.sin(elapsed * 10 + f) * 0.06;
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.lineTo(hx + Math.cos(fa) * size * 0.11 * dir, hy + Math.sin(fa) * size * 0.11);
+        ctx.stroke();
+      }
+    }
+    // head：詭異歪頭,困惑時左右東張西望
     const headX = confused ? Math.sin(elapsed * 4) * size * 0.07 - size * 0.02 : -size * 0.02;
+    const headTilt = stunned ? 0 : 0.3 + Math.sin(elapsed * 0.9) * 0.1;
+    ctx.save();
+    ctx.translate(headX, -size * 0.5);
+    ctx.rotate(headTilt);
     ctx.beginPath();
-    ctx.arc(headX, -size * 0.5, size * 0.1, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.ellipse(0, 0, size * 0.095, size * 0.112, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${Math.floor(143 * shade)},${Math.floor(130 * shade)},${Math.floor(102 * shade)},${shade})`;
     ctx.fill();
     // 灰白髮髻
     ctx.fillStyle = `rgba(${Math.floor(190 * shade)},${Math.floor(185 * shade)},${Math.floor(175 * shade)},${shade})`;
     ctx.beginPath();
-    ctx.arc(headX, -size * 0.565, size * 0.062, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.arc(0, -size * 0.065, size * 0.062, Math.PI * 0.95, Math.PI * 2.05);
     ctx.fill();
     ctx.beginPath();
-    ctx.arc(headX, -size * 0.615, size * 0.032, 0, Math.PI * 2);
+    ctx.arc(0, -size * 0.115, size * 0.032, 0, Math.PI * 2);
     ctx.fill();
-    // eyes：平常兇（紅）、蓄力/生氣放大、被打暈變粉紅
+    // 黑洞嘴（無聲尖叫,緩慢開合；被打暈時閉合）
+    const mouth = stunned ? 0.1 : 0.5 + 0.5 * Math.sin(elapsed * 1.7);
+    ctx.beginPath();
+    ctx.ellipse(0, size * 0.05, size * 0.03, size * (0.015 + mouth * 0.045), 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(0,0,0,${shade})`;
+    ctx.fill();
+    // eyes：平常兇（紅,一亮一暗不對稱）、蓄力/生氣放大、被打暈變粉紅
     const eyeR = size * ((windup || angry) ? 0.022 : 0.016);
-    ctx.fillStyle = `rgba(255,${stunned ? 200 : 20},${stunned ? 200 : 0},${shade})`;
+    const eGlow = 0.5 + 0.5 * Math.sin(elapsed * 9);
+    ctx.fillStyle = `rgba(255,${stunned ? 200 : Math.floor(15 + eGlow * 30)},${stunned ? 200 : 0},${shade})`;
     ctx.beginPath();
-    ctx.arc(headX - size * 0.035, -size * 0.505, eyeR, 0, Math.PI * 2);
-    ctx.arc(headX + size * 0.03, -size * 0.505, eyeR, 0, Math.PI * 2);
+    ctx.arc(-size * 0.035, -size * 0.008, eyeR, 0, Math.PI * 2);
     ctx.fill();
+    ctx.fillStyle = `rgba(255,${stunned ? 200 : Math.floor(15 + (1 - eGlow) * 30)},${stunned ? 200 : 0},${shade})`;
+    ctx.beginPath();
+    ctx.arc(size * 0.03, -size * 0.012, eyeR * 0.85, 0, Math.PI * 2);
+    ctx.fill();
+    // 幾綹散落白髮垂下遮半臉（隨移動輕晃）
+    ctx.strokeStyle = `rgba(${Math.floor(165 * shade)},${Math.floor(160 * shade)},${Math.floor(150 * shade)},${shade * 0.8})`;
+    ctx.lineWidth = Math.max(1, size * 0.008);
+    for (let h = 0; h < 5; h++) {
+      const hx0 = -size * 0.08 + h * size * 0.03;
+      ctx.beginPath();
+      ctx.moveTo(hx0, -size * 0.08);
+      ctx.quadraticCurveTo(hx0 + Math.sin(elapsed * 2 + h) * size * 0.015, size * 0.1, hx0 + Math.sin(elapsed * 1.3 + h * 2) * size * 0.03, size * 0.24);
+      ctx.stroke();
+    }
+    ctx.restore();
     ctx.restore();
     ctx.fillStyle = '#fff';
     ctx.font = `bold ${Math.max(10, size * 0.06)}px sans-serif`;
@@ -1747,7 +2089,7 @@ restartBtn.addEventListener('click', reset);
 muteBtn.addEventListener('click', () => {
   muted = !muted;
   muteBtn.textContent = muted ? '🔇' : '🔊';
-  if (!muted) ensureAudio();
+  if (!muted) { ensureAudio(); startAmbient(); } else stopAmbient();
 });
 resize();
 
