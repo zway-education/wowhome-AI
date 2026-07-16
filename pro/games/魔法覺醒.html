@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v5 -->
+<!-- 專業AI升級 v6：關卡主題化烘焙背景（森林/熔岩/冰原/虛空/星空剪影＋中央魔法陣＋星雲染色）、子彈additive拖尾光、玩家元素光環、全螢幕閃光/危險暈影改烘焙快取（主迴圈零即時漸層）；音效新增程序化殘響(ConvolverNode)、配樂加底鼓與噪聲鑔打擊層、低血量心跳聲 -->
+<!-- v5 -->
 <!-- v5 升級摘要：修復平板橫向/手機寵物面板疊住角色卡片的封鎖級版位衝突（改為收合式設定鈕+置中彈窗）；
      新增擊殺/治療飄字回饋、魔王登場鏡頭震動與色彩閃光、魔王波開場緩衝小怪出生節奏、低血量危險暈影提示 -->
 <!-- v5補強：角色精細化（玩家/小怪/魔王全面漸層陰影+輪廓線+高光點+受擊或開心表情狀態，魔王加尖刺/觸手/憤怒臉多部件)；
@@ -482,6 +483,18 @@ function ensureAudio(){
       comp.threshold.value=-18; comp.knee.value=24; comp.ratio.value=8;
       master = actx.createGain(); master.gain.value=0.9;
       master.connect(comp); comp.connect(actx.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（魔法大殿空間感），母線並聯送入
+      try{
+        const len = Math.floor(actx.sampleRate*1.4);
+        const ir = actx.createBuffer(2, len, actx.sampleRate);
+        for(let ch=0; ch<2; ch++){
+          const d = ir.getChannelData(ch);
+          for(let i=0;i<len;i++) d[i] = (Math.random()*2-1)*Math.pow(1-i/len, 2.8);
+        }
+        const conv = actx.createConvolver(); conv.buffer = ir;
+        const rev = actx.createGain(); rev.gain.value = 0.16;
+        master.connect(rev); rev.connect(conv); conv.connect(comp);
+      }catch(e){}
       startMusic();
     }catch(e){}
   } else if(actx.state==='suspended'){ actx.resume(); }
@@ -565,6 +578,32 @@ function musicTick(){
     g.gain.exponentialRampToValueAtTime(0.0001,t0+MUSIC_STEP_MS/1000*0.85);
     o.connect(g); g.connect(musicGain);
     o.start(t0); o.stop(t0+MUSIC_STEP_MS/1000*0.9);
+  }
+  // v6 打擊層：底鼓（每 4 步，正拍）＋噪聲鑔（反拍），讓配樂有律動骨架
+  if(musicStep % 4 === 0){
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.type='sine';
+    o.frequency.setValueAtTime(150, t0);
+    o.frequency.exponentialRampToValueAtTime(46, t0+0.11);
+    g.gain.setValueAtTime(0.0001,t0);
+    g.gain.exponentialRampToValueAtTime(0.55,t0+0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001,t0+0.13);
+    o.connect(g); g.connect(musicGain);
+    o.start(t0); o.stop(t0+0.15);
+  }
+  if(musicStep % 2 === 1){
+    if(!musicTick._hat){
+      const hl = Math.floor(actx.sampleRate*0.05);
+      const hb = actx.createBuffer(1,hl,actx.sampleRate);
+      const hd = hb.getChannelData(0);
+      for(let i=0;i<hl;i++) hd[i]=(Math.random()*2-1)*(1-i/hl);
+      musicTick._hat = hb;
+    }
+    const src=actx.createBufferSource(); src.buffer=musicTick._hat;
+    const hp=actx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=6200;
+    const g=actx.createGain(); g.gain.value=0.35;
+    src.connect(hp); hp.connect(g); g.connect(musicGain);
+    src.start(t0);
   }
   musicStep++;
 }
@@ -850,12 +889,127 @@ function bakeBg(){
   const grad = c.createLinearGradient(0,0,0,H);
   grad.addColorStop(0, stg.top); grad.addColorStop(1, stg.bottom);
   c.fillStyle=grad; c.fillRect(0,0,W,H);
+  // v6 星雲染色（主題色大光斑，柔和打亮場地）
+  c.save();
+  c.globalCompositeOperation='lighter';
+  [[W*0.2,H*0.24,0.06],[W*0.82,H*0.3,0.05],[W*0.5,H*0.78,0.045]].forEach(([nx,ny,na])=>{
+    const ng=c.createRadialGradient(nx,ny,10,nx,ny,Math.min(W,H)*0.42);
+    ng.addColorStop(0, stg.accent+Math.round(na*255).toString(16).padStart(2,'0'));
+    ng.addColorStop(1, stg.accent+'00');
+    c.fillStyle=ng;
+    c.beginPath(); c.arc(nx,ny,Math.min(W,H)*0.42,0,7); c.fill();
+  });
+  c.restore();
   c.fillStyle='rgba(255,255,255,0.035)';
   const gap=40;
   for(let x=0;x<W;x+=gap) for(let y=0;y<H;y+=gap) c.fillRect(x,y,2,2);
+  // v6 中央魔法陣（雙環＋刻度＋符文點，戰場即法陣）
+  c.save();
+  c.translate(W/2, H/2);
+  const R = Math.min(W,H)*0.3;
+  c.strokeStyle='rgba(255,255,255,0.07)';
+  c.lineWidth=2;
+  c.beginPath(); c.arc(0,0,R,0,7); c.stroke();
+  c.beginPath(); c.arc(0,0,R*0.78,0,7); c.stroke();
+  c.lineWidth=1;
+  c.beginPath(); c.arc(0,0,R*0.45,0,7); c.stroke();
+  for(let i=0;i<24;i++){
+    const a=i/24*Math.PI*2;
+    c.beginPath();
+    c.moveTo(Math.cos(a)*R*0.94, Math.sin(a)*R*0.94);
+    c.lineTo(Math.cos(a)*R, Math.sin(a)*R);
+    c.stroke();
+  }
+  c.fillStyle='rgba(255,255,255,0.075)';
+  for(let i=0;i<8;i++){
+    const a=i/8*Math.PI*2 + 0.3;
+    c.save();
+    c.translate(Math.cos(a)*R*0.885, Math.sin(a)*R*0.885);
+    c.rotate(a);
+    c.fillRect(-3,-3,6,6);
+    c.restore();
+  }
+  c.strokeStyle = stg.accent+'22';
+  c.lineWidth=1.5;
+  c.beginPath();
+  for(let i=0;i<6;i++){
+    const a=i/6*Math.PI*2 - Math.PI/2;
+    const x2=Math.cos(a)*R*0.78, y2=Math.sin(a)*R*0.78;
+    if(i===0) c.moveTo(x2,y2); else c.lineTo(x2,y2);
+  }
+  c.closePath(); c.stroke();
+  c.restore();
+  // v6 關卡主題剪影（底部地景，一眼看出身在哪一關）
+  c.save();
+  c.globalAlpha=0.5;
+  const base=H;
+  if(stg.deco==='forest'){
+    c.fillStyle='#0c2114';
+    for(let x=-20;x<W+40;x+=46){
+      const h2=30+((x*7)%38);
+      c.beginPath(); c.moveTo(x-24,base); c.lineTo(x,base-h2); c.lineTo(x+24,base); c.closePath(); c.fill();
+    }
+  }else if(stg.deco==='lava'){
+    c.fillStyle='#200705';
+    for(let x=-30;x<W+60;x+=90){
+      const h2=36+((x*13)%42);
+      c.beginPath(); c.moveTo(x-50,base); c.lineTo(x,base-h2); c.lineTo(x+50,base); c.closePath(); c.fill();
+      c.fillStyle='rgba(255,110,50,0.5)';
+      c.fillRect(x-6,base-h2,12,3);
+      c.fillStyle='#200705';
+    }
+  }else if(stg.deco==='ice'){
+    c.fillStyle='#0a1c2c';
+    for(let x=-20;x<W+40;x+=58){
+      const h2=34+((x*11)%46);
+      c.beginPath(); c.moveTo(x-20,base); c.lineTo(x,base-h2); c.lineTo(x+7,base-h2*0.55); c.lineTo(x+22,base); c.closePath(); c.fill();
+    }
+  }else if(stg.deco==='void'){
+    c.fillStyle='#120826';
+    for(let x=-20;x<W+40;x+=74){
+      const h2=26+((x*17)%40);
+      c.beginPath(); c.ellipse(x,base+6,34,h2,0,Math.PI,0); c.fill();
+    }
+  }else{
+    c.fillStyle='#0c1226';
+    for(let x=-20;x<W+40;x+=66){
+      const h2=30+((x*9)%36);
+      c.fillRect(x-10,base-h2,20,h2);
+      c.beginPath(); c.moveTo(x-10,base-h2); c.lineTo(x,base-h2-14); c.lineTo(x+10,base-h2); c.closePath(); c.fill();
+    }
+  }
+  c.restore();
   const vign = c.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.7);
   vign.addColorStop(0,'rgba(0,0,0,0)'); vign.addColorStop(1,'rgba(0,0,0,0.45)');
   c.fillStyle=vign; c.fillRect(0,0,W,H);
+  bakeOverlayFX();
+}
+/* v6 全螢幕閃光／危險暈影 烘焙快取：主迴圈只調 alpha 疊圖，零即時漸層 */
+let divineFlashCv=null, redVignCv=null;
+const bossFlashCache={};
+function bakeRadialFull(inner, outer){
+  const cv=document.createElement('canvas');
+  cv.width=Math.max(2,Math.floor(W/2)); cv.height=Math.max(2,Math.floor(H/2));
+  const c=cv.getContext('2d');
+  const g=c.createRadialGradient(cv.width/2,cv.height/2,0,cv.width/2,cv.height/2,Math.max(cv.width,cv.height)*0.75);
+  g.addColorStop(0,inner); g.addColorStop(1,outer);
+  c.fillStyle=g; c.fillRect(0,0,cv.width,cv.height);
+  return cv;
+}
+function bakeOverlayFX(){
+  divineFlashCv = bakeRadialFull('rgba(255,244,214,0.9)','rgba(255,244,214,0)');
+  const cv=document.createElement('canvas');
+  cv.width=Math.max(2,Math.floor(W/2)); cv.height=Math.max(2,Math.floor(H/2));
+  const c=cv.getContext('2d');
+  const g=c.createRadialGradient(cv.width/2,cv.height/2,Math.min(cv.width,cv.height)*0.26,cv.width/2,cv.height/2,Math.max(cv.width,cv.height)*0.62);
+  g.addColorStop(0,'rgba(255,40,60,0)'); g.addColorStop(1,'rgba(255,20,40,0.85)');
+  c.fillStyle=g; c.fillRect(0,0,cv.width,cv.height);
+  redVignCv = cv;
+  for(const k in bossFlashCache) delete bossFlashCache[k];
+}
+function bossFlashSprite(color){
+  if(!bossFlashCache[color]) bossFlashCache[color] = bakeRadialFull(color+'cc', color+'00');
+  return bossFlashCache[color];
 }
 const glowCache = {};
 function glowSprite(color){
@@ -1238,6 +1392,16 @@ function update(dt){
   stageTime += dt/1000;
   $id('timeLabel').textContent = stageTime.toFixed(1)+'s';
 
+  // v6 低血量心跳聲：與紅色暈影同步的「咚-咚」，血越少越急
+  if(player.hp>0 && player.hp <= player.maxHp*0.3){
+    update._hbT = (update._hbT||0) - dt;
+    if(update._hbT <= 0){
+      update._hbT = player.hp <= player.maxHp*0.15 ? 620 : 900;
+      beep(58, 0.1, 'sine', 0.22, 40);
+      setTimeout(()=>beep(50, 0.12, 'sine', 0.18, 34), 150);
+    }
+  }
+
   let mx=0,my=0;
   if(keys['a']||keys['arrowleft']) mx-=1;
   if(keys['d']||keys['arrowright']) mx+=1;
@@ -1441,7 +1605,18 @@ function render(){
   }
   ctx.globalAlpha=1;
 
-  // 子彈：預烘焙光暈＋實心彈體
+  // 子彈：預烘焙光暈＋實心彈體＋v6 additive 拖尾光
+  ctx.save();
+  ctx.globalCompositeOperation='lighter';
+  for(const b of bullets){
+    const g1=glowSprite(b.color);
+    ctx.globalAlpha=0.45;
+    ctx.drawImage(g1, b.x-b.vx*2.2-b.r*1.9, b.y-b.vy*2.2-b.r*1.9, b.r*3.8, b.r*3.8);
+    ctx.globalAlpha=0.28;
+    ctx.drawImage(g1, b.x-b.vx*4.4-b.r*1.4, b.y-b.vy*4.4-b.r*1.4, b.r*2.8, b.r*2.8);
+  }
+  ctx.restore();
+  ctx.globalAlpha=1;
   for(const b of bullets){
     ctx.drawImage(glowSprite(b.color), b.x-b.r*2.4, b.y-b.r*2.4, b.r*4.8, b.r*4.8);
     ctx.fillStyle=b.color;
@@ -1451,6 +1626,18 @@ function render(){
   }
 
   for(const en of enemies) drawEnemy(en, t);
+
+  // v6 玩家元素光環（隨施放魔法屬性著色的地面輝光）
+  if(player && chosenMagic){
+    const pl = 0.8 + Math.sin(t*0.004)*0.2;
+    ctx.save();
+    ctx.globalCompositeOperation='lighter';
+    ctx.globalAlpha=0.4*pl;
+    const gr = player.r*3.2;
+    ctx.drawImage(glowSprite(chosenMagic.color), player.x-gr, player.y+6-gr*0.5, gr*2, gr);
+    ctx.restore();
+    ctx.globalAlpha=1;
+  }
 
   if(player.divineBuffT>0){
     const pulse = 0.7 + Math.sin(t*0.008)*0.3;
@@ -1501,34 +1688,25 @@ function render(){
     ctx.fillText(bannerSub, W/2, H*0.32+62);
     ctx.restore();
   }
-  if(divineFlashT>0){
+  if(divineFlashT>0 && divineFlashCv){
     ctx.save();
     ctx.globalAlpha = Math.max(0, divineFlashT/900) * 0.65;
-    const flash = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.75);
-    flash.addColorStop(0,'rgba(255,244,214,0.9)'); flash.addColorStop(1,'rgba(255,244,214,0)');
-    ctx.fillStyle=flash;
-    ctx.fillRect(0,0,W,H);
+    ctx.drawImage(divineFlashCv, 0, 0, W, H);   // v6：烘焙快取，零即時漸層
     ctx.restore();
   }
-  // v5：魔王登場閃光——用該關魔王的主題色，讓「大事件」感跟魔王擊敗時的華麗特效對稱
+  // v5：魔王登場閃光（v6 改烘焙快取）
   if(bossFlashT>0){
     ctx.save();
     ctx.globalAlpha = Math.max(0, bossFlashT/500) * 0.55;
-    const flash = ctx.createRadialGradient(W/2,H/2,0,W/2,H/2,Math.max(W,H)*0.8);
-    flash.addColorStop(0, bossFlashColor+'cc'); flash.addColorStop(1, bossFlashColor+'00');
-    ctx.fillStyle=flash;
-    ctx.fillRect(0,0,W,H);
+    ctx.drawImage(bossFlashSprite(bossFlashColor), 0, 0, W, H);
     ctx.restore();
   }
-  // v5：低血量危險暈影——角落 14px 血條容易被忽略，加一層全螢幕脈動提示「快死了」
-  if(player && player.hp>0 && player.hp <= player.maxHp*0.3){
+  // v5：低血量危險暈影（v6 改烘焙快取）
+  if(player && player.hp>0 && player.hp <= player.maxHp*0.3 && redVignCv){
     const pulse = 0.5 + 0.5*Math.sin(t*0.006);
     ctx.save();
     ctx.globalAlpha = 0.16 + 0.2*pulse;
-    const vign = ctx.createRadialGradient(W/2,H/2,Math.min(W,H)*0.26,W/2,H/2,Math.max(W,H)*0.62);
-    vign.addColorStop(0,'rgba(255,40,60,0)'); vign.addColorStop(1,'rgba(255,20,40,0.85)');
-    ctx.fillStyle=vign;
-    ctx.fillRect(0,0,W,H);
+    ctx.drawImage(redVignCv, 0, 0, W, H);
     ctx.restore();
   }
 }

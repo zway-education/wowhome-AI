@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v4 -->
+<!-- 專業AI升級 v6：整幅夜景離屏烘焙(主迴圈零漸層/零shadowBlur)、柵欄與墓園加景、烘焙窗光additive閃爍、幽靈鬼火飄浮層、烘焙霧氣條帶、vignette；音效補上壓縮母線＋程序化殘響(ConvolverNode)、風聲環境層與木屋吱呀聲、全音效隨機音高 -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -207,34 +207,76 @@ function drawSprite(img, x, y, w, h, fallback) {
   }
 }
 
-// ----- Web Audio -----
-let AC = null;
+// ----- Web Audio（v6：壓縮母線＋程序化殘響＋風聲環境層） -----
+let AC = null, BUS = null, windGain = null;
 let muted = localStorage.getItem('haunt-muted') === '1';
 function audio() {
   if (!AC) {
-    try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { AC = null; }
+    try {
+      AC = new (window.AudioContext || window.webkitAudioContext)();
+      const comp = AC.createDynamicsCompressor();
+      comp.threshold.value = -16; comp.knee.value = 24; comp.ratio.value = 8;
+      comp.attack.value = 0.003; comp.release.value = 0.22;
+      BUS = AC.createGain();
+      BUS.gain.value = 0.9;
+      BUS.connect(comp);
+      comp.connect(AC.destination);
+      // v6 程序化殘響：generated impulse ConvolverNode（空曠鬼屋回聲）
+      try {
+        const len = Math.floor(AC.sampleRate * 1.9);
+        const ir = AC.createBuffer(2, len, AC.sampleRate);
+        for (let c = 0; c < 2; c++) {
+          const d = ir.getChannelData(c);
+          for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.6);
+        }
+        const conv = AC.createConvolver(); conv.buffer = ir;
+        const rev = AC.createGain(); rev.gain.value = 0.22;
+        BUS.connect(rev); rev.connect(conv); conv.connect(comp);
+      } catch (e) {}
+      // v6 夜風環境層：噪聲 bandpass＋慢速 LFO 起伏（音量依遊戲狀態切換）
+      try {
+        const wlen = AC.sampleRate * 2;
+        const wbuf = AC.createBuffer(1, wlen, AC.sampleRate);
+        const wd = wbuf.getChannelData(0);
+        for (let i = 0; i < wlen; i++) wd[i] = Math.random() * 2 - 1;
+        const wsrc = AC.createBufferSource(); wsrc.buffer = wbuf; wsrc.loop = true;
+        const wbp = AC.createBiquadFilter(); wbp.type = 'bandpass'; wbp.frequency.value = 480; wbp.Q.value = 0.5;
+        const wg = AC.createGain(); wg.gain.value = 1;
+        const lfo = AC.createOscillator(); lfo.frequency.value = 0.11;
+        const lfoG = AC.createGain(); lfoG.gain.value = 0.4;
+        lfo.connect(lfoG); lfoG.connect(wg.gain); lfo.start();
+        windGain = AC.createGain(); windGain.gain.value = 0;
+        wsrc.connect(wbp); wbp.connect(wg); wg.connect(windGain); windGain.connect(comp); wsrc.start();
+      } catch (e) { windGain = null; }
+      updateAmbient();
+    } catch (e) { AC = null; }
   }
   if (AC && AC.state === 'suspended') AC.resume();
   return AC;
+}
+function updateAmbient() {
+  if (!AC || !windGain) return;
+  windGain.gain.setTargetAtTime((!muted && mode !== 'title') ? 0.055 : 0, AC.currentTime, 0.6);
 }
 addEventListener('pointerdown', audio, { once: true });
 addEventListener('keydown', audio, { once: true });
 function beep(freq, dur, type, vol, slide) {
   if (muted) return;
-  const ac = audio(); if (!ac) return;
+  const ac = audio(); if (!ac || !BUS) return;
+  freq *= 0.96 + Math.random() * 0.08;   // v6 隨機音高 ±4%
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type || 'square';
   o.frequency.setValueAtTime(freq, ac.currentTime);
   if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
   g.gain.setValueAtTime(vol || 0.12, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  o.connect(g).connect(ac.destination);
+  o.connect(g).connect(BUS);
   o.start();
   o.stop(ac.currentTime + dur);
 }
 function noiseBurst(dur, vol) {
   if (muted) return;
-  const ac = audio(); if (!ac) return;
+  const ac = audio(); if (!ac || !BUS) return;
   const len = Math.floor(ac.sampleRate * dur);
   const buf = ac.createBuffer(1, len, ac.sampleRate);
   const data = buf.getChannelData(0);
@@ -243,7 +285,7 @@ function noiseBurst(dur, vol) {
   src.buffer = buf;
   g.gain.setValueAtTime(vol || 0.2, ac.currentTime);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
-  src.connect(g).connect(ac.destination);
+  src.connect(g).connect(BUS);
   src.start();
 }
 const sfx = {
@@ -258,7 +300,8 @@ const sfx = {
   meter()  { beep(1046, 0.08, 'sine', 0.08); },
   block()  { beep(1250, 0.05, 'square', 0.09); beep(620, 0.09, 'triangle', 0.13, -180); },
   candy()  { [880, 1175].forEach((f, i) => setTimeout(() => beep(f, 0.09, 'triangle', 0.12), i * 70)); },
-  count(n) { beep(n ? 440 : 700, n ? 0.12 : 0.32, 'square', 0.12); }
+  count(n) { beep(n ? 440 : 700, n ? 0.12 : 0.32, 'square', 0.12); },
+  creak()  { beep(120, 0.7, 'sawtooth', 0.028, 34); setTimeout(() => beep(95, 0.5, 'sawtooth', 0.02, -20), 350); }   // v6 木屋吱呀
 };
 const muteBtn = document.getElementById('muteBtn');
 function refreshMute() { muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -266,6 +309,7 @@ muteBtn.addEventListener('click', () => {
   muted = !muted;
   localStorage.setItem('haunt-muted', muted ? '1' : '0');
   refreshMute();
+  updateAmbient();
   if (!muted) beep(660, 0.08, 'square', 0.1);
 });
 refreshMute();
@@ -337,6 +381,175 @@ let stars = [];
 for (let i = 0; i < 46; i++) {
   stars.push({ x: Math.random() * GAME_W, y: Math.random() * 240, r: 0.6 + Math.random() * 1.4, tw: Math.random() * 6 });
 }
+
+/* ===== v6 離屏烘焙：整幅夜景（天空/月亮/鬼屋/枯樹/柵欄/墓園/地面）一次畫好，
+   主迴圈零 createGradient、零 shadowBlur ===== */
+const WINDOWS = [[168, 280, 20, 26], [370, 250, 22, 30], [600, 288, 20, 24], [800, 390, 22, 26]];
+const bgCv = document.createElement('canvas');
+(function bakeBG() {
+  bgCv.width = GAME_W * 2; bgCv.height = GAME_H * 2;
+  const g = bgCv.getContext('2d');
+  g.setTransform(2, 0, 0, 2, 0, 0);
+  // 夜空
+  const sky = g.createRadialGradient(GAME_W / 2, GAME_H * 0.45, 60, GAME_W / 2, GAME_H * 0.5, 620);
+  sky.addColorStop(0, '#241436'); sky.addColorStop(0.7, '#120a20'); sky.addColorStop(1, '#05030a');
+  g.fillStyle = sky; g.fillRect(0, 0, GAME_W, GAME_H);
+  // 星雲霧帶（紫色淡染）
+  for (const [nx, ny, nr] of [[200, 90, 130], [640, 60, 110], [460, 150, 90]]) {
+    const ng = g.createRadialGradient(nx, ny, 4, nx, ny, nr);
+    ng.addColorStop(0, 'rgba(120,80,200,0.12)'); ng.addColorStop(1, 'rgba(120,80,200,0)');
+    g.fillStyle = ng; g.beginPath(); g.arc(nx, ny, nr, 0, Math.PI * 2); g.fill();
+  }
+  // 底層星星（靜態，動態閃爍層另外畫）
+  g.fillStyle = '#9a8ac4';
+  for (let i = 0; i < 40; i++) g.fillRect(Math.random() * GAME_W, Math.random() * 250, 1, 1);
+  // 月亮：光暈＋本體＋隕石坑
+  const mg = g.createRadialGradient(GAME_W - 150, 90, 8, GAME_W - 150, 90, 110);
+  mg.addColorStop(0, 'rgba(255,250,200,0.5)'); mg.addColorStop(1, 'rgba(255,250,200,0)');
+  g.fillStyle = mg; g.beginPath(); g.arc(GAME_W - 150, 90, 110, 0, Math.PI * 2); g.fill();
+  const moon = g.createRadialGradient(GAME_W - 165, 75, 5, GAME_W - 150, 90, 46);
+  moon.addColorStop(0, '#fffbe0'); moon.addColorStop(0.7, '#d8cf9a'); moon.addColorStop(1, '#b3a86a');
+  g.fillStyle = moon; g.beginPath(); g.arc(GAME_W - 150, 90, 44, 0, Math.PI * 2); g.fill();
+  g.fillStyle = 'rgba(150,140,90,0.4)';
+  g.beginPath(); g.arc(GAME_W - 165, 82, 8, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(GAME_W - 138, 104, 6, 0, Math.PI * 2); g.fill();
+  g.beginPath(); g.arc(GAME_W - 145, 70, 4, 0, Math.PI * 2); g.fill();
+  // 遠處鬼屋剪影
+  g.fillStyle = '#150a22';
+  g.beginPath();
+  g.moveTo(60, GROUND_Y); g.lineTo(60, 330); g.lineTo(140, 330); g.lineTo(140, 250);
+  g.lineTo(180, 200); g.lineTo(220, 250); g.lineTo(220, 330); g.lineTo(300, 330);
+  g.lineTo(390, 180); g.lineTo(480, 330); g.lineTo(560, 330); g.lineTo(560, 260);
+  g.lineTo(640, 260); g.lineTo(640, 320); g.lineTo(760, 320); g.lineTo(760, 360);
+  g.lineTo(900, 360); g.lineTo(900, GROUND_Y);
+  g.closePath(); g.fill();
+  g.strokeStyle = '#3a2555'; g.lineWidth = 2; g.stroke();
+  // 尖塔桿
+  g.beginPath(); g.moveTo(390, 180); g.lineTo(390, 150); g.stroke();
+  // 窗框（暗底＋十字，發光層動態疊）
+  for (const [wx, wy, ww, wh] of WINDOWS) {
+    g.fillStyle = '#31204a';
+    g.fillRect(wx - 2, wy - 2, ww + 4, wh + 4);
+    g.fillStyle = '#7a4a00';
+    g.fillRect(wx, wy, ww, wh);
+    g.strokeStyle = 'rgba(21,10,34,0.9)'; g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(wx + ww / 2, wy); g.lineTo(wx + ww / 2, wy + wh);
+    g.moveTo(wx, wy + wh / 2); g.lineTo(wx + ww, wy + wh / 2);
+    g.stroke();
+  }
+  // 枯樹（左右各一）
+  const tree = (tx, flip) => {
+    g.save(); g.translate(tx, GROUND_Y); g.scale(flip, 1);
+    g.strokeStyle = '#1c1030'; g.lineCap = 'round';
+    g.lineWidth = 10;
+    g.beginPath(); g.moveTo(0, 4); g.quadraticCurveTo(6, -60, -6, -110); g.stroke();
+    g.lineWidth = 5;
+    g.beginPath();
+    g.moveTo(-2, -70); g.quadraticCurveTo(30, -95, 44, -128);
+    g.moveTo(-4, -95); g.quadraticCurveTo(-30, -115, -38, -140);
+    g.stroke();
+    g.lineWidth = 2.5;
+    g.beginPath();
+    g.moveTo(44, -128); g.lineTo(58, -140);
+    g.moveTo(44, -128); g.lineTo(52, -118);
+    g.moveTo(-38, -140); g.lineTo(-50, -150);
+    g.stroke();
+    g.restore();
+  };
+  tree(40, 1); tree(GAME_W - 40, -1);
+  // v6 加景：歪斜鐵柵欄（鬼屋前排）
+  g.strokeStyle = '#241638'; g.lineCap = 'round';
+  g.lineWidth = 3;
+  g.beginPath();
+  g.moveTo(0, GROUND_Y - 24); g.lineTo(GAME_W, GROUND_Y - 28);
+  g.stroke();
+  g.lineWidth = 2.5;
+  for (let fx = 14; fx < GAME_W; fx += 34) {
+    const lean = Math.sin(fx * 1.7) * 4;
+    const fy = GROUND_Y - 26 - Math.sin(fx * 0.013) * 2;
+    g.beginPath();
+    g.moveTo(fx, GROUND_Y + 2); g.lineTo(fx + lean, fy - 22);
+    g.stroke();
+    g.beginPath();   // 尖頭
+    g.moveTo(fx + lean - 3, fy - 18); g.lineTo(fx + lean, fy - 26); g.lineTo(fx + lean + 3, fy - 18);
+    g.stroke();
+  }
+  // 地面
+  const gg = g.createLinearGradient(0, GROUND_Y, 0, GAME_H);
+  gg.addColorStop(0, '#1a0f28'); gg.addColorStop(1, '#05030a');
+  g.fillStyle = gg; g.fillRect(0, GROUND_Y, GAME_W, GAME_H - GROUND_Y);
+  g.strokeStyle = '#402a5c'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(0, GROUND_Y); g.lineTo(GAME_W, GROUND_Y); g.stroke();
+  // 月光映地（烘焙反光帶）
+  const mr = g.createRadialGradient(GAME_W - 150, GROUND_Y + 30, 10, GAME_W - 150, GROUND_Y + 30, 260);
+  mr.addColorStop(0, 'rgba(255,250,200,0.07)'); mr.addColorStop(1, 'rgba(255,250,200,0)');
+  g.fillStyle = mr; g.fillRect(GAME_W - 420, GROUND_Y, 540, GAME_H - GROUND_Y);
+  // 地面碎石（細節）
+  g.fillStyle = 'rgba(90,70,130,0.35)';
+  for (let i = 0; i < 30; i++) {
+    const px2 = Math.random() * GAME_W, py2 = GROUND_Y + 8 + Math.random() * (GAME_H - GROUND_Y - 14);
+    g.fillRect(px2, py2, 2 + Math.random() * 3, 1.5);
+  }
+  // 墓碑（多兩座 + 傾斜十字架）
+  const grave = (gx, gs, leanA) => {
+    g.save(); g.translate(gx, GROUND_Y + 18); g.rotate(leanA); g.scale(gs, gs);
+    g.fillStyle = '#241838';
+    g.beginPath();
+    g.moveTo(-12 + 8, -26); g.arcTo(12, -26, 12, 2, 8); g.lineTo(12, 2); g.lineTo(-12, 2); g.lineTo(-12, -26 + 8);
+    g.arcTo(-12, -26, 12, -26, 8);
+    g.closePath(); g.fill();
+    g.strokeStyle = '#3a2555'; g.lineWidth = 1.5;
+    g.beginPath();
+    g.moveTo(-6, -14); g.lineTo(6, -14);
+    g.moveTo(0, -19); g.lineTo(0, -8);
+    g.stroke();
+    g.restore();
+  };
+  grave(130, 1, 0); grave(850, 0.8, 0.06); grave(520, 0.7, -0.05);
+  grave(300, 0.6, 0.1); grave(700, 0.55, -0.08);
+})();
+/* v6 烘焙光暈精靈：窗光／鬼火 */
+function bakeGlowSpr(size, stops) {
+  const c = document.createElement('canvas'); c.width = c.height = size;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(size / 2, size / 2, 1, size / 2, size / 2, size / 2);
+  for (const [t2, col] of stops) rg.addColorStop(t2, col);
+  g.fillStyle = rg; g.fillRect(0, 0, size, size);
+  return c;
+}
+const winGlowCv = bakeGlowSpr(128, [[0, 'rgba(255,207,77,0.95)'], [0.35, 'rgba(255,157,31,0.5)'], [1, 'rgba(255,157,31,0)']]);
+const wispCv = bakeGlowSpr(64, [[0, 'rgba(170,255,220,0.9)'], [0.4, 'rgba(110,230,190,0.35)'], [1, 'rgba(110,230,190,0)']]);
+const vigCv = (() => {
+  const c = document.createElement('canvas'); c.width = GAME_W; c.height = GAME_H;
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(GAME_W / 2, GAME_H * 0.46, GAME_H * 0.44, GAME_W / 2, GAME_H * 0.52, GAME_H * 1.02);
+  rg.addColorStop(0, 'rgba(5,3,10,0)'); rg.addColorStop(1, 'rgba(5,3,10,0.5)');
+  g.fillStyle = rg; g.fillRect(0, 0, GAME_W, GAME_H);
+  return c;
+})();
+/* v6 烘焙霧氣條帶（主迴圈只做平移 blit） */
+const fogCv = document.createElement('canvas');
+(function bakeFog() {
+  fogCv.width = GAME_W + 160; fogCv.height = 90;
+  const g = fogCv.getContext('2d');
+  const fg = g.createLinearGradient(0, 0, 0, 90);
+  fg.addColorStop(0, 'rgba(200,180,255,0)');
+  fg.addColorStop(0.55, 'rgba(200,180,255,0.16)');
+  fg.addColorStop(1, 'rgba(200,180,255,0)');
+  g.fillStyle = fg;
+  g.beginPath();
+  g.moveTo(0, 90);
+  for (let x = 0; x <= fogCv.width; x += 40) g.lineTo(x, 40 + Math.sin(x * 0.02) * 12);
+  g.lineTo(fogCv.width, 90);
+  g.closePath(); g.fill();
+})();
+/* v6 幽靈鬼火（飄浮環境粒子） */
+const wisps = [];
+for (let i = 0; i < 6; i++) {
+  wisps.push({ x: Math.random() * GAME_W, y: 240 + Math.random() * 180, ph: Math.random() * 6.3, sp: 0.4 + Math.random() * 0.5 });
+}
+let creakT = 5;
 
 function resetGame() {
   ghost = makeFighter('幽靈', '👻', 220, 1, IMG.ghost);
@@ -447,6 +660,7 @@ function startGame(ai) {
   overOverlay.classList.remove('show');
   sfx.start();
   sfx.count(3);
+  updateAmbient();
 }
 function startSurvival() {
   survival = true; vsAI = true;
@@ -460,6 +674,7 @@ function startSurvival() {
   overOverlay.classList.remove('show');
   sfx.start();
   sfx.count(3);
+  updateAmbient();
 }
 function refreshTitle() {
   const b = document.getElementById('mode3');
@@ -495,6 +710,7 @@ document.getElementById('menuBtn').addEventListener('click', () => {
   resetGame();
   refreshTitle();
   titleOverlay.classList.add('show');
+  updateAmbient();
 });
 
 // ----- 戰鬥 -----
@@ -682,6 +898,21 @@ function update(dt) {
   flash = Math.max(0, flash - dt * 3);
   overCooldown = Math.max(0, overCooldown - dt);
   lightning = Math.max(0, lightning - dt * 2.2);
+  // v6 鬼火飄浮
+  for (const w of wisps) {
+    w.ph += dt * w.sp;
+    w.x += Math.sin(w.ph * 0.9) * 16 * dt;
+    w.y += Math.cos(w.ph * 0.7) * 10 * dt;
+    if (w.x < -20) w.x = GAME_W + 10;
+    if (w.x > GAME_W + 20) w.x = -10;
+    w.y = Math.max(200, Math.min(GROUND_Y - 20, w.y));
+  }
+  // v6 木屋吱呀聲（隨機氛圍音）
+  creakT -= dt;
+  if (creakT <= 0) {
+    creakT = 6 + Math.random() * 8;
+    if (mode === 'play') sfx.creak();
+  }
   lightningTimer -= dt;
   if (lightningTimer <= 0) {
     lightningTimer = 8 + Math.random() * 9;
@@ -830,15 +1061,18 @@ function rr(x, y, w, h, r) {
 }
 
 function drawBackground() {
-  // 夜空
-  const g = ctx.createRadialGradient(GAME_W / 2, GAME_H * 0.45, 60, GAME_W / 2, GAME_H * 0.5, 620);
-  g.addColorStop(0, lightning > 0.4 ? '#5a4a80' : '#241436');
-  g.addColorStop(0.7, '#120a20');
-  g.addColorStop(1, '#05030a');
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, GAME_W, GAME_H);
+  // v6：整幅夜景取自離屏烘焙（零即時漸層/陰影）
+  ctx.drawImage(bgCv, 0, 0, GAME_W, GAME_H);
 
-  // 星星
+  // 閃電時整片天空增亮（覆蓋層取代即時漸層重建）
+  if (lightning > 0.4) {
+    ctx.globalAlpha = (lightning - 0.4) * 0.55;
+    ctx.fillStyle = '#4a3a70';
+    ctx.fillRect(0, 0, GAME_W, GROUND_Y);
+    ctx.globalAlpha = 1;
+  }
+
+  // 動態閃爍星星（疊在烘焙星空上）
   for (const s of stars) {
     const tw = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(elapsed * 1.8 + s.tw));
     ctx.globalAlpha = tw;
@@ -846,27 +1080,6 @@ function drawBackground() {
     ctx.fillRect(s.x, s.y, s.r, s.r);
   }
   ctx.globalAlpha = 1;
-
-  // 月亮：光暈 + 本體 + 隕石坑
-  const mg = ctx.createRadialGradient(GAME_W - 150, 90, 8, GAME_W - 150, 90, 110);
-  mg.addColorStop(0, 'rgba(255,250,200,0.5)');
-  mg.addColorStop(1, 'rgba(255,250,200,0)');
-  ctx.fillStyle = mg;
-  ctx.beginPath();
-  ctx.arc(GAME_W - 150, 90, 110, 0, Math.PI * 2);
-  ctx.fill();
-  const moon = ctx.createRadialGradient(GAME_W - 165, 75, 5, GAME_W - 150, 90, 46);
-  moon.addColorStop(0, '#fffbe0');
-  moon.addColorStop(0.7, '#d8cf9a');
-  moon.addColorStop(1, '#b3a86a');
-  ctx.fillStyle = moon;
-  ctx.beginPath();
-  ctx.arc(GAME_W - 150, 90, 44, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = 'rgba(150,140,90,0.4)';
-  ctx.beginPath(); ctx.arc(GAME_W - 165, 82, 8, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(GAME_W - 138, 104, 6, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.arc(GAME_W - 145, 70, 4, 0, Math.PI * 2); ctx.fill();
 
   // 蝙蝠（OpenMoji，沿弧線飛）
   for (const b of bats) {
@@ -880,38 +1093,7 @@ function drawBackground() {
     ctx.restore();
   }
 
-  // 遠處鬼屋剪影（多屋頂 + 尖塔）
-  ctx.fillStyle = '#150a22';
-  ctx.beginPath();
-  ctx.moveTo(60, GROUND_Y);
-  ctx.lineTo(60, 330);
-  ctx.lineTo(140, 330);
-  ctx.lineTo(140, 250);
-  ctx.lineTo(180, 200);
-  ctx.lineTo(220, 250);
-  ctx.lineTo(220, 330);
-  ctx.lineTo(300, 330);
-  ctx.lineTo(390, 180);
-  ctx.lineTo(480, 330);
-  ctx.lineTo(560, 330);
-  ctx.lineTo(560, 260);
-  ctx.lineTo(640, 260);
-  ctx.lineTo(640, 320);
-  ctx.lineTo(760, 320);
-  ctx.lineTo(760, 360);
-  ctx.lineTo(900, 360);
-  ctx.lineTo(900, GROUND_Y);
-  ctx.closePath();
-  ctx.fill();
-  // 屋頂描邊
-  ctx.strokeStyle = '#3a2555';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  // 尖塔旗
-  ctx.strokeStyle = '#3a2555';
-  ctx.beginPath();
-  ctx.moveTo(390, 180); ctx.lineTo(390, 150);
-  ctx.stroke();
+  // 尖塔旗（飄動，動態）
   ctx.fillStyle = '#5a3d85';
   ctx.beginPath();
   ctx.moveTo(390, 150);
@@ -920,109 +1102,47 @@ function drawBackground() {
   ctx.closePath();
   ctx.fill();
 
-  // 發亮的窗（閃爍）
+  // v6 窗光：烘焙光暈 additive 閃爍（取代每幀 shadowBlur＋漸層）
   const flick = 0.6 + 0.4 * Math.sin(elapsed * 5.3) * Math.sin(elapsed * 1.7);
-  const windows = [[168, 280, 20, 26], [370, 250, 22, 30], [600, 288, 20, 24], [800, 390, 22, 26]];
-  for (const [wx, wy, ww, wh] of windows) {
-    ctx.save();
-    ctx.shadowColor = 'rgba(255,170,0,0.9)';
-    ctx.shadowBlur = 18 * flick;
-    const wg = ctx.createRadialGradient(wx + ww / 2, wy + wh / 2, 2, wx + ww / 2, wy + wh / 2, ww);
-    wg.addColorStop(0, '#ffcf4d');
-    wg.addColorStop(0.6, '#ff9d1f');
-    wg.addColorStop(1, '#7a4a00');
-    ctx.fillStyle = wg;
-    ctx.globalAlpha = 0.55 + 0.45 * flick;
-    ctx.fillRect(wx, wy, ww, wh);
-    ctx.restore();
-    ctx.globalAlpha = 1;
-    // 窗框十字
-    ctx.strokeStyle = 'rgba(21,10,34,0.9)';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(wx + ww / 2, wy); ctx.lineTo(wx + ww / 2, wy + wh);
-    ctx.moveTo(wx, wy + wh / 2); ctx.lineTo(wx + ww, wy + wh / 2);
-    ctx.stroke();
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const [wx, wy, ww, wh] of WINDOWS) {
+    ctx.globalAlpha = 0.35 + 0.45 * flick;
+    const gr = ww * 2.6;
+    ctx.drawImage(winGlowCv, wx + ww / 2 - gr, wy + wh / 2 - gr, gr * 2, gr * 2);
   }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = 'rgba(255,207,77,' + (0.35 + 0.4 * flick).toFixed(3) + ')';
+  for (const [wx, wy, ww, wh] of WINDOWS) ctx.fillRect(wx, wy, ww, wh);
 
-  // 枯樹（左右各一）
-  const tree = (tx, flip) => {
-    ctx.save();
-    ctx.translate(tx, GROUND_Y);
-    ctx.scale(flip, 1);
-    ctx.strokeStyle = '#1c1030';
-    ctx.lineCap = 'round';
-    ctx.lineWidth = 10;
-    ctx.beginPath();
-    ctx.moveTo(0, 4);
-    ctx.quadraticCurveTo(6, -60, -6, -110);
-    ctx.stroke();
-    ctx.lineWidth = 5;
-    ctx.beginPath();
-    ctx.moveTo(-2, -70);
-    ctx.quadraticCurveTo(30, -95, 44, -128);
-    ctx.moveTo(-4, -95);
-    ctx.quadraticCurveTo(-30, -115, -38, -140);
-    ctx.stroke();
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(44, -128); ctx.lineTo(58, -140);
-    ctx.moveTo(44, -128); ctx.lineTo(52, -118);
-    ctx.moveTo(-38, -140); ctx.lineTo(-50, -150);
-    ctx.stroke();
-    ctx.restore();
-  };
-  tree(40, 1);
-  tree(GAME_W - 40, -1);
-
-  // 地面
-  const gg = ctx.createLinearGradient(0, GROUND_Y, 0, GAME_H);
-  gg.addColorStop(0, '#1a0f28');
-  gg.addColorStop(1, '#05030a');
-  ctx.fillStyle = gg;
-  ctx.fillRect(0, GROUND_Y, GAME_W, GAME_H - GROUND_Y);
-  ctx.strokeStyle = '#402a5c';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(0, GROUND_Y);
-  ctx.lineTo(GAME_W, GROUND_Y);
-  ctx.stroke();
-  // 墓碑
-  for (const [gx, gs] of [[130, 1], [850, 0.8], [520, 0.7]]) {
-    ctx.save();
-    ctx.translate(gx, GROUND_Y + 18);
-    ctx.scale(gs, gs);
-    ctx.fillStyle = '#241838';
-    rr(-12, -26, 24, 28, 8);
-    ctx.fill();
-    ctx.strokeStyle = '#3a2555';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(-6, -14); ctx.lineTo(6, -14);
-    ctx.moveTo(0, -19); ctx.lineTo(0, -8);
-    ctx.stroke();
-    ctx.restore();
+  // v6 幽靈鬼火（additive 飄浮光點）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  for (const w of wisps) {
+    const tw = 0.3 + 0.7 * Math.abs(Math.sin(w.ph * 1.3));
+    ctx.globalAlpha = tw * 0.5;
+    const sz = 14 + tw * 10;
+    ctx.drawImage(wispCv, w.x - sz / 2, w.y - sz / 2, sz, sz);
   }
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawFog() {
-  // 兩層飄移霧氣
-  for (const [amp, spd, a, y0] of [[46, 0.25, 0.1, GROUND_Y - 16], [30, 0.4, 0.14, GROUND_Y + 6]]) {
-    const off = Math.sin(elapsed * spd) * amp;
-    const fg = ctx.createLinearGradient(0, y0 - 30, 0, y0 + 30);
-    fg.addColorStop(0, 'rgba(200,180,255,0)');
-    fg.addColorStop(0.6, 'rgba(200,180,255,' + a + ')');
-    fg.addColorStop(1, 'rgba(200,180,255,0)');
-    ctx.fillStyle = fg;
-    ctx.beginPath();
-    ctx.moveTo(-80 + off, y0 + 30);
-    for (let x = -80; x <= GAME_W + 80; x += 40) {
-      ctx.lineTo(x + off, y0 + Math.sin(x * 0.02 + elapsed * 0.7) * 12 - 10);
-    }
-    ctx.lineTo(GAME_W + 80 + off, y0 + 30);
-    ctx.closePath();
-    ctx.fill();
-  }
+  // v6 三層烘焙霧氣條帶：主迴圈只做平移 blit
+  ctx.save();
+  ctx.globalAlpha = 0.75;
+  const o1 = Math.sin(elapsed * 0.25) * 46;
+  const o2 = Math.sin(elapsed * 0.4 + 2) * 30;
+  const o3 = Math.sin(elapsed * 0.55 + 4) * 24;
+  ctx.drawImage(fogCv, o1 - 80, GROUND_Y - 58, GAME_W + 160, 90);
+  ctx.globalAlpha = 0.9;
+  ctx.drawImage(fogCv, o2 - 80, GROUND_Y - 34, GAME_W + 160, 90);
+  ctx.globalAlpha = 0.6;
+  ctx.drawImage(fogCv, -o3 - 80, GROUND_Y - 12, GAME_W + 160, 90);
+  ctx.restore();
+  ctx.globalAlpha = 1;
 }
 
 function drawFighter(f, foe) {
@@ -1329,6 +1449,9 @@ function draw() {
   drawFloats();
 
   ctx.restore();
+
+  // v6 烘焙 vignette（夜色聚焦擂臺中央）
+  ctx.drawImage(vigCv, 0, 0, GAME_W, GAME_H);
 
   // KO 大字
   if (koTimer >= 0 && koTimer < 1.7) {
