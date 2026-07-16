@@ -244,67 +244,424 @@ const lerp = (a,b,t) => a+(b-a)*t;
 
 // ---------- v6 烘焙資產：火空/熔岩/平臺/岩壁視差/光暈/暈影/顆粒/光帶 ----------
 function bakeTex(w,h,fn){ const c = document.createElement('canvas'); c.width=w; c.height=h; fn(c.getContext('2d'),w,h); return c; }
-const skyTex = bakeTex(GAME_W, GAME_H, (g,w,h)=>{
-  const rg = g.createRadialGradient(w/2, h*1.05, h*0.1, w/2, h*1.05, w*0.9);
-  rg.addColorStop(0, '#ff7e3d'); rg.addColorStop(0.22, '#ff3d1c');
-  rg.addColorStop(0.5, '#4a0f08'); rg.addColorStop(0.75, '#180608'); rg.addColorStop(1, '#070307');
-  g.fillStyle = rg; g.fillRect(0, 0, w, h);
-  g.globalAlpha = 0.22;
-  g.fillStyle = 'rgba(255,170,80,0.6)';
-  g.beginPath(); g.ellipse(w*0.2, h*0.15, w*0.3, h*0.15, 0, 0, Math.PI*2); g.fill();
-  g.globalAlpha = 1;
-  // 遠處火山剪影
-  g.fillStyle = 'rgba(20,6,8,0.9)';
-  g.beginPath(); g.moveTo(0, h*0.52);
-  g.lineTo(w*0.12, h*0.36); g.lineTo(w*0.2, h*0.46); g.lineTo(w*0.33, h*0.3);
-  g.lineTo(w*0.45, h*0.5); g.lineTo(w*0.6, h*0.34); g.lineTo(w*0.72, h*0.48);
-  g.lineTo(w*0.86, h*0.32); g.lineTo(w, h*0.5);
-  g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fill();
-  // 火山口微光
-  [[0.33,0.3],[0.6,0.34],[0.86,0.32]].forEach(([px,py])=>{
-    const rr = g.createRadialGradient(w*px, h*py, 0, w*px, h*py, 42);
-    rr.addColorStop(0,'rgba(255,120,60,0.5)'); rr.addColorStop(1,'rgba(255,120,60,0)');
-    g.fillStyle = rr; g.fillRect(w*px-42, h*py-42, 84, 84);
-  });
-});
-// 岩壁視差層（近景，可平鋪捲動）
-const rockTex = bakeTex(GAME_W*2, GAME_H, (g,w,h)=>{
-  g.fillStyle = 'rgba(12,5,10,0.85)';
-  let s = 7;
-  const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
-  g.beginPath(); g.moveTo(0, h*0.7);
-  for(let x=0; x<=w; x+=w/24){
-    g.lineTo(x, h*(0.55 + rnd()*0.2));
+/* ===================== 以下 3D 場景「直接移植自遊戲《跑酷火人3D》」：同一套投影、烘焙與角色代碼，保證畫面一致 ===================== */
+const VW = GAME_W, VH = GAME_H, CX = VW/2, CY = VH*0.42, FOV = VH*0.9;
+const TILT = 0.30;
+const cosA = Math.cos(TILT), sinA = Math.sin(TILT);
+const cam = { x:0, y:170, z:-320 };
+function project(x,y,z){
+  const dx=x-cam.x, dy=y-cam.y, dz=z-cam.z;
+  const ry = dy*cosA + dz*sinA;
+  const rz = dz*cosA - dy*sinA;
+  if(rz < 14) return null;
+  const s = FOV/rz;
+  return { x:CX+dx*s, y:CY-ry*s, s };
+}
+function camDepth(y,z){ return (z-cam.z)*cosA - (y-cam.y)*sinA; }
+function quad(a,b,c,d,color){
+  if(!a||!b||!c||!d) return false;
+  ctx.fillStyle=color;
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y);
+  ctx.closePath(); ctx.fill();
+  return true;
+}
+function quadStroke(a,b,c,d,color,w){
+  if(!a||!b||!c||!d) return;
+  ctx.strokeStyle=color; ctx.lineWidth=w;
+  ctx.beginPath();
+  ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y);
+  ctx.closePath(); ctx.stroke();
+}
+function texQuad(a,b,c,d,alpha){
+  ctx.save();
+  ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y); ctx.closePath(); ctx.clip();
+  ctx.globalAlpha = ctx.globalAlpha*alpha;
+  const W=rockTexCv.width, H=rockTexCv.height;
+  ctx.transform((b.x-a.x)/W,(b.y-a.y)/W,(d.x-a.x)/H,(d.y-a.y)/H,a.x,a.y);
+  ctx.drawImage(rockTexCv,0,0);
+  ctx.restore();
+}
+function drawBox3D(x,y,z,hw,h,hd,pal,lavaGlow,outline,tex){
+  const tFL=project(x-hw,y,z-hd), tFR=project(x+hw,y,z-hd),
+        tBL=project(x-hw,y,z+hd), tBR=project(x+hw,y,z+hd),
+        bFL=project(x-hw,y-h,z-hd), bFR=project(x+hw,y-h,z-hd),
+        bBL=project(x-hw,y-h,z+hd), bBR=project(x+hw,y-h,z+hd);
+  if(cam.x < x-hw){ quad(tFL,tBL,bBL,bFL,pal.sideDark); if(outline) quadStroke(tFL,tBL,bBL,bFL,outline,1); }
+  else if(cam.x > x+hw){ quad(tFR,tBR,bBR,bFR,pal.side); if(outline) quadStroke(tFR,tBR,bBR,bFR,outline,1); }
+  if(quad(tFL,tFR,bFR,bFL,pal.front)){
+    if(bFL&&bFR&&tFL&&tFR){
+      const mFL={x:tFL.x+(bFL.x-tFL.x)*0.55, y:tFL.y+(bFL.y-tFL.y)*0.55};
+      const mFR={x:tFR.x+(bFR.x-tFR.x)*0.55, y:tFR.y+(bFR.y-tFR.y)*0.55};
+      quad(mFL,mFR,bFR,bFL,'rgba(10,4,2,0.35)');
+      if(lavaGlow>0){
+        const gFL={x:tFL.x+(bFL.x-tFL.x)*0.78, y:tFL.y+(bFL.y-tFL.y)*0.78};
+        const gFR={x:tFR.x+(bFR.x-tFR.x)*0.78, y:tFR.y+(bFR.y-tFR.y)*0.78};
+        quad(gFL,gFR,bFR,bFL,'rgba(255,110,30,'+(0.32*lavaGlow).toFixed(2)+')');
+      }
+    }
+    if(outline) quadStroke(tFL,tFR,bFR,bFL,outline,1);
   }
-  g.lineTo(w, h); g.lineTo(0, h); g.closePath(); g.fill();
-  // 岩石裂縫熔光
-  for(let i=0;i<26;i++){
-    const x = rnd()*w, y = h*(0.68 + rnd()*0.25);
-    g.globalAlpha = 0.2 + rnd()*0.3;
-    g.fillStyle = '#ff5a26';
-    g.fillRect(x, y, 2 + rnd()*8, 1.4);
+  quad(tFL,tFR,tBR,tBL,pal.top);
+  if(tex && tFL&&tFR&&tBR&&tBL && Math.abs(tFR.x-tFL.x)>56) texQuad(tFL,tFR,tBR,tBL,0.85);
+  quadStroke(tFL,tFR,tBR,tBL,pal.edge,1.5);
+  if(outline) quadStroke(tFL,tFR,tBR,tBL,outline,1);
+  return {tFL,tFR,tBL,tBR};
+}
+/* 岩石細節紋理（遊戲同款） */
+const rockTexCv = bakeTex(128,128,(g)=>{
+  for(let i=0;i<130;i++){
+    g.fillStyle = 'rgba(0,0,0,'+(0.05+Math.random()*0.12).toFixed(2)+')';
+    const r = 2+Math.random()*7;
+    g.beginPath(); g.ellipse(Math.random()*128, Math.random()*128, r, r*0.7, Math.random()*3, 0, 6.29); g.fill();
   }
-  g.globalAlpha = 1;
-});
-const lavaTex = bakeTex(GAME_W, 180, (g,w,h)=>{
-  const lg = g.createLinearGradient(0, 0, 0, h*0.32);
-  lg.addColorStop(0, '#ffd36b'); lg.addColorStop(0.4, '#ff7e3d'); lg.addColorStop(1, '#8a1a06');
-  g.fillStyle = lg; g.fillRect(0, 0, w, h);
-  // 熔岩亮斑
-  for(let i=0;i<34;i++){
-    const x = Math.random()*w, y = 12+Math.random()*(h-20);
-    g.globalAlpha = 0.12 + Math.random()*0.2;
-    g.fillStyle = '#ffd36b';
-    g.beginPath(); g.ellipse(x, y, 8+Math.random()*22, 2.5+Math.random()*4, 0, 0, Math.PI*2); g.fill();
+  for(let i=0;i<90;i++){
+    g.fillStyle = 'rgba(255,235,205,'+(0.04+Math.random()*0.08).toFixed(2)+')';
+    g.fillRect(Math.random()*128, Math.random()*128, 1+Math.random()*2, 1+Math.random()*2);
   }
-  g.globalAlpha = 1;
+  g.strokeStyle='rgba(0,0,0,0.22)'; g.lineWidth=1;
+  for(let i=0;i<11;i++){
+    let x=Math.random()*128, y=Math.random()*128;
+    g.beginPath(); g.moveTo(x,y);
+    for(let k=0;k<4;k++){ x+=(Math.random()*2-1)*18; y+=(Math.random()*2-1)*18; g.lineTo(x,y); }
+    g.stroke();
+  }
 });
-const platTex = bakeTex(8, 18, (g,w,h)=>{
-  const lg = g.createLinearGradient(0, 0, 0, h);
-  lg.addColorStop(0, '#3a4a6a'); lg.addColorStop(1, '#1a2138');
-  g.fillStyle = lg; g.fillRect(0, 0, w, h);
-  g.fillStyle = 'rgba(56,225,255,0.5)'; g.fillRect(0, 0, w, 3);
+/* 熔岩結殼紋理（遊戲同款） */
+const lavaTexCv = bakeTex(256,256,(g)=>{
+  const W=256,H=256;
+  for(let i=0;i<46;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=14+Math.random()*30;
+    const ry=r*(0.5+Math.random()*0.3), rot=Math.random()*3;
+    g.fillStyle='rgba(70,16,4,'+(0.5+Math.random()*0.35).toFixed(2)+')';
+    for(let ox=-W;ox<=W;ox+=W) for(let oy=-H;oy<=H;oy+=H){
+      g.beginPath(); g.ellipse(x+ox,y+oy,r,ry,rot,0,6.29); g.fill();
+    }
+  }
+  for(let i=0;i<70;i++){
+    const x=Math.random()*W, y=Math.random()*H, r=1+Math.random()*3;
+    g.fillStyle='rgba(255,210,110,'+(0.15+Math.random()*0.3).toFixed(2)+')';
+    for(let ox=-W;ox<=W;ox+=W) for(let oy=-H;oy<=H;oy+=H){
+      g.beginPath(); g.arc(x+ox,y+oy,r,0,6.29); g.fill();
+    }
+  }
 });
+/* 天空／火山剪影／熔岩漸層／結殼合成（遊戲 bakeSky 同款，固定 960×540） */
+const skyCv = bakeTex(VW, VH, (g)=>{
+  const grad = g.createLinearGradient(0,0,0,VH);
+  grad.addColorStop(0,'#0d0308'); grad.addColorStop(0.35,'#2a0a0c');
+  grad.addColorStop(0.62,'#6b1a10'); grad.addColorStop(0.8,'#c8451a'); grad.addColorStop(1,'#ff7e3d');
+  g.fillStyle = grad; g.fillRect(0,0,VW,VH);
+  const hb = VH*0.142;
+  for(let i=0;i<90;i++){
+    const x=Math.random()*VW, y=Math.random()*hb*0.92;
+    g.globalAlpha = 0.2+Math.random()*0.6;
+    g.fillStyle='#ffd9c0'; g.fillRect(x,y,Math.random()<0.2?2:1,Math.random()<0.2?2:1);
+  }
+  g.globalAlpha=1;
+  for(let i=0;i<7;i++){
+    const cx=Math.random()*VW, cy=hb*(0.22+Math.random()*0.62), rw=90+Math.random()*170, rh=10+Math.random()*18;
+    const cg=g.createRadialGradient(cx,cy+rh,2,cx,cy,rw);
+    cg.addColorStop(0,'rgba(255,120,50,0.30)');
+    cg.addColorStop(0.55,'rgba(130,32,20,0.20)');
+    cg.addColorStop(1,'rgba(60,10,14,0)');
+    g.fillStyle=cg;
+    g.beginPath(); g.ellipse(cx,cy,rw,rh,0,0,Math.PI*2); g.fill();
+  }
+  const hg=g.createLinearGradient(0,hb-VH*0.09,0,hb+VH*0.02);
+  hg.addColorStop(0,'rgba(255,120,40,0)'); hg.addColorStop(0.85,'rgba(255,150,60,0.4)'); hg.addColorStop(1,'rgba(255,190,90,0.55)');
+  g.fillStyle=hg; g.fillRect(0,hb-VH*0.09,VW,VH*0.11);
+});
+function bakeMts(stripH, step, hMin, hVar, color, crater){
+  const cv = document.createElement('canvas');
+  cv.width=VW; cv.height=Math.ceil(stripH);
+  const m=cv.getContext('2d');
+  for(let x=-160;x<VW+240;x+=step){
+    const h=hMin+(((x*13)%hVar)+hVar)%hVar;
+    m.fillStyle=color;
+    m.beginPath(); m.moveTo(x-step*0.62,cv.height); m.lineTo(x,cv.height-h); m.lineTo(x+step*0.62,cv.height); m.closePath(); m.fill();
+    if(crater){
+      m.fillStyle='rgba(255,170,80,0.28)';
+      m.fillRect(x-16, cv.height-h-4, 32, 6);
+      m.fillStyle='rgba(255,130,45,0.75)';
+      m.fillRect(x-9, cv.height-h, 18, 3.5);
+    }
+  }
+  return cv;
+}
+const farMtCv = bakeMts(Math.max(50,VH*0.20), 210, VH*0.045, VH*0.06, '#160407', false);
+const nearMtCv = bakeMts(Math.max(66,VH*0.26), 300, VH*0.075, VH*0.09, '#20070a', true);
+const lavaGradCv = bakeTex(4,256,(g)=>{
+  const lgrad = g.createLinearGradient(0,0,0,256);
+  lgrad.addColorStop(0,'#8a1e06'); lgrad.addColorStop(0.3,'#c83a0e');
+  lgrad.addColorStop(0.7,'#ff6a1c'); lgrad.addColorStop(1,'#ffb04a');
+  g.fillStyle = lgrad; g.fillRect(0,0,4,256);
+});
+const crustCv = (function(){
+  const TW=320;
+  const cv = document.createElement('canvas');
+  cv.width = Math.ceil(VW/TW)*TW; cv.height = Math.ceil(VH*0.9/TW)*TW;
+  const cc = cv.getContext('2d');
+  cc.globalAlpha=0.30;
+  for(let y=0;y<cv.height;y+=160) for(let x=0;x<cv.width;x+=160) cc.drawImage(lavaTexCv,x,y,160,160);
+  cc.globalAlpha=0.42;
+  for(let y=0;y<cv.height;y+=TW) for(let x=0;x<cv.width;x+=TW) cc.drawImage(lavaTexCv,x,y,TW,TW);
+  cc.globalAlpha=1;
+  return cv;
+})();
+function makeGlow3(color,size){
+  const c=document.createElement('canvas'); c.width=c.height=size;
+  const g=c.getContext('2d');
+  const grad=g.createRadialGradient(size/2,size/2,1,size/2,size/2,size/2);
+  grad.addColorStop(0,color); grad.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle=grad; g.fillRect(0,0,size,size);
+  return c;
+}
+const glowFire = makeGlow3('rgba(255,170,70,0.65)',64);
+const glowCyan = makeGlow3('rgba(56,225,255,0.6)',64);
+const glowHighlight = makeGlow3('rgba(255,255,255,0.95)',32);
+/* 關卡（遊戲第1關「火山入門」原版資料）與調色盤 */
+const THEME0 = { top:'#7a5638', front:'#5a3a22', side:'#4a2e1a', sideDark:'#38200f', edge:'rgba(255,200,140,0.4)' };
+const PAL_GOAL = { top:'#38e1ff', front:'#2a7fd0', side:'#2260a8', sideDark:'#1a4880', edge:'rgba(255,255,255,0.7)' };
+const PAL_BODY = { top:'#ffe9a0', front:'#ffb43c', side:'#e08a1e', sideDark:'#b86a12', edge:'rgba(255,240,190,0.5)' };
+const PAL_LEG  = { top:'#ff9d3c', front:'#e05c1c', side:'#b8460e', sideDark:'#8a3408', edge:'rgba(255,180,120,0.4)' };
+const PAL_BOOT = { top:'#4a2a14', front:'#331b0c', side:'#26140a', sideDark:'#180c05', edge:'rgba(255,190,130,0.3)' };
+const PAL_MITT = { top:'#ffd97c', front:'#ffb43c', side:'#e08a1e', sideDark:'#b86a12', edge:'rgba(255,240,190,0.5)' };
+const OUTLINE_FIRE = 'rgba(40,14,4,0.55)';
+const LAVA_Y = -80;
+const platforms = (function(){
+  const plats=[]; let z=0, y=0;
+  function add(x,dy,gap,hw,hd,opts={}){
+    z += gap; y += dy;
+    plats.push(Object.assign({x,y,z,w:hw,d:hd,type:'normal',phase:Math.random()*6.28},opts));
+  }
+  add(0,0,0,150,150,{checkpoint:true,start:true});
+  [[0,0,260,110,75],[40,8,215,105,70],[-40,10,215,100,70],[30,12,217,100,72,{checkpoint:true}],
+   [-50,10,220,92,68],[40,14,218,90,65],[-20,12,212,90,65],[50,10,205,88,70,{checkpoint:true}],
+   [0,14,220,86,62],[-50,10,215,84,60],[30,12,212,88,65]].forEach(s=>add(...s));
+  plats.push({x:0,y:y+8,z:z+300,w:220,d:220,type:'goal',phase:0});
+  return plats;
+})();
+const GOAL_PLAT = platforms[platforms.length-1];
+const lavaBlobs = (function(){
+  const arr=[];
+  for(let i=0;i<26;i++) arr.push({ x:(Math.random()*2-1)*1400, z:Math.random()*(GOAL_PLAT.z+800)-300, r:6+Math.random()*10, ph:Math.random()*6.28 });
+  return arr;
+})();
+/* 場景繪製（遊戲同款：熔岩海／平臺／旗幟／火人） */
+function drawLava3(t){
+  const horizonY = CY - FOV*Math.tan(TILT);
+  const par = (cam.x*0.06)%VW;
+  ctx.drawImage(skyCv, -par, 0);
+  if(par>0) ctx.drawImage(skyCv, VW-par, 0);
+  else ctx.drawImage(skyCv, -VW-par, 0);
+  const hy = Math.max(40, horizonY);
+  const p1=((cam.x*0.018)%VW+VW)%VW, p2=((cam.x*0.045)%VW+VW)%VW;
+  ctx.drawImage(farMtCv, -p1, hy-farMtCv.height+6);
+  ctx.drawImage(farMtCv, VW-p1, hy-farMtCv.height+6);
+  ctx.drawImage(nearMtCv, -p2, hy-nearMtCv.height+8);
+  ctx.drawImage(nearMtCv, VW-p2, hy-nearMtCv.height+8);
+  ctx.drawImage(lavaGradCv, 0, hy, VW, VH-hy);
+  const bandH=VH-hy, CW=crustCv.width, CH=crustCv.height;
+  const cox=(((cam.x*0.5)%CW)+CW)%CW, coy=(((-cam.z*0.55)%CH)+CH)%CH;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(0,hy,VW,bandH); ctx.clip();
+  ctx.drawImage(crustCv, -cox, hy-coy);
+  ctx.drawImage(crustCv, CW-cox, hy-coy);
+  ctx.drawImage(crustCv, -cox, hy-coy+CH);
+  ctx.drawImage(crustCv, CW-cox, hy-coy+CH);
+  if(hy-coy+CH < VH){ ctx.drawImage(crustCv, -cox, hy-coy+CH*2); ctx.drawImage(crustCv, CW-cox, hy-coy+CH*2); }
+  ctx.restore();
+  for(const b of lavaBlobs){
+    const dz=camDepth(LAVA_Y, b.z);
+    if(dz<30 || dz>2600) continue;
+    const p=project(b.x, LAVA_Y, b.z);
+    if(!p) continue;
+    const pulse=0.75+0.25*Math.sin(t*2+b.ph);
+    const r=b.r*p.s*8;
+    ctx.globalAlpha=0.5*pulse*Math.min(1,(2600-dz)/700);
+    ctx.drawImage(glowFire, p.x-r, p.y-r*0.4, r*2, r*0.8);
+    ctx.globalAlpha=1;
+  }
+  ctx.globalAlpha=0.22;
+  ctx.strokeStyle='#ffd98e'; ctx.lineWidth=1.5;
+  for(let i=0;i<4;i++){
+    const zz=cam.z+300+i*380+ (t*40)%380;
+    const a=project(cam.x-800,LAVA_Y,zz), b2=project(cam.x+800,LAVA_Y,zz);
+    if(a&&b2){ ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b2.x,b2.y); ctx.stroke(); }
+  }
+  ctx.globalAlpha=1;
+}
+function drawFlag3(x,y,z,active,big){
+  const h=big?120:66;
+  drawBox3D(x, y+h, z, big?3:2, h, big?3:2, {top:'#eee',front:'#cfd6e0',side:'#aab4c4',sideDark:'#8a94a4',edge:'rgba(255,255,255,0.4)'},0);
+  const a=project(x,y+h,z), b=project(x,y+h-(big?34:22),z);
+  if(a&&b){
+    const w=(big?52:30)*a.s, flap=Math.sin(performance.now()/200+x)*4*a.s;
+    ctx.fillStyle = active ? '#ffcf5c' : (big?'#38e1ff':'#8a94a4');
+    ctx.beginPath();
+    ctx.moveTo(a.x,a.y); ctx.lineTo(a.x+w, (a.y+b.y)/2+flap); ctx.lineTo(b.x,b.y);
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,0.3)'; ctx.lineWidth=1; ctx.stroke();
+  }
+}
+function drawPlatform3(p,t,checkpointIdx){
+  const b=p;
+  const dz=camDepth(b.y,b.z);
+  if(dz<16 || dz>3000) return;
+  const pal = p.type==='goal' ? PAL_GOAL : THEME0;
+  const h=30;
+  const q = drawBox3D(b.x, b.y, b.z, b.w, h, b.d, pal, Math.max(0, 1-(b.y-LAVA_Y)/380), null, true);
+  if(q && q.tFL && q.tBR && p.type==='goal'){
+    const c=project(b.x, b.y, b.z);
+    if(c){
+      const r=b.w*1.4*c.s;
+      ctx.drawImage(glowCyan, c.x-r, c.y-r*0.4, r*2, r*0.8);
+      const topP=project(b.x, b.y+560, b.z);
+      if(topP){
+        ctx.save();
+        ctx.globalCompositeOperation='lighter';
+        ctx.globalAlpha=0.38+0.14*Math.sin(performance.now()/300);
+        const w=Math.max(6, b.w*0.5*c.s);
+        ctx.drawImage(glowCyan, c.x-w, topP.y, w*2, Math.max(4, c.y-topP.y));
+        ctx.restore();
+      }
+    }
+  }
+  if(p.checkpoint && !p.start){
+    drawFlag3(b.x-b.w*0.7, b.y, b.z+b.d*0.6, platforms.indexOf(p)<=checkpointIdx, false);
+  }
+  if(p.type==='goal') drawFlag3(b.x, b.y, b.z+30, false, true);
+}
+const player3 = { x:0, y:0, z:0, sx:1, sy:1, running:false, grounded:true, face:'normal' };
+function drawPlayer3(t){
+  const px=player3.x, py=player3.y, pz=player3.z;
+  let shY=null;
+  for(const p of platforms){
+    if(Math.abs(px-p.x)<p.w && Math.abs(pz-p.z)<p.d && p.y<=py+2){
+      if(shY===null || p.y>shY) shY=p.y;
+    }
+  }
+  if(shY!==null){
+    const sp=project(px,shY+1,pz);
+    if(sp){
+      const r=Math.max(3, 24*sp.s*(1-Math.min(1,(py-shY)/260)));
+      ctx.globalAlpha=0.35;
+      ctx.fillStyle='#000';
+      ctx.beginPath(); ctx.ellipse(sp.x,sp.y,r,r*0.42,0,0,Math.PI*2); ctx.fill();
+      ctx.globalAlpha=1;
+      const gr=Math.max(6, 44*sp.s*(1-Math.min(1,(py-shY)/300)));
+      ctx.save();
+      ctx.globalCompositeOperation='lighter';
+      ctx.globalAlpha=0.45;
+      ctx.drawImage(glowFire, sp.x-gr, sp.y-gr*0.4, gr*2, gr*0.8);
+      ctx.restore();
+    }
+  }
+  const swing = player3.running&&player3.grounded ? Math.sin(performance.now()/85)*10 : (player3.grounded?0:6);
+  const sy=player3.sy, sx=player3.sx;
+  const bob = player3.grounded&&player3.running ? Math.abs(Math.sin(performance.now()/85))*3 : 0;
+  const faceState = player3.face;
+  drawBox3D(px-6*sx, py+16*sy+bob, pz+swing*0.7, 4.5, 16*sy, 4.5, PAL_LEG, 0, OUTLINE_FIRE);
+  drawBox3D(px+6*sx, py+16*sy+bob, pz-swing*0.7, 4.5, 16*sy, 4.5, PAL_LEG, 0, OUTLINE_FIRE);
+  drawBox3D(px-6*sx, py+4*sy+bob, pz+swing*0.7+2.5, 5.5, 4*sy, 6.5, PAL_BOOT, 0, OUTLINE_FIRE);
+  drawBox3D(px+6*sx, py+4*sy+bob, pz-swing*0.7+2.5, 5.5, 4*sy, 6.5, PAL_BOOT, 0, OUTLINE_FIRE);
+  drawBox3D(px, py+38*sy+bob, pz, 10*sx, 22*sy, 7, PAL_BODY, 0, OUTLINE_FIRE);
+  drawBox3D(px-14*sx, py+34*sy+bob, pz-swing*0.6, 3.5, 14*sy, 3.5, PAL_LEG, 0, OUTLINE_FIRE);
+  drawBox3D(px+14*sx, py+34*sy+bob, pz+swing*0.6, 3.5, 14*sy, 3.5, PAL_LEG, 0, OUTLINE_FIRE);
+  drawBox3D(px-14*sx, py+22*sy+bob, pz-swing*0.6, 3.2, 4*sy, 3.2, PAL_MITT, 0, OUTLINE_FIRE);
+  drawBox3D(px+14*sx, py+22*sy+bob, pz+swing*0.6, 3.2, 4*sy, 3.2, PAL_MITT, 0, OUTLINE_FIRE);
+  drawBox3D(px, py+54*sy+bob, pz, 8*sx, 15*sy, 8, PAL_BODY, 0, OUTLINE_FIRE);
+  const hl=project(px-4*sx, py+58*sy+bob, pz-7.5);
+  if(hl){ const r=6*hl.s; ctx.globalAlpha=0.85; ctx.drawImage(glowHighlight, hl.x-r, hl.y-r, r*2, r*2); ctx.globalAlpha=1; }
+  const face=project(px, py+47*sy+bob, pz-8.2);
+  if(face){
+    const s=face.s;
+    const eyeDX=4.5*s*10/8, eyeY=face.y-2*s;
+    if(faceState==='happy'){
+      ctx.strokeStyle='#3a1a06'; ctx.lineWidth=Math.max(1.2,1.6*s); ctx.lineCap='round';
+      [-1,1].forEach(dir=>{
+        ctx.beginPath(); ctx.arc(face.x+dir*eyeDX, eyeY+1.7*s, 2*s, Math.PI*1.08, Math.PI*1.92); ctx.stroke();
+      });
+      ctx.fillStyle='rgba(255,110,140,0.55)';
+      [-1,1].forEach(dir=>{
+        ctx.beginPath(); ctx.ellipse(face.x+dir*eyeDX*1.55, eyeY+4.6*s, 1.7*s, 1*s, 0, 0, Math.PI*2); ctx.fill();
+      });
+      ctx.fillStyle='#3a1a06';
+      ctx.beginPath(); ctx.ellipse(face.x, face.y+3.6*s, 3.2*s, 2.2*s, 0, 0.05*Math.PI, 0.95*Math.PI); ctx.fill();
+      ctx.fillStyle='#ff9d8a';
+      ctx.beginPath(); ctx.ellipse(face.x, face.y+4.6*s, 1.8*s, 1*s, 0, 0, Math.PI); ctx.fill();
+    } else {
+      [-1,1].forEach(dir=>{
+        ctx.fillStyle='#fff8ec';
+        ctx.beginPath(); ctx.ellipse(face.x+dir*eyeDX, eyeY, 1.9*s, 2*s, 0, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle='#3a1a06';
+        ctx.beginPath(); ctx.arc(face.x+dir*eyeDX, eyeY+0.5*s, 1.15*s, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle='#fff';
+        ctx.beginPath(); ctx.arc(face.x+dir*eyeDX-0.5*s, eyeY-0.3*s, 0.5*s, 0, Math.PI*2); ctx.fill();
+      });
+      ctx.strokeStyle='#3a1a06'; ctx.lineWidth=Math.max(1,1.2*s); ctx.lineCap='round';
+      ctx.beginPath(); ctx.arc(face.x, face.y+2.5*s, 2.6*s, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke();
+    }
+  }
+  const hp=project(px, py+62*sy+bob, pz);
+  if(hp){
+    const s=hp.s, fl=Math.sin(performance.now()/90);
+    ctx.save(); ctx.globalCompositeOperation='lighter';
+    ctx.drawImage(glowFire, hp.x-30*s, hp.y-34*s, 60*s, 60*s);
+    ctx.restore();
+    const flame=(ox,h,w,color)=>{
+      ctx.fillStyle=color;
+      ctx.beginPath();
+      ctx.moveTo(hp.x+(ox-w)*s, hp.y);
+      ctx.quadraticCurveTo(hp.x+(ox-w*0.4)*s, hp.y-h*0.55*s, hp.x+(ox+fl*3)*s, hp.y-h*s);
+      ctx.quadraticCurveTo(hp.x+(ox+w*0.4)*s, hp.y-h*0.55*s, hp.x+(ox+w)*s, hp.y);
+      ctx.closePath(); ctx.fill();
+    };
+    flame(-6, 18+fl*2, 6, '#ff7e3d');
+    flame(6, 16-fl*2, 6, '#ff9d3c');
+    flame(0, 26+fl*3, 7, '#ffcf5c');
+    flame(0, 14+fl*2, 4, '#fff3c9');
+  }
+}
+/* 沿關卡路徑推進（平臺上奔跑、縫隙間跳躍拋物線） */
+function pathAt(z){
+  for(let i=0;i<platforms.length;i++){
+    const p=platforms[i];
+    if(z >= p.z-p.d && z <= p.z+p.d){
+      const nx = p.x;
+      return { x:nx, y:p.y, grounded:true, idx:i };
+    }
+    const n = platforms[i+1];
+    if(n && z > p.z+p.d && z < n.z-n.d){
+      const u = (z-(p.z+p.d))/((n.z-n.d)-(p.z+p.d));
+      return { x:lerp(p.x,n.x,u), y:lerp(p.y,n.y,u)+Math.sin(u*Math.PI)*72, grounded:false, idx:i };
+    }
+  }
+  return { x:GOAL_PLAT.x, y:GOAL_PLAT.y, grounded:true, idx:platforms.length-1 };
+}
+function renderGameScene(t, z, running, face, camBackoff){
+  const pos = pathAt(z);
+  player3.x = pos.x; player3.y = pos.y; player3.z = z;
+  player3.running = running; player3.grounded = pos.grounded; player3.face = face;
+  if(face === 'happy'){ // 通關慶祝小跳
+    const hop = Math.abs(Math.sin(t*5))*30;
+    player3.y += hop; player3.grounded = hop < 2;
+  }
+  cam.x = player3.x*0.7;
+  cam.y = player3.y+180;
+  cam.z = player3.z-(camBackoff||340);
+  drawLava3(t);
+  const items=[];
+  for(const p of platforms) items.push({d:camDepth(p.y,p.z), kind:'p', p});
+  items.push({d:camDepth(player3.y,player3.z)-1, kind:'me'});
+  items.sort((a,b)=>b.d-a.d);
+  const checkpointIdx = pos.idx;
+  for(const it of items){
+    if(it.kind==='p') drawPlatform3(it.p,t,checkpointIdx);
+    else drawPlayer3(t);
+  }
+}
 const emberTex = bakeTex(32, 32, (g)=>{
   const r = g.createRadialGradient(16,16,0,16,16,16);
   r.addColorStop(0,'rgba(255,224,138,0.95)'); r.addColorStop(0.5,'rgba(255,150,60,0.35)'); r.addColorStop(1,'rgba(255,126,61,0)');
@@ -413,14 +770,6 @@ function drawCinema(t, dt){
 }
 
 // ---------- 場景繪製 ----------
-function drawSky(t) {
-  ctx.drawImage(skyTex, 0, 0);
-}
-function drawRocks(t, speed){
-  const off = (t * speed) % (GAME_W*2);
-  ctx.drawImage(rockTex, -off, 0);
-  ctx.drawImage(rockTex, GAME_W*2 - off, 0);
-}
 function drawEmbers(t, seedOffset) {
   let s = 11 + seedOffset;
   const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
@@ -438,80 +787,35 @@ function drawEmbers(t, seedOffset) {
   }
   ctx.restore();
 }
-function drawLava(y, t) {
-  ctx.save();
+// 遊戲同款 HUD 膠囊（第◯關／進度％＋時間），置於 letterbox 安全區內
+function roundPill(x, y, w, h){
+  const r = h/2;
   ctx.beginPath();
-  ctx.moveTo(0, y + Math.sin(t * 3) * 4);
-  for (let x = 0; x <= GAME_W; x += 40) ctx.lineTo(x, y + Math.sin(t*3 + x*0.02) * 6);
-  ctx.lineTo(GAME_W, GAME_H); ctx.lineTo(0, GAME_H); ctx.closePath();
-  ctx.clip();
-  ctx.drawImage(lavaTex, 0, y - 10, GAME_W, 180);
-  ctx.restore();
-  // 熔岩上方光暈（bloom）
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.25 + 0.06*Math.sin(t*2.4);
-  ctx.drawImage(glowTex, GAME_W*0.15, y-70, GAME_W*0.7, 130);
-  ctx.restore();
+  ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r);
+  ctx.closePath();
 }
-function drawPlatform(x, y, w, h) {
-  ctx.drawImage(platTex, x, y, w, h);
-}
-function drawRunner(x, y, size, t, jumpP) {
-  const bob = jumpP !== undefined ? -Math.sin(jumpP * Math.PI) * size * 0.6 : 0;
-  const leg = Math.sin(t * 14) * size * 0.28;
+function drawGameHUD(pct, timeS){
   ctx.save();
-  ctx.translate(x, y + bob);
-  // 火焰光暈（烘焙 bloom）
-  ctx.save();
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.75 + 0.15*Math.sin(t*9);
-  ctx.drawImage(glowTex, -size*1.4, -size*1.7, size*2.8, size*2.8);
-  ctx.restore();
-  const grad = ctx.createLinearGradient(0, -size, 0, size*0.3);
-  grad.addColorStop(0, '#ffcf5c'); grad.addColorStop(1, '#ff7e3d');
-  ctx.strokeStyle = grad; ctx.fillStyle = grad;
-  ctx.lineWidth = Math.max(3, size * 0.1);
-  ctx.lineCap = 'round';
-  ctx.beginPath(); ctx.arc(0, -size * 0.8, size * 0.2, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.moveTo(0, -size * 0.6); ctx.lineTo(0, 0); ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0, -size * 0.4); ctx.lineTo(-size * 0.32, -size * 0.1 - leg * 0.3);
-  ctx.moveTo(0, -size * 0.4); ctx.lineTo(size * 0.32, -size * 0.1 + leg * 0.3);
-  ctx.stroke();
-  ctx.beginPath();
-  ctx.moveTo(0, 0); ctx.lineTo(-size * 0.24, size * 0.45 + leg);
-  ctx.moveTo(0, 0); ctx.lineTo(size * 0.24, size * 0.45 - leg);
-  ctx.stroke();
-  ctx.restore();
-}
-function drawFlag(x, y, size, t) {
-  ctx.save();
-  ctx.translate(x, y);
-  ctx.strokeStyle = '#eaf6ff'; ctx.lineWidth = Math.max(2, size*0.06);
-  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -size); ctx.stroke();
-  const wave = Math.sin(t * 5) * size * 0.12;
-  const g = ctx.createLinearGradient(0, -size, size*0.6, -size*0.7);
-  g.addColorStop(0, '#38e1ff'); g.addColorStop(1, '#9a6bff');
-  ctx.fillStyle = g;
-  ctx.beginPath();
-  ctx.moveTo(0, -size); ctx.lineTo(size*0.55, -size*0.85 + wave); ctx.lineTo(0, -size*0.68);
-  ctx.closePath(); ctx.fill();
-  // 旗頂光暈
-  ctx.globalCompositeOperation = 'lighter';
-  ctx.globalAlpha = 0.6 + 0.2*Math.sin(t*4);
-  ctx.drawImage(glowTex, -30, -size-30, 60, 60);
-  ctx.restore();
-}
-function progressPill(pct) {
-  ctx.save();
-  ctx.font = "bold 16px sans-serif"; ctx.textAlign = 'left';
-  const txt = Math.floor(pct) + '%';
-  ctx.fillStyle = 'rgba(7,11,20,0.62)';
-  ctx.fillRect(14, 64, 74, 32);
-  ctx.strokeStyle = 'rgba(56,225,255,0.5)'; ctx.strokeRect(14, 64, 74, 32);
-  ctx.fillStyle = '#38e1ff';
-  ctx.fillText(txt, 26, 86);
+  ctx.font = "bold 15px 'PingFang TC','Microsoft JhengHei',sans-serif";
+  // 左：關卡膠囊
+  ctx.fillStyle = 'rgba(10,14,26,0.66)';
+  roundPill(14, 62, 132, 32); ctx.fill();
+  ctx.strokeStyle = 'rgba(56,225,255,0.4)'; ctx.lineWidth = 1; ctx.stroke();
+  ctx.fillStyle = '#9adcff'; ctx.textAlign = 'left';
+  ctx.fillText('第1關 火山入門', 26, 83);
+  // 中：進度＋時間膠囊
+  const label1 = '進度 ', v1 = Math.floor(pct)+'%', label2 = '　時間 ', v2 = timeS.toFixed(1)+'s';
+  ctx.fillStyle = 'rgba(10,14,26,0.66)';
+  roundPill(GAME_W/2-92, 62, 184, 32); ctx.fill();
+  ctx.strokeStyle = 'rgba(56,225,255,0.4)'; ctx.stroke();
+  ctx.textAlign = 'left';
+  let tx = GAME_W/2-78;
+  ctx.fillStyle = '#e8f2ff'; ctx.fillText(label1, tx, 83); tx += ctx.measureText(label1).width;
+  ctx.fillStyle = '#38e1ff'; ctx.fillText(v1, tx, 83); tx += ctx.measureText(v1).width;
+  ctx.fillStyle = '#e8f2ff'; ctx.fillText(label2, tx, 83); tx += ctx.measureText(label2).width;
+  ctx.fillStyle = '#38e1ff'; ctx.fillText(v2, tx, 83);
   ctx.restore();
 }
 function subtitle(text, alpha) {
@@ -578,41 +882,30 @@ function draw(t) {
   ctx.save();
   ctx.translate(GAME_W/2, GAME_H/2); ctx.scale(zoom, zoom); ctx.translate(-GAME_W/2-ox, -GAME_H/2-oy);
 
-  drawSky(t);
-
+  // ===== 遊戲同款 3D 場景：沿第1關路徑真實跑跳（幕一定場→幕二起跑→幕三衝線）=====
+  const GOAL_Z = GOAL_PLAT.z;
+  let z3 = 0, running3 = false, face3 = 'normal', backoff = 340;
   if (t < 6) {
-    // ===== 第一幕：標題浮現 =====
-    drawRocks(t, 6);
-    drawLava(GAME_H * 0.86, t);
-    drawEmbers(t, 0);
+    z3 = 0; running3 = false; backoff = lerp(430, 350, easeOut(clamp(t/3,0,1)));
     if (t > 0.2) cue('act1chime', () => chime());
   } else if (t < 12) {
-    // ===== 第二幕A：跑跳越過熔岩 =====
     const p = (t - 6) / 6;
-    drawRocks(t, 26);
-    drawLava(GAME_H * 0.82, t);
-    drawPlatform(GAME_W*0.05, GAME_H*0.72, GAME_W*0.22, 18);
-    drawPlatform(GAME_W*0.42, GAME_H*0.72, GAME_W*0.22, 18);
-    drawPlatform(GAME_W*0.79, GAME_H*0.72, GAME_W*0.22, 18);
-    const cyc = (p * 2.2) % 1;
-    const runX = GAME_W * (0.12 + p * 0.76 > 0.95 ? 0.95 : 0.12 + p * 0.76);
-    const jumpP = cyc < 0.5 ? cyc * 2 : 0;
-    drawRunner(runX, GAME_H * 0.7, 46, t, jumpP);
-    drawEmbers(t, 0);
+    z3 = lerp(0, 907, p); running3 = true;
     cue('jumpBeat', () => chime());
   } else if (t < 20) {
-    // ===== 第二幕B：連續跳台加速 =====
     const p = (t - 12) / 8;
-    drawRocks(t, 60);
-    drawLava(GAME_H * 0.8, t);
-    for (let i = 0; i < 4; i++) {
-      const px = ((GAME_W * 0.15 * i + t * 90) % (GAME_W + 160)) - 80;
-      drawPlatform(px, GAME_H * (0.66 + (i%2)*0.08), 100, 16);
-    }
-    const bobT = (p * 3) % 1;
-    drawRunner(GAME_W * 0.5, GAME_H * 0.6, 52, t, bobT < 0.5 ? bobT*2 : 0);
-    drawEmbers(t, 0);
-    // v6 衝刺速度線
+    z3 = lerp(907, 2197, p); running3 = true;
+    // v6 衝刺速度線（保留）
+    if (t > 14) cue('speedThump', () => chime());
+  } else if (t < 23.4) {
+    const p = (t - 20) / 3.4;
+    z3 = lerp(2197, GOAL_Z, easeInOut(p)); running3 = true; backoff = lerp(340, 300, p);
+  } else {
+    z3 = GOAL_Z; running3 = false; face3 = 'happy'; backoff = 320;
+  }
+  renderGameScene(t, z3, running3, face3, backoff);
+  drawEmbers(t, 0);
+  if (t >= 12 && t < 20) {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for(let i=0;i<10;i++){
@@ -625,16 +918,6 @@ function draw(t) {
       ctx.fillRect(x, y, len, 2);
     }
     ctx.restore();
-    if (t > 14) cue('speedThump', () => chime());
-  } else {
-    // ===== 第三幕：抵達終點旗 + CTA =====
-    const p = (t - 20) / 10;
-    drawRocks(t, 30);
-    drawLava(GAME_H * 0.84, t);
-    drawFlag(GAME_W * 0.78, GAME_H * 0.72, 130, t);
-    const runP = easeInOut(clamp(p * 1.6, 0, 1));
-    drawRunner(GAME_W * (0.15 + runP * 0.6), GAME_H * 0.7, 48, t, (p*4)%1 < 0.5 ? ((p*4)%1)*2 : 0);
-    drawEmbers(t, 0);
   }
 
   ctx.restore();
@@ -649,7 +932,7 @@ function draw(t) {
       ctx.textAlign = 'center';
       ctx.font = "20px 'PingFang TC','Microsoft JhengHei',sans-serif";
       ctx.fillStyle = '#9fb3d9';
-      ctx.fillText('AI未來創作營隊 出品 · 第一人稱 3D 跑酷冒險', GAME_W / 2, GAME_H * 0.56);
+      ctx.fillText('AI未來創作營隊 出品 · 5 大火山關卡 3D 跑酷', GAME_W / 2, GAME_H * 0.56);
       ctx.restore();
     }
     if (t > 3.6) subtitle('越過熔岩，抵達終點旗！', clamp((t - 3.6) / 0.6, 0, 1));
@@ -657,7 +940,7 @@ function draw(t) {
     if (t < 9) subtitle('WASD / 虛擬搖桿移動，空白鍵起跳', clamp((t - 6.3) / 0.6, 0, 1));
     else subtitle('踩穩平臺，掉進熔岩會回到檢查點！', clamp((t - 9.2) / 0.6, 0, 1));
   } else if (t < 20) {
-    progressPill(clamp((t-12)/8 * 100, 0, 100));
+    drawGameHUD(clamp(907/GOAL_PLAT.z*100 + (t-12)/8 * (2197-907)/GOAL_PLAT.z*100, 0, 100), t-6);
     if (t < 16.4) subtitle('連續平臺挑戰你的節奏感', clamp((t - 12.3) / 0.6, 0, 1));
     else subtitle('計時破紀錄，登上最佳成績！', clamp((t - 16.6) / 0.6, 0, 1));
   } else {
