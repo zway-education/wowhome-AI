@@ -1,0 +1,750 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>貓咪大戰爭 介紹影片</title>
+<style>
+  :root{
+    --cyan:#38e1ff; --blue:#4f7cff; --purple:#9a6bff; --pink:#ff6cc7;
+  }
+  html,body{
+    margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+    background:#070b14; font-family:-apple-system,"PingFang TC","Microsoft JhengHei",sans-serif;
+    touch-action:none;
+  }
+  #stage{ position:fixed; inset:0; display:block; }
+  #ui{
+    position:fixed; inset:0; pointer-events:none;
+    display:flex; flex-direction:column; justify-content:space-between;
+  }
+  .top{
+    display:flex; justify-content:space-between; align-items:flex-start;
+    padding: max(12px, env(safe-area-inset-top)) 14px 0 14px;
+  }
+  .title-chip{
+    background:rgba(7,11,20,.42); border-radius:12px; padding:6px 12px;
+    display:inline-block;
+  }
+  .title{
+    font-weight:800; font-size:clamp(16px,3.2vw,22px); color:#fff;
+    background:linear-gradient(92deg,var(--cyan),var(--blue),var(--purple));
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
+    text-shadow:0 0 18px rgba(56,225,255,.25);
+  }
+  .brand{
+    font-size:11px; color:#e8f0ff; opacity:.85; margin-top:2px;
+  }
+  button{
+    pointer-events:auto; border:none; border-radius:14px; cursor:pointer;
+    font-weight:700; font-family:inherit;
+  }
+  #muteBtn{
+    width:44px;height:44px;min-width:44px;min-height:44px;
+    background:rgba(10,16,30,.65); border:1.5px solid rgba(255,255,255,.18);
+    color:#fff; font-size:20px; display:flex; align-items:center; justify-content:center;
+  }
+  .caption-wrap{
+    display:flex; justify-content:center; padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  .caption{
+    pointer-events:none; color:#fff; font-weight:700; font-size:clamp(14px,3.6vw,20px);
+    background:rgba(7,11,20,.55); border:1px solid rgba(255,255,255,.12);
+    padding:8px 18px; border-radius:999px; max-width:88vw; text-align:center;
+    opacity:0; transition:opacity .35s ease;
+  }
+  .caption.show{ opacity:1; }
+  #hint{
+    position:absolute; top:56px; left:0; right:0; text-align:center;
+    color:#fff6cf; font-size:13px; opacity:.9; pointer-events:none;
+    transition:opacity .6s ease;
+  }
+  #replayWrap{
+    position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+    background:rgba(5,8,16,.55); pointer-events:none;
+  }
+  #replayWrap.show{ display:flex; pointer-events:auto; }
+  #replayBtn{
+    padding:14px 30px; font-size:17px; color:#0a0f1c;
+    background:linear-gradient(92deg,var(--cyan),var(--blue));
+    box-shadow:0 8px 24px rgba(79,124,255,.45);
+    min-height:52px;
+  }
+</style>
+</head>
+<body>
+<canvas id="stage"></canvas>
+<div id="ui">
+  <div class="top">
+    <div class="title-chip">
+      <div class="title">貓咪大戰爭 介紹影片</div>
+      <div class="brand">AI未來創作營隊</div>
+    </div>
+    <button id="muteBtn" aria-label="靜音切換">🔇</button>
+  </div>
+  <div id="hint">點畫面開啟音效與動畫 ▶</div>
+  <div class="caption-wrap"><div class="caption" id="caption"></div></div>
+</div>
+<div id="replayWrap">
+  <button id="replayBtn">🔁 重新播放</button>
+</div>
+
+<script>
+(function(){
+"use strict";
+
+// ---------- 畫布縮放 ----------
+const canvas = document.getElementById('stage');
+const ctx = canvas.getContext('2d');
+let W=0,H=0,DPR=1;
+function resize(){
+  DPR = Math.min(window.devicePixelRatio||1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W*DPR; canvas.height = H*DPR;
+  canvas.style.width = W+'px'; canvas.style.height = H+'px';
+  ctx.setTransform(DPR,0,0,DPR,0,0);
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ---------- 音效：Web Audio 原創進行曲風配樂 ----------
+let actx=null, masterGain=null, muted=true;
+function ensureAudio(){
+  if(actx) return;
+  actx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = actx.createGain();
+  masterGain.gain.value = 0.0;
+  masterGain.connect(actx.destination);
+}
+function setMuted(m){
+  muted = m;
+  document.getElementById('muteBtn').textContent = muted ? '🔇' : '🔊';
+  if(masterGain){
+    masterGain.gain.cancelScheduledValues(actx.currentTime);
+    masterGain.gain.linearRampToValueAtTime(muted?0.0:0.22, actx.currentTime+0.08);
+  }
+}
+
+const NOTE = {C4:261.63,D4:293.66,E4:329.63,F4:349.23,G4:392.00,A4:440.00,B4:493.88,
+  C5:523.25,D5:587.33,E5:659.25,F5:698.46,G5:783.99,A5:880.00,B5:987.77,
+  C6:1046.5, R:0};
+const TEMPO = 0.15;
+const melody = [
+  ['C5',1],['C5',1],['E5',1],['G5',1],
+  ['E5',1],['G5',1],['C6',2],
+  ['B5',1],['G5',1],['E5',1],['D5',1],
+  ['C5',2],['R',1],['G4',1],
+  ['A4',1],['C5',1],['E5',1],['G5',1],
+  ['F5',1],['D5',1],['B4',1],['G4',1],
+  ['C5',1],['E5',1],['G5',1],['C6',3]
+];
+const bassline = [
+  ['C4',2],['C4',2],['F4',2],['F4',2],
+  ['G4',2],['G4',2],['C4',4],
+  ['A4',2],['A4',2],['F4',2],['G4',2],
+  ['C4',4]
+];
+function playTone(freq, startAt, dur, type, vol){
+  if(freq<=0) return;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  const filt = actx.createBiquadFilter();
+  filt.type = 'lowpass';
+  filt.frequency.value = 2800;
+  filt.Q.value = 0.4;
+  osc.type = type;
+  osc.frequency.value = freq;
+  g.gain.setValueAtTime(0.0001, startAt);
+  g.gain.linearRampToValueAtTime(vol, startAt+0.02);
+  g.gain.exponentialRampToValueAtTime(Math.max(vol*0.35,0.0005), startAt+dur*0.55);
+  g.gain.exponentialRampToValueAtTime(0.0001, startAt+dur*0.95);
+  osc.connect(filt); filt.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.03);
+}
+function playSeq(seq, type, vol, offset){
+  let t = actx.currentTime + 0.05;
+  for(const [n,beats] of seq){
+    const dur = beats*TEMPO;
+    if(NOTE[n]) playTone(NOTE[n]*offset, t, dur, type, vol);
+    t += dur;
+  }
+  return t;
+}
+let musicStarted=false;
+function startMusic(){
+  if(musicStarted) return;
+  musicStarted = true;
+  ensureAudio();
+  const totalDur = playSeq(melody, 'square', 0.16, 1);
+  playSeq(bassline, 'triangle', 0.18, 0.5);
+  startDrums();
+  setTimeout(()=>{ if(!ended){ playSeq(melody,'square',0.16,1); playSeq(bassline,'triangle',0.18,0.5);} }, (totalDur-actx.currentTime)*1000-50);
+}
+function sfxMarch(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  playTone(160, t, 0.08, 'triangle', 0.14);
+}
+function sfxImpact(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  playTone(150, t, 0.14, 'sine', 0.24);
+  playTone(70, t, 0.18, 'sine', 0.2);
+  const bufSize = Math.floor(actx.sampleRate*0.12);
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let j=0;j<bufSize;j++){ data[j] = (Math.random()*2-1) * (1-j/bufSize); }
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const filt = actx.createBiquadFilter();
+  filt.type='bandpass'; filt.frequency.value=1000; filt.Q.value=1.1;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.26, t);
+  g.gain.exponentialRampToValueAtTime(0.0005, t+0.12);
+  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.start(t); src.stop(t+0.14);
+}
+function sfxWin(){
+  if(!actx) return;
+  const t = actx.currentTime;
+  [523.25,659.25,783.99,1046.5].forEach((f,i)=>playTone(f, t+i*0.09, 0.18, 'square', 0.2));
+}
+
+// ---------- 打鼓聲：進行曲鼓點（大鼓+小鼓，Web Audio 合成） ----------
+function drumKick(startAt, vol){
+  const dur = 0.16;
+  const osc = actx.createOscillator();
+  const g = actx.createGain();
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(150, startAt);
+  osc.frequency.exponentialRampToValueAtTime(48, startAt+dur*0.85);
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0008, startAt+dur);
+  osc.connect(g); g.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+dur+0.02);
+}
+function drumSnare(startAt, vol){
+  const dur = 0.14;
+  const bufSize = Math.floor(actx.sampleRate*dur);
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let j=0;j<bufSize;j++){ data[j] = (Math.random()*2-1) * (1-j/bufSize); }
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const filt = actx.createBiquadFilter();
+  filt.type='highpass'; filt.frequency.value=1400;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0006, startAt+dur);
+  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.start(startAt); src.stop(startAt+dur+0.02);
+  // 疊一顆音頭鼓身補上厚度
+  const osc = actx.createOscillator();
+  const g2 = actx.createGain();
+  osc.type='triangle'; osc.frequency.value = 190;
+  g2.gain.setValueAtTime(vol*0.6, startAt);
+  g2.gain.exponentialRampToValueAtTime(0.0006, startAt+0.06);
+  osc.connect(g2); g2.connect(masterGain);
+  osc.start(startAt); osc.stop(startAt+0.08);
+}
+function drumHat(startAt, vol){
+  const dur = 0.05;
+  const bufSize = Math.floor(actx.sampleRate*dur);
+  const buf = actx.createBuffer(1, bufSize, actx.sampleRate);
+  const data = buf.getChannelData(0);
+  for(let j=0;j<bufSize;j++){ data[j] = (Math.random()*2-1) * (1-j/bufSize); }
+  const src = actx.createBufferSource();
+  src.buffer = buf;
+  const filt = actx.createBiquadFilter();
+  filt.type='highpass'; filt.frequency.value=6000;
+  const g = actx.createGain();
+  g.gain.setValueAtTime(vol, startAt);
+  g.gain.exponentialRampToValueAtTime(0.0006, startAt+dur);
+  src.connect(filt); filt.connect(g); g.connect(masterGain);
+  src.start(startAt); src.stop(startAt+dur+0.01);
+}
+// 進行曲鼓組節奏：一小節 8 拍＝ 大鼓-鈸-小鼓-鈸-大鼓-大鼓-小鼓-鈸
+const DRUM_BEAT = TEMPO*2; // 每鼓拍秒數
+const DRUM_PATTERN = ['kick','hat','snare','hat','kick','kick','snare','hat'];
+let drumTimer=null;
+function scheduleDrumBar(startAt, vol){
+  DRUM_PATTERN.forEach((hit,i)=>{
+    const t = startAt + i*DRUM_BEAT;
+    if(hit==='kick') drumKick(t, vol);
+    else if(hit==='snare') drumSnare(t, vol*0.9);
+    else drumHat(t, vol*0.5);
+  });
+  return startAt + DRUM_PATTERN.length*DRUM_BEAT;
+}
+function startDrums(){
+  let next = actx.currentTime + 0.05;
+  function loop(){
+    if(ended){ return; }
+    next = scheduleDrumBar(next, 0.24);
+    const waitMs = (next - actx.currentTime)*1000 - 120;
+    drumTimer = setTimeout(loop, Math.max(20,waitMs));
+  }
+  loop();
+}
+function stopDrums(){ if(drumTimer){ clearTimeout(drumTimer); drumTimer=null; } }
+
+// ---------- 背景：戰場草原 ----------
+function drawGround(t){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,'#4fb6ff'); g.addColorStop(0.55,'#9adcff'); g.addColorStop(1,'#d9f5d0');
+  ctx.fillStyle=g; ctx.fillRect(0,0,W,H);
+
+  ctx.save();
+  ctx.fillStyle='#fff6c9';
+  ctx.shadowColor='rgba(255,244,180,.9)'; ctx.shadowBlur=40;
+  ctx.beginPath(); ctx.arc(W*0.86, H*0.15, Math.min(W,H)*0.07, 0, Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  function cloud(cx,cy,s,alpha){
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    ctx.fillStyle='#ffffff';
+    ctx.beginPath();
+    ctx.ellipse(cx,cy,26*s,14*s,0,0,Math.PI*2);
+    ctx.ellipse(cx+22*s,cy-8*s,18*s,12*s,0,0,Math.PI*2);
+    ctx.ellipse(cx-24*s,cy-4*s,16*s,11*s,0,0,Math.PI*2);
+    ctx.fill();
+    ctx.restore();
+  }
+  for(let i=0;i<4;i++){
+    const cx = ((i*180 + t*14) % (W+160)) - 80;
+    const cy = H*(0.12+i*0.08);
+    cloud(cx, cy, 1+i*0.15, 0.85-i*0.08);
+  }
+
+  const hillY1 = H*0.6;
+  ctx.fillStyle='#8fd47c';
+  ctx.beginPath(); ctx.moveTo(0,hillY1);
+  for(let x=0;x<=W;x+=W/8){ ctx.quadraticCurveTo(x+W/16, hillY1-H*0.05, x+W/8, hillY1); }
+  ctx.lineTo(W,H*0.8); ctx.lineTo(0,H*0.8); ctx.closePath(); ctx.fill();
+
+  const floorY = H*0.8;
+  const fg = ctx.createLinearGradient(0,floorY,0,H);
+  fg.addColorStop(0,'#79d34f'); fg.addColorStop(1,'#488c2c');
+  ctx.fillStyle=fg; ctx.fillRect(0,floorY,W,H-floorY);
+
+  ctx.strokeStyle='#3f8a2a'; ctx.lineWidth=3;
+  for(let x=0; x<W; x+=14){
+    const wob = Math.sin(t*2 + x*0.3)*2;
+    ctx.beginPath();
+    ctx.moveTo(x, floorY+2);
+    ctx.lineTo(x+wob, floorY-8);
+    ctx.stroke();
+  }
+  for(let i=0;i<20;i++){
+    const fx = (i*131)%W;
+    const fy = floorY + 12 + (i*57)%(H-floorY-12);
+    ctx.fillStyle = i%3===0 ? '#ffe38a' : '#ffffff';
+    ctx.beginPath(); ctx.arc(fx,fy,2.4,0,Math.PI*2); ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------- 貓咪戰士（多部件繪製，原創造型） ----------
+function drawCat(x,y,scale,facing,phase,pose,palette,hasHelmet){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(facing*scale, scale);
+
+  let squashY=1, squashX=1, bob=0, tilt=0;
+  const bounce = Math.sin(phase*7)*3;
+  if(pose==='march'){ bob=Math.abs(bounce)*1.2; }
+  if(pose==='charge'){ squashX=1.14; squashY=0.88; bob=bounce*0.4; tilt=-0.08; }
+  if(pose==='hit'){ squashX=0.85; squashY=1.15; tilt=0.14; }
+  if(pose==='win'){ bob=-Math.abs(Math.sin(phase*8))*14; }
+  if(pose==='idle'){ bob=bounce*0.6; }
+
+  ctx.translate(0,bob);
+  ctx.rotate(tilt);
+  ctx.scale(squashX,squashY);
+
+  const body = palette.body, dark=palette.dark, light=palette.light, accent=palette.accent;
+
+  ctx.save();
+  ctx.globalAlpha = 0.32;
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(0,58,34,9,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  const tailWag = Math.sin(phase*5)*0.35;
+  ctx.save();
+  ctx.translate(-34,-6);
+  ctx.rotate(tailWag);
+  ctx.strokeStyle = body; ctx.lineWidth=10; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(-20,-14,-14,-32); ctx.stroke();
+  ctx.restore();
+
+  const legSwing = pose==='march' ? Math.sin(phase*7)*0.5 : 0;
+  ctx.fillStyle = dark;
+  ctx.save(); ctx.translate(-14,30); ctx.rotate(legSwing);
+  ctx.beginPath(); ctx.ellipse(0,4,11,9,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+  ctx.save(); ctx.translate(14,30); ctx.rotate(-legSwing);
+  ctx.beginPath(); ctx.ellipse(0,4,11,9,0,0,Math.PI*2); ctx.fill(); ctx.restore();
+
+  ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2);
+  const sphereBody = ctx.createRadialGradient(-13,-10,3,2,14,42);
+  sphereBody.addColorStop(0, light);
+  sphereBody.addColorStop(0.55, body);
+  sphereBody.addColorStop(1, dark);
+  ctx.fillStyle = sphereBody;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.globalAlpha = 0.35;
+  const rim = ctx.createRadialGradient(16,20,20,16,20,36);
+  rim.addColorStop(0,'rgba(255,255,255,0)'); rim.addColorStop(1, light);
+  ctx.fillStyle = rim;
+  ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.globalAlpha = 0.9;
+  const spec = ctx.createRadialGradient(-13,-12,0,-13,-12,14);
+  spec.addColorStop(0,'rgba(255,255,255,.8)'); spec.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = spec;
+  ctx.beginPath(); ctx.arc(0,8,32,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.beginPath(); ctx.ellipse(0,10,18,16,0,0,Math.PI*2);
+  const bellyGrad = ctx.createRadialGradient(-4,2,2,0,8,20);
+  bellyGrad.addColorStop(0,'#ffffff'); bellyGrad.addColorStop(1, light);
+  ctx.fillStyle = bellyGrad;
+  ctx.fill();
+
+  const armSwing = pose==='charge' ? -0.9 : (pose==='hit'? 0.5 : Math.sin(phase*6)*0.2);
+  ctx.save();
+  ctx.translate(24,2); ctx.rotate(armSwing);
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(10,6,10,8,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save();
+  ctx.translate(-24,2); ctx.rotate(-armSwing*0.6);
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.ellipse(-10,6,10,8,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(0,-30);
+
+  ctx.fillStyle = body;
+  ctx.beginPath(); ctx.moveTo(-20,-14); ctx.lineTo(-30,-34); ctx.lineTo(-6,-22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(30,-34); ctx.lineTo(6,-22); ctx.closePath(); ctx.fill();
+  const earShade = ctx.createLinearGradient(-30,-34,-6,-14);
+  earShade.addColorStop(0, light); earShade.addColorStop(1, dark);
+  ctx.fillStyle = earShade;
+  ctx.beginPath(); ctx.moveTo(-20,-14); ctx.lineTo(-30,-34); ctx.lineTo(-6,-22); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(20,-14); ctx.lineTo(30,-34); ctx.lineTo(6,-22); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = dark;
+  ctx.beginPath(); ctx.moveTo(-18,-16); ctx.lineTo(-24,-28); ctx.lineTo(-9,-21); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(18,-16); ctx.lineTo(24,-28); ctx.lineTo(9,-21); ctx.closePath(); ctx.fill();
+
+  ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2);
+  const sphereHead = ctx.createRadialGradient(-9,-9,2,2,4,30);
+  sphereHead.addColorStop(0, light);
+  sphereHead.addColorStop(0.55, body);
+  sphereHead.addColorStop(1, dark);
+  ctx.fillStyle = sphereHead;
+  ctx.fill();
+  ctx.save();
+  ctx.clip();
+  ctx.globalAlpha = 0.85;
+  const specHead = ctx.createRadialGradient(-9,-10,0,-9,-10,11);
+  specHead.addColorStop(0,'rgba(255,255,255,.75)'); specHead.addColorStop(1,'rgba(255,255,255,0)');
+  ctx.fillStyle = specHead;
+  ctx.beginPath(); ctx.arc(0,0,24,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  ctx.strokeStyle = dark; ctx.lineWidth=3;
+  ctx.beginPath(); ctx.arc(0,0,24,Math.PI*1.15,Math.PI*1.35); ctx.stroke();
+
+  const blink = (Math.sin(phase*2.2+x*0.01)>0.965) ? 0.15 : 1;
+  ctx.fillStyle = '#12121a';
+  ctx.save(); ctx.translate(-9,-1); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.save(); ctx.translate(9,-1); ctx.scale(1,blink);
+  ctx.beginPath(); ctx.arc(0,0,4.2,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#fff';
+  ctx.beginPath(); ctx.arc(-10.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(7.5,-2.5,1.2,0,Math.PI*2); ctx.fill();
+
+  ctx.fillStyle = accent;
+  ctx.beginPath(); ctx.moveTo(-2,5); ctx.lineTo(2,5); ctx.lineTo(0,8); ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='#3a2a20'; ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(-4,12,-8,9); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(0,8); ctx.quadraticCurveTo(4,12,8,9); ctx.stroke();
+
+  ctx.strokeStyle='rgba(255,255,255,.55)'; ctx.lineWidth=1;
+  [-1,0,1].forEach(i=>{
+    ctx.beginPath(); ctx.moveTo(-6,4+i*3); ctx.lineTo(-22,2+i*4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6,4+i*3); ctx.lineTo(22,2+i*4); ctx.stroke();
+  });
+
+  if(hasHelmet){
+    ctx.fillStyle = '#8a8a92';
+    ctx.beginPath(); ctx.arc(0,-8,20,Math.PI,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#c8c8d2';
+    ctx.beginPath(); ctx.arc(0,-8,20,Math.PI*1.05,Math.PI*1.5); ctx.fill();
+  }
+
+  ctx.restore(); // 頭
+  ctx.restore(); // 整體
+}
+
+// ---------- 敵人：外星大魔王（原創造型，非既有版權角色） ----------
+function drawBoss(x,y,scale,phase,pose){
+  ctx.save();
+  ctx.translate(x,y);
+  ctx.scale(scale,scale);
+
+  let bob = Math.sin(phase*3)*6, tilt=0, squash=1;
+  if(pose==='rage'){ tilt=Math.sin(phase*10)*0.06; squash=1.06; }
+  if(pose==='hit'){ squash=0.85; tilt=0.1; }
+  if(pose==='down'){ tilt = Math.PI*0.5*Math.min(1,phase); bob += phase*40; }
+
+  ctx.translate(0,bob);
+  ctx.rotate(tilt);
+  ctx.scale(squash,squash);
+
+  ctx.save();
+  ctx.globalAlpha=0.35; ctx.fillStyle='#000';
+  ctx.beginPath(); ctx.ellipse(0,86,50,12,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+
+  // 身體：紫色巨大蛋形，帶尖刺肩甲
+  ctx.beginPath(); ctx.ellipse(0,20,44,58,0,0,Math.PI*2);
+  const bg = ctx.createRadialGradient(-16,-10,6,0,20,70);
+  bg.addColorStop(0,'#c199ff'); bg.addColorStop(0.55,'#7a3fd1'); bg.addColorStop(1,'#3f1a72');
+  ctx.fillStyle = bg; ctx.fill();
+
+  // 肩甲尖刺
+  ctx.fillStyle='#2b1052';
+  [-1,1].forEach(s=>{
+    ctx.beginPath();
+    ctx.moveTo(s*30,-6); ctx.lineTo(s*54,-28); ctx.lineTo(s*38,4); ctx.closePath(); ctx.fill();
+  });
+
+  // 眼睛（單眼發光，帶威嚇感）
+  ctx.save();
+  ctx.fillStyle = pose==='rage' ? '#ff4d5c' : '#ffd24d';
+  ctx.shadowColor = ctx.fillStyle; ctx.shadowBlur = 18;
+  ctx.beginPath(); ctx.ellipse(0,-6,16,10,0,0,Math.PI*2); ctx.fill();
+  ctx.restore();
+  ctx.fillStyle='#1a0a2e';
+  ctx.beginPath(); ctx.arc(0,-6,6,0,Math.PI*2); ctx.fill();
+
+  // 尖牙嘴
+  ctx.fillStyle='#1a0a2e';
+  ctx.beginPath(); ctx.ellipse(0,28,20,10,0,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle='#fff';
+  [-12,-4,4,12].forEach(dx=>{
+    ctx.beginPath(); ctx.moveTo(dx-3,22); ctx.lineTo(dx+3,22); ctx.lineTo(dx,32); ctx.closePath(); ctx.fill();
+  });
+
+  // 觸手手臂
+  const armT = pose==='rage' ? Math.sin(phase*8)*0.5 : Math.sin(phase*2)*0.2;
+  ctx.strokeStyle = '#5a2aa0'; ctx.lineWidth=16; ctx.lineCap='round';
+  ctx.save(); ctx.translate(-44,10); ctx.rotate(armT-0.3);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(-30,10,-38,44); ctx.stroke();
+  ctx.restore();
+  ctx.save(); ctx.translate(44,10); ctx.rotate(-armT+0.3);
+  ctx.beginPath(); ctx.moveTo(0,0); ctx.quadraticCurveTo(30,10,38,44); ctx.stroke();
+  ctx.restore();
+
+  ctx.restore();
+}
+
+function drawSparkBurst(x,y,t,color){
+  ctx.save();
+  for(let i=0;i<14;i++){
+    const ang = (i/14)*Math.PI*2 + t*2;
+    const r = 10+ t*160;
+    const a = Math.max(0,1-t*1.3);
+    ctx.fillStyle = color.replace('ALPHA', a.toFixed(2));
+    ctx.beginPath();
+    ctx.arc(x+Math.cos(ang)*r, y+Math.sin(ang)*r, 5*(1-t*0.7), 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// ---------- 場景時間軸（三幕：出擊→交戰→勝利） ----------
+let startTime=null, ended=false;
+let camShake=0;
+const TOTAL = 26; // 秒
+
+const CAT_BASIC = {body:'#ffffff', dark:'#dcdcdc', light:'#ffffff', accent:'#ff8a5c'};
+const CAT_TANK  = {body:'#7fb8ff', dark:'#3f6fc0', light:'#e4f2ff', accent:'#ffd24d'};
+const CAT_CRAZY = {body:'#ff8a6a', dark:'#c0442a', light:'#ffe0d0', accent:'#ffe14d'};
+
+const captions = [
+  {t:0.5, d:3.2, text:'貓咪軍團，集合出擊！'},
+  {t:4.2, d:3.6, text:'基本貓・坦克貓・狂暴貓，並肩衝鋒'},
+  {t:9.0, d:4.0, text:'神祕外星大魔王，擋路現身！'},
+  {t:14.0, d:4.5, text:'全軍衝撞——必殺一擊！'},
+  {t:19.5, d:4.5, text:'勝利！★ 貓咪大戰爭，即刻開玩 ★'},
+];
+let captionEl = document.getElementById('caption');
+let shownCaption = -1;
+
+function updateCaption(tt){
+  let idx=-1;
+  for(let i=0;i<captions.length;i++){
+    if(tt>=captions[i].t && tt<captions[i].t+captions[i].d){ idx=i; break; }
+  }
+  if(idx!==shownCaption){
+    shownCaption = idx;
+    if(idx>=0){
+      captionEl.textContent = captions[idx].text;
+      captionEl.classList.add('show');
+    } else {
+      captionEl.classList.remove('show');
+    }
+  }
+}
+
+let collided=false, bossDown=false, marchSfxAt=0;
+
+function frame(now){
+  if(startTime===null) startTime = now;
+  const tt = (now-startTime)/1000;
+  ctx.clearRect(0,0,W,H);
+
+  if(camShake>0){
+    ctx.save();
+    ctx.translate((Math.random()-0.5)*camShake, (Math.random()-0.5)*camShake);
+    camShake *= 0.85;
+  } else {
+    ctx.save();
+  }
+
+  drawGround(tt);
+  updateCaption(tt);
+
+  const floorY = H*0.8;
+  const scaleBase = Math.min(W,H)/420;
+  const groundY = floorY - 20*scaleBase;
+
+  // 幕一 0-9s：三隻貓咪出場並排行軍
+  // 幕二 9-14s：外星大魔王登場對峙
+  // 幕三 14-19.5s：衝撞必殺
+  // 幕四 19.5-26s：勝利結尾
+
+  const enterT = Math.min(1, tt/2.4);
+  const ease = 1-Math.pow(1-enterT,3);
+  const marchX = -W*0.35 + ease*(W*0.32-(-W*0.35));
+
+  if(tt>0.1 && tt-marchSfxAt>0.22 && tt<9){ marchSfxAt=tt; sfxMarch(); }
+
+  let catsPose='march';
+  let catsX = marchX;
+  if(tt>=9 && tt<14){ catsPose='charge'; catsX = W*0.32 + Math.sin((tt-9)*3)*4; }
+  if(tt>=14 && tt<15.2){
+    const p=(tt-14)/1.2;
+    catsX = W*0.32 + p*(W*0.5-W*0.32);
+    catsPose='charge';
+  }
+  if(tt>=15.2 && tt<19.5){ catsPose='win'; catsX = W*0.5; }
+  if(tt>=19.5){ catsPose='win'; catsX = W*0.5; }
+
+  const catScale = 1.5*scaleBase;
+  drawCat(catsX-46*scaleBase, groundY+6*scaleBase, catScale*0.9, 1, tt*1.1, catsPose, CAT_BASIC, false);
+  drawCat(catsX, groundY, catScale*1.15, 1, tt*0.9+1, catsPose, CAT_TANK, true);
+  drawCat(catsX+50*scaleBase, groundY+8*scaleBase, catScale*0.95, 1, tt*1.3+2, catsPose, CAT_CRAZY, false);
+
+  // 大魔王：9s 後從右側登場
+  if(tt>=7){
+    const bossEnter = Math.min(1,(tt-7)/2.2);
+    const be = 1-Math.pow(1-bossEnter,3);
+    let bossX = W*1.15 - be*(W*1.15-W*0.78);
+    let bossPose = 'idle';
+    if(tt>=9 && tt<14) bossPose='rage';
+    if(tt>=14 && tt<15.4){ bossPose='hit'; bossX = W*0.78 - Math.min(1,(tt-14)/1.4)*(W*0.16); }
+    if(tt>=15.2 && !bossDown){ bossDown=true; camShake=20; sfxImpact(); }
+    if(tt>=15.2 && tt<20){ bossPose='down'; }
+    if(tt>=20) bossPose='down';
+
+    const bossScale = 1.15*scaleBase;
+    const bossPhase = bossDown ? Math.min(1,(tt-15.2)) : tt;
+    drawBoss(bossX, groundY-10*scaleBase, bossScale, tt, bossPose);
+    if(bossDown && tt<15.6){
+      drawSparkBurst(W*0.62, groundY-70*scaleBase, (tt-15.2), 'rgba(255,206,92,ALPHA)');
+    }
+  }
+
+  ctx.restore();
+
+  if(!ended && tt>=TOTAL){
+    ended=true;
+    document.getElementById('replayWrap').classList.add('show');
+  }
+  if(!ended){
+    requestAnimationFrame(frame);
+  }
+}
+
+function startAll(){
+  document.getElementById('hint').style.opacity='0';
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(false);
+  startMusic();
+}
+
+let running=false;
+function beginPlayback(){
+  if(running) return;
+  running=true;
+  startTime=null; ended=false; collided=false; bossDown=false; marchSfxAt=0;
+  document.getElementById('replayWrap').classList.remove('show');
+  requestAnimationFrame(frame);
+}
+
+document.body.addEventListener('pointerdown', function firstTap(){
+  startAll();
+  beginPlayback();
+  document.body.removeEventListener('pointerdown', firstTap);
+}, {once:true});
+
+try { startAll(); beginPlayback(); } catch(e) {}
+
+document.getElementById('muteBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  ensureAudio();
+  if(actx.state==='suspended') actx.resume();
+  setMuted(!muted);
+});
+
+document.getElementById('replayBtn').addEventListener('click', function(e){
+  e.stopPropagation();
+  musicStarted=false;
+  running=false;
+  stopDrums();
+  if(!muted) startMusic();
+  beginPlayback();
+});
+
+resize();
+drawGround(0);
+drawCat(W*0.42, H*0.8-20, 1.5*Math.min(W,H)/420, 1, 0, 'idle', CAT_TANK, true);
+
+})();
+</script>
+<script>/* AI-CAMP-STATS-BEACON */
+(function(){
+  try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數 */
+  var NS="ai-future-camp", K="x-cat-wars-intro";
+  function ping(n){ try{ var p=fetch("//abacus.jasoncameron.dev/hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }
+  ping(K+"-v");
+  ping(K+"-p"); ping("site-total-plays");
+})();
+</script>
+</body>
+</html>
