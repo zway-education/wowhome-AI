@@ -70,6 +70,17 @@
     padding: 20px;
     box-sizing: border-box;
   }
+  /* 死亡結算：背景改透明，讓恐怖阿嬤的臉持續留在畫面上（她不會消失） */
+  #resultScreen.lose { background: transparent; }
+  #resultPanel {
+    background: rgba(5,3,2,0.74);
+    border: 1px solid rgba(180,60,60,0.32);
+    border-radius: 14px;
+    padding: 22px 26px;
+    max-width: 640px;
+    box-sizing: border-box;
+  }
+  #resultScreen.win #resultPanel { background: rgba(3,5,3,0.6); border-color: rgba(60,180,90,0.3); }
   #resultScreen h1 {
     font-size: clamp(26px, 6vw, 44px);
     margin: 0 0 10px;
@@ -341,13 +352,15 @@
   <button class="bigBtn alt" id="backToTitleBtn">返回標題</button>
 </div>
 <div id="resultScreen">
-  <h1 id="resultTitle"></h1>
-  <div id="resultText"></div>
-  <div id="resultStars"></div>
-  <div id="resultBtns">
-    <button class="bigBtn" id="retryBtn">再試一次</button>
-    <button class="bigBtn alt" id="nextBtn">下一關</button>
-    <button class="bigBtn alt" id="toLevelsBtn">選關</button>
+  <div id="resultPanel">
+    <h1 id="resultTitle"></h1>
+    <div id="resultText"></div>
+    <div id="resultStars"></div>
+    <div id="resultBtns">
+      <button class="bigBtn" id="retryBtn">再試一次</button>
+      <button class="bigBtn alt" id="nextBtn">下一關</button>
+      <button class="bigBtn alt" id="toLevelsBtn">選關</button>
+    </div>
   </div>
 </div>
 <div id="pauseOverlay">
@@ -1428,7 +1441,7 @@ let gameState = 'title'; // title | levelSelect | play | paused | result
 let running = false;
 let startTime = null, elapsed = 0;
 let dying = false, deathTime = -Infinity, deathCause = 'open';
-const DEATH_ANIM_DURATION = 1.4;
+const DEATH_ANIM_DURATION = 2.6; // 死亡特寫拉長，讓恐怖阿嬤的臉停留更久
 
 function renderLevelGrid() {
   levelGridEl.innerHTML = '';
@@ -1454,6 +1467,12 @@ function showScreen(state) {
   resultScreenEl.style.display = state === 'result' ? 'flex' : 'none';
   pauseOverlayEl.style.display = state === 'paused' ? 'flex' : 'none';
   const inPlay = state === 'play' || state === 'paused';
+  if (!inPlay) {
+    // 離開遊玩畫面時清掉殘留的浮層提示（結算畫面只留恐怖阿嬤的臉＋結算卡片）
+    hintOverlayEl.style.display = 'none';
+    interactPromptEl.style.display = 'none';
+    hideOverlayEl.style.display = 'none';
+  }
   document.getElementById('touchControls').style.display = inPlay ? 'flex' : 'none';
   document.getElementById('minimapWrap').style.display = inPlay ? 'block' : 'none';
   hudEl.style.display = inPlay ? 'block' : 'none';
@@ -1942,7 +1961,7 @@ let grainPat = null, grainOx = 0, grainOy = 0, grainNext = 0;
 
 function drawDeathCloseup(t, w, h, horizon) {
   // v6 恐怖阿嬤特寫：皺紋滿面＋發光雙瞳＋血盆大嘴，撲向鏡頭（單次事件動畫，非持續晃動）
-  const lunge = Math.min(1, t / 0.3);
+  const lunge = Math.min(1, t / (0.35 / DEATH_ANIM_DURATION)); // 撲近動作維持約 0.35 秒，其餘時間停留特寫
   const ease = 1 - Math.pow(1 - lunge, 3);
   const size = h * (0.55 + ease * 0.55 + t * 0.15);
   const cx = w / 2, cy = horizon + size * 0.02;
@@ -1981,7 +2000,19 @@ function drawDeathCloseup(t, w, h, horizon) {
   ctx.fillStyle = 'rgba(84,64,46,0.4)';
   ctx.beginPath(); ctx.ellipse(-size * 0.2, size * 0.02, size * 0.09, size * 0.05, 0.35, 0, Math.PI * 2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(size * 0.2, size * 0.02, size * 0.09, size * 0.05, -0.35, 0, Math.PI * 2); ctx.fill();
-  // 皺紋（額頭三道、法令紋）
+  // 腐爛斑塊（暗紫綠壞死色，皮膚不再健康）
+  ctx.fillStyle = 'rgba(70,60,50,0.35)';
+  ctx.beginPath(); ctx.ellipse(-size * 0.24, -size * 0.3, size * 0.05, size * 0.035, 0.4, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(size * 0.18, size * 0.22, size * 0.04, size * 0.03, -0.2, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(-size * 0.06, size * 0.3, size * 0.035, size * 0.025, 0.1, 0, Math.PI * 2); ctx.fill();
+  // 浮出的暗色血管（額頭與太陽穴向外擴散，更駭人的病態感）
+  ctx.strokeStyle = 'rgba(70,15,25,0.55)';
+  ctx.lineWidth = Math.max(0.8, size * 0.006);
+  ctx.beginPath(); ctx.moveTo(-size * 0.02, -size * 0.42); ctx.quadraticCurveTo(-size * 0.08, -size * 0.34, -size * 0.14, -size * 0.24); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.04, -size * 0.4); ctx.quadraticCurveTo(size * 0.1, -size * 0.3, size * 0.16, -size * 0.2); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(-size * 0.26, -size * 0.1); ctx.quadraticCurveTo(-size * 0.3, size * 0.02, -size * 0.27, size * 0.16); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.27, -size * 0.08); ctx.quadraticCurveTo(size * 0.31, size * 0.04, size * 0.28, size * 0.18); ctx.stroke();
+  // 皺紋（額頭三道、法令紋、更深更密集的紋理）
   ctx.strokeStyle = 'rgba(76,58,40,0.6)';
   ctx.lineWidth = Math.max(1, size * 0.008);
   for (let i = 0; i < 3; i++) {
@@ -1992,22 +2023,43 @@ function drawDeathCloseup(t, w, h, horizon) {
   }
   ctx.beginPath(); ctx.moveTo(-size * 0.1, size * 0.08); ctx.quadraticCurveTo(-size * 0.16, size * 0.16, -size * 0.12, size * 0.24); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(size * 0.1, size * 0.08); ctx.quadraticCurveTo(size * 0.16, size * 0.16, size * 0.12, size * 0.24); ctx.stroke();
-  // 眼窩（深洞）
-  ctx.fillStyle = 'rgba(22,10,7,1)';
-  ctx.beginPath(); ctx.ellipse(-size * 0.14, -size * 0.16, size * 0.1, size * 0.075, 0.1, 0, Math.PI * 2); ctx.fill();
-  ctx.beginPath(); ctx.ellipse(size * 0.14, -size * 0.16, size * 0.1, size * 0.075, -0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.lineWidth = Math.max(0.6, size * 0.005);
+  ctx.beginPath(); ctx.moveTo(-size * 0.26, -size * 0.32); ctx.quadraticCurveTo(-size * 0.28, -size * 0.2, -size * 0.24, -size * 0.08); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(size * 0.26, -size * 0.3); ctx.quadraticCurveTo(size * 0.29, -size * 0.18, size * 0.25, -size * 0.06); ctx.stroke();
+  // 撕裂舊疤（貫穿眼角到臉頰，經典恐怖記號）
+  ctx.strokeStyle = 'rgba(120,30,26,0.65)';
+  ctx.lineWidth = Math.max(1, size * 0.01);
+  ctx.beginPath(); ctx.moveTo(size * 0.06, -size * 0.24); ctx.lineTo(size * 0.14, size * 0.06); ctx.stroke();
+  // 眼窩（深洞，比一般眼窩更凹陷發黑）
+  ctx.fillStyle = 'rgba(14,6,4,1)';
+  ctx.beginPath(); ctx.ellipse(-size * 0.14, -size * 0.16, size * 0.105, size * 0.082, 0.1, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(size * 0.14, -size * 0.16, size * 0.105, size * 0.082, -0.1, 0, Math.PI * 2); ctx.fill();
   // 下垂怒眉
   ctx.strokeStyle = 'rgba(60,52,45,1)';
   ctx.lineWidth = Math.max(2, size * 0.02);
   ctx.beginPath(); ctx.moveTo(-size * 0.23, -size * 0.27); ctx.lineTo(-size * 0.05, -size * 0.22); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(size * 0.23, -size * 0.27); ctx.lineTo(size * 0.05, -size * 0.22); ctx.stroke();
-  // 發光雙瞳（緩慢脈動）
+  // 發光雙瞳（緩慢脈動，環繞充血血絲，更凶惡逼人）
   const eyeGlow = 0.5 + 0.5 * Math.sin(elapsed * 16);
+  for (const ex of [-size * 0.14, size * 0.14]) {
+    ctx.strokeStyle = `rgba(200,30,25,${0.55 + eyeGlow * 0.25})`;
+    ctx.lineWidth = Math.max(0.5, size * 0.004);
+    for (let v = 0; v < 3; v++) {
+      const va = -Math.PI * 0.6 + v * 0.55;
+      ctx.beginPath();
+      ctx.moveTo(ex + Math.cos(va) * size * 0.02, -size * 0.155 + Math.sin(va) * size * 0.015);
+      ctx.lineTo(ex + Math.cos(va) * size * 0.06, -size * 0.155 + Math.sin(va) * size * 0.045);
+      ctx.stroke();
+    }
+  }
   ctx.fillStyle = `rgba(255,${Math.floor(20 + eyeGlow * 40)},0,1)`;
   ctx.beginPath();
-  ctx.arc(-size * 0.14, -size * 0.155, size * 0.028, 0, Math.PI * 2);
-  ctx.arc(size * 0.14, -size * 0.155, size * 0.028, 0, Math.PI * 2);
+  ctx.arc(-size * 0.14, -size * 0.155, size * 0.03, 0, Math.PI * 2);
+  ctx.arc(size * 0.14, -size * 0.155, size * 0.03, 0, Math.PI * 2);
   ctx.fill();
+  ctx.fillStyle = `rgba(255,240,220,${0.75 + eyeGlow * 0.25})`;
+  ctx.beginPath(); ctx.arc(-size * 0.14, -size * 0.155, size * 0.011, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(size * 0.14, -size * 0.155, size * 0.011, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = 'rgba(255,220,180,0.9)';
   ctx.fillRect(-size * 0.148, -size * 0.168, size * 0.012, size * 0.012);
   ctx.fillRect(size * 0.132, -size * 0.168, size * 0.012, size * 0.012);
@@ -2016,21 +2068,48 @@ function drawDeathCloseup(t, w, h, horizon) {
   ctx.beginPath();
   ctx.moveTo(0, -size * 0.12); ctx.lineTo(-size * 0.035, size * 0.02); ctx.lineTo(size * 0.035, size * 0.02);
   ctx.closePath(); ctx.fill();
-  // 血盆大嘴（隨撲近張大）
-  const mouthOpen = size * (0.08 + ease * 0.15);
-  ctx.fillStyle = 'rgba(18,4,4,1)';
-  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.16, mouthOpen, 0, 0, Math.PI * 2); ctx.fill();
-  // 稀疏牙齒（裁切在嘴型內）
+  // 血盆大嘴（隨撲近張大，內部更暗更深）
+  const mouthOpen = size * (0.08 + ease * 0.17);
+  ctx.fillStyle = 'rgba(10,2,2,1)';
+  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.17, mouthOpen, 0, 0, Math.PI * 2); ctx.fill();
+  // 參差不齊的獠牙（比原本更多、更尖、長短不一，更駭人）
   ctx.save();
-  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.16, mouthOpen, 0, 0, Math.PI * 2); ctx.clip();
-  ctx.fillStyle = 'rgba(210,196,158,1)';
-  for (let i = -2; i <= 2; i++) {
+  ctx.beginPath(); ctx.ellipse(0, size * 0.18, size * 0.17, mouthOpen, 0, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = 'rgba(205,190,155,1)';
+  for (let i = -3; i <= 3; i++) {
     if (i === 0) continue;
-    ctx.fillRect(i * size * 0.055 - size * 0.018, size * 0.18 - mouthOpen, size * 0.036, mouthOpen * 0.45);
+    const toothH = mouthOpen * (0.4 + (Math.abs(i) % 2) * 0.22);
+    ctx.beginPath();
+    ctx.moveTo(i * size * 0.042 - size * 0.02, size * 0.18 - mouthOpen);
+    ctx.lineTo(i * size * 0.042 + size * 0.02, size * 0.18 - mouthOpen);
+    ctx.lineTo(i * size * 0.042, size * 0.18 - mouthOpen + toothH);
+    ctx.closePath(); ctx.fill();
   }
+  // 兩顆特別尖長的犬齒
+  ctx.fillStyle = 'rgba(220,205,170,1)';
+  for (const side of [-1, 1]) {
+    const bx = side * size * 0.11;
+    ctx.beginPath();
+    ctx.moveTo(bx - size * 0.022, size * 0.18 - mouthOpen);
+    ctx.lineTo(bx + size * 0.022, size * 0.18 - mouthOpen);
+    ctx.lineTo(bx, size * 0.18 - mouthOpen + mouthOpen * 0.95);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(150,20,20,0.85)';
   for (let i = -1; i <= 1; i++)
-    ctx.fillRect(i * size * 0.07 - size * 0.016, size * 0.18 + mouthOpen * 0.6, size * 0.032, mouthOpen * 0.4);
+    ctx.fillRect(i * size * 0.07 - size * 0.016, size * 0.18 + mouthOpen * 0.55, size * 0.032, mouthOpen * 0.42);
   ctx.restore();
+  // 嘴角滲血（隨撲近逐漸增加）
+  ctx.fillStyle = `rgba(140,10,10,${0.5 + ease * 0.4})`;
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.moveTo(side * size * 0.155, size * 0.14);
+    ctx.quadraticCurveTo(side * size * 0.18, size * 0.22, side * size * 0.15, size * (0.3 + ease * 0.14));
+    ctx.lineTo(side * size * 0.12, size * (0.28 + ease * 0.12));
+    ctx.quadraticCurveTo(side * size * 0.14, size * 0.2, side * size * 0.13, size * 0.16);
+    ctx.closePath();
+    ctx.fill();
+  }
   ctx.restore();
   // 兩側撲來的爪手
   for (const side of [-1, 1]) {
@@ -2054,9 +2133,10 @@ function drawDeathCloseup(t, w, h, horizon) {
     ctx.restore();
   }
 
-  const strikes = [0.25, 0.55];
+  const strikes = [0.4 / DEATH_ANIM_DURATION, 0.9 / DEATH_ANIM_DURATION];
+  const strikeWidth = 0.3 / DEATH_ANIM_DURATION;
   for (const st of strikes) {
-    const local = clamp((t - st) / 0.35, 0, 1);
+    const local = clamp((t - st) / strikeWidth, 0, 1);
     if (local <= 0 || local >= 1) continue;
     const alpha = Math.sin(local * Math.PI);
     ctx.strokeStyle = `rgba(160,0,0,${alpha * 0.9})`;
@@ -2166,41 +2246,136 @@ function drawSprite(entity, RAY_COUNT, kind) {
       ctx.arc((dot - 1) * size * 0.07, size * 0.12 + (dot % 2) * size * 0.1, size * 0.014, 0, Math.PI * 2);
       ctx.fill();
     }
-    // 兩隻伸出的手
-    ctx.strokeStyle = bodyColor;
-    ctx.lineWidth = Math.max(1, size * 0.03);
+    // 兩隻瘦骨嶙峋的爪手，五指張開（比直線手臂更駭人）
+    const handShade = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    for (const side of [1, -1]) {
+      const sx = side > 0 ? size * 0.2 : -size * 0.18;
+      const sy = side > 0 ? -size * 0.1 : -size * 0.08;
+      const hx = side > 0 ? size * 0.46 : -size * 0.36;
+      const hy = side > 0 ? -size * 0.0 : size * 0.06;
+      ctx.strokeStyle = bodyColor;
+      ctx.lineWidth = Math.max(1, size * 0.028);
+      ctx.beginPath(); ctx.moveTo(sx, sy); ctx.lineTo(hx, hy); ctx.stroke();
+      ctx.strokeStyle = handShade;
+      ctx.lineWidth = Math.max(1, size * 0.014);
+      for (let f = 0; f < 4; f++) {
+        const fa = (f - 1.5) * 0.32 * side + (side > 0 ? -0.1 : 0.1);
+        ctx.beginPath();
+        ctx.moveTo(hx, hy);
+        ctx.lineTo(hx + Math.cos(fa) * size * 0.1 * side, hy + Math.sin(fa) * size * 0.1 - size * 0.02);
+        ctx.stroke();
+      }
+    }
+    // head：困惑時左右東張西望，平時也有極輕微的顫抖歪頭
+    const jitter = Math.sin(elapsed * 13) * size * 0.006;
+    const headX = confused ? Math.sin(elapsed * 4) * size * 0.07 - size * 0.02 : -size * 0.02 + jitter;
+    const headTilt = confused ? 0 : 0.12 + Math.sin(elapsed * 0.7) * 0.06;
+    ctx.save();
+    ctx.translate(headX, -size * 0.5);
+    ctx.rotate(headTilt);
+    // 消瘦臉形（比正圓更長，凹陷的下顎線）
     ctx.beginPath();
-    ctx.moveTo(size * 0.2, -size * 0.1);
-    ctx.lineTo(size * 0.42, size * 0.05);
-    ctx.lineTo(size * 0.5, -size * 0.02);
-    ctx.moveTo(-size * 0.18, -size * 0.08);
-    ctx.lineTo(-size * 0.38, size * 0.08);
+    ctx.ellipse(0, 0, size * 0.088, size * 0.108, 0, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.fill();
+    // 腐爛斑（暗紫綠色壞死斑塊，皮膚不再是健康色）
+    ctx.fillStyle = `rgba(${Math.floor(70 * shade)},${Math.floor(60 * shade)},${Math.floor(50 * shade)},${shade * 0.4})`;
+    ctx.beginPath(); ctx.ellipse(-size * 0.06, -size * 0.04, size * 0.018, size * 0.014, 0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(size * 0.05, size * 0.06, size * 0.014, size * 0.011, -0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(size * 0.01, -size * 0.075, size * 0.012, size * 0.009, 0, 0, Math.PI * 2); ctx.fill();
+    // 凹陷雙頰陰影
+    ctx.fillStyle = `rgba(${Math.floor(90 * shade)},${Math.floor(70 * shade)},${Math.floor(55 * shade)},${shade * 0.7})`;
+    ctx.beginPath(); ctx.ellipse(-size * 0.045, size * 0.03, size * 0.022, size * 0.032, 0.3, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(size * 0.045, size * 0.03, size * 0.022, size * 0.032, -0.3, 0, Math.PI * 2); ctx.fill();
+    // 額頭與臉頰浮出的暗色血管
+    ctx.strokeStyle = `rgba(${Math.floor(70 * shade)},${Math.floor(15 * shade)},${Math.floor(25 * shade)},${shade * 0.5})`;
+    ctx.lineWidth = Math.max(0.4, size * 0.004);
+    ctx.beginPath(); ctx.moveTo(-size * 0.02, -size * 0.09); ctx.quadraticCurveTo(-size * 0.035, -size * 0.05, -size * 0.06, -size * 0.02); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(size * 0.055, -size * 0.01); ctx.quadraticCurveTo(size * 0.07, size * 0.02, size * 0.065, size * 0.06); ctx.stroke();
+    // 額頭與眼下皺紋
+    ctx.strokeStyle = `rgba(${Math.floor(95 * shade)},${Math.floor(78 * shade)},${Math.floor(58 * shade)},${shade * 0.75})`;
+    ctx.lineWidth = Math.max(0.6, size * 0.005);
+    for (let i = 0; i < 2; i++) {
+      ctx.beginPath();
+      ctx.moveTo(-size * 0.05, -size * 0.06 - i * size * 0.014);
+      ctx.quadraticCurveTo(0, -size * 0.07 - i * size * 0.014, size * 0.05, -size * 0.06 - i * size * 0.014);
+      ctx.stroke();
+    }
+    ctx.beginPath(); ctx.moveTo(-size * 0.055, size * 0.055); ctx.lineTo(-size * 0.03, size * 0.075); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(size * 0.055, size * 0.055); ctx.lineTo(size * 0.03, size * 0.075); ctx.stroke();
+    // 灰白散亂髮絲（取代整齊髮髻，更凌亂駭人；數量增加、更長更雜）
+    ctx.strokeStyle = `rgba(${Math.floor(185 * shade)},${Math.floor(178 * shade)},${Math.floor(165 * shade)},${shade * 0.85})`;
+    ctx.lineWidth = Math.max(0.8, size * 0.008);
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i - 4.5) * 0.19;
+      const wob = Math.sin(elapsed * 2.4 + i) * size * 0.012;
+      const len = 0.28 + (i % 3) * 0.05;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * size * 0.08, Math.sin(a) * size * 0.1);
+      ctx.quadraticCurveTo(Math.cos(a) * size * 0.16 + wob, Math.sin(a) * size * 0.2, Math.cos(a) * size * 0.13 + wob * 1.5, Math.sin(a) * size * len + size * 0.06);
+      ctx.stroke();
+    }
+    // 兩絡垂到臉前的髮絲（遮住部分眼睛，經典驚悚剪影）
+    ctx.lineWidth = Math.max(0.7, size * 0.007);
+    ctx.beginPath();
+    ctx.moveTo(-size * 0.05, -size * 0.09);
+    ctx.quadraticCurveTo(-size * 0.075 + jitter, -size * 0.01, -size * 0.05, size * 0.09);
     ctx.stroke();
-    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
     ctx.beginPath();
-    ctx.arc(size * 0.5, -size * 0.02, size * 0.028, 0, Math.PI * 2);
-    ctx.arc(-size * 0.38, size * 0.08, size * 0.026, 0, Math.PI * 2);
-    ctx.fill();
-    // head：困惑時左右東張西望
-    const headX = confused ? Math.sin(elapsed * 4) * size * 0.07 - size * 0.02 : -size * 0.02;
+    ctx.moveTo(size * 0.06, -size * 0.085);
+    ctx.quadraticCurveTo(size * 0.085 - jitter, size * 0.0, size * 0.06, size * 0.1);
+    ctx.stroke();
+    ctx.fillStyle = `rgba(${Math.floor(178 * shade)},${Math.floor(170 * shade)},${Math.floor(158 * shade)},${shade})`;
     ctx.beginPath();
-    ctx.arc(headX, -size * 0.5, size * 0.1, 0, Math.PI * 2);
-    ctx.fillStyle = `rgba(${Math.floor(150 * shade)},${Math.floor(135 * shade)},${Math.floor(110 * shade)},${shade})`;
+    ctx.arc(0, -size * 0.075, size * 0.058, Math.PI * 0.95, Math.PI * 2.05);
     ctx.fill();
-    // 灰白髮髻
-    ctx.fillStyle = `rgba(${Math.floor(190 * shade)},${Math.floor(185 * shade)},${Math.floor(175 * shade)},${shade})`;
+    // 扭曲裂嘴（一邊上揚一邊下垂的不對稱獰笑，比對稱嘴更詭異）
+    ctx.fillStyle = `rgba(${Math.floor(60 * shade)},${Math.floor(22 * shade)},${Math.floor(22 * shade)},${shade * 0.9})`;
     ctx.beginPath();
-    ctx.arc(headX, -size * 0.565, size * 0.062, Math.PI * 0.95, Math.PI * 2.05);
+    ctx.moveTo(-size * 0.036, size * 0.05);
+    ctx.quadraticCurveTo(-size * 0.01, size * 0.078, size * 0.02, size * 0.05);
+    ctx.quadraticCurveTo(size * 0.034, size * 0.038, size * 0.04, size * 0.045);
+    ctx.quadraticCurveTo(size * 0.01, size * 0.06, -size * 0.02, size * 0.052);
+    ctx.quadraticCurveTo(-size * 0.03, size * 0.046, -size * 0.036, size * 0.05);
     ctx.fill();
-    ctx.beginPath();
-    ctx.arc(headX, -size * 0.615, size * 0.032, 0, Math.PI * 2);
-    ctx.fill();
-    // eyes：平常兇（紅）、蓄力/生氣放大、被打暈變粉紅
-    const eyeR = size * ((windup || angry) ? 0.022 : 0.016);
+    // 嘴角疤痕（撕裂痕延伸出嘴角，經典恐怖元素）
+    ctx.strokeStyle = `rgba(${Math.floor(110 * shade)},${Math.floor(30 * shade)},${Math.floor(24 * shade)},${shade * 0.8})`;
+    ctx.lineWidth = Math.max(0.6, size * 0.006);
+    ctx.beginPath(); ctx.moveTo(size * 0.036, size * 0.048); ctx.lineTo(size * 0.058, size * 0.032); ctx.stroke();
+    // 臉頰另一道舊疤
+    ctx.beginPath(); ctx.moveTo(-size * 0.06, -size * 0.03); ctx.lineTo(-size * 0.045, size * 0.015); ctx.stroke();
+    // 嘴角垂涎（不停晃動的口水絲，未暈眩時才有）
+    if (!stunned) {
+      const droolLen = size * (0.03 + 0.02 * (0.5 + 0.5 * Math.sin(elapsed * 1.6)));
+      ctx.strokeStyle = `rgba(210,225,190,${shade * 0.55})`;
+      ctx.lineWidth = Math.max(0.5, size * 0.004);
+      ctx.beginPath();
+      ctx.moveTo(size * 0.018, size * 0.062);
+      ctx.lineTo(size * 0.02, size * 0.062 + droolLen);
+      ctx.stroke();
+    }
+    // eyes：深陷眼窩＋血絲眼白＋發光瞳孔（平常兇紅、蓄力/生氣放大、被打暈變粉紅）
+    ctx.fillStyle = `rgba(15,8,6,${shade * 0.55})`;
+    ctx.beginPath(); ctx.ellipse(-size * 0.035, -size * 0.008, size * 0.026, size * 0.02, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(size * 0.03, -size * 0.008, size * 0.026, size * 0.02, 0, 0, Math.PI * 2); ctx.fill();
+    // 眼周瘀青暗影
+    ctx.fillStyle = `rgba(${Math.floor(50 * shade)},${Math.floor(20 * shade)},${Math.floor(35 * shade)},${shade * 0.4})`;
+    ctx.beginPath(); ctx.ellipse(-size * 0.035, -size * 0.002, size * 0.034, size * 0.026, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(size * 0.03, -size * 0.002, size * 0.034, size * 0.026, 0, 0, Math.PI * 2); ctx.fill();
+    if (!stunned) {
+      // 血絲眼白（僅非暈眩時,更凶惡）
+      ctx.strokeStyle = `rgba(200,40,30,${shade * 0.7})`;
+      ctx.lineWidth = Math.max(0.4, size * 0.003);
+      for (const ex of [-size * 0.035, size * 0.03]) {
+        ctx.beginPath(); ctx.moveTo(ex - size * 0.018, -size * 0.012); ctx.lineTo(ex - size * 0.006, -size * 0.006); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(ex + size * 0.02, -size * 0.014); ctx.lineTo(ex + size * 0.008, -size * 0.006); ctx.stroke();
+      }
+    }
+    const eyeR = size * ((windup || angry) ? 0.02 : 0.014);
     ctx.fillStyle = `rgba(255,${stunned ? 200 : 20},${stunned ? 200 : 0},${shade})`;
     ctx.beginPath();
-    ctx.arc(headX - size * 0.035, -size * 0.505, eyeR, 0, Math.PI * 2);
-    ctx.arc(headX + size * 0.03, -size * 0.505, eyeR, 0, Math.PI * 2);
+    ctx.arc(-size * 0.035, -size * 0.005, eyeR, 0, Math.PI * 2);
+    ctx.arc(size * 0.03, -size * 0.005, eyeR, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
     ctx.fillStyle = '#fff';
@@ -2409,6 +2584,11 @@ function frame(now) {
     drawMinimap();
   } else if (gameState === 'paused') {
     drawScene(); // frozen background
+  } else if (gameState === 'result' && dying) {
+    // 死亡後恐怖阿嬤的臉持續留在畫面上：結算卡片變透明，背景繼續播放她的特寫
+    // （瞳孔脈動、髮絲飄動皆會一直動，直到玩家按下再試一次/選關）
+    elapsed = (performance.now() - startTime) / 1000;
+    drawScene();
   }
 }
 requestAnimationFrame(frame);
