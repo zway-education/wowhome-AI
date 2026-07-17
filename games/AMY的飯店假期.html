@@ -360,7 +360,8 @@ const AREAS = {
   rooftop: {
     doors: [ {x:410,y:470,w:80,h:70,to:'room',ex:600,ey:300,label:'樓梯下樓'} ],
     pool: { x:220, y:150, w:460, h:260 },
-    sunbeds: [ [120,200],[120,280],[740,200],[740,280] ]
+    slide: { x:110, y:96, w:76, h:70 },   // 滑水道入口平台：走上去咻—滑進泳池
+    sunbeds: [ [120,280],[120,360],[740,200],[740,280] ]
   },
   restaurant: {
     doors: [ {x:410,y:26,w:80,h:56,to:'lobby',ex:600,ey:440,label:'樓梯回大廳'} ],
@@ -388,7 +389,7 @@ const DAYS = [
     desc:'衣櫃換泳裝 → 上頂樓 → 撿齊 6 個泳圈' },
   { key:'d3', name:'美食日', icon:'food', par:85, fast:55, area:'lobby',
     desc:'到 B1 餐廳入座，服務生送餐，吃完 3 道美食' },
-  { key:'d4', name:'遊戲日', icon:'coin', par:90, fast:58, area:'lobby',
+  { key:'d4', name:'遊戲日', icon:'coin', par:115, fast:78, area:'lobby',
     desc:'找齊 4 枚代幣 → 遊戲室打街機 → 回房泡澡' },
   { key:'d5', name:'退房日', icon:'key', par:65, fast:40, area:'room',
     desc:'收行李 → 櫃檯還房卡 → 大門口集合' }
@@ -444,6 +445,7 @@ function goalLabel(){
 }
 function setupDay(d){
   items = []; sharedGot = 0; sharedNeed = 0; S.collectDone = false;
+  mini = null; arcadeCool = 0;
   p1 = makePlayer(0); p2 = makePlayer(1); players=[p1,p2];
   resetWaiter();
   if(d===0){
@@ -536,15 +538,7 @@ function updateDayTasks(p, dt){
     if(p1.step>=2 && p2.step>=2) dayComplete();
   }else if(D===3){
     if(p.step===0 && sharedGot>=sharedNeed){ p.step=1; updateTaskLabels(); }
-    if(p.step===1 && S.area==='gameroom'){
-      const ar = AREAS.gameroom.arcades[1];
-      if(dist(p.x,p.y,ar[0],ar[1]+40) < 55){
-        p.step=2; p.squash=1; S.freeze=.08; S.shake=6;
-        sfx.win(); burstConfetti2(p.x,p.y-30,16,'#9a6bff');
-        floatText(p.x,p.y,p.name+'：街機好好玩！','#9a6bff');
-        updateTaskLabels(); showHint(p.name+'：打完電動，回房間泡澡放鬆吧～');
-      }
-    }
+    // 打街機改為真的可玩的「接星星」小遊戲（updateArcadeTrigger／updateMini），過關才進下一步
     if(p.step===2 && p.bathing){
       p.step=3; floatText(p.x,p.y,'泡澡好舒服～','#38e1ff');
       updateTaskLabels();
@@ -628,8 +622,122 @@ function updateWaiter(dt){
     }
   }
 }
+/* 5F 街機小遊戲「接星星」：走近中間街機就開機，左右移動籃子接住 10 顆星星。
+   沒有失敗（漏接不扣分），呼應「失敗不挫折」；Day 4 打贏才算完成打電動任務 */
+let mini = null, arcadeCool = 0;
+function startMini(){
+  mini = { score:0, need:10, px:.5, drops:[], t:0, done:false, doneT:0 };
+  sfx.elevator(); showHint('街機開機！左右移動籃子，接住 10 顆星星！');
+}
+function updateArcadeTrigger(){
+  if(mini || S.area!=='gameroom' || S.doorCooldown>0 || arcadeCool>0) return;
+  const ar = AREAS.gameroom.arcades[1];
+  for(const p of players){
+    if(dist(p.x,p.y,ar[0],ar[1]+40) < 50){ startMini(); return; }
+  }
+}
+function updateMini(dt){
+  arcadeCool = Math.max(0, arcadeCool-dt);
+  if(!mini) return;
+  mini.t += dt;
+  if(mini.done){
+    mini.doneT -= dt;
+    if(mini.doneT<=0){ mini=null; arcadeCool=1.4; }
+    return;
+  }
+  // 兩人任一組按鍵/搖桿都能控制籃子
+  let dx=0;
+  if(keys['KeyA']||keys['ArrowLeft']) dx--;
+  if(keys['KeyD']||keys['ArrowRight']) dx++;
+  const s1=stickDir('p1'), s2=stickDir('p2');
+  if(s1) dx+=s1.dx; if(s2) dx+=s2.dx;
+  mini.px = clamp(mini.px + dx*1.15*dt, .06, .94);
+  if(Math.random() < dt*2.4 && mini.drops.length<5)
+    mini.drops.push({x:rnd(.08,.92), y:-.05, spd:rnd(.4,.6), ph:rnd(0,6)});
+  for(let i=mini.drops.length-1;i>=0;i--){
+    const d=mini.drops[i]; d.y += d.spd*dt;
+    if(d.y>.82 && d.y<.95 && Math.abs(d.x-mini.px)<.1){
+      mini.drops.splice(i,1); mini.score++; sfx.star();
+      const g=miniGeom(); burstConfetti(g.x+d.x*g.w, g.y+g.h*.85, 6);
+    }else if(d.y>1.05) mini.drops.splice(i,1);
+  }
+  if(!mini.done && mini.score>=mini.need){
+    mini.done=true; mini.doneT=1.2;
+    sfx.win(); S.shake=6; S.freeze=.08;
+    const gg=miniGeom(); burstConfetti(gg.x+gg.w/2, gg.y+gg.h/2, 24);
+    if(S.day===3){
+      players.forEach(p=>{ if(p.step===1){ p.step=2; p.squash=1; } });
+      updateTaskLabels(); showHint('過關！打完電動，回房間泡澡放鬆吧～');
+    }else showHint('過關！你是街機高手！');
+  }
+}
+function miniGeom(){
+  const W=stage.clientWidth, H=stage.clientHeight;
+  const w=Math.min(480, W*.86), h=Math.min(360, H*.72);
+  return { x:(W-w)/2, y:(H-h)/2, w, h };
+}
+function drawMini(t){
+  if(!mini) return;
+  const g=miniGeom(), x=g.x, y=g.y, w=g.w, h=g.h;
+  ctx.save();
+  ctx.fillStyle='rgba(4,6,14,.55)'; ctx.fillRect(0,0,stage.clientWidth,stage.clientHeight);
+  // 街機螢幕外框（霓虹）
+  ctx.fillStyle='#0b0620'; roundRectPath(ctx,x-10,y-10,w+20,h+20,18); ctx.fill();
+  ctx.strokeStyle='#9a6bff'; ctx.lineWidth=3; ctx.stroke();
+  ctx.strokeStyle='rgba(56,225,255,.5)'; ctx.lineWidth=1.5;
+  roundRectPath(ctx,x-4,y-4,w+8,h+8,14); ctx.stroke();
+  ctx.save(); roundRectPath(ctx,x,y,w,h,10); ctx.clip();
+  const bg=ctx.createLinearGradient(0,y,0,y+h);
+  bg.addColorStop(0,'#101736'); bg.addColorStop(1,'#1c1030');
+  ctx.fillStyle=bg; ctx.fillRect(x,y,w,h);
+  ctx.fillStyle='rgba(255,255,255,.25)';
+  for(let i=0;i<24;i++) ctx.fillRect(x+rndSeed(i+9)*w, y+((rndSeed(i+33)*h)+t*22)%h, 2, 2);
+  // 落下的星星
+  for(const d of mini.drops){
+    ctx.save(); ctx.translate(x+d.x*w, y+d.y*h); ctx.rotate(Math.sin(t*2+d.ph)*.4);
+    ctx.fillStyle='#ffcf5c'; ctx.strokeStyle='#c98d1f'; ctx.lineWidth=1.5;
+    ctx.beginPath();
+    for(let i=0;i<5;i++){
+      const a=-Math.PI/2+i*(Math.PI*2/5), a2=a+Math.PI/5;
+      ctx.lineTo(Math.cos(a)*12, Math.sin(a)*12);
+      ctx.lineTo(Math.cos(a2)*5, Math.sin(a2)*5);
+    }
+    ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.restore();
+  }
+  // 接星籃（AMY 粉色小籃）
+  const bx=x+mini.px*w, by=y+h*.88;
+  ctx.fillStyle='#ff6cc7'; roundRectPath(ctx,bx-34,by-10,68,20,9); ctx.fill();
+  ctx.strokeStyle='#b43a86'; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle='#ffd1ec'; roundRectPath(ctx,bx-28,by-7,56,7,4); ctx.fill();
+  // 分數與說明
+  ctx.textAlign='center';
+  ctx.font='bold 22px "PingFang TC","Microsoft JhengHei",sans-serif';
+  ctx.fillStyle='#ffcf5c'; ctx.fillText('★ '+mini.score+' / '+mini.need, x+w/2, y+34);
+  ctx.font='12.5px sans-serif'; ctx.fillStyle='#8ea0c2';
+  ctx.fillText('← → 或 A D 或 拖曳搖桿移動籃子', x+w/2, y+h-14);
+  if(mini.done){
+    ctx.fillStyle='rgba(4,6,14,.5)'; ctx.fillRect(x,y,w,h);
+    ctx.font='bold 34px "PingFang TC","Microsoft JhengHei",sans-serif';
+    ctx.fillStyle='#ffcf5c'; ctx.fillText('過關！', x+w/2, y+h/2+10);
+  }
+  ctx.restore(); ctx.restore();
+}
 // 5F 遊戲室溜滑梯：走進滑梯口，咻——直接溜回一樓大廳！（任何一天都能玩）
 function updateSlide(){
+  // 頂樓滑水道：走上平台就滑進泳池正中央（自動觸發跳水音效與泳姿）
+  if(S.area==='rooftop' && S.doorCooldown<=0){
+    const ws = AREAS.rooftop.slide, pl = AREAS.rooftop.pool;
+    for(const p of players){
+      if(p.x>ws.x && p.x<ws.x+ws.w && p.y>ws.y && p.y<ws.y+ws.h){
+        sfx.elevator(); S.shake=6;
+        p.x = pl.x+pl.w*.35+rnd(-20,20); p.y = pl.y+pl.h*.4+rnd(-15,15);
+        p.squash = 1;
+        burstConfetti2(p.x, p.y, 12, '#bfe8ff');
+        floatText(p.x, p.y, '咻——滑進泳池！', '#38e1ff');
+      }
+    }
+  }
   if(S.area!=='gameroom' || S.doorCooldown>0) return;
   const sl = AREAS.gameroom.slide;
   for(const p of players){
@@ -1200,6 +1308,26 @@ function bakeRooftop(g){
   g.fillStyle='#2fa8d8'; roundRectPath(g,px,py,pl.w*scale,pl.h*scale,14*scale); g.fill();
   g.font=(11*scale)+'px sans-serif'; g.fillStyle='#0a4a66'; g.textAlign='center';
   g.fillText('走進水裡就能游泳', px+pl.w*scale/2, py-10*scale);
+  // 滑水道：藍色階梯平台＋橘色滑道弧線滑入泳池
+  {
+    const ws = AREAS.rooftop.slide;
+    const [wx1,wy1]=toScreen(ws.x,ws.y);
+    g.fillStyle='rgba(255,207,92,.16)'; roundRectPath(g,wx1-6*scale,wy1-6*scale,ws.w*scale+12*scale,ws.h*scale+12*scale,12*scale); g.fill();
+    g.strokeStyle='#ffcf5c'; g.lineWidth=2; g.setLineDash([6,5]);
+    roundRectPath(g,wx1-6*scale,wy1-6*scale,ws.w*scale+12*scale,ws.h*scale+12*scale,12*scale); g.stroke(); g.setLineDash([]);
+    g.fillStyle='#3a7bd8'; roundRectPath(g,wx1,wy1,ws.w*scale,ws.h*scale,8*scale); g.fill();
+    g.fillStyle='rgba(255,255,255,.25)';
+    for(let i=0;i<4;i++) g.fillRect(wx1+8*scale, wy1+(10+i*15)*scale, ws.w*scale-16*scale, 5*scale);
+    const [ex1,ey1]=toScreen(ws.x+ws.w, ws.y+ws.h*.5);
+    const pl2=AREAS.rooftop.pool;
+    const [px2,py2]=toScreen(pl2.x+pl2.w*.3, pl2.y+pl2.h*.35);
+    g.strokeStyle='#ff9a3d'; g.lineWidth=10*scale; g.lineCap='round';
+    g.beginPath(); g.moveTo(ex1,ey1); g.quadraticCurveTo(px2-40*scale, ey1+10*scale, px2, py2); g.stroke();
+    g.strokeStyle='#ffcf5c'; g.lineWidth=3.5*scale;
+    g.beginPath(); g.moveTo(ex1,ey1); g.quadraticCurveTo(px2-40*scale, ey1+10*scale, px2, py2); g.stroke();
+    g.font='bold '+(11*scale)+'px sans-serif'; g.fillStyle='#ffcf5c'; g.textAlign='center';
+    g.fillText('滑水道！', wx1+ws.w*scale/2, wy1-10*scale);
+  }
   AREAS.rooftop.sunbeds.forEach(([bx,by])=>{
     const [sx,sy]=toScreen(bx,by);
     g.fillStyle='rgba(0,0,0,.15)'; g.beginPath(); g.ellipse(sx,sy+10*scale,18*scale,5*scale,0,0,Math.PI*2); g.fill();
@@ -1417,6 +1545,8 @@ function update(dt){
   }
   S.staffTalkT = Math.max(0, S.staffTalkT - dt);
   S.doorCooldown = Math.max(0, S.doorCooldown - dt);
+  updateMini(dt);
+  if(mini) return;   // 街機小遊戲進行中：兩人暫停移動，輸入交給小遊戲
 
   let dx1=0,dy1=0;
   if(keys['KeyW']) dy1--; if(keys['KeyS']) dy1++;
@@ -1439,6 +1569,7 @@ function update(dt){
 
   updateDoors();
   updateSlide();
+  updateArcadeTrigger();
   updateDayTasks(p1, dt); updateDayTasks(p2, dt);
   updateWaiter(dt);
 }
@@ -2120,6 +2251,7 @@ function render(t){
   drawFloats();
   ctx.restore();
   drawConfetti();
+  drawMini(t);
   if(S.scene==='play') drawSticksVisual();
 }
 
@@ -2147,7 +2279,9 @@ window.__QA = {
   teleport(idx,x,y){ const p = idx===0?p1:p2; p.x=x; p.y=y; },
   setArea(a,ex,ey){ changeArea(a, ex!=null?ex:60, ey!=null?ey:480); },
   startDay,
-  items: () => items
+  items: () => items,
+  mini: () => mini,
+  setMiniScore(n){ if(mini) mini.score=n; }
 };
 })();
 </script>
