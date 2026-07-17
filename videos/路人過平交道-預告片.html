@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="author" content="AI未來創作營隊">
+<title>路人過平交道 — 預告片</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d1826;overflow:hidden;
+    font-family:"Noto Sans TC","Microsoft JhengHei","PingFang TC",sans-serif}
+  canvas{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%)}
+  #mute{position:fixed;right:10px;top:10px;width:52px;height:52px;border-radius:50%;
+    background:rgba(10,22,38,.72);border:2px solid rgba(126,200,248,.8);color:#eaf6ff;
+    font-size:22px;z-index:10;display:flex;align-items:center;justify-content:center;cursor:pointer}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<button id="mute" aria-label="靜音切換">🔇</button>
+<script>
+'use strict';
+const GAME_W = 960, GAME_H = 540;
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+function resize(){
+  const scale = Math.min(innerWidth / GAME_W, innerHeight / GAME_H);
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  canvas.width  = GAME_W * scale * dpr;
+  canvas.height = GAME_H * scale * dpr;
+  canvas.style.width  = GAME_W * scale + 'px';
+  canvas.style.height = GAME_H * scale + 'px';
+  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
+}
+addEventListener('resize', resize); resize();
+
+const clamp=(v,a,b)=> v<a?a:v>b?b:v;
+const lerp=(a,b,t)=> a+(b-a)*t;
+const ss=(t,a,b)=> clamp((t-a)/(b-a),0,1);
+const TAU = Math.PI*2;
+const easeOutBack = t => 1 + 2.7*Math.pow(t-1,3) + 1.7*Math.pow(t-1,2);
+const easeOutBounce = t => { const n=7.5625, d=2.75;
+  if(t<1/d) return n*t*t;
+  if(t<2/d) return n*(t-=1.5/d)*t+0.75;
+  if(t<2.5/d) return n*(t-=2.25/d)*t+0.9375;
+  return n*(t-=2.625/d)*t+0.984375; };
+
+/* ===== 音效 ===== */
+let AC = null, muted = false;
+function audio(){ if(!AC){ try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch(e){} } return AC; }
+addEventListener('pointerdown', audio, { once:true });
+function beep(freq, dur, type, vol, slide, delay){
+  if(muted) return;
+  const ac = audio(); if(!ac) return;
+  const t0 = ac.currentTime + (delay||0);
+  const o = ac.createOscillator(), g = ac.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t0);
+  if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq+slide), t0+dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0+0.01);
+  g.gain.exponentialRampToValueAtTime(0.001, t0+dur);
+  o.connect(g).connect(ac.destination);
+  o.start(t0); o.stop(t0+dur+0.05);
+}
+const sfx = {
+  bell(){ beep(1568,0.14,'square',0.12); },
+  horn(){ beep(440,0.5,'sawtooth',0.1); beep(554,0.5,'sawtooth',0.08,0,0.03); },
+  stopGood(){ beep(784,0.1,'square',0.12); beep(1046,0.16,'square',0.11,0,0.1); },
+  whoosh(){ beep(220,0.35,'sawtooth',0.08,-160); },
+  ding(){ [523,659,784,1047].forEach((f,i)=> beep(f,0.16,'square',0.11,0,i*0.08)); }
+};
+const muteBtn = document.getElementById('mute');
+muteBtn.addEventListener('click', ()=>{ muted=!muted; muteBtn.textContent = muted?'🔇':'🔊'; audio(); });
+
+/* ===== 場景常數（沿用遊戲美術座標） ===== */
+const RAIL_TOP = 300, RAIL_BOT = 368;
+function hw(y){ return 20 + Math.max(0,(y-150))*0.30; }
+function pscale(y){ return clamp(0.5 + (y-150)/390*0.95, 0.42, 1.55); }
+function rrp(x,y,w,h,r){
+  ctx.beginPath(); ctx.moveTo(x+r,y);
+  ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
+}
+const GC = {};
+function grd(key, make){ let g = GC[key]; if(!g){ g = make(); GC[key] = g; } return g; }
+
+let worldT = 0;
+function drawSky(){
+  const g = grd('sky', ()=>{ const t = ctx.createLinearGradient(0,0,0,320);
+    t.addColorStop(0,'#5aa8e8'); t.addColorStop(0.6,'#9ed4f8'); t.addColorStop(1,'#d9f0fc'); return t; });
+  ctx.fillStyle = g; ctx.fillRect(0,0,GAME_W,340);
+  ctx.fillStyle = '#fff3a0';
+  ctx.beginPath(); ctx.arc(140,64,26,0,TAU); ctx.fill();
+  for(let i=0;i<3;i++){
+    const x = ((worldT*(6+i*3) + i*300) % (GAME_W+200)) - 100;
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    for(const [ox,oy,r] of [[0,0,20],[18,5,16],[-18,5,14],[6,-9,15]]){
+      ctx.beginPath(); ctx.arc(x+ox, 60+i*40+oy, r, 0, TAU); ctx.fill();
+    }
+  }
+}
+function drawTownFar(){
+  ctx.fillStyle = 'rgba(255,255,255,.12)';
+  for(const [hx,hs] of [[70,1],[220,0.8],[650,0.9],[800,1.1],[900,0.75]]){
+    const bw=60*hs, bh=48*hs, by=254;
+    ctx.fillRect(hx-bw/2, by-bh, bw, bh);
+  }
+  ctx.fillStyle = '#88b868';
+  ctx.fillRect(0, 248, GAME_W, 52);
+}
+function drawGroundAndPath(){
+  const g = grd('ground', ()=>{ const t = ctx.createLinearGradient(0,290,0,540);
+    t.addColorStop(0,'#7ec850'); t.addColorStop(0.6,'#5fa93e'); t.addColorStop(1,'#417a2c'); return t; });
+  ctx.fillStyle = g; ctx.fillRect(0, 290, GAME_W, 250);
+  const topY = 140, botY = 560;
+  ctx.fillStyle = '#cfc8ba';
+  ctx.beginPath();
+  ctx.moveTo(GAME_W/2-hw(topY), topY); ctx.lineTo(GAME_W/2+hw(topY), topY);
+  ctx.lineTo(GAME_W/2+hw(botY), botY); ctx.lineTo(GAME_W/2-hw(botY), botY);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = 'rgba(90,80,60,.4)'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(GAME_W/2-hw(topY), topY); ctx.lineTo(GAME_W/2-hw(botY), botY); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(GAME_W/2+hw(topY), topY); ctx.lineTo(GAME_W/2+hw(botY), botY); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.7)';
+  for(let i=0;i<12;i++){
+    const yy = 150 + Math.pow(i/11,1.4)*400;
+    if(yy > RAIL_TOP-14 && yy < RAIL_BOT+16) continue;
+    const w2 = hw(yy)*0.7, hh = 3 + (yy-150)*0.014;
+    ctx.fillRect(GAME_W/2-w2, yy, w2*2, hh);
+  }
+}
+function drawRailway(){
+  const bg = grd('ballast', ()=>{ const t = ctx.createLinearGradient(0,RAIL_TOP,0,RAIL_BOT);
+    t.addColorStop(0,'#9a7a4e'); t.addColorStop(0.5,'#8a6d3b'); t.addColorStop(1,'#6d5228'); return t; });
+  ctx.fillStyle = bg; ctx.fillRect(0, RAIL_TOP, GAME_W, RAIL_BOT-RAIL_TOP);
+  const tg = grd('tie', ()=>{ const t = ctx.createLinearGradient(0,RAIL_TOP+8,0,RAIL_BOT-6);
+    t.addColorStop(0,'#6a4e2a'); t.addColorStop(1,'#4e3a1e'); return t; });
+  ctx.fillStyle = tg;
+  for(let x=0; x<GAME_W; x+=46) ctx.fillRect(x, RAIL_TOP+8, 15, RAIL_BOT-RAIL_TOP-16);
+  ctx.fillStyle = '#b8a888';
+  ctx.fillRect(GAME_W/2-hw(RAIL_TOP)-8, RAIL_TOP+6, (hw(RAIL_TOP)+8)*2, RAIL_BOT-RAIL_TOP-10);
+  ctx.strokeStyle = 'rgba(255,210,60,.85)'; ctx.lineWidth = 5;
+  ctx.strokeRect(GAME_W/2-hw(RAIL_TOP)-6, RAIL_TOP+8, (hw(RAIL_TOP)+6)*2, RAIL_BOT-RAIL_TOP-14);
+  for(const ry of [RAIL_TOP+14, RAIL_BOT-16]){
+    ctx.fillStyle = '#3a3a42'; ctx.fillRect(0, ry, GAME_W, 7);
+    ctx.fillStyle = 'rgba(255,255,255,.5)'; ctx.fillRect(0, ry+0.4, GAME_W, 1);
+  }
+}
+let bellActive = false, lightPhase = 0, barrier = 0;
+function drawCrossbuck(x, baseY, s){
+  ctx.save(); ctx.translate(x, baseY); ctx.scale(s, s);
+  const pg = grd('cbPole', ()=>{ const t = ctx.createLinearGradient(-5,0,5,0);
+    t.addColorStop(0,'#8a8a92'); t.addColorStop(0.5,'#d0d0d8'); t.addColorStop(1,'#6a6a72'); return t; });
+  ctx.fillStyle = pg; ctx.fillRect(-5, -120, 10, 120);
+  ctx.save(); ctx.translate(0, -110);
+  for(const a of [-0.42, 0.42]){
+    ctx.save(); ctx.rotate(a);
+    ctx.fillStyle = '#fff'; ctx.fillRect(-32, -6, 64, 11);
+    ctx.strokeStyle = '#d22'; ctx.lineWidth = 2; ctx.strokeRect(-32,-6,64,11);
+    ctx.restore();
+  }
+  ctx.restore();
+  ctx.fillStyle = '#222'; ctx.fillRect(-20, -46, 40, 16);
+  for(const [lx,on] of [[-10, lightPhase===0],[10, lightPhase===1]]){
+    const lit = bellActive && on;
+    if(lit){ ctx.save(); ctx.shadowBlur = 14; ctx.shadowColor = '#ff2222'; }
+    ctx.fillStyle = lit ? '#ff2222' : '#3a0808';
+    ctx.beginPath(); ctx.arc(lx, -38, 5.6, 0, TAU); ctx.fill();
+    if(lit) ctx.restore();
+  }
+  ctx.restore();
+}
+function drawBarrierArm(x, baseY, s, len){
+  const ang = lerp(-Math.PI/2*0.94, 0, clamp(barrier,0,1));
+  ctx.save(); ctx.translate(x, baseY); ctx.scale(s, s);
+  const bg = grd('barBase', ()=>{ const t = ctx.createLinearGradient(-8,-30,8,-30);
+    t.addColorStop(0,'#c8c8d0'); t.addColorStop(1,'#7a7a84'); return t; });
+  ctx.fillStyle = bg; ctx.fillRect(-8, -38, 16, 30);
+  ctx.save(); ctx.translate(0, -32); ctx.rotate(ang);
+  ctx.fillStyle = '#33333a'; ctx.fillRect(-15, -4, 15, 8);
+  ctx.fillStyle = '#fff'; ctx.fillRect(0, -3.4, len, 6.8);
+  ctx.fillStyle = '#e33';
+  for(let seg=0; seg<len; seg+=26) ctx.fillRect(seg+13, -3.4, 13, 6.8);
+  ctx.fillStyle = '#e33'; ctx.beginPath(); ctx.arc(len, 0, 4, 0, TAU); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
+const train = { x:-500, active:false, speed:900 };
+function drawTrain(){
+  if(!train.active) return;
+  const y = RAIL_BOT - 14;
+  const x0 = train.x - 1500;
+  ctx.save();
+  const wheelRot = train.x*0.06;
+  for(let i=0;i<3;i++) trainCar(x0 + 900 + i*158, y, 148, wheelRot);
+  const lx = x0 + 900 + 3*158;
+  const g = grd('locoBody', ()=>{ const t = ctx.createLinearGradient(0, y-92, 0, y);
+    t.addColorStop(0,'#4d8ed0'); t.addColorStop(0.45,'#2b6cb0'); t.addColorStop(1,'#1a365d'); return t; });
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.moveTo(lx, y-6); ctx.lineTo(lx, y-84);
+  ctx.quadraticCurveTo(lx+10, y-92, lx+52, y-90);
+  ctx.quadraticCurveTo(lx+110, y-84, lx+124, y-50);
+  ctx.quadraticCurveTo(lx+132, y-26, lx+128, y-6);
+  ctx.closePath(); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#122a48'; ctx.stroke();
+  ctx.fillStyle = '#ffd94d'; ctx.fillRect(lx, y-38, 124, 8);
+  ctx.save(); ctx.shadowBlur = 12; ctx.shadowColor = '#fff3a0';
+  ctx.fillStyle = '#fff3a0';
+  ctx.beginPath(); ctx.arc(lx+125, y-20, 5, 0, TAU); ctx.fill(); ctx.restore();
+  trainWheel(lx+24, y, wheelRot); trainWheel(lx+56, y, wheelRot); trainWheel(lx+98, y, wheelRot);
+  ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 2.2; ctx.lineCap='round';
+  for(let i=0;i<4;i++){
+    const sy = y-80+i*20, sx0 = x0+880 - (worldT*900+i*140)%320;
+    ctx.beginPath(); ctx.moveTo(sx0, sy); ctx.lineTo(sx0-56, sy); ctx.stroke();
+  }
+  ctx.restore();
+}
+function trainCar(x, y, w, rot){
+  const g = grd('carBody', ()=>{ const t = ctx.createLinearGradient(0, y-88, 0, y);
+    t.addColorStop(0,'#4d8ed0'); t.addColorStop(0.45,'#2b6cb0'); t.addColorStop(1,'#1a365d'); return t; });
+  ctx.fillStyle = g; rrp(x, y-86, w, 80, 8); ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = '#122a48'; ctx.stroke();
+  ctx.fillStyle = '#ffd94d'; ctx.fillRect(x, y-40, w, 8);
+  for(let wi=0; wi<3; wi++){
+    const wx = x + 14 + wi*44;
+    ctx.fillStyle = '#cfeffd'; rrp(wx, y-76, 30, 24, 4); ctx.fill();
+    ctx.strokeStyle = '#122a48'; ctx.lineWidth = 1.6; ctx.stroke();
+  }
+  trainWheel(x+24, y, rot); trainWheel(x+w-24, y, rot);
+}
+function trainWheel(x, y, rot){
+  ctx.fillStyle = '#22222a'; ctx.beginPath(); ctx.arc(x, y, 10, 0, TAU); ctx.fill();
+  ctx.fillStyle = '#55555f'; ctx.beginPath(); ctx.arc(x, y, 6.4, 0, TAU); ctx.fill();
+  ctx.strokeStyle = '#c8c8d0'; ctx.lineWidth = 1.8;
+  for(let i=0;i<3;i++){
+    const a = rot + i*Math.PI/3*2;
+    ctx.beginPath(); ctx.moveTo(x-Math.cos(a)*5.6, y-Math.sin(a)*5.6); ctx.lineTo(x+Math.cos(a)*5.6, y+Math.sin(a)*5.6); ctx.stroke();
+  }
+}
+const ped = { y:486, step:0, walking:false, look:0, happy:false, bob:0, sx:1, sy:1 };
+function drawPed(){
+  const s = pscale(ped.y);
+  const px = GAME_W/2, py = ped.y;
+  ctx.fillStyle = 'rgba(20,30,10,.32)';
+  ctx.beginPath(); ctx.ellipse(px, py+3, 20*s, 5*s, 0, 0, TAU); ctx.fill();
+  ctx.save();
+  ctx.translate(px, py - ped.bob*s);
+  ctx.scale(s*ped.sx, s*ped.sy);
+  const skin='#ffd9b0', skinD='#c89060', shirt1='#4da3e8', shirt2='#2b6cb0', pant='#2c3e50';
+  const sw = ped.walking ? Math.sin(ped.step) : 0;
+  for(const side of [1,-1]){
+    const lift = ped.walking ? Math.max(0, Math.sin(ped.step)*side)*6 : 0;
+    ctx.save(); ctx.translate(side*7 + sw*side*2.4, -24);
+    ctx.fillStyle = pant; rrp(-4.2, 0, 8.4, 20-lift, 4); ctx.fill();
+    ctx.fillStyle = '#e84a3a'; rrp(-5.2, 16-lift, 10.4, 6, 3); ctx.fill();
+    ctx.restore();
+  }
+  const bg = grd('pedShirt', ()=>{ const t = ctx.createLinearGradient(0,-62,0,-22);
+    t.addColorStop(0,shirt1); t.addColorStop(1,shirt2); return t; });
+  ctx.fillStyle = bg; rrp(-14, -60, 28, 38, 9); ctx.fill();
+  ctx.lineWidth = 2.2; ctx.strokeStyle = '#1a365d'; ctx.stroke();
+  for(const side of [1,-1]){
+    const swingA = ped.walking ? Math.sin(ped.step + (side>0?0:Math.PI))*0.55 : 0.1*side*Math.sin(worldT*2);
+    ctx.save(); ctx.translate(side*13, -52); ctx.rotate(0.2*side + swingA*side);
+    ctx.fillStyle = shirt2; rrp(-3.4, 0, 6.8, 17, 3.4); ctx.fill();
+    ctx.fillStyle = skin; ctx.beginPath(); ctx.arc(0, 19, 4.2, 0, TAU); ctx.fill();
+    ctx.restore();
+  }
+  const lk = ped.look;
+  ctx.save(); ctx.translate(lk*9, -74); ctx.rotate(lk*0.18);
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(0, 0, 14.5, 13.6, 0, 0, TAU); ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = skinD; ctx.stroke();
+  ctx.fillStyle = '#5a3a1a';
+  ctx.beginPath(); ctx.moveTo(-13+lk*5, -4);
+  ctx.quadraticCurveTo(-7+lk*5, -12, 0+lk*5, -8);
+  ctx.quadraticCurveTo(7+lk*5, -12, 13+lk*5, -5);
+  ctx.quadraticCurveTo(9, -15, 0, -14);
+  ctx.quadraticCurveTo(-9, -15, -13+lk*5, -4);
+  ctx.closePath(); ctx.fill();
+  const cg = grd('pedCap', ()=>{ const t = ctx.createLinearGradient(0,-9,0,2);
+    t.addColorStop(0,'#ffe14d'); t.addColorStop(1,'#f2b312'); return t; });
+  ctx.save(); ctx.translate(lk*5.5, -9);
+  ctx.fillStyle = cg; ctx.beginPath(); ctx.arc(0, 0, 12.6, Math.PI, 0); ctx.closePath(); ctx.fill();
+  ctx.fillStyle = '#f2b312';
+  ctx.beginPath(); ctx.ellipse(0, 0.5, 15.4, 3.4, 0, 0, Math.PI, true); ctx.fill();
+  ctx.restore();
+  for(const sd of [1,-1]){
+    const exp = sd*6 + lk*7;
+    if(ped.happy){
+      ctx.strokeStyle = '#3a2a12'; ctx.lineWidth = 2.1;
+      ctx.beginPath(); ctx.arc(exp, 1, 3.4, Math.PI*1.1, Math.PI*1.9); ctx.stroke();
+    } else {
+      ctx.fillStyle = '#3a2a12';
+      ctx.beginPath(); ctx.ellipse(exp, 1, 2.4, 3.2, 0, 0, TAU); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(exp+0.8, -0.4, 0.9, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.strokeStyle = '#8a4a2a'; ctx.lineWidth = 1.8; ctx.lineCap='round';
+  ctx.beginPath();
+  if(ped.happy) ctx.arc(lk*5.5, 6.5, 4.2, 0.2, Math.PI-0.2);
+  else ctx.arc(lk*5.5, 6, 3.6, 0.3, Math.PI-0.3);
+  ctx.stroke();
+  ctx.restore();
+  if(Math.abs(lk) > 0.05){
+    const la = clamp(Math.abs(lk),0,1), ld = Math.sign(lk);
+    ctx.save(); ctx.globalAlpha = la;
+    ctx.translate(ld*42, -80);
+    ctx.fillStyle = '#ffe14d'; ctx.strokeStyle = '#8a6a10'; ctx.lineWidth = 1.8; ctx.lineJoin='round';
+    for(let i=0;i<2;i++){
+      const off = (i*13 + Math.sin(worldT*8)*3) * ld;
+      ctx.beginPath();
+      ctx.moveTo(off, -8); ctx.lineTo(off+10*ld, 0); ctx.lineTo(off, 8);
+      ctx.lineTo(off+4.5*ld, 0); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    ctx.restore();
+  }
+  ctx.restore();
+}
+/* ===== 粒子與飄字 ===== */
+const MAX_PARTS = 200;
+let parts = [];
+function burst(x,y,color,n,speed){
+  for(let i=0;i<n && parts.length<MAX_PARTS;i++){
+    const a = Math.random()*TAU, s = (speed||200)*(0.3+Math.random()*0.7);
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-70,life:0.6,max:0.6,color,s:3+Math.random()*3});
+  }
+}
+function updateParts(dt){
+  for(let i=parts.length-1;i>=0;i--){
+    const p = parts[i];
+    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 600*dt; p.life -= dt;
+    if(p.life<=0){ parts[i] = parts[parts.length-1]; parts.pop(); }
+  }
+}
+function drawParts(){
+  for(const p of parts){
+    ctx.globalAlpha = Math.max(0, p.life/p.max);
+    ctx.fillStyle = p.color;
+    ctx.fillRect(p.x-p.s/2, p.y-p.s/2, p.s, p.s);
+  }
+  ctx.globalAlpha = 1;
+}
+let floats = [];
+function floatText(x,y,text,color,big){ floats.push({x,y,text,color,life:1.1,max:1.1,big:big||24}); }
+function updateFloats(dt){
+  for(let i=floats.length-1;i>=0;i--){
+    const f = floats[i]; f.y -= 34*dt; f.life -= dt;
+    if(f.life<=0){ floats[i] = floats[floats.length-1]; floats.pop(); }
+  }
+}
+function drawFloats(){
+  ctx.textAlign='center';
+  for(const f of floats){
+    ctx.font = '900 '+f.big+'px "Noto Sans TC",sans-serif';
+    ctx.globalAlpha = clamp(f.life/f.max,0,1);
+    ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.5)';
+    ctx.strokeText(f.text, f.x, f.y); ctx.fillStyle = f.color; ctx.fillText(f.text, f.x, f.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawScene(){
+  drawSky(); drawTownFar(); drawGroundAndPath();
+  if(ped.y < RAIL_TOP+20) drawPed();
+  drawCrossbuck(GAME_W/2-72, 288, 0.9);
+  drawRailway();
+  drawBarrierArm(GAME_W/2-46, 284, 0.86, 122);
+  drawTrain();
+  drawCrossbuck(GAME_W/2+96, 402, 1.12);
+  drawBarrierArm(GAME_W/2+66, 398, 1.06, 118);
+  if(ped.y >= RAIL_TOP+20) drawPed();
+  drawParts();
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,GAME_W,4); ctx.fillRect(0,GAME_H-4,GAME_W,4);
+}
+
+/* ===== 分幕腳本（自動播放） ===== */
+let shake = 0;
+function titleCard(t, title, sub, dur){
+  const k = clamp(t/0.5, 0, 1), fade = t > dur-0.5 ? clamp((dur-t)/0.5,0,1) : 1;
+  ctx.save();
+  ctx.globalAlpha = Math.min(k,fade);
+  ctx.textAlign='center';
+  ctx.font='900 40px "Noto Sans TC",sans-serif';
+  ctx.lineWidth=8; ctx.strokeStyle='#122a48';
+  ctx.strokeText(title, GAME_W/2, 210);
+  const g = ctx.createLinearGradient(0,180,0,236);
+  g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#7ec8f8');
+  ctx.fillStyle = g; ctx.fillText(title, GAME_W/2, 210);
+  if(sub){
+    ctx.font='700 20px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=5; ctx.strokeStyle='rgba(0,0,0,.5)';
+    ctx.strokeText(sub, GAME_W/2, 250);
+    ctx.fillStyle='#ffe9b0'; ctx.fillText(sub, GAME_W/2, 250);
+  }
+  ctx.restore();
+}
+
+const SCENES = [];
+// 幕一：標題登場
+SCENES.push({
+  dur: 3.2,
+  enter(){ ped.y = 486; ped.walking=false; ped.look=0; ped.happy=false; train.active=false; bellActive=false; barrier=0; },
+  update(t, dt){},
+  draw(t){ drawScene(); titleCard(t, '路人過平交道', '平交道安全大冒險', this.dur); }
+});
+// 幕二：靠近 + 警鈴響
+SCENES.push({
+  dur: 3.6,
+  enter(){ ped.y = 486; ped.walking = true; },
+  update(t, dt){
+    ped.step += dt*9; ped.bob = Math.abs(Math.sin(ped.step))*5;
+    ped.y -= 60*dt;
+    if(t > 1.6 && !bellActive){ bellActive = true; sfx.bell(); }
+    lightPhase = Math.floor(worldT*2.4)%2;
+    if(t > 2.6){ ped.walking = false; ped.bob = 0; }
+  },
+  draw(t){
+    drawScene();
+    if(t>1.6){
+      ctx.textAlign='center'; ctx.font='900 26px "Noto Sans TC",sans-serif';
+      ctx.globalAlpha = clamp((t-1.6)/0.4,0,1);
+      ctx.lineWidth=6; ctx.strokeStyle='rgba(0,0,0,.5)';
+      ctx.strokeText('叮叮叮！警鈴一響立刻停！', GAME_W/2, 96);
+      ctx.fillStyle='#ff6a5a'; ctx.fillText('叮叮叮！警鈴一響立刻停！', GAME_W/2, 96);
+      ctx.globalAlpha = 1;
+    }
+  }
+});
+// 幕三：柵欄放下 + 火車通過
+SCENES.push({
+  dur: 4.4,
+  enter(){ barrier = 0; train.active=false; train.x=-600; this._horn=false; },
+  update(t, dt){
+    barrier = easeOutBounce(ss(t, 0.1, 1.0));
+    if(t > 1.6 && !train.active){ train.active = true; train.x=-600; train.speed=780; if(!this._horn){ this._horn=true; sfx.horn(); } }
+    if(train.active) train.x += train.speed*dt;
+    lightPhase = Math.floor(worldT*2.4)%2;
+    shake = train.active ? 2+Math.sin(worldT*40)*0.6 : 0;
+  },
+  draw(t){
+    ctx.save();
+    ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+    drawScene();
+    ctx.restore();
+    ctx.textAlign='center'; ctx.font='900 26px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=6; ctx.strokeStyle='rgba(0,0,0,.5)';
+    const msg = t < 1.6 ? '柵欄放下，絕不闖越！' : '轟隆轟隆！小心第二班列車！';
+    ctx.strokeText(msg, GAME_W/2, 96);
+    ctx.fillStyle='#ffe9b0'; ctx.fillText(msg, GAME_W/2, 96);
+  }
+});
+// 幕四：左看右看 + 安全通過
+SCENES.push({
+  dur: 4.2,
+  enter(){ barrier = 0; bellActive=false; train.active=false; ped.look=0; ped.happy=false; this._phase=0; this._t2=0; },
+  update(t, dt){
+    if(t < 0.9){ ped.look = -clamp(t/0.9,0,1)*0.9; }
+    else if(t < 1.6){ ped.look = lerp(-0.9,0.9, clamp((t-0.9)/0.7,0,1)); if(this._phase===0){this._phase=1; sfx.look();} }
+    else if(t < 2.0){ ped.look = 0.9; if(this._phase===1){this._phase=2; sfx.lookOK(); floatText(GAME_W/2, 340, '安全了！', '#ffcd75', 24);} }
+    else {
+      ped.walking = true; ped.step += dt*9; ped.bob = Math.abs(Math.sin(ped.step))*5;
+      ped.y -= 90*dt;
+      if(ped.y <= 148 && ped.y > 100){ ped.happy = true; ped.walking=false; }
+    }
+  },
+  draw(t){ drawScene(); }
+});
+// 幕五：結尾 CTA
+SCENES.push({
+  dur: 3.4,
+  enter(){ ped.happy = true; ped.y = 150; train.active=false; this._played=false; },
+  update(t, dt){
+    if(t>0.2 && !this._played){ this._played = true; sfx.ding(); burst(GAME_W/2, 200, '#ffcf5c', 24, 240); burst(GAME_W/2, 200, '#aee239', 16, 200); }
+  },
+  draw(t){
+    drawScene();
+    ctx.fillStyle = 'rgba(8,16,30,.45)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    ctx.textAlign='center';
+    const pop = easeOutBack(clamp(t*2.2,0,1));
+    ctx.save(); ctx.translate(GAME_W/2, 190); ctx.scale(pop,pop);
+    ctx.font='900 42px "Noto Sans TC",sans-serif';
+    ctx.lineWidth=8; ctx.strokeStyle='#122a48';
+    ctx.strokeText('停、看、聽！安全回家', 0, 0);
+    const g = ctx.createLinearGradient(0,-26,0,16);
+    g.addColorStop(0,'#eaf6ff'); g.addColorStop(1,'#aee239');
+    ctx.fillStyle = g; ctx.fillText('停、看、聽！安全回家', 0, 0);
+    ctx.restore();
+    ctx.font='700 20px "Noto Sans TC",sans-serif';
+    ctx.globalAlpha = 0.6+0.4*Math.sin(worldT*4);
+    ctx.fillStyle='#fff5d6';
+    ctx.fillText('路人過平交道　立即開玩！', GAME_W/2, 260);
+    ctx.globalAlpha = 1;
+  }
+});
+
+let sceneIdx = 0, sceneT = 0;
+function enterScene(i){ sceneIdx = i % SCENES.length; sceneT = 0; SCENES[sceneIdx].enter(); }
+enterScene(0);
+
+const STEP = 1/60;
+let last = performance.now(), acc = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  acc += Math.min((now - last) / 1000, 0.1);
+  last = now;
+  while(acc >= STEP){
+    worldT += STEP;
+    sceneT += STEP;
+    const sc = SCENES[sceneIdx];
+    sc.update(sceneT, STEP);
+    updateParts(STEP); updateFloats(STEP);
+    shake *= Math.pow(0.001, STEP);
+    if(sceneT >= sc.dur) enterScene(sceneIdx+1);
+    acc -= STEP;
+  }
+  SCENES[sceneIdx].draw(sceneT);
+  drawFloats();
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
