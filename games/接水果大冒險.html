@@ -39,12 +39,13 @@ function resize(){
 addEventListener('resize', resize); resize();
 
 /* ===== 輸入 ===== */
-const input = { left:false, right:false, action:false, actionBuffer:0, pointerX:null };
+const input = { left:false, right:false, action:false, actionBuffer:0, pointerX:null, tapP:null };
+let mode = null;   // 'pc'＝電腦模式（鍵盤）、'pad'＝平板模式（拖曳）
 const KEYMAP = { ArrowLeft:'left', KeyA:'left', ArrowRight:'right', KeyD:'right',
                  Space:'action', ArrowUp:'action', KeyW:'action' };
 addEventListener('keydown', e => {
   const a = KEYMAP[e.code]; if(!a) return; e.preventDefault();
-  if(a === 'action' && !input.action) input.actionBuffer = 0.12;
+  if(a === 'action' && !input.action){ input.actionBuffer = 0.12; input.keyBuffer = 0.12; }
   input[a] = true;
 });
 addEventListener('keyup', e => { const a = KEYMAP[e.code]; if(a) input[a] = false; });
@@ -61,12 +62,17 @@ function handleTouches(e){
     const p = touchPos(t);
     input.pointerX = p.x;
     input.action = true;
+    if(e.type === 'touchstart') input.tapP = p;
   }
   if(input.action && !wasAction) input.actionBuffer = 0.12;
 }
 for(const ev of ['touchstart','touchmove','touchend','touchcancel'])
   canvas.addEventListener(ev, handleTouches, { passive:false });
-canvas.addEventListener('mousedown', e => { input.action = true; input.actionBuffer = 0.12; });
+canvas.addEventListener('mousedown', e => {
+  input.action = true; input.actionBuffer = 0.12;
+  const r = canvas.getBoundingClientRect();
+  input.tapP = { x:(e.clientX - r.left)/canvas._scale, y:(e.clientY - r.top)/canvas._scale };
+});
 addEventListener('mouseup', () => { input.action = false; });
 canvas.addEventListener('mousemove', e => {
   const r = canvas.getBoundingClientRect();
@@ -241,13 +247,26 @@ function difficultyTick(dt){
 let state;
 function setState(s){ state = s; if(s.enter) s.enter(); }
 
+const MODE_BTNS = [
+  { x:GAME_W/2-250, y:330, w:230, h:74, mode:'pc',  icon:'💻', label:'電腦模式', sub:'鍵盤 ← → 移動' },
+  { x:GAME_W/2+20,  y:330, w:230, h:74, mode:'pad', icon:'📱', label:'平板模式', sub:'手指拖曳籃子' }
+];
 const menuState = {
   t: 0,
-  enter(){ this.t = 0; },
+  enter(){ this.t = 0; input.tapP = null; },
   update(dt){
     this.t += dt;
-    if(input.actionBuffer > 0 || (input.pointerX!==null && input.action)){
-      input.actionBuffer = 0;
+    if(input.tapP){
+      const p = input.tapP; input.tapP = null;
+      for(const b of MODE_BTNS)
+        if(p.x>=b.x-8 && p.x<=b.x+b.w+8 && p.y>=b.y-8 && p.y<=b.y+b.h+8){
+          mode = b.mode; input.actionBuffer = 0;
+          setState(playState); return;
+        }
+    }
+    if(input.keyBuffer > 0){   // 空白鍵＝電腦模式直接開始（純鍵盤，觸控不會誤觸）
+      input.keyBuffer = 0; input.actionBuffer = 0;
+      mode = 'pc';
       setState(playState);
     }
   },
@@ -275,19 +294,34 @@ const menuState = {
       if(img.complete && img.naturalWidth) ctx.drawImage(img, x-26, y-26, 52, 52);
     });
 
-    ctx.font='700 24px "Noto Sans TC",sans-serif';
+    // 模式選擇按鈕
+    for(const b of MODE_BTNS){
+      const hot = Math.sin(this.t*4 + (b.mode==='pc'?0:Math.PI)) > 0.4;
+      const g2 = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
+      g2.addColorStop(0,'rgba(110,170,80,.95)'); g2.addColorStop(1,'rgba(46,86,44,.95)');
+      ctx.fillStyle = g2;
+      ctx.beginPath();
+      ctx.roundRect(b.x, b.y, b.w, b.h, 14); ctx.fill();
+      ctx.lineWidth = hot ? 4 : 2.6;
+      ctx.strokeStyle = hot ? '#fff' : 'rgba(240,250,220,.8)';
+      ctx.stroke();
+      ctx.font='900 24px "Noto Sans TC",sans-serif'; ctx.fillStyle='#f4ffe8';
+      ctx.fillText(b.icon+' '+b.label, b.x+b.w/2, b.y+32);
+      ctx.font='700 15px "Noto Sans TC",sans-serif'; ctx.fillStyle='#d8ecc8';
+      ctx.fillText(b.sub, b.x+b.w/2, b.y+58);
+    }
+    ctx.font='700 18px "Noto Sans TC",sans-serif';
     ctx.fillStyle='#fff5d6';
-    const flash = 0.6+0.4*Math.sin(this.t*4);
-    ctx.globalAlpha = flash;
-    ctx.fillText('點擊 / 按空白鍵 開始遊戲', GAME_W/2, 350);
+    ctx.globalAlpha = 0.6+0.4*Math.sin(this.t*4);
+    ctx.fillText('選一個模式開始！（空白鍵＝電腦模式）', GAME_W/2, 448);
     ctx.globalAlpha = 1;
 
     ctx.font='16px "Noto Sans TC",sans-serif';
     ctx.fillStyle='#ffffffcc';
-    ctx.fillText('接水果 +分數　接到 💣🦨 扣一命　接 ⭐ 大加分', GAME_W/2, 390);
+    ctx.fillText('接水果 +分數　接到 💣🦨 扣一命　接 ⭐ 大加分', GAME_W/2, 478);
     if(best>0){
       ctx.fillStyle='#ffcd75';
-      ctx.fillText('最佳分數：'+best, GAME_W/2, 418);
+      ctx.fillText('最佳分數：'+best, GAME_W/2, 30);
     }
     document.getElementById('hint').classList.add('show');
   }
@@ -300,7 +334,11 @@ const playState = {
     spawnInterval = 1.05; shake = 0; freeze = 0; flashT = 0;
     comboCount = 0; comboTimer = 0;
     resetBasket();
-    document.getElementById('hint').classList.remove('show');
+    const hintEl = document.getElementById('hint');
+    hintEl.textContent = mode==='pc' ? '💻 電腦模式：鍵盤 ← → 移動籃子' : '📱 平板模式：手指拖曳籃子';
+    hintEl.classList.remove('show');
+    hintEl.classList.add('show');
+    setTimeout(()=> hintEl.classList.remove('show'), 3500);
   },
   update(dt){
     if(freeze > 0){ freeze -= dt; return; }
@@ -313,8 +351,8 @@ const playState = {
       const s = Math.sign(basket.vx);
       basket.vx -= s*Math.min(Math.abs(basket.vx), DEC*dt);
     }
-    // 移動：觸控/滑鼠拖曳（直接跟隨，含緩動）
-    if(input.pointerX !== null && input.action){
+    // 移動：觸控/滑鼠拖曳（平板模式限定，直接跟隨含緩動）
+    if(mode !== 'pc' && input.pointerX !== null && input.action){
       const target = clamp(input.pointerX, basket.w/2, GAME_W-basket.w/2);
       basket.vx = (target - basket.x) * 14;
     }
@@ -584,6 +622,7 @@ function frame(now){
   last = now;
   while(acc >= STEP){
     input.actionBuffer = Math.max(0, input.actionBuffer - STEP);
+    input.keyBuffer = Math.max(0, (input.keyBuffer||0) - STEP);
     state.update(STEP);
     acc -= STEP;
   }
