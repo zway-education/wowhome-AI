@@ -1,5 +1,8 @@
 <!DOCTYPE html>
 <!-- RUBY版 v1：RUBY 當主角（WASD／左搖桿），AMY 改青色、無人操作時自動跟隨；主視覺換紅寶石色系；新增「餐廳」（坐下吃飯、主廚NPC、燭光）與「遊戲間」（電玩機台、跳舞墊、獎品櫃）兩個自由探索場景 -->
+<!-- RUBY版 v2：庭園新增「兒童遊樂區」（溜滑梯／盪鞦韆／蹺蹺板／滿地可踢的球，含頂視角球體物理：踢、彈牆、互撞）
+     與「釣魚池」（站到岸邊自動甩竿、魚群游動、上鉤判定＋釣起特效） -->
+<!-- 遊樂區/釣魚池由 outdoor(庭園) 開門進入，皆可自由進出，不影響五日行程主線任務 -->
 <!-- 專業AI升級 v6：四場景烘焙光照（陽光光束/吊燈光池/窗光/vignette）、泳池波光粼粼(additive)、庭園落葉與室內塵埃環境粒子、電視螢光暈；音效新增程序化殘響(ConvolverNode)、分場景環境音（風聲/水聲/大廳低語）與鳥鳴、換場景自動切換音景 -->
 <!-- v5 -->
 <!-- v5 補強：①角色精細化(頭部漸層/輪廓線/高光/髮絲漸層/開心表情第二狀態) ②觸控可玩稽核(雙搖桿已達標，見稽核註記) ③新增手機版大螢幕提醒浮層(sessionStorage一次/純CSS+SVG) -->
@@ -124,7 +127,8 @@
       <p class="sub" style="margin:0 0 6px;color:var(--pink);font-weight:700">RUBY 與 AMY 的五日假期</p>
       <div class="rule"></div>
       <p>這次換 RUBY 當隊長！兩姊妹到 WOWHOME HOTEL 度假五天：辦入住、玩泳池、找星星、
-        泡澡放鬆、最後打包退房。大廳還新開了「餐廳」和「遊戲間」，隨時可以進去吃飯、打電動、跳舞！</p>
+        泡澡放鬆、最後打包退房。大廳新開了「餐廳」和「遊戲間」，庭園也新增「兒童遊樂區」
+        （溜滑梯、盪鞦韆、蹺蹺板、滿地的球）和「釣魚池」，隨時可以自由探索、玩到不想走！</p>
       <div class="keys">
         <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#38e1ff" stroke-width="2"><rect x="3" y="5" width="18" height="11" rx="1.5"/><path d="M2 19h20"/></svg>
           <span><b>RUBY</b> <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd>　<b style="color:var(--cyan)">AMY</b> <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd></span></div>
@@ -279,6 +283,8 @@ function updateAmbient(){
     else if(S.area==='lobby'){ vol=.03; freq=300; }
     else if(S.area==='restaurant'){ vol=.035; freq=340; }
     else if(S.area==='gameroom'){ vol=.05; freq=520; }
+    else if(S.area==='playground'){ vol=.05; freq=440; }
+    else if(S.area==='fishing'){ vol=.055; freq=380; }
     else { vol=.02; freq=260; }
   }
   ambGain.gain.setTargetAtTime(vol, AC.currentTime, .6);
@@ -316,6 +322,9 @@ const sfx = {
   splash(){ noiseBurst(.3,.18,700); beep(280,.2,'sine',.08,-100); },
   sleep(){ beep(392,.18,'sine',.1,-60); setTimeout(()=>beep(330,.3,'sine',.08,-40),150); },
   yum(){ beep(494,.1,'triangle',.09); setTimeout(()=>beep(587,.12,'triangle',.09),90); setTimeout(()=>beep(740,.16,'triangle',.08),200); },
+  kick(){ beep(rnd(180,240),.08,'square',.09,80); noiseBurst(.05,.06,900); },
+  whoosh(){ noiseBurst(.4,.14,1600); beep(600,.35,'sine',.05,-360); },
+  creak(){ beep(rnd(200,260),.14,'triangle',.05,-60); },
   quack(){ beep(340,.1,'sawtooth',.1,-80); setTimeout(()=>beep(300,.08,'sawtooth',.07,-60),90); },
   win(){ [523,659,784,1047,784,1047,1319].forEach((f,i)=>setTimeout(()=>beep(f,.2,'triangle',.11), i*110)); },
   collectAll(){ [880,1108,1318].forEach((f,i)=>setTimeout(()=>beep(f,.14,'square',.11), i*70)); },
@@ -324,10 +333,12 @@ const sfx = {
 
 /* ---------- 世界與場景（沿用 v2 地圖，玩家一眼認得） ---------- */
 const WORLD = { w: 900, h: 560 };
-const AREA_LABEL = { outdoor:'飯店庭園', lobby:'大廳', room:'雙人客房', rooftop:'頂樓泳池', restaurant:'飯店餐廳', gameroom:'遊戲間' };
+const AREA_LABEL = { outdoor:'飯店庭園', lobby:'大廳', room:'雙人客房', rooftop:'頂樓泳池', restaurant:'飯店餐廳', gameroom:'遊戲間', playground:'兒童遊樂區', fishing:'釣魚池' };
 const AREAS = {
   outdoor: {
-    doors: [ {x:706,y:230,w:56,h:90,to:'lobby',ex:110,ey:470,label:'飯店大門'} ],
+    doors: [ {x:706,y:230,w:56,h:90,to:'lobby',ex:110,ey:470,label:'飯店大門'},
+      {x:360,y:150,w:74,h:74,to:'playground',ex:120,ey:275,label:'遊樂區'},
+      {x:470,y:300,w:70,h:70,to:'fishing',ex:120,ey:300,label:'釣魚池'} ],
     trees: [ [40,60],[90,110],[860,70],[820,130],[40,480],[860,470],[20,300],[870,300] ],
     pool: { x:80, y:330, w:270, h:170 },
     building: { x:660, y:60, w:200, h:280 },
@@ -373,8 +384,49 @@ const AREAS = {
     arcades: [ [180,120],[330,120],[480,120],[630,120],[780,120] ],
     pad: { x:330, y:330, w:240, h:150 },
     shelf: { x:700, y:300, w:170, h:70 }
+  },
+  playground: {
+    doors: [ {x:16,y:230,w:56,h:90,to:'outdoor',ex:390,ey:250,label:'回庭園'} ],
+    slide: { topX:210, topY:130, botX:330, botY:360 },   // 溜滑梯：頂部平台→底部
+    swings: { fx:470, fy:110, seats:[[455,250],[545,250]] }, // 盪鞦韆：兩個座位
+    seesaw: { cx:720, cy:390, len:82 },                  // 蹺蹺板：中心＋臂長
+    sandbox: { x:130, y:400, w:430, h:135 }              // 沙坑（球滾動範圍偏此）
+  },
+  fishing: {
+    doors: [ {x:16,y:250,w:56,h:90,to:'outdoor',ex:500,ey:300,label:'回庭園'} ],
+    pond: { x:210, y:150, w:520, h:340 },                // 池塘水域
+    dock: { x:120, y:300, w:110, h:64 }                  // 木碼頭
   }
 };
+// RUBY版新增：釣魚池的魚群（在池中游動，靠近浮標會上鉤）
+let fishes = [];
+const FISH_COLORS = ['#ff8fa3','#ffcf5c','#7fe6ff','#9a6bff','#ffa72e','#57b06a'];
+function setupFishing(){
+  fishes = [];
+  const pd = AREAS.fishing.pond;
+  for(let i=0;i<7;i++){
+    fishes.push({
+      x: rnd(pd.x+40,pd.x+pd.w-40), y: rnd(pd.y+40,pd.y+pd.h-40),
+      dir: Math.random()<.5?1:-1, spd: rnd(24,46),
+      color: FISH_COLORS[i%FISH_COLORS.length], size: rnd(.9,1.4),
+      turnT: rnd(1,3), biteT: 0, wobble: rnd(0,6.28)
+    });
+  }
+}
+// RUBY版新增：遊樂區的一堆球（頂視角物理，會被踢、彈牆、互撞、慢慢停）
+let balls = [];
+const BALL_COLORS = ['#ff4d6d','#ffcf5c','#38e1ff','#9a6bff','#57b06a','#ff8fa3','#ffa72e'];
+function setupPlayground(){
+  balls = [];
+  for(let i=0;i<16;i++){
+    balls.push({
+      x: rnd(150,760), y: rnd(300,520),
+      vx: 0, vy: 0, r: rnd(11,16),
+      color: BALL_COLORS[i%BALL_COLORS.length],
+      spin: rnd(0,6.28)
+    });
+  }
+}
 
 /* ---------- 五日行程（v4 關卡系統） ---------- */
 const DAYS = [
@@ -410,7 +462,9 @@ function makePlayer(idx){
     hasSuitcase:false, hasKey:false, step:0,
     lying:false, bathing:false, swimming:false, hasBathed:false,
     nearWardrobe:false, outfit:'normal', squash:0, stepT:0,
-    eating:false, nearArcade:false, danceT:0
+    eating:false, nearArcade:false, danceT:0,
+    sliding:false, slideT:0, swinging:false, swingSeat:-1, seesawing:false, seesawSide:0,
+    fishing:false, bobX:0, bobY:0, caught:0, biteT:0
   };
 }
 let p1 = makePlayer(0), p2 = makePlayer(1), players = [p1,p2];
@@ -569,6 +623,8 @@ function updateDayTasks(p, dt){
   if(S.area==='rooftop') updateSwim(p);
   if(S.area==='restaurant') updateEat(p);
   if(S.area==='gameroom') updateArcade(p, dt);
+  if(S.area==='playground') updatePlaygroundPlayer(p, dt);
+  if(S.area==='fishing') updateFishingPlayer(p, dt);
 }
 function updateWardrobe(p){
   const wd = AREAS.room.wardrobe;
@@ -615,6 +671,156 @@ function updateArcade(p, dt){
       beep(notes[(Math.random()*4)|0], .12, 'square', .07);
       burstConfetti2(p.x,p.y-24,3, ['#ff4d6d','#ffcf5c','#38e1ff'][(Math.random()*3)|0]);
     }
+  }
+}
+// RUBY版新增：兒童遊樂區——溜滑梯、盪鞦韆、蹺蹺板互動＋踢球
+const SLIDE_CHEERS=['咻——','溜下去囉！','好好玩！','再溜一次！'];
+function updatePlaygroundPlayer(p, dt){
+  const A = AREAS.playground;
+  // 溜滑梯：走到頂端平台 → 沿斜坡滑到底（動畫期間鎖輸入）
+  if(p.sliding){
+    p.slideT += dt/0.75;                       // 0.75 秒滑完
+    const k = Math.min(1, p.slideT);
+    const ek = k*k;                            // 加速下滑
+    p.x = A.slide.topX + (A.slide.botX-A.slide.topX)*ek;
+    p.y = A.slide.topY + (A.slide.botY-A.slide.topY)*ek;
+    p.dir = 1;
+    if(k>=1){
+      p.sliding=false; p.slideT=0; p.squash=1.4; S.shake=4;
+      sfx.splash(); burstConfetti2(p.x,p.y,12,'#ffcf5c');
+      floatText(p.x,p.y,'咻——到底啦！','#ffcf5c');
+    }
+    return;
+  }
+  if(!p.swinging && !p.seesawing &&
+     Math.abs(p.x-A.slide.topX)<30 && Math.abs(p.y-A.slide.topY)<34){
+    p.sliding=true; p.slideT=0; p.moving=false;
+    sfx.whoosh(); floatText(p.x,p.y,SLIDE_CHEERS[(Math.random()*4)|0],'#ff4d6d');
+    return;
+  }
+  // 盪鞦韆：靠近座位就坐上去盪（一移動就下來），坐著時位置跟著鞦韆前後擺
+  if(!p.swinging){
+    A.swings.seats.forEach((s,i)=>{
+      const other = players.find(q=>q!==p && q.swinging && q.swingSeat===i);
+      if(!other && dist(p.x,p.y,s[0],s[1])<30){
+        p.swinging=true; p.swingSeat=i; p.moving=false; p.squash=1;
+        sfx.creak(); floatText(p.x,p.y,'盪鞦韆～','#38e1ff');
+      }
+    });
+  }
+  if(p.swinging){
+    const s = A.swings.seats[p.swingSeat];
+    const sw = Math.sin(clock*2.6 + p.swingSeat*1.3)*40;
+    p.x = s[0]+sw; p.y = s[1]+Math.abs(sw)*0.18;
+    if(Math.abs(sw)>36 && Math.random()<0.04) sfx.creak();
+  }
+  // 蹺蹺板：走到任一端坐下，兩端輪流上下（坐著時 y 跟著翹動）
+  if(!p.seesawing){
+    [[-1],[1]].forEach(([side])=>{
+      const ex = A.seesaw.cx + side*A.seesaw.len;
+      const other = players.find(q=>q!==p && q.seesawing && q.seesawSide===side);
+      if(!other && dist(p.x,p.y,ex,A.seesaw.cy)<30){
+        p.seesawing=true; p.seesawSide=side; p.moving=false; p.squash=1;
+        sfx.creak(); floatText(p.x,p.y,'蹺蹺板！','#9a6bff');
+      }
+    });
+  }
+  if(p.seesawing){
+    const tilt = Math.sin(clock*2.2)*22;       // 板子傾角（像素高度差）
+    const ex = A.seesaw.cx + p.seesawSide*A.seesaw.len;
+    p.x = ex; p.y = A.seesaw.cy + p.seesawSide*tilt;
+  }
+  // 踢球：碰到球就把球往遠離玩家的方向踢出去
+  for(const b of balls){
+    const d = dist(p.x,p.y,b.x,b.y);
+    if(d < b.r+16 && d>0.001){
+      const nx=(b.x-p.x)/d, ny=(b.y-p.y)/d;
+      const power = 150 + (p.moving?150:0);
+      b.vx = nx*power; b.vy = ny*power;
+      if(d<b.r+13){ b.x=p.x+nx*(b.r+16); b.y=p.y+ny*(b.r+16); }
+      if(kickCd<=0){ sfx.kick(); kickCd=0.08; p.squash=Math.max(p.squash,.6); }
+    }
+  }
+}
+let kickCd = 0;
+function updateBalls(dt){
+  kickCd = Math.max(0, kickCd-dt);
+  const A = AREAS.playground; if(!A) return;
+  const fr = Math.pow(0.12, dt);               // 摩擦：慢慢停
+  for(const b of balls){
+    b.x += b.vx*dt; b.y += b.vy*dt;
+    b.spin += (b.vx)*dt*0.05;
+    b.vx *= fr; b.vy *= fr;
+    if(Math.abs(b.vx)<3) b.vx=0; if(Math.abs(b.vy)<3) b.vy=0;
+    // 撞牆反彈
+    if(b.x<b.r+16){ b.x=b.r+16; b.vx=Math.abs(b.vx)*0.7; }
+    if(b.x>WORLD.w-b.r-16){ b.x=WORLD.w-b.r-16; b.vx=-Math.abs(b.vx)*0.7; }
+    if(b.y<b.r+120){ b.y=b.r+120; b.vy=Math.abs(b.vy)*0.7; }   // 上緣留給滑梯/鞦韆
+    if(b.y>WORLD.h-b.r-16){ b.y=WORLD.h-b.r-16; b.vy=-Math.abs(b.vy)*0.7; }
+  }
+  // 球與球互撞（簡單彈開）
+  for(let i=0;i<balls.length;i++) for(let j=i+1;j<balls.length;j++){
+    const a=balls[i], c=balls[j];
+    const dx=c.x-a.x, dy=c.y-a.y, d=Math.hypot(dx,dy), min=a.r+c.r;
+    if(d>0.001 && d<min){
+      const nx=dx/d, ny=dy/d, push=(min-d)/2;
+      a.x-=nx*push; a.y-=ny*push; c.x+=nx*push; c.y+=ny*push;
+      const avn=a.vx*nx+a.vy*ny, cvn=c.vx*nx+c.vy*ny;
+      a.vx+=(cvn-avn)*nx; a.vy+=(cvn-avn)*ny;
+      c.vx+=(avn-cvn)*nx; c.vy+=(avn-cvn)*ny;
+    }
+  }
+}
+// RUBY版新增：釣魚池——站到岸邊/碼頭自動甩竿，浮標落水，魚靠近上鉤就釣起來
+function pondNearestEdge(px,py,pd){
+  const cx=clamp(px,pd.x,pd.x+pd.w), cy=clamp(py,pd.y,pd.y+pd.h);
+  return {cx,cy,d:dist(px,py,cx,cy)};
+}
+function updateFishingPlayer(p, dt){
+  const pd = AREAS.fishing.pond;
+  const inWater = p.x>pd.x && p.x<pd.x+pd.w && p.y>pd.y && p.y<pd.y+pd.h;
+  if(!p.fishing){
+    const e = pondNearestEdge(p.x,p.y,pd);
+    if(!inWater && e.d>2 && e.d<44){
+      // 浮標往水中央方向拋 80px
+      const mx=pd.x+pd.w/2, my=pd.y+pd.h/2;
+      let bx=e.cx, by=e.cy;
+      const dx=mx-e.cx, dy=my-e.cy, dl=Math.hypot(dx,dy)||1;
+      bx=e.cx+dx/dl*80; by=e.cy+dy/dl*80;
+      p.fishing=true; p.moving=false; p.biteT=0;
+      p.bobX=clamp(bx,pd.x+12,pd.x+pd.w-12); p.bobY=clamp(by,pd.y+12,pd.y+pd.h-12);
+      p.dir = p.bobX>=p.x?1:-1;
+      sfx.whoosh(); floatText(p.x,p.y-6,'甩竿！','#7fe6ff');
+    }
+    return;
+  }
+  // 已在釣：找最近的魚判斷咬鉤
+  let nearest=null, nd=1e9;
+  for(const f of fishes){ const d=dist(f.x,f.y,p.bobX,p.bobY); if(d<nd){ nd=d; nearest=f; } }
+  if(nearest && nd<44){
+    p.biteT += dt;
+    if(p.biteT>1.1){
+      p.biteT=0; p.caught++; p.squash=1.3; S.shake=4;
+      sfx.ding(); sfx.splash();
+      floatText(p.bobX,p.bobY,'釣到魚！','#ffcf5c');
+      burstConfetti2(p.bobX,p.bobY,12,nearest.color);
+      // 魚被釣走→在池中別處重生
+      nearest.x=rnd(pd.x+40,pd.x+pd.w-40); nearest.y=rnd(pd.y+40,pd.y+pd.h-40);
+    }
+  }else{
+    p.biteT = Math.max(0, p.biteT - dt*2);
+  }
+}
+function updateFishes(dt){
+  const pd = AREAS.fishing.pond; if(!pd) return;
+  for(const f of fishes){
+    f.turnT -= dt; f.wobble += dt*4;
+    if(f.turnT<=0){ f.turnT=rnd(1,3.5); if(Math.random()<.5) f.dir*=-1; f.spd=rnd(22,48); }
+    f.x += f.dir*f.spd*dt;
+    f.y += Math.sin(f.wobble)*10*dt;
+    if(f.x<pd.x+22){ f.x=pd.x+22; f.dir=1; }
+    if(f.x>pd.x+pd.w-22){ f.x=pd.x+pd.w-22; f.dir=-1; }
+    f.y = clamp(f.y, pd.y+22, pd.y+pd.h-22);
   }
 }
 function updateSwim(p){
@@ -675,8 +881,11 @@ function showEnd(st){
 /* ---------- 進出場景 ---------- */
 function changeArea(to, ex, ey){
   S.area = to;
-  players.forEach((p,i)=>{ p.x = ex + i*40; p.y = ey; p.lying=false; p.bathing=false; p.swimming=false; p.eating=false; });
+  players.forEach((p,i)=>{ p.x = ex + i*40; p.y = ey; p.lying=false; p.bathing=false; p.swimming=false; p.eating=false;
+    p.sliding=false; p.slideT=0; p.swinging=false; p.swingSeat=-1; p.seesawing=false; p.fishing=false; });
   ambParts.length = 0;   // v6 換場景清空環境粒子（落葉/塵埃形態不同）
+  if(to==='playground') setupPlayground(); else balls.length = 0;
+  if(to==='fishing') setupFishing(); else fishes.length = 0;
   S.doorCooldown = 0.6;
   sfx.door();
   bakeArea();
@@ -847,6 +1056,8 @@ function bakeArea(){
   else if(S.area==='rooftop') bakeRooftop(g);
   else if(S.area==='restaurant') bakeRestaurant(g);
   else if(S.area==='gameroom') bakeGameroom(g);
+  else if(S.area==='playground') bakePlayground(g);
+  else if(S.area==='fishing') bakeFishing(g);
   else bakeRoom(g);
   bakeLighting(g);
 }
@@ -855,7 +1066,7 @@ function bakeLighting(g){
   const W = stage.clientWidth, H = stage.clientHeight;
   g.save();
   g.globalCompositeOperation='lighter';
-  if(S.area==='outdoor'){
+  if(S.area==='outdoor' || S.area==='playground' || S.area==='fishing'){
     const [sx,sy]=toScreen(830,50);
     const rg=g.createRadialGradient(sx,sy,10,sx,sy,H*0.95);
     rg.addColorStop(0,'rgba(255,228,150,.22)'); rg.addColorStop(.5,'rgba(255,214,130,.08)'); rg.addColorStop(1,'rgba(255,214,130,0)');
@@ -1265,6 +1476,210 @@ function bakeGameroom(g){
   g.font=(11*scale)+'px sans-serif'; g.fillStyle='#eaf1ff'; g.textAlign='center';
   g.fillText('回大廳', dx+d.w*scale/2, dy+d.h*scale+14*scale);
 }
+function bakePlayground(g){
+  const [ox,oy]=toScreen(0,0);
+  const skyH=120*scale;
+  const sg=g.createLinearGradient(0,oy,0,oy+skyH);
+  sg.addColorStop(0,'#5aa8ff'); sg.addColorStop(1,'#bfe8ff');
+  g.fillStyle=sg; g.fillRect(ox,oy,WORLD.w*scale,skyH);
+  g.fillStyle='#ffe98a'; g.beginPath(); g.arc(ox+WORLD.w*scale-70*scale,oy+46*scale,22*scale,0,Math.PI*2); g.fill();
+  // 草地＋跑道圈
+  g.fillStyle='#4aa15a'; g.fillRect(ox,oy+skyH,WORLD.w*scale,WORLD.h*scale-skyH);
+  g.fillStyle='rgba(255,255,255,.05)';
+  for(let i=0;i<50;i++) g.fillRect(ox+rndSeed(i+2)*WORLD.w*scale, oy+skyH+rndSeed(i+40)*(WORLD.h*scale-skyH), 9*scale,3*scale);
+  // 沙坑
+  const sb=AREAS.playground.sandbox; const [sbx,sby]=toScreen(sb.x,sb.y);
+  g.fillStyle='#6d4c30'; roundRectPath(g,sbx-6*scale,sby-6*scale,sb.w*scale+12*scale,sb.h*scale+12*scale,10*scale); g.fill();
+  g.fillStyle='#f0d9a0'; roundRectPath(g,sbx,sby,sb.w*scale,sb.h*scale,8*scale); g.fill();
+  g.fillStyle='rgba(180,150,90,.4)';
+  for(let i=0;i<26;i++) g.beginPath(),g.arc(sbx+rndSeed(i+5)*sb.w*scale,sby+rndSeed(i+60)*sb.h*scale,2*scale,0,Math.PI*2),g.fill();
+  // 溜滑梯（爬梯＋頂棚＋滑道）
+  const sl=AREAS.playground.slide;
+  const [tx,ty]=toScreen(sl.topX,sl.topY), [bx,by]=toScreen(sl.botX,sl.botY);
+  g.strokeStyle='rgba(0,0,0,.18)'; g.lineWidth=14*scale; g.lineCap='round';
+  g.beginPath(); g.moveTo(tx+8*scale,ty+30*scale); g.lineTo(bx+8*scale,by+8*scale); g.stroke();
+  // 頂部平台柱
+  g.fillStyle='#c96a7c'; g.fillRect(tx-24*scale,ty,8*scale,64*scale); g.fillRect(tx+16*scale,ty,8*scale,64*scale);
+  // 爬梯
+  g.strokeStyle='#ffcf5c'; g.lineWidth=5*scale;
+  g.beginPath(); g.moveTo(tx-24*scale,ty+64*scale); g.lineTo(tx-24*scale,ty); g.stroke();
+  g.beginPath(); g.moveTo(tx-6*scale,ty+64*scale); g.lineTo(tx-6*scale,ty); g.stroke();
+  for(let i=0;i<5;i++){ const ry=ty+8*scale+i*12*scale; g.beginPath(); g.moveTo(tx-24*scale,ry); g.lineTo(tx-6*scale,ry); g.stroke(); }
+  // 頂棚
+  g.fillStyle='#ff4d6d'; g.beginPath(); g.moveTo(tx-30*scale,ty-2*scale); g.lineTo(tx+22*scale,ty-2*scale); g.lineTo(tx-4*scale,ty-24*scale); g.closePath(); g.fill();
+  // 平台
+  g.fillStyle='#e8a24a'; roundRectPath(g,tx-26*scale,ty-2*scale,52*scale,16*scale,4*scale); g.fill();
+  // 滑道（漸層藍）
+  g.save();
+  const ang=Math.atan2(by-ty,bx-tx);
+  g.strokeStyle='#7fd6ff'; g.lineWidth=26*scale; g.lineCap='round';
+  g.beginPath(); g.moveTo(tx+6*scale,ty+12*scale); g.lineTo(bx,by); g.stroke();
+  g.strokeStyle='#bfeaff'; g.lineWidth=8*scale;
+  g.beginPath(); g.moveTo(tx+6*scale,ty+12*scale); g.lineTo(bx,by); g.stroke();
+  g.restore();
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#fff'; g.textAlign='center';
+  g.fillText('溜滑梯（爬到頂端）', tx, ty-30*scale);
+  // 盪鞦韆（A 字框架，鏈條/座位在動態層畫）
+  const sw=AREAS.playground.swings; const [fx,fy]=toScreen(sw.fx,sw.fy);
+  g.strokeStyle='#8a5a34'; g.lineWidth=8*scale; g.lineCap='round';
+  g.beginPath(); g.moveTo(fx-70*scale,fy+150*scale); g.lineTo(fx-40*scale,fy); g.stroke();
+  g.beginPath(); g.moveTo(fx+10*scale,fy+150*scale); g.lineTo(fx-40*scale,fy); g.stroke();
+  g.beginPath(); g.moveTo(fx+150*scale,fy+150*scale); g.lineTo(fx+120*scale,fy); g.stroke();
+  g.beginPath(); g.moveTo(fx+70*scale,fy+150*scale); g.lineTo(fx+120*scale,fy); g.stroke();
+  g.strokeStyle='#c9a15a'; g.lineWidth=7*scale;
+  g.beginPath(); g.moveTo(fx-40*scale,fy); g.lineTo(fx+120*scale,fy); g.stroke();
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#fff';
+  g.fillText('盪鞦韆', fx+40*scale, fy-8*scale);
+  // 蹺蹺板底座（板子在動態層畫，會翹）
+  const se=AREAS.playground.seesaw; const [cx,cy]=toScreen(se.cx,se.cy);
+  g.fillStyle='#5a4432'; g.beginPath();
+  g.moveTo(cx-16*scale,cy+22*scale); g.lineTo(cx+16*scale,cy+22*scale); g.lineTo(cx,cy-6*scale); g.closePath(); g.fill();
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#fff';
+  g.fillText('蹺蹺板', cx, cy+40*scale);
+  // 招牌＋回庭園門
+  g.fillStyle='#ffcf5c'; g.font='bold '+(14*scale)+'px sans-serif';
+  g.fillText('兒童遊樂區', ox+200*scale, oy+34*scale);
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#eaf7ff';
+  g.fillText('踢滿地的球、溜滑梯、盪鞦韆、玩蹺蹺板！', ox+200*scale, oy+52*scale);
+  const d=AREAS.playground.doors[0]; const [dx,dy]=toScreen(d.x,d.y);
+  g.fillStyle='#6d4c30'; roundRectPath(g,dx,dy,d.w*scale,d.h*scale,6*scale); g.fill();
+  g.fillStyle='#eaf1ff'; g.textAlign='center';
+  g.fillText('回庭園', dx+d.w*scale/2, dy+d.h*scale+14*scale);
+}
+function bakeFishing(g){
+  const [ox,oy]=toScreen(0,0);
+  const skyH=110*scale;
+  const sg=g.createLinearGradient(0,oy,0,oy+skyH);
+  sg.addColorStop(0,'#6ab0ff'); sg.addColorStop(1,'#cdeeff');
+  g.fillStyle=sg; g.fillRect(ox,oy,WORLD.w*scale,skyH);
+  // 遠山
+  g.fillStyle='rgba(90,140,110,.5)';
+  for(let i=0;i<6;i++){ const [mx,my]=toScreen(i*170,110); g.beginPath(); g.moveTo(mx,my); g.lineTo(mx+90*scale,my-(30+rndSeed(i)*40)*scale); g.lineTo(mx+180*scale,my); g.closePath(); g.fill(); }
+  // 草岸
+  g.fillStyle='#4aa15a'; g.fillRect(ox,oy+skyH,WORLD.w*scale,WORLD.h*scale-skyH);
+  g.fillStyle='rgba(255,255,255,.05)';
+  for(let i=0;i<40;i++) g.fillRect(ox+rndSeed(i+9)*WORLD.w*scale, oy+skyH+rndSeed(i+30)*(WORLD.h*scale-skyH), 9*scale,3*scale);
+  // 池塘（深→淺漸層＋岸邊石框）
+  const pd=AREAS.fishing.pond; const [px,py]=toScreen(pd.x,pd.y);
+  g.fillStyle='#7a6a4a'; roundRectPath(g,px-8*scale,py-8*scale,pd.w*scale+16*scale,pd.h*scale+16*scale,26*scale); g.fill();
+  const wg=g.createRadialGradient(px+pd.w*scale/2,py+pd.h*scale/2,20*scale,px+pd.w*scale/2,py+pd.h*scale/2,pd.w*scale*.6);
+  wg.addColorStop(0,'#2e7fb0'); wg.addColorStop(1,'#1b5a86');
+  g.fillStyle=wg; roundRectPath(g,px,py,pd.w*scale,pd.h*scale,22*scale); g.fill();
+  // 睡蓮
+  [[.22,.3],[.7,.25],[.55,.72],[.32,.66]].forEach(([fx,fy],i)=>{
+    const lx=px+pd.w*scale*fx, ly=py+pd.h*scale*fy;
+    g.fillStyle='#3c9552'; g.beginPath(); g.arc(lx,ly,13*scale,0,Math.PI*1.7); g.fill();
+    g.fillStyle=['#ff8fa3','#fff5d6'][i%2]; g.beginPath(); g.arc(lx+4*scale,ly-2*scale,4*scale,0,Math.PI*2); g.fill();
+  });
+  // 香蒲（岸邊）
+  [[pd.x-4,pd.y+60],[pd.x-4,pd.y+150],[pd.x+pd.w+4,pd.y+90]].forEach(([rx,ry])=>{
+    const [sx,sy]=toScreen(rx,ry);
+    g.strokeStyle='#3c9552'; g.lineWidth=3*scale; g.beginPath(); g.moveTo(sx,sy); g.lineTo(sx,sy-40*scale); g.stroke();
+    g.fillStyle='#8a5a34'; roundRectPath(g,sx-3*scale,sy-42*scale,6*scale,16*scale,3*scale); g.fill();
+  });
+  // 木碼頭
+  const dk=AREAS.fishing.dock; const [dkx,dky]=toScreen(dk.x,dk.y);
+  g.fillStyle='rgba(0,0,0,.22)'; g.fillRect(dkx+4*scale,dky+5*scale,dk.w*scale,dk.h*scale);
+  g.fillStyle='#8a5a34'; roundRectPath(g,dkx,dky,dk.w*scale,dk.h*scale,4*scale); g.fill();
+  g.strokeStyle='#6d4423'; g.lineWidth=2*scale;
+  for(let i=0;i<5;i++){ const ly=dky+(6+i*12)*scale; g.beginPath(); g.moveTo(dkx,ly); g.lineTo(dkx+dk.w*scale,ly); g.stroke(); }
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#5a3c17'; g.textAlign='center'; g.fillText('碼頭', dkx+dk.w*scale/2, dky+dk.h*scale-6*scale);
+  // 招牌＋門
+  g.fillStyle='#ffcf5c'; g.font='bold '+(14*scale)+'px sans-serif';
+  g.fillText('釣魚池', ox+150*scale, oy+34*scale);
+  g.font=(11*scale)+'px sans-serif'; g.fillStyle='#eaf7ff';
+  g.fillText('站到水邊或碼頭就會甩竿，等魚上鉤！', ox+320*scale, oy+34*scale);
+  const d=AREAS.fishing.doors[0]; const [dx,dy]=toScreen(d.x,d.y);
+  g.fillStyle='#6d4c30'; roundRectPath(g,dx,dy,d.w*scale,d.h*scale,6*scale); g.fill();
+  g.fillStyle='#eaf1ff'; g.textAlign='center';
+  g.fillText('回庭園', dx+d.w*scale/2, dy+d.h*scale+14*scale);
+}
+// 釣魚池動態：水面波紋、游動的魚、玩家的釣竿/釣線/浮標
+function drawFishingProps(t){
+  const sc=scale, pd=AREAS.fishing.pond;
+  const [px,py]=toScreen(pd.x,pd.y);
+  // 水面波紋（additive 閃光）
+  ctx.save(); ctx.globalCompositeOperation='lighter'; ctx.strokeStyle='#bfeaff'; ctx.lineWidth=1.4*sc;
+  for(let i=0;i<10;i++){
+    const gx=pd.x+30+rndSeed(i*3+1)*(pd.w-60), gy=pd.y+30+rndSeed(i*5+2)*(pd.h-60);
+    const tw=Math.sin(t*1.8+i*1.5); if(tw<=.2) continue;
+    const [cx2,cy2]=toScreen(gx,gy); ctx.globalAlpha=(tw-.2)*.4;
+    ctx.beginPath(); ctx.moveTo(cx2-6*sc,cy2); ctx.quadraticCurveTo(cx2,cy2-3*sc,cx2+6*sc,cy2); ctx.stroke();
+  }
+  ctx.restore(); ctx.globalAlpha=1;
+  // 魚（水下半透明身影＋尾巴擺動）
+  for(const f of fishes){
+    const [fx,fy]=toScreen(f.x,f.y);
+    ctx.save(); ctx.translate(fx,fy); ctx.scale(f.dir*f.size, f.size);
+    ctx.globalAlpha=.9;
+    ctx.fillStyle=f.color;
+    ctx.beginPath(); ctx.ellipse(0,0,11*sc,6*sc,0,0,Math.PI*2); ctx.fill();
+    const tw=Math.sin(f.wobble)*0.5;
+    ctx.beginPath(); ctx.moveTo(-9*sc,0); ctx.lineTo(-17*sc,(-4+tw*3)*sc); ctx.lineTo(-17*sc,(4+tw*3)*sc); ctx.closePath(); ctx.fill();
+    ctx.fillStyle='rgba(255,255,255,.5)'; ctx.beginPath(); ctx.ellipse(2*sc,-1.5*sc,4*sc,2.5*sc,0,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#20242e'; ctx.beginPath(); ctx.arc(6*sc,-1*sc,1.3*sc,0,Math.PI*2); ctx.fill();
+    ctx.restore(); ctx.globalAlpha=1;
+  }
+  // 玩家釣竿＋線＋浮標
+  for(const p of players){
+    if(!p.fishing) continue;
+    const [hx,hy]=toScreen(p.x,p.y-14);          // 手部
+    const [bx,by]=toScreen(p.bobX,p.bobY);
+    const dip = (p.biteT>0? Math.sin(t*18)*3*Math.min(1,p.biteT):0)*sc;  // 咬鉤時浮標抖動
+    ctx.strokeStyle='#c9a15a'; ctx.lineWidth=2.5*sc; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(hx-6*sc,hy+6*sc); ctx.lineTo(hx+10*sc,hy-14*sc); ctx.stroke();
+    ctx.strokeStyle='rgba(255,255,255,.7)'; ctx.lineWidth=1*sc;
+    ctx.beginPath(); ctx.moveTo(hx+10*sc,hy-14*sc); ctx.quadraticCurveTo((hx+bx)/2,hy-24*sc,bx,by+dip); ctx.stroke();
+    // 浮標（紅白）
+    ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(bx,by+dip,4.5*sc,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle='#ff4d6d'; ctx.beginPath(); ctx.arc(bx,by-1.5*sc+dip,4.5*sc,Math.PI,0); ctx.fill();
+    ctx.strokeStyle='rgba(0,0,0,.3)'; ctx.lineWidth=.8*sc; ctx.beginPath(); ctx.arc(bx,by+dip,4.5*sc,0,Math.PI*2); ctx.stroke();
+    // 咬鉤水波
+    if(p.biteT>0){ ctx.strokeStyle='rgba(255,255,255,.6)'; ctx.lineWidth=1.4*sc;
+      const r=(6+Math.sin(t*10)*4)*sc; ctx.beginPath(); ctx.arc(bx,by+dip,r,0,Math.PI*2); ctx.stroke(); }
+  }
+}
+// 遊樂區動態道具：鞦韆鏈條/座位、蹺蹺板板子、滿地的球（球在人腳下先畫）
+function drawPlaygroundProps(t){
+  const sc=scale, A=AREAS.playground;
+  // 球（帶陰影＋高光＋自轉條紋）
+  for(const b of balls){
+    const [sx,sy]=toScreen(b.x,b.y);
+    ctx.fillStyle='rgba(0,0,0,.2)'; ctx.beginPath(); ctx.ellipse(sx,sy+b.r*sc*.7,b.r*sc,b.r*sc*.4,0,0,Math.PI*2); ctx.fill();
+    const bg=ctx.createRadialGradient(sx-b.r*sc*.35,sy-b.r*sc*.35,b.r*sc*.15,sx,sy,b.r*sc);
+    bg.addColorStop(0,shadeColor(b.color,45)); bg.addColorStop(1,shadeColor(b.color,-18));
+    ctx.fillStyle=bg; ctx.beginPath(); ctx.arc(sx,sy,b.r*sc,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle=shadeColor(b.color,-30); ctx.lineWidth=1*sc; ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.arc(sx,sy,b.r*sc,0,Math.PI*2); ctx.clip();
+    ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1.4*sc;
+    ctx.beginPath(); ctx.arc(sx+Math.cos(b.spin)*b.r*sc, sy+Math.sin(b.spin)*b.r*sc, b.r*sc*.8, 0, Math.PI*2); ctx.stroke();
+    ctx.restore();
+    ctx.fillStyle='rgba(255,255,255,.6)'; ctx.beginPath(); ctx.arc(sx-b.r*sc*.35,sy-b.r*sc*.35,b.r*sc*.22,0,Math.PI*2); ctx.fill();
+  }
+  // 盪鞦韆：鏈條＋座板（跟 update 同相位，座板正好在騎乘者屁股下）
+  const sw=A.swings;
+  sw.seats.forEach((s,i)=>{
+    const off = Math.sin(clock*2.6 + i*1.3)*40;
+    const [bx,by]=toScreen(s[0],s[1]-70);          // 吊點
+    const [ex,ey]=toScreen(s[0]+off,s[1]+Math.abs(off)*0.18);  // 座位
+    ctx.strokeStyle='#c9ced4'; ctx.lineWidth=2*sc; ctx.lineCap='round';
+    ctx.beginPath(); ctx.moveTo(bx-6*sc,by); ctx.lineTo(ex-6*sc,ey); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(bx+6*sc,by); ctx.lineTo(ex+6*sc,ey); ctx.stroke();
+    ctx.fillStyle='#8a5a34'; roundRectPath(ctx,ex-12*sc,ey-3*sc,24*sc,6*sc,2*sc); ctx.fill();
+  });
+  // 蹺蹺板：翹動的長板＋兩端把手（跟 update 同相位）
+  const se=A.seesaw;
+  const tilt = Math.sin(clock*2.2)*22;
+  const [lx,ly]=toScreen(se.cx-se.len, se.cy-tilt);
+  const [rx,ry]=toScreen(se.cx+se.len, se.cy+tilt);
+  ctx.strokeStyle='#e05a6a'; ctx.lineWidth=10*sc; ctx.lineCap='round';
+  ctx.beginPath(); ctx.moveTo(lx,ly); ctx.lineTo(rx,ry); ctx.stroke();
+  ctx.strokeStyle='#ffcf5c'; ctx.lineWidth=4*sc;
+  [[lx,ly],[rx,ry]].forEach(([hx,hy],i)=>{
+    const up=(i===0? -tilt: tilt);
+    ctx.beginPath(); ctx.moveTo(hx,hy); ctx.lineTo(hx, hy-16*sc); ctx.stroke();
+  });
+}
 function roundRectPath(g,x,y,w,h,r){
   g.beginPath();
   g.moveTo(x+r,y); g.arcTo(x+w,y,x+w,y+h,r); g.arcTo(x+w,y+h,x,y+h,r);
@@ -1274,9 +1689,10 @@ function rndSeed(i){ const v = Math.sin(i*127.1+311.7)*43758.5453; return v-Math
 
 /* ---------- 更新 ---------- */
 function movePlayer(p, dx, dy, dt){
+  if(p.sliding){ p.moving=false; return; }   // 溜滑梯途中鎖住玩家輸入，交給滑梯動畫驅動
   const len = Math.hypot(dx,dy);
   p.moving = len > .05;
-  if(p.moving && (p.lying||p.bathing||p.eating)){ p.lying=false; p.bathing=false; p.eating=false; }
+  if(p.moving && (p.lying||p.bathing||p.eating||p.swinging||p.seesawing||p.fishing)){ p.lying=false; p.bathing=false; p.eating=false; p.swinging=false; p.swingSeat=-1; p.seesawing=false; p.fishing=false; }
   if(p.moving){
     dx/=len; dy/=len;
     const spd = p.swimming ? p.speed*.6 : p.speed;
@@ -1298,6 +1714,8 @@ function movePlayer(p, dx, dy, dt){
 function update(dt){
   clock += dt;
   updateConfetti(dt); updateFloats(dt); updateBubbles(dt); updateAmbParts(dt);
+  if(S.area==='playground') updateBalls(dt);
+  if(S.area==='fishing') updateFishes(dt);
   S.shake = Math.max(0, S.shake - dt*14);
   if(S.scene!=='play' || S.over) return;
   S.time += dt;
@@ -1305,7 +1723,7 @@ function update(dt){
   chirpT -= dt;
   if(chirpT<=0){
     chirpT = 2.5+Math.random()*4;
-    if(S.area==='outdoor'||S.area==='rooftop') sfx.chirp();
+    if(S.area==='outdoor'||S.area==='rooftop'||S.area==='playground'||S.area==='fishing') sfx.chirp();
   }
   const ct = fmtTime(S.time);
   if(ct !== update._ct){
@@ -1862,6 +2280,8 @@ function drawDynamic(t){
     });
     ctx.restore(); ctx.globalAlpha=1;
   }
+  if(S.area==='playground') drawPlaygroundProps(t);
+  if(S.area==='fishing') drawFishingProps(t);
   // v6 環境粒子（庭園落葉/室內塵埃）
   drawAmbParts();
   // 撿取物
@@ -2013,11 +2433,14 @@ window.__QA = {
   snap(){ return { scene:S.scene, area:S.area, over:S.over, day:S.day, time:S.time,
     sharedGot, sharedNeed, dayStars:dayStars.slice(),
     p1x:p1.x,p1y:p1.y,p1step:p1.step,p1outfit:p1.outfit,p1swim:p1.swimming,p1bath:p1.bathing,p1lying:p1.lying,
+    p1sliding:p1.sliding,p1swinging:p1.swinging,p1seesawing:p1.seesawing,p1fishing:p1.fishing,p1caught:p1.caught,
     p2x:p2.x,p2y:p2.y,p2step:p2.step,p2outfit:p2.outfit,p2swim:p2.swimming,p2bath:p2.bathing,p2auto:!!p2.auto }; },
   teleport(idx,x,y){ const p = idx===0?p1:p2; p.x=x; p.y=y; },
   setArea(a,ex,ey){ changeArea(a, ex!=null?ex:60, ey!=null?ey:480); },
   startDay,
-  items: () => items
+  items: () => items,
+  balls: () => balls,
+  fishes: () => fishes
 };
 })();
 </script>
