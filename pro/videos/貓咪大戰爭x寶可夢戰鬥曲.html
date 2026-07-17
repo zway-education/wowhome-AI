@@ -596,6 +596,85 @@ function drawCat(g, x, y, scale, facing, phase, pose, pal){
   g.restore();
 }
 
+/* ---------- 貓媽媽（背景加油角色，蓄力時登場） ---------- */
+const CHARGE_WINS = [[8, 9.2], [16.2, 19.3]];
+function mamaAlphaAt(t){
+  let a = 0;
+  for(const [s, e] of CHARGE_WINS){
+    if(t < s - 0.3 || t > e + 0.3) continue;
+    let k;
+    if(t < s) k = ss01(t, s - 0.3, s);
+    else if(t > e) k = 1 - ss01(t, e, e + 0.3);
+    else k = 1;
+    a = Math.max(a, k);
+  }
+  return a;
+}
+function drawMamaCat(g, x, y, scale, phase, alpha){
+  if(alpha <= 0) return;
+  g.save();
+  g.globalAlpha = alpha;
+  g.translate(x, y);
+  g.scale(scale, scale);
+  const bob = Math.sin(phase * 3) * 2;
+  g.translate(0, bob);
+  const body = '#d8dbe6', dark = '#8b93a8', light = '#f5f6fa';
+  /* 地面陰影 */
+  g.save(); g.globalAlpha = alpha * 0.28; g.fillStyle = '#000';
+  g.beginPath(); g.ellipse(0, 54 - bob, 28, 8, 0, 0, TAU); g.fill(); g.restore();
+  /* 尾巴（安穩捲起） */
+  g.save(); g.translate(26, -2); g.rotate(0.3 + Math.sin(phase * 3) * 0.08);
+  g.strokeStyle = body; g.lineWidth = 9; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(0, 0); g.quadraticCurveTo(18, -10, 10, -28); g.stroke();
+  g.restore();
+  /* 身體 */
+  g.beginPath(); g.ellipse(0, 10, 25, 29, 0, 0, TAU);
+  g.fillStyle = grd('mamaBody', () => {
+    const gr = g.createRadialGradient(-10, -8, 3, 2, 10, 34);
+    gr.addColorStop(0, light); gr.addColorStop(0.55, body); gr.addColorStop(1, dark);
+    return gr;
+  });
+  g.fill();
+  /* 雙手舉起加油 */
+  const armLift = -1.1 + Math.sin(phase * 4) * 0.1;
+  for(const sgn of [-1, 1]){
+    g.save(); g.translate(sgn * 19, -4); g.rotate(sgn * armLift);
+    g.fillStyle = dark;
+    g.beginPath(); g.ellipse(sgn * 4, -17, 8, 7, 0, 0, TAU); g.fill();
+    g.restore();
+  }
+  /* 頭 */
+  g.save(); g.translate(0, -32);
+  g.fillStyle = grd('mamaEar', () => {
+    const gr = g.createLinearGradient(-24, -30, -4, -12);
+    gr.addColorStop(0, light); gr.addColorStop(1, dark);
+    return gr;
+  });
+  g.beginPath(); g.moveTo(-16, -12); g.lineTo(-24, -30); g.lineTo(-4, -18); g.closePath(); g.fill();
+  g.beginPath(); g.moveTo(16, -12); g.lineTo(24, -30); g.lineTo(4, -18); g.closePath(); g.fill();
+  g.beginPath(); g.arc(0, 0, 19, 0, TAU);
+  g.fillStyle = grd('mamaHead', () => {
+    const gr = g.createRadialGradient(-7, -7, 2, 2, 4, 25);
+    gr.addColorStop(0, light); gr.addColorStop(0.55, body); gr.addColorStop(1, dark);
+    return gr;
+  });
+  g.fill();
+  /* 瞇眼微笑（慈祥表情） */
+  g.strokeStyle = '#3a3a44'; g.lineWidth = 2; g.lineCap = 'round';
+  g.beginPath(); g.moveTo(-11, -2); g.quadraticCurveTo(-7, -6, -3, -2); g.stroke();
+  g.beginPath(); g.moveTo(3, -2); g.quadraticCurveTo(7, -6, 11, -2); g.stroke();
+  /* 腮紅 */
+  g.fillStyle = 'rgba(255,140,140,.5)';
+  g.beginPath(); g.arc(-11, 4, 3, 0, TAU); g.fill();
+  g.beginPath(); g.arc(11, 4, 3, 0, TAU); g.fill();
+  /* 嘴 */
+  g.strokeStyle = '#3a2a20'; g.lineWidth = 1.4;
+  g.beginPath(); g.moveTo(0, 6); g.quadraticCurveTo(-3, 9, -6, 7); g.stroke();
+  g.beginPath(); g.moveTo(0, 6); g.quadraticCurveTo(3, 9, 6, 7); g.stroke();
+  g.restore();
+  g.restore();
+}
+
 /* ---------- 電氣鼠（原創風格化對手，非官方素材） ---------- */
 function drawMouse(g, x, y, scale, phase, pose, appearK){
   g.save();
@@ -831,6 +910,9 @@ function draw(t, dt){
     ctx.drawImage(glowZap, catXAt(t) - 90, GY - 130, 180, 180);
     ctx.globalAlpha = 1;
   }
+  /* 貓媽媽（蓄力時在後方加油） */
+  const mamaA = mamaAlphaAt(t);
+  if(mamaA > 0) drawMamaCat(ctx, CATX0 - 92, GY + 4, 1.05, t, mamaA);
   /* 白貓戰士 */
   const cx0 = catXAt(t);
   /* 衝刺殘影 */
@@ -925,6 +1007,7 @@ function update(dt){
   if(trig('ballOpen', 3.82)){ sfxPop(); flashW = Math.max(flashW, 0.4); pBurst(MX, GY - 20, 20, ['#fff', '#ffe45c', '#8fd3ff'], 260); }
   if(trig('vs', 6.35)){ sfxWin(); flashW = Math.max(flashW, 0.3); }
   if(T >= 8 && T < 9.2 && Math.random() < 0.65) pAura(CATX0, GY - 10);
+  if(mamaAlphaAt(T) > 0.5 && Math.random() < 0.25) pAura(CATX0 - 92, GY - 26);
   if(trig('dash1', 9.2)) sfxDash();
   if(T >= 9.2 && T < 9.6 && Math.random() < 0.8) pSpeedline(catXAt(T) - 40, GY - 40);
   if(trig('punch', 9.62)){
