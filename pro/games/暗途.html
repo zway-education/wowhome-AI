@@ -421,13 +421,13 @@ function placeStoryNodes(){
     {id:'fork1',icon:'sign',text:'前方走廊分成兩條路：左邊傳來滴水聲，右邊一片死寂。',
      choices:[{label:'走左邊（滴水聲的方向）',flag:'path_left'},{label:'走右邊（死寂的方向）',flag:'path_right'}]},
     {id:'mirror',icon:'mirror',text:'一面破碎的鏡子立在房間中央。鏡子裡的你，動作似乎慢了半拍……',
-     choices:[{label:'打碎鏡子',flag:'broke_mirror'},{label:'轉身離開',flag:'left_mirror'}]},
+     choices:[{label:'打碎鏡子',flag:'broke_mirror',deadly:'鏡中的你比你先動了一步——它從碎片裡爬了出來。'},{label:'轉身離開',flag:'left_mirror'}]},
     {id:'diary',icon:'diary',text:'一本沾著暗紅汙漬的日記攤開在地上，最後一頁寫著：\n「它曾經也是這裡的病人。手電筒的光，是它唯一記得的東西。」',
-     choices:[{label:'帶走日記，留作證據',flag:'kept_diary'},{label:'把日記燒掉，假裝什麼都沒看到',flag:'burned_diary'}]},
+     choices:[{label:'帶走日記，留作證據',flag:'kept_diary'},{label:'把日記燒掉，假裝什麼都沒看到',flag:'burned_diary',deadly:'火光照亮了整條走廊——也照亮了一直站在你身後的它。'}]},
     {id:'photo',icon:'photo',text:'牆角掉著一張泛黃照片：好幾張病床上，躺著同一張臉的病人。\n照片背面用指甲刻著一行字：「它們在學我們。」',
      choices:[{label:'把照片撕碎',flag:'tore_photo'},{label:'把照片收進口袋',flag:'kept_photo'}]},
     {id:'phone',icon:'phone',text:'走廊盡頭一支老式公共電話突然響起。鈴聲在空蕩的建築裡格外刺耳。',
-     choices:[{label:'接起電話',flag:'answered_phone'},{label:'不理它，快步離開',flag:'ignored_phone'}]},
+     choices:[{label:'接起電話',flag:'answered_phone',deadly:'電話那頭傳來的，是你自己的聲音：「找到你了。」'},{label:'不理它，快步離開',flag:'ignored_phone'}]},
     {id:'cage',icon:'cage',text:'一間空病房裡立著一副生鏽的約束椅，扶手內側佈滿指甲抓痕——像是想從裡面掙脫出去。',
      choices:[{label:'仔細檢查那些抓痕',flag:'inspected_cage'},{label:'轉身不看，快步離開',flag:'avoided_cage'}]},
     {id:'chapel',icon:'bell',text:'樓梯轉角有一座小小的祈禱室，牆上掛著一隻銅鐘，繩子還垂在觸手可及的地方。',
@@ -479,7 +479,15 @@ function showChoices(node){
       storyFlags[c.flag]=true;node.done=true;nodesRead++;
       storyBox.classList.remove('show');
       setTimeout(()=>{storyBox.style.display='none';},350);
-      storyActive=false;sBlip(300,.15,'triangle',.08,-80);
+      storyActive=false;
+      if(c.deadly){
+        /* 劇情選錯：直接死亡＋黑幕收束動畫 */
+        storyDeathCause=c.deadly;
+        state='storydeath';scareT=0;shake=6;
+        heartbeat(false);sSting();sNoise(.8,.2,'lowpass',500);
+      }else{
+        sBlip(300,.15,'triangle',.08,-80);
+      }
     });
     storyChoices.appendChild(b);
   });
@@ -552,7 +560,7 @@ if(isTouch){
   window._joy=()=>joyOn?{cx:joyCX,cy:joyCY,kx:joyKX,ky:joyKY}:null;
 }
 /* ============ 遊戲狀態 ============ */
-let state='title',gameT=0,shake=0,scareT=0,endInfo=null,camX=0,camY=0,flick=1;
+let state='title',gameT=0,shake=0,scareT=0,endInfo=null,camX=0,camY=0,flick=1,storyDeathCause=null;
 /* v4：難度模式（惡夢模式＝逃出一次後解鎖的進階挑戰） */
 const MODES={
   normal:{keys:3,amulets:2,safe:15,spd:0,hear:1,lightR:1,glimpse:1,mult:1,bestKey:'darkpath.best',label:'普通',wraithKeys:2,dollT:75},
@@ -954,7 +962,7 @@ function showEnd(kind){
   let justUnlocked=false;
   if(escaped&&!unlockedNM){unlockedNM=true;justUnlocked=true;try{localStorage.setItem('darkpath.nm.unlock','1');}catch(e){}}
   let title,body,color;
-  if(kind==='death'){title='被 抓 到 了 ！';body='小幽靈輕輕拍了拍你的肩膀：「找到你啦！」別灰心，深呼吸——再試一次，這次一定能逃出去！';color='#8ab4ff';}
+  if(kind==='death'){title=storyDeathCause?'你 選 錯 了 …':'被 抓 到 了 ！';body=storyDeathCause?storyDeathCause+'\n有些選擇，在這棟療養院裡只有一次機會。再試一次吧。':'小幽靈輕輕拍了拍你的肩膀：「找到你啦！」別灰心，深呼吸——再試一次，這次一定能逃出去！';color=storyDeathCause?'#d66':'#8ab4ff';storyDeathCause=null;}
   else{title=endInfo.title;body=endInfo.body;color=endInfo.color;}
   const unlockLine=justUnlocked?'<p style="color:#ff9e5a;font-size:15px">🌑 你逃出來了——<b>惡夢模式</b>已解鎖！回到標題挑戰更黑暗的療養院。</p>':'';
   overlay.innerHTML='<h1 style="color:'+color+'">'+title+'</h1><p>'+body+'</p>'+unlockLine+
@@ -993,7 +1001,7 @@ function resetGame(){
   monster.active=false;monster.waypoint=null;monster.facing=0;monster.wasActive=false;monster.returnT=0;
   camX=player.x-vw/2;camY=player.y-vh/2;
   exitHintEl.style.display='none';storyBox.style.display='none';storyBox.classList.remove('show');
-  storyActive=false;gameT=0;state='play';endInfo=null;
+  storyActive=false;gameT=0;state='play';endInfo=null;storyDeathCause=null;
   overlay.classList.add('hidden');hud.style.display='block';
   document.getElementById('muteBtn').style.display='block';
   startAmbience();
@@ -1451,6 +1459,53 @@ function drawMinimap(){
   if(keysCollected>=M.keys){ctx.fillStyle='#5aff78';ctx.fillRect(ox+exitTile.tx*s,oy+exitTile.ty*s,s,s);}
   ctx.fillStyle='#fff';ctx.fillRect(ox+(player.x/TILE|0)*s,oy+(player.y/TILE|0)*s,s,s);
 }
+/* 劇情選錯死亡動畫：黑暗從四周收束、影之手升起、紅字浮現，最後接驚嚇畫面 */
+function drawStoryDeath(t){
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  const pr=Math.min(scareT/1.8,1);
+  render(t);   // 底層仍是遊戲畫面，黑暗逐漸吞噬
+  // 影之手：從畫面底部緩緩升起的細長黑影
+  ctx.save();
+  const hands=6;
+  for(let i=0;i<hands;i++){
+    const hx=vw*(0.08+i*0.16)+Math.sin(t*2+i*1.7)*12;
+    const rise=pr*vh*(.55+((i*37)%13)/40);
+    const hw=26+((i*53)%17);
+    ctx.fillStyle='rgba(5,2,2,'+(0.55+0.4*pr)+')';
+    ctx.beginPath();
+    ctx.moveTo(hx-hw,vh);
+    ctx.quadraticCurveTo(hx-hw*.6,vh-rise*.6,hx-hw*.15,vh-rise);
+    for(let f=0;f<4;f++){
+      const fx=hx-hw*.15+f*hw*.12,fl=rise+18+((i+f)*29)%22;
+      ctx.lineTo(fx,vh-fl);ctx.lineTo(fx+hw*.06,vh-rise+6);
+    }
+    ctx.quadraticCurveTo(hx+hw*.6,vh-rise*.55,hx+hw,vh);
+    ctx.closePath();ctx.fill();
+  }
+  ctx.restore();
+  // 黑暗收束（iris close）
+  const irisR=Math.max(0,(1-pr)*Math.hypot(vw,vh)*.6+40);
+  const ir=ctx.createRadialGradient(vw/2,vh/2,Math.max(1,irisR*.55),vw/2,vh/2,irisR);
+  ir.addColorStop(0,'rgba(0,0,0,0)');ir.addColorStop(1,'rgba(0,0,0,.97)');
+  ctx.fillStyle=ir;ctx.fillRect(0,0,vw,vh);
+  // 紅字浮現
+  if(pr>.35){
+    const ta=Math.min(1,(pr-.35)/.4);
+    const jx=(Math.random()*2-1)*3*ta,jy=(Math.random()*2-1)*3*ta;
+    ctx.globalAlpha=ta;
+    ctx.font='bold '+Math.min(30,vw*.045)+'px "Microsoft JhengHei",serif';
+    ctx.textAlign='center';
+    ctx.shadowColor='#900';ctx.shadowBlur=18;
+    ctx.fillStyle='#c22';
+    ctx.fillText('你選錯了……',vw/2+jx,vh/2-14+jy);
+    if(storyDeathCause){
+      ctx.font=Math.min(17,vw*.03)+'px "Microsoft JhengHei",serif';
+      ctx.shadowBlur=8;ctx.fillStyle='#d88';
+      ctx.fillText(storyDeathCause,vw/2+jx,vh/2+22+jy);
+    }
+    ctx.shadowBlur=0;ctx.globalAlpha=1;
+  }
+}
 /* 溫和化：驚嚇畫面改為圓潤卡通小幽靈——柔和配色、無紅色強閃、抖動大減 */
 function drawJumpscare(){
   ctx.setTransform(dpr,0,0,dpr,0,0);
@@ -1548,6 +1603,9 @@ function frame(now){
       if(dripT<=0){dripT=4+Math.random()*7;if(!muted)sDrip();}
       knockT-=STEP;
       if(knockT<=0){knockT=14+Math.random()*16;if(!muted)sKnock();}
+    }else if(state==='storydeath'){
+      scareT+=STEP;
+      if(scareT>2.4){state='jumpscare';scareT=0;sJumpscare();shake=8;}
     }else if(state==='jumpscare'){
       scareT+=STEP;
       if(scareT>.75){state='end';showEnd('death');}   /* 加強版：驚嚇畫面延長至 0.75 秒，讓放大逼近效果完整播完 */
@@ -1557,6 +1615,7 @@ function frame(now){
   }
   const t=performance.now()/1000;
   if(state==='jumpscare')drawJumpscare();
+  else if(state==='storydeath')drawStoryDeath(t);
   else if(state==='play'||state==='end')render(t);
   if(state==='play'||state==='jumpscare'||state==='end')drawGrain(t);   /* v6：底片顆粒 */
 }
@@ -1614,6 +1673,7 @@ window.__test={
   get audio(){return {drone:!!drone,music:!!musicT,heart:!!heartT};},
   setMode(m){if(MODES[m]){mode=m;M=MODES[m];}},
   win(){keysCollected=M.keys;state='end';endInfo=computeEnding();showEnd();},
+  storyDeath(c){storyDeathCause=c||'測試';state='storydeath';scareT=0;},
   die(){state='end';showEnd('death');},
   title(){showTitle();}
 };
