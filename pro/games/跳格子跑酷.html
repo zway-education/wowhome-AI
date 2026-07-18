@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v7：僅介面/畫質/質感 — 面板漸層卡片與漸層標題字、按鈕懸停動效、HUD膠囊立體陰影、金幣additive光暈、靜音鈕質感、母線低通音色打磨（玩法與文本不變） -->
 <!-- 專業AI升級 v6：草地透視條紋、烘焙vignette、飛鳥/夜間螢火蟲環境層、里程碑彩帶、金幣閃光；音效新增程序化殘響(ConvolverNode)、隨速度增強的風聲環境層、腳步聲 -->
 <!-- v4 -->
 <html lang="zh-Hant">
@@ -26,7 +27,8 @@
     position: absolute; left: 50%; top: 50%;
     transform: translate(-50%, -50%) scale(0.86);
     width: min(88vw, 440px);
-    background: rgba(255, 255, 255, 0.94);
+    background: linear-gradient(180deg, rgba(255,255,255,0.97), rgba(240,246,255,0.94));
+    border: 1px solid rgba(74,109,180,0.18);
     border-radius: 24px;
     padding: 28px 24px;
     text-align: center;
@@ -44,8 +46,11 @@
   .overlay h1 {
     margin: 0;
     font-size: 34px;
-    color: #f9629e;
-    text-shadow: 0 2px 0 rgba(0,0,0,0.08);
+    background: linear-gradient(92deg, #f9629e, #ff8a5c);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 2px 0 rgba(0,0,0,0.08));
   }
   .overlay .sub { font-size: 15px; opacity: 0.8; margin: 12px 0; line-height: 1.8; }
   .bigbtn {
@@ -61,8 +66,9 @@
     color: #fff;
     cursor: pointer;
     box-shadow: 0 5px 0 #c74679, 0 10px 20px rgba(201, 70, 121, 0.35);
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
   }
+  .bigbtn:hover { transform: translateY(-2px); filter: brightness(1.05); }
   .bigbtn:active {
     transform: translateY(4px);
     box-shadow: 0 1px 0 #c74679, 0 4px 10px rgba(201, 70, 121, 0.3);
@@ -98,14 +104,17 @@
     position: absolute; right: 12px; top: 12px;
     width: 48px; height: 48px;
     font-size: 22px;
-    border: none;
+    border: 1px solid rgba(74,109,180,0.25);
     border-radius: 12px;
-    background: rgba(255, 255, 255, 0.85);
+    background: linear-gradient(180deg, rgba(255,255,255,0.95), rgba(235,242,255,0.85));
     color: #2c3e50;
     cursor: pointer;
     z-index: 30;
-    box-shadow: 0 3px 10px rgba(20, 40, 80, 0.25);
+    box-shadow: 0 3px 10px rgba(20, 40, 80, 0.25), inset 0 1px 0 rgba(255,255,255,0.9);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
   }
+  #muteBtn:hover { transform: scale(1.07); box-shadow: 0 5px 14px rgba(20, 40, 80, 0.32); }
+  #muteBtn:active { transform: scale(0.93); }
 </style>
 </head>
 <body>
@@ -179,7 +188,11 @@ function audio() {
       comp.attack.value = 0.003; comp.release.value = 0.2;
       BUS = AC.createGain();
       BUS.gain.value = 0.85;
-      BUS.connect(comp);
+      /* v7 音色打磨：母線低通 9kHz 收掉方波高頻毛邊，音色更圓潤（觸發語意不變） */
+      const tone = AC.createBiquadFilter();
+      tone.type = 'lowpass'; tone.frequency.value = 9000; tone.Q.value = 0.5;
+      BUS.connect(tone);
+      tone.connect(comp);
       comp.connect(AC.destination);
       // v6 程序化殘響：generated impulse ConvolverNode（戶外小空間感），BUS 並聯送入
       try {
@@ -397,6 +410,16 @@ const vigCv = document.createElement('canvas');
   vg.addColorStop(0, 'rgba(20,20,40,0)');
   vg.addColorStop(1, 'rgba(20,20,40,0.34)');
   g.fillStyle = vg; g.fillRect(0, 0, GAME_W, GAME_H);
+})();
+/* v7 金幣光暈（烘焙 radial，drawItems 內 additive 疊加） */
+const coinGlowCv = document.createElement('canvas');
+(function bakeCoinGlow() {
+  coinGlowCv.width = coinGlowCv.height = 44;
+  const g = coinGlowCv.getContext('2d');
+  const rg = g.createRadialGradient(22, 22, 2, 22, 22, 22);
+  rg.addColorStop(0, 'rgba(255,228,130,0.6)');
+  rg.addColorStop(1, 'rgba(255,200,60,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 44, 44);
 })();
 const fireflyCv = document.createElement('canvas');
 (function bakeFirefly() {
@@ -1235,6 +1258,12 @@ function drawItems() {
     ctx.scale(p.s, p.s);
     if (it.type === 'coin') {
       ctx.translate(0, Math.sin(elapsed * 5 + it.seed) * 2.5);
+      // v7 金幣光暈：烘焙 radial additive 疊底，金幣更醒目發亮
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.75;
+      ctx.drawImage(coinGlowCv, -22, -22, 44, 44);
+      ctx.restore();
       ctx.scale(Math.abs(Math.sin(elapsed * 3.2 + it.seed)) * 0.75 + 0.25, 1);
       ctx.drawImage(SPR.coin.c, -SPR.coin.ox, -SPR.coin.oy, SPR.coin.w, SPR.coin.h);
     } else {
@@ -1497,11 +1526,18 @@ function drawSpeedLines() {
   }
 }
 
+/* v7 HUD 膠囊：陰影＋白底一次畫，介面更有立體卡片感 */
+function capsule(x, y, w, h, r, alpha) {
+  ctx.fillStyle = 'rgba(20,40,80,0.16)';
+  rr(x, y + 3, w, h, r);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,' + alpha + ')';
+  rr(x, y, w, h, r);
+  ctx.fill();
+}
 function drawHUD() {
   // 白色圓角膠囊（承襲原作 HUD 樣式）
-  ctx.fillStyle = 'rgba(255,255,255,0.88)';
-  rr(GAME_W / 2 - 150, 16, 300, 46, 23);
-  ctx.fill();
+  capsule(GAME_W / 2 - 150, 16, 300, 46, 23, 0.88);
   ctx.fillStyle = '#2c3e50';
   ctx.textAlign = 'center';
   ctx.font = 'bold 24px "Microsoft JhengHei", sans-serif';
@@ -1518,17 +1554,13 @@ function drawHUD() {
   }
 
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  rr(16, 16, 150, 40, 20);
-  ctx.fill();
+  capsule(16, 16, 150, 40, 20, 0.85);
   ctx.fillStyle = '#2c3e50';
   ctx.font = '16px "Microsoft JhengHei", sans-serif';
   ctx.fillText('🏆 最佳 ' + best, 32, 42);
 
   // 金幣計數 ＋ 護盾指示
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  rr(16, 62, shield ? 196 : 112, 36, 18);
-  ctx.fill();
+  capsule(16, 62, shield ? 196 : 112, 36, 18, 0.85);
   ctx.fillStyle = '#b07a10';
   ctx.font = 'bold 17px "Microsoft JhengHei", sans-serif';
   ctx.fillText('🪙 × ' + coins, 32, 86);
@@ -1538,9 +1570,7 @@ function drawHUD() {
   }
 
   // 速度計
-  ctx.fillStyle = 'rgba(255,255,255,0.85)';
-  rr(GAME_W - 166 - 60, 16, 150, 40, 20);
-  ctx.fill();
+  capsule(GAME_W - 166 - 60, 16, 150, 40, 20, 0.85);
   ctx.fillStyle = '#2c3e50';
   ctx.font = '15px "Microsoft JhengHei", sans-serif';
   ctx.fillText('速度', GAME_W - 210, 41);

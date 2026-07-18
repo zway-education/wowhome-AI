@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v7：僅介面/畫質/質感 — 標題漸層字與面板漸層卡片、按鈕懸停動效、HUD面板統一描邊、虛擬搖桿立體球帽與雙圈刻度、母線低通音色打磨（玩法與文本不變） -->
 <!-- 專業AI升級 v6：地城光影（玩家光圈/追兵紅光additive）、磚紋牆面與地板色變、飄浮塵埃層、烘焙vignette、寶石bloom；音效新增程序化殘響(ConvolverNode)、地城低鳴環境層、追兵逼近張力音層、腳步聲 -->
 <!-- v4 -->
 <html lang="zh-Hant">
@@ -27,7 +28,7 @@
     position: absolute; left: 50%; top: 50%;
     transform: translate(-50%, -50%) scale(0.86);
     width: min(88vw, 440px);
-    background: rgba(26, 28, 44, 0.94);
+    background: linear-gradient(180deg, rgba(34,37,60,0.96), rgba(22,24,40,0.94));
     border: 3px solid #7c8cff;
     border-radius: 20px;
     padding: 26px 22px;
@@ -47,8 +48,11 @@
     margin: 0 0 6px;
     font-size: 38px;
     letter-spacing: 6px;
-    color: #4fc3f7;
-    text-shadow: 0 3px 0 rgba(0,0,0,0.4);
+    background: linear-gradient(92deg, #4fc3f7, #7c8cff, #b39dff);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    filter: drop-shadow(0 3px 0 rgba(0,0,0,0.4));
   }
   .overlay .sub { font-size: 14px; opacity: 0.85; margin: 10px 0; line-height: 1.8; }
   .bigbtn {
@@ -64,8 +68,9 @@
     color: #fff;
     cursor: pointer;
     box-shadow: 0 5px 0 #0d47a1, 0 10px 20px rgba(25, 118, 210, 0.4);
-    transition: transform 0.12s ease, box-shadow 0.12s ease;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, filter 0.12s ease;
   }
+  .bigbtn:hover { transform: translateY(-2px); filter: brightness(1.07); }
   .bigbtn:active {
     transform: translateY(4px);
     box-shadow: 0 1px 0 #0d47a1, 0 4px 8px rgba(25, 118, 210, 0.35);
@@ -84,11 +89,15 @@
     font-size: 22px;
     border: 2px solid rgba(124, 140, 255, 0.5);
     border-radius: 12px;
-    background: rgba(26, 28, 44, 0.8);
+    background: linear-gradient(180deg, rgba(34,37,60,0.9), rgba(22,24,40,0.8));
     color: #f4f4f4;
     cursor: pointer;
     z-index: 30;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);
+    transition: transform 0.15s ease, border-color 0.15s ease;
   }
+  #muteBtn:hover { transform: scale(1.07); border-color: #4fc3f7; }
+  #muteBtn:active { transform: scale(0.93); }
   #diffRow { display: flex; gap: 10px; justify-content: center; margin: 10px 0 2px; }
   .diffbtn {
     flex: 1; max-width: 160px;
@@ -102,6 +111,7 @@
     cursor: pointer;
     transition: transform 0.1s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
   }
+  .diffbtn:hover:not(.locked) { border-color: #7c8cff; background: rgba(124, 140, 255, 0.16); transform: translateY(-1px); }
   .diffbtn:active { transform: scale(0.95); }
   .diffbtn.active {
     border-color: #4fc3f7;
@@ -318,7 +328,11 @@ function audio() {
       comp.attack.value = 0.003; comp.release.value = 0.2;
       BUS = AC.createGain();
       BUS.gain.value = 0.85;
-      BUS.connect(comp);
+      /* v7 音色打磨：母線低通 9kHz 收掉方波高頻毛邊，音色更圓潤（觸發語意不變） */
+      const toneLP = AC.createBiquadFilter();
+      toneLP.type = 'lowpass'; toneLP.frequency.value = 9000; toneLP.Q.value = 0.5;
+      BUS.connect(toneLP);
+      toneLP.connect(comp);
       comp.connect(AC.destination);
       // v6 程序化殘響：generated impulse ConvolverNode（石造地城空間感）
       try {
@@ -1577,6 +1591,22 @@ function drawGemGuide() {
   ctx.restore();
 }
 
+/* v7 搖桿球帽：烘焙 radial 高光球體，質感更立體（操作邏輯不變） */
+const joyKnobCv = (() => {
+  const c = document.createElement('canvas');
+  c.width = c.height = 96;   // 2x 超取樣
+  const g = c.getContext('2d');
+  const rg = g.createRadialGradient(36, 33, 6, 48, 48, 45);
+  rg.addColorStop(0, '#c8ecff');
+  rg.addColorStop(0.5, '#4fc3f7');
+  rg.addColorStop(1, '#1565c0');
+  g.fillStyle = rg;
+  g.beginPath(); g.arc(48, 48, 42, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = 'rgba(255,255,255,0.6)';
+  g.lineWidth = 3;
+  g.beginPath(); g.arc(48, 48, 40, 0, Math.PI * 2); g.stroke();
+  return c;
+})();
 function drawJoystick() {
   if (!joy) return;
   ctx.globalAlpha = 0.4;
@@ -1585,13 +1615,26 @@ function drawJoystick() {
   ctx.beginPath();
   ctx.arc(joy.cx, joy.cy, 55, 0, Math.PI * 2);
   ctx.stroke();
-  ctx.fillStyle = '#4fc3f7';
+  ctx.strokeStyle = 'rgba(79,195,247,0.55)';
+  ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(joy.cx + joy.dx, joy.cy + joy.dy, 24, 0, Math.PI * 2);
-  ctx.fill();
+  ctx.arc(joy.cx, joy.cy, 44, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 0.9;
+  ctx.drawImage(joyKnobCv, joy.cx + joy.dx - 24, joy.cy + joy.dy - 24, 48, 48);
   ctx.globalAlpha = 1;
 }
 
+/* v7 HUD 面板：深底＋主題色描邊統一質感 */
+function panel(x, y, w, h, r) {
+  ctx.fillStyle = 'rgba(26,28,44,0.85)';
+  rr(x, y, w, h, r);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(124,140,255,0.35)';
+  ctx.lineWidth = 1.2;
+  rr(x, y, w, h, r);
+  ctx.stroke();
+}
 function drawHUD() {
   // 存活時間（中央上方）
   ctx.fillStyle = 'rgba(26,28,44,0.85)';
@@ -1611,23 +1654,17 @@ function drawHUD() {
 
   // 最佳 + 回合寶石進度
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(26,28,44,0.85)';
-  rr(16, 12, 170, 34, 12);
-  ctx.fill();
+  panel(16, 12, 170, 34, 12);
   ctx.fillStyle = '#f4f4f4';
   ctx.font = '15px "Microsoft JhengHei", sans-serif';
   ctx.fillText('🏆 最佳 ' + Math.round(best) + ' 分', 30, 34);
-  ctx.fillStyle = 'rgba(26,28,44,0.85)';
-  rr(16, 52, 216, 32, 12);
-  ctx.fill();
+  panel(16, 52, 216, 32, 12);
   ctx.fillStyle = '#69f0ae';
   ctx.font = 'bold 15px "Microsoft JhengHei", sans-serif';
   ctx.fillText('第 ' + round + ' 回合　💎 ' + (GEMS_PER_ROUND - gems.length) + '/' + GEMS_PER_ROUND, 30, 74);
 
   // 分數（右上）
-  ctx.fillStyle = 'rgba(26,28,44,0.85)';
-  rr(GAME_W - 186, 12, 170, 34, 12);
-  ctx.fill();
+  panel(GAME_W - 186, 12, 170, 34, 12);
   ctx.fillStyle = '#ffd54f';
   ctx.font = 'bold 16px "Microsoft JhengHei", sans-serif';
   ctx.fillText('分數 ' + totalScore(), GAME_W - 168, 35);
