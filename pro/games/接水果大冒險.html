@@ -1,6 +1,7 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v6 -->
-<!-- 升級摘要：畫質——烘焙日月bloom＋vignette後製、視差雲層/飄葉隨風向飄動/夜空流星、幸運星金粉尾跡與炸彈引信火花尾跡、接到水果衝擊波光圈、進度條流光；音效——程序化戶外殘響（ConvolverNode）、風聲氛圍層＋晝鳥鳴/夜蟋蟀、受擊事件自動ducking -->
+<!-- 專業AI升級 v7 -->
+<!-- v7 升級摘要（僅介面/畫質/質感，不改故事文本與玩法）：畫質——背景大氣透視薄霧、樹冠受光/陰影分層、樹幹側影、地面光斑；介面——按鈕落影+頂部光澤+高亮發光、進度條描邊、飄字彈跳入場、標題柔光；質感——狀態切換淡入過場、粒子改圓形柔和、接取/UI音色加高頻泛音層 -->
+<!-- v6 升級摘要：畫質——烘焙日月bloom＋vignette後製、視差雲層/飄葉隨風向飄動/夜空流星、幸運星金粉尾跡與炸彈引信火花尾跡、接到水果衝擊波光圈、進度條流光；音效——程序化戶外殘響（ConvolverNode）、風聲氛圍層＋晝鳥鳴/夜蟋蟀、受擊事件自動ducking -->
 <!-- v5：難度鋸齒喘息波(安全+獎勵段)、直向裝置轉橫提示、接取寬容度加大、連擊里程碑大回饋、破關依星級分級慶祝、角色精細化/觸控/大螢幕提醒 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
 <html lang="zh-Hant">
@@ -252,7 +253,7 @@ function noise(dur, vol, delay){
   src.connect(g).connect(master); src.start(t0);
 }
 const sfx = {
-  catchGood(){ beep(rp(988),0.08,'square',0.13); beep(rp(1319),0.13,'square',0.12,0,0.07); },
+  catchGood(){ beep(rp(988),0.08,'square',0.12); beep(rp(1976),0.05,'sine',0.05); beep(rp(1319),0.13,'square',0.11,0,0.07); beep(rp(2637),0.08,'sine',0.04,0,0.07); }, /* v7 音色：加高頻正弦泛音層更清亮 */
   catchStar(){ [880,1109,1319,1760].forEach((f,i)=> beep(rp(f),0.13,'square',0.11,0,i*0.06)); },
   catchBad(){ beep(180,0.25,'sawtooth',0.18,-130); noise(0.22,0.14); ambDuck = 0.25; },
   bird(){ const b = rp(2100); beep(b,0.09,'sine',0.04,650); beep(b*1.14,0.08,'sine',0.035,520,0.12); },
@@ -261,7 +262,7 @@ const sfx = {
   combo(n){ beep(rp(660+n*60),0.07,'square',0.09); },
   tick(){ beep(880,0.05,'square',0.1); },
   frenzy(){ [523,659,784,1047,1319].forEach((f,i)=> beep(f,0.12,'square',0.1,0,i*0.07)); },
-  ui(){ beep(rp(660),0.06,'square',0.08); },
+  ui(){ beep(rp(660),0.06,'square',0.07); beep(rp(1320),0.05,'sine',0.035); }, /* v7 音色潤飾 */
   star(i){ beep(880+i*220,0.2,'triangle',0.14); },
   clear(starN){                                    // v5：破關音效依星級分級（1星精簡～3星滿版琶音）
     const notes = [523,659,784,1047,1319,1568];
@@ -347,7 +348,8 @@ function drawParts(){
   for(const p of parts){
     ctx.globalAlpha = Math.max(0, p.life/p.max);
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x-p.s/2, p.y-p.s/2, p.s, p.s);
+    /* v7：粒子改圓形，收尾隨壽命縮小更柔和 */
+    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, p.s*0.62*(0.4+0.6*p.life/p.max)), 0, TAU); ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
@@ -362,10 +364,15 @@ function updateFloats(dt){
 function drawFloats(){
   ctx.textAlign='center';
   for(const f of floats){
+    /* v7：飄字彈跳入場（easeOutBack 縮放），更有手感 */
+    const sc = easeOutBack(clamp((f.max - f.life)*5, 0, 1));
+    ctx.save();
+    ctx.translate(f.x, f.y); ctx.scale(sc, sc);
     ctx.font='900 '+f.big+'px '+FONT;
     ctx.globalAlpha = clamp(f.life/f.max,0,1);
     ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.45)';
-    ctx.strokeText(f.text, f.x, f.y); ctx.fillStyle=f.color; ctx.fillText(f.text, f.x, f.y);
+    ctx.strokeText(f.text, 0, 0); ctx.fillStyle=f.color; ctx.fillText(f.text, 0, 0);
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 }
@@ -546,6 +553,10 @@ function bakeBG(themeName){
   g.beginPath(); g.moveTo(0,300);
   for(let x=0;x<=GAME_W;x+=40) g.lineTo(x, 286 - Math.sin(x*0.008)*30 - Math.cos(x*0.02)*10);
   g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
+  /* v7 大氣透視：遠丘上緣兩層薄霧，拉開景深 */
+  g.globalAlpha = 0.25; g.fillStyle = T.mid; g.fillRect(0, 262, GAME_W, 58);
+  g.globalAlpha = 0.12; g.fillRect(0, 320, GAME_W, 40);
+  g.globalAlpha = 1;
   /* 近丘 */
   g.fillStyle = T.hillNear;
   g.beginPath(); g.moveTo(0,360);
@@ -556,6 +567,9 @@ function bakeBG(themeName){
     const ty = 400;
     g.fillStyle = T.trunk;
     g.fillRect(tx-8*tscale, ty-52*tscale, 16*tscale, 60*tscale);
+    /* v7 樹幹側影：右緣加深立體感 */
+    g.fillStyle = 'rgba(0,0,0,.22)';
+    g.fillRect(tx+2*tscale, ty-52*tscale, 6*tscale, 60*tscale);
     g.fillStyle = T.leaf;
     g.beginPath(); g.arc(tx, ty-74*tscale, 40*tscale, 0, TAU); g.fill();
     g.beginPath(); g.arc(tx-30*tscale, ty-56*tscale, 28*tscale, 0, TAU); g.fill();
@@ -563,6 +577,12 @@ function bakeBG(themeName){
     g.fillStyle = T.leaf2;
     g.beginPath(); g.arc(tx-12*tscale, ty-84*tscale, 20*tscale, 0, TAU); g.fill();
     g.beginPath(); g.arc(tx+18*tscale, ty-70*tscale, 16*tscale, 0, TAU); g.fill();
+    /* v7 樹冠受光/陰影分層：底部陰影弧＋左上高光點 */
+    g.globalAlpha = 0.18; g.fillStyle = '#000';
+    g.beginPath(); g.arc(tx+6*tscale, ty-60*tscale, 34*tscale, 0.12*Math.PI, 0.88*Math.PI); g.fill();
+    g.globalAlpha = 0.15; g.fillStyle = '#fff';
+    g.beginPath(); g.arc(tx-16*tscale, ty-88*tscale, 13*tscale, 0, TAU); g.fill();
+    g.globalAlpha = 1;
     /* 樹上小果子 */
     g.fillStyle = themeName==='night' ? '#c8a03a' : '#e84a3a';
     for(let f=0;f<5;f++){
@@ -580,6 +600,13 @@ function bakeBG(themeName){
     const x=(i*167)%GAME_W, y=GROUND_Y+14+(i*53)%58;
     g.beginPath(); g.moveTo(x,y); g.lineTo(x-3,y-7); g.moveTo(x,y); g.lineTo(x+3,y-8); g.stroke();
   }
+  /* v7 地面光斑：柔和橢圓亮斑增加材質層次 */
+  g.globalAlpha = 0.07; g.fillStyle = '#fff';
+  for(let i=0;i<8;i++){
+    const x=(i*233)%GAME_W, y=GROUND_Y+26+(i*37)%42;
+    g.beginPath(); g.ellipse(x, y, 46, 9, 0, 0, TAU); g.fill();
+  }
+  g.globalAlpha = 1;
   if(T.tint){ g.fillStyle = T.tint; g.fillRect(0,0,GAME_W,GAME_H); }
   bakedBG = c;
   /* v6 vignette 後製（烘焙一次、低解析放大） */
@@ -808,18 +835,31 @@ function drawStarShape(x,y,r,fill,rot){
   ctx.restore();
 }
 function drawButton(b, hot){
+  /* v7 按鈕質感：落影＋頂部光澤＋高亮發光描邊 */
+  ctx.save();
   const g = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
   if(b.disabled){ g.addColorStop(0,'rgba(70,80,75,.85)'); g.addColorStop(1,'rgba(40,48,44,.85)'); }
   else if(b.gold){ g.addColorStop(0,'#ffcf5c'); g.addColorStop(1,'#ff7e3d'); }
   else { g.addColorStop(0,'rgba(110,170,80,.95)'); g.addColorStop(1,'rgba(46,86,44,.95)'); }
+  if(!b.disabled){ ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4; }
   ctx.fillStyle = g;
   rrp(b.x, b.y, b.w, b.h, 14); ctx.fill();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+  /* 頂部光澤帶 */
+  ctx.save();
+  rrp(b.x, b.y, b.w, b.h, 14); ctx.clip();
+  ctx.fillStyle = b.disabled ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.22)';
+  rrp(b.x+3, b.y+3, b.w-6, b.h*0.42, 10); ctx.fill();
+  ctx.restore();
   ctx.lineWidth = hot ? 4 : 2.6;
+  if(hot){ ctx.shadowColor = b.gold ? 'rgba(255,207,92,.9)' : 'rgba(174,226,57,.8)'; ctx.shadowBlur = 14; }
   ctx.strokeStyle = hot ? '#fff' : 'rgba(240,250,220,.8)';
-  ctx.stroke();
+  rrp(b.x, b.y, b.w, b.h, 14); ctx.stroke();
+  ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
   ctx.font = '900 '+(b.fs||22)+'px '+FONT; ctx.textAlign='center';
   ctx.fillStyle = b.disabled ? 'rgba(230,240,230,.5)' : (b.gold ? '#4a2a00' : '#f4ffe8');
   ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2+(b.fs||22)*0.36);
+  ctx.restore();
 }
 /* 螢火蟲（夜關）與風葉 */
 let motes = [];
@@ -883,6 +923,9 @@ function drawHUD(){
     ctx.restore();
     ctx.globalAlpha = 1;
   }
+  /* v7：進度條外框亮描邊，提升 HUD 精緻度 */
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.6;
+  rrp(bx,by,bw2,bh2,11); ctx.stroke();
   for(const [t,i] of [[t1,1],[t2,2],[t3,3]]){
     const mx = bx + bw2 * t/t3;
     drawStarShape(mx-2, by+bh2/2, 8, score>=t ? '#ffcf5c' : 'rgba(255,255,255,.4)');
@@ -920,7 +963,10 @@ function drawHUD(){
 
 /* ===== 狀態機 ===== */
 let state = null;
-function setState(s){ state = s; if(s.enter) s.enter(); }
+/* v7 過場：狀態切換時 0.3 秒淡入（純視覺覆蓋，不影響操作與邏輯） */
+let fadeT = 0;
+const FADE_LEN = 0.3;
+function setState(s){ state = s; fadeT = FADE_LEN; if(s.enter) s.enter(); }
 const hintEl = document.getElementById('hint');
 
 const titleState = {
@@ -945,11 +991,14 @@ const titleState = {
     ctx.save();
     ctx.translate(GAME_W/2, 120+bob);
     ctx.font='900 58px '+FONT;
+    /* v7：標題柔光光暈 */
+    ctx.shadowColor='rgba(174,226,57,.55)'; ctx.shadowBlur=26;
     ctx.lineWidth=10; ctx.strokeStyle='#204631';
     ctx.strokeText('接水果大冒險', 0, 0);
     const g = ctx.createLinearGradient(0,-34,0,20);
     g.addColorStop(0,'#fff5d6'); g.addColorStop(1,'#aee239');
     ctx.fillStyle = g; ctx.fillText('接水果大冒險', 0, 0);
+    ctx.shadowColor='transparent'; ctx.shadowBlur=0;
     ctx.font='900 22px '+FONT; ctx.fillStyle='#ffcf5c';
     ctx.fillText('PRO 版　5 大果園關卡 × 星星評分 × 黃金果雨', 0, 42);
     ctx.restore();
@@ -1298,9 +1347,16 @@ function frame(now){
     state.update(STEP);
     updateAmbient(STEP);   /* v6：氛圍層 */
     updateRings(STEP);     /* v6：衝擊波 */
+    fadeT = Math.max(0, fadeT - STEP); /* v7：過場淡入 */
     acc -= STEP;
   }
   state.draw();
+  if(fadeT > 0){
+    ctx.globalAlpha = clamp(fadeT/FADE_LEN, 0, 1)*0.85;
+    ctx.fillStyle = '#0a140c';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.globalAlpha = 1;
+  }
 }
 setState(titleState);
 requestAnimationFrame(frame);

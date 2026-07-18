@@ -1,6 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v6 -->
-<!-- 升級摘要：畫質——烘焙月亮bloom＋vignette後製、倒數最後5秒漸強紅色警戒暈、屋頂餘燼浮塵與流星、剪斷銅芯餘火花、成功拆除彩帶禮花、裝置拉絲金屬質感；音效——DynamicsCompressor母線＋夜空程序化殘響、城市低鳴/風聲氛圍層、最後5秒緊張低音漸強（爆炸自動ducking） -->
+<!-- 專業AI升級 v7 -->
+<!-- v7 摘要（僅介面/畫質/質感，玩法與文本不動）：UI——按鈕金屬漸層＋頂部高光＋陰影、結算面板柔和投影、標題字發光；畫質——粒子加發光暈層、儀表玻璃反光、外殼頂緣受光線、畫布多層外陰影；質感——beep 雙振盪器輕微失諧增厚音色（觸發時機不變） -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -18,7 +18,7 @@
   canvas{
     position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     border:3px solid #ffb020;border-radius:10px;
-    box-shadow:0 0 44px rgba(255,68,68,.25);
+    box-shadow:0 0 44px rgba(255,68,68,.22),0 24px 70px rgba(0,0,0,.65),0 0 0 1px rgba(255,214,120,.25);
     cursor:none;
   }
 </style>
@@ -185,6 +185,15 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
   o.connect(g).connect(master);
   o.start(); o.stop(AC.currentTime + dur);
+  /* v7 音色打磨：疊一顆輕微失諧的副振盪器增厚音色（同觸發、同時長） */
+  const o2 = AC.createOscillator(), g2 = AC.createGain();
+  o2.type = type;
+  o2.frequency.setValueAtTime(freq * 1.006, AC.currentTime);
+  if(slide) o2.frequency.exponentialRampToValueAtTime(Math.max(30, (freq + slide) * 1.006), AC.currentTime + dur);
+  g2.gain.setValueAtTime(vol * 0.35, AC.currentTime);
+  g2.gain.exponentialRampToValueAtTime(0.001, AC.currentTime + dur);
+  o2.connect(g2).connect(master);
+  o2.start(); o2.stop(AC.currentTime + dur);
 }
 function noise(dur = 0.15, vol = 0.2){
   if(muted || !AC) return;
@@ -245,8 +254,14 @@ function updateParts(dt){
 }
 function drawParts(){
   for(const p of parts){
-    ctx.globalAlpha = clamp(p.life / p.max, 0, 1);
-    ctx.fillStyle = p.color; ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    const a = clamp(p.life / p.max, 0, 1);
+    /* v7 畫質：外圈柔和光暈＋亮核，粒子更有發光感 */
+    ctx.globalAlpha = a * 0.3;
+    ctx.fillStyle = p.color; ctx.fillRect(p.x - 5.5, p.y - 5.5, 11, 11);
+    ctx.globalAlpha = a;
+    ctx.fillRect(p.x - 3, p.y - 3, 6, 6);
+    ctx.globalAlpha = a * 0.85;
+    ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.fillRect(p.x - 1.2, p.y - 1.2, 2.4, 2.4);
   }
   ctx.globalAlpha = 1;
 }
@@ -778,6 +793,13 @@ function drawTimer(cx, cy){
   rr(cx - 92, cy - 32, 184, 64, 8);
   ctx.fillStyle = '#05070c'; ctx.fill();
   ctx.strokeStyle = '#39435e'; ctx.lineWidth = 2; ctx.stroke();
+  /* v7 畫質：面板玻璃斜向反光 */
+  ctx.save();
+  rr(cx - 92, cy - 32, 184, 64, 8); ctx.clip();
+  const gl = ctx.createLinearGradient(cx - 92, cy - 32, cx - 30, cy + 32);
+  gl.addColorStop(0, 'rgba(200,220,255,.10)'); gl.addColorStop(0.45, 'rgba(200,220,255,.03)'); gl.addColorStop(0.46, 'rgba(200,220,255,0)');
+  ctx.fillStyle = gl; ctx.fillRect(cx - 92, cy - 32, 184, 30);
+  ctx.restore();
   ctx.shadowColor = color; ctx.shadowBlur = urgent ? 18 : 10;
   const s = Math.max(0, timeLeft);
   const d1 = Math.floor(s / 10), d2 = Math.floor(s) % 10, d3 = Math.floor((s * 10) % 10);
@@ -805,6 +827,9 @@ function drawCase(){
   rr(CASE_X, CASE_Y, CASE_W, CASE_H, 20);
   ctx.fillStyle = caseGrad; ctx.fill();
   ctx.strokeStyle = '#39435e'; ctx.lineWidth = 2.5; ctx.stroke();
+  /* v7 畫質：外殼頂緣受光細線（月光方向） */
+  rr(CASE_X + 3, CASE_Y + 3, CASE_W - 6, CASE_H - 6, 17);
+  ctx.strokeStyle = 'rgba(190,210,255,.14)'; ctx.lineWidth = 1.5; ctx.stroke();
   /* v6 拉絲金屬質感（極淡水平髮絲紋） */
   ctx.globalAlpha = 0.045;
   ctx.strokeStyle = '#dfe8ff'; ctx.lineWidth = 1;
@@ -993,11 +1018,20 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.save();
   ctx.translate(x + w / 2, y + h / 2);
   ctx.scale(pulse, pulse);
+  /* v7 質感：按鈕投影＋垂直漸層＋頂部高光 */
   rr(-w / 2, -h / 2, w, h, 10);
-  ctx.fillStyle = primary ? '#ffb020' : 'rgba(255,255,255,.1)';
+  ctx.shadowColor = 'rgba(0,0,0,.45)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
+  const bg = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+  if(primary){ bg.addColorStop(0, '#ffc95a'); bg.addColorStop(0.5, '#ffb020'); bg.addColorStop(1, '#e69712'); }
+  else{ bg.addColorStop(0, 'rgba(255,255,255,.16)'); bg.addColorStop(1, 'rgba(255,255,255,.06)'); }
+  ctx.fillStyle = bg;
   ctx.fill();
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
   ctx.strokeStyle = primary ? '#ffd77e' : '#7c8798';
   ctx.lineWidth = 2.5; ctx.stroke();
+  rr(-w / 2 + 4, -h / 2 + 3, w - 8, h * 0.32, 6);
+  ctx.fillStyle = primary ? 'rgba(255,255,255,.28)' : 'rgba(255,255,255,.07)';
+  ctx.fill();
   ctx.fillStyle = primary ? '#1d1503' : '#e8ecf1';
   ctx.font = 'bold ' + Math.round(h * 0.42) + 'px ' + FONT;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1032,7 +1066,10 @@ function bigText(txt, y, size, color, scaleK){
   ctx.textAlign = 'center';
   ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(5,8,16,.9)';
   ctx.strokeText(txt, 0, 0);
+  /* v7 質感：大字加同色柔光 */
+  ctx.shadowColor = color; ctx.shadowBlur = 22;
   ctx.fillStyle = color; ctx.fillText(txt, 0, 0);
+  ctx.shadowBlur = 0;
   ctx.restore();
 }
 
@@ -1265,8 +1302,13 @@ function overDraw(){
   ctx.translate(GAME_W / 2, GAME_H / 2 - 30);
   ctx.scale(k, k);
   rr(-235, -140, 470, 280, 18);
+  ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 30; ctx.shadowOffsetY = 10;
   ctx.fillStyle = 'rgba(18,24,38,.96)'; ctx.fill();
+  ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
   ctx.strokeStyle = won ? '#33d1a6' : '#ff4444'; ctx.lineWidth = 3; ctx.stroke();
+  /* v7 質感：面板內緣高光 */
+  rr(-231, -136, 462, 272, 15);
+  ctx.strokeStyle = 'rgba(190,210,255,.10)'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.textAlign = 'center';
   if(mode === 'level' && levelCleared){
     ctx.font = 'bold 32px ' + FONT;
