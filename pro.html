@@ -533,9 +533,9 @@ async function fillNums(el, force) {
   el.dataset.done = '1';
   await statsReady; // 先等快照載好，卡片數字直接秒開
   if (force) {
-    // 強制刷新：'votes' 只清評價快取（高頻），true 全部清（低頻）
+    // 強制刷新：只讓快取過期（保留舊值顯示，避免數字閃回0），'votes' 只刷評價
     const sfxs = force === 'votes' ? ['-love','-love-c','-like','-like-c'] : ['-v','-p','-love','-love-c','-like','-like-c'];
-    sfxs.forEach(sfx => { delete countCache[key + sfx]; delete countCacheAt[key + sfx]; });
+    sfxs.forEach(sfx => { delete countCacheAt[key + sfx]; });
   }
   if (!el.innerHTML) el.innerHTML = '<span style="opacity:.5">統計載入中…</span>'; // 佔位，避免看起來沒有統計
   // 逾時保險：2.5 秒還沒查到就先顯示 0，數字到了會自動蓋掉（30秒週期也會補）
@@ -552,7 +552,9 @@ async function fillNums(el, force) {
     el.innerHTML = numSpan('v', '瀏覽', views || 0) + numSpan('p', '遊玩', plays || 0) +
       numSpan('love', '非常好玩', nl) + numSpan('like', '好玩', ng);
   };
-  paint(0, 0);
+  const staleLove = Math.max(0, (countCache[key + '-love'] || 0) - (countCache[key + '-love-c'] || 0));
+  const staleLike = Math.max(0, (countCache[key + '-like'] || 0) - (countCache[key + '-like-c'] || 0));
+  paint(staleLove, staleLike); // 先顯示上次的票數，新數字到了再換（不閃0）
   const [love, loveC, like, likeC] = await Promise.all([
     readCount(key + '-love', true), readCount(key + '-love-c', true),
     readCount(key + '-like', true), readCount(key + '-like-c', true),
