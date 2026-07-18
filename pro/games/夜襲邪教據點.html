@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v6：螢火蟲光暈精靈化+營火裊裊炊煙+火光additive bloom、月亮烘焙進疊層(移除每幀漸層)、被發現時紅色警戒暗角脈動；程序化殘響ConvolverNode、夜風蟋蟀氛圍層+追擊緊張低鳴切換+營火劈啪+ducking -->
+<!-- 專業AI升級 v7：僅介面/畫質/質感再優化——星空烘焙+閃爍星辰、HUD 玻璃質感面板統一化、標題火光輝光與按鈕內光高光、攻擊鈕冷卻環、浮字彈跳緩動、低血量愛心脈動、按鍵音潤飾；玩法/數值/文本一字未動 -->
+<!-- v6：螢火蟲光暈精靈化+營火裊裊炊煙+火光additive bloom、月亮烘焙進疊層(移除每幀漸層)、被發現時紅色警戒暗角脈動；程序化殘響ConvolverNode、夜風蟋蟀氛圍層+追擊緊張低鳴切換+營火劈啪+ducking -->
 <!-- v4：無盡夜襲模式、頭目信徒、無聲連殺加分、三晚劇情 -->
 <html lang="zh-Hant">
 <head>
@@ -148,7 +149,7 @@ function noise(dur, vol) {
   src.start();
 }
 const sfx = {
-  click() { beep(520, 0.06, 'square', 0.08); },
+  click() { beep(520, 0.06, 'square', 0.08); beep(1040, 0.045, 'triangle', 0.035); }, // v7：疊高八度泛音，按鍵音更清脆
   swing() { noise(0.08, 0.07); beep(300, 0.07, 'triangle', 0.05, -120); },
   hit() { beep(210, 0.09, 'square', 0.13, -70); noise(0.05, 0.09); },
   takedown() { duckAmb(); beep(140, 0.16, 'sawtooth', 0.14, -60); noise(0.12, 0.11); },
@@ -199,12 +200,18 @@ function updateFloaters(dt) {
 function drawFloaters() {
   for (const f of floaters) {
     ctx.globalAlpha = clamp(f.life * 1.5, 0, 1);
+    // v7：出現瞬間彈跳緩動（大字彈更大），質感更彈
+    const pop = easeOutBack(clamp((1 - f.life) * (f.big ? 5 : 8), 0, 1));
+    ctx.save();
+    ctx.translate(f.x, f.y);
+    ctx.scale(pop, pop);
     ctx.fillStyle = f.color;
     ctx.font = (f.big ? 'bold 24px' : 'bold 17px') + ' sans-serif';
     ctx.textAlign = 'center';
     ctx.strokeStyle = 'rgba(0,0,0,0.8)'; ctx.lineWidth = 3;
-    ctx.strokeText(f.text, f.x, f.y);
-    ctx.fillText(f.text, f.x, f.y);
+    ctx.strokeText(f.text, 0, 0);
+    ctx.fillText(f.text, 0, 0);
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 }
@@ -873,7 +880,19 @@ vigCv.width = GAME_W; vigCv.height = GAME_H;
   c.beginPath(); c.arc(830, 70, 26, 0, 6.29); c.fill();
   c.fillStyle = 'rgba(205,199,168,0.6)';
   c.beginPath(); c.arc(822, 64, 6, 0, 6.29); c.arc(838, 78, 4, 0, 6.29); c.fill();
+  // v7：靜態星空烘焙（畫面上緣，零每幀成本）
+  let sSeed = 7;
+  function sRnd() { sSeed = (sSeed * 1103515245 + 12345) & 0x7fffffff; return (sSeed % 1000) / 1000; }
+  for (let i = 0; i < 46; i++) {
+    const sx = sRnd() * GAME_W, sy = sRnd() * 120, sa = 0.15 + sRnd() * 0.35, ss = sRnd() < 0.2 ? 2 : 1.3;
+    if (Math.hypot(sx - 830, sy - 70) < 60) continue;
+    c.fillStyle = 'rgba(220,228,240,' + sa.toFixed(2) + ')';
+    c.fillRect(sx, sy, ss, ss);
+  }
 })();
+// v7：少量閃爍星辰（動態明滅，僅上緣天空帶）
+const twinkles = [];
+for (let i = 0; i < 8; i++) twinkles.push({ x: rnd(20, GAME_W - 20), y: rnd(8, 105), ph: rnd(0, 6), sp: rnd(1.2, 2.4) });
 // v6：紅色警戒暗角（被追擊時脈動）
 const dangerCv = document.createElement('canvas');
 dangerCv.width = GAME_W; dangerCv.height = GAME_H;
@@ -917,6 +936,20 @@ function drawAtmosphere() {
   ctx.globalAlpha = 1;
   // 月光角落 + 暗角 + 月亮（預繪疊層）
   ctx.drawImage(vigCv, 0, 0);
+  // v7：閃爍星辰（呼吸明滅，additive）
+  ctx.globalCompositeOperation = 'lighter';
+  for (const tw of twinkles) {
+    const a = Math.max(0, Math.sin(bgTime * tw.sp + tw.ph));
+    if (a < 0.05) continue;
+    ctx.globalAlpha = a * 0.55;
+    ctx.fillStyle = '#e8eef8';
+    ctx.fillRect(tw.x - 1, tw.y - 1, 2.2, 2.2);
+    ctx.globalAlpha = a * 0.2;
+    ctx.fillRect(tw.x - 3, tw.y - 0.5, 6, 1);
+    ctx.fillRect(tw.x - 0.5, tw.y - 3, 1, 6);
+  }
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.globalAlpha = 1;
 }
 function fogUpdate(dt) {
   bgTime += dt;
@@ -956,6 +989,12 @@ const titleState = {
     drawAtmosphere();   // v6：月亮已烘焙進疊層
     // 標題
     const ts = easeOutBack(clamp(this.t / 0.7, 0, 1));
+    // v7：標題後方火光輝光（additive、緩慢呼吸）
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.16 + Math.sin(bgTime * 1.4) * 0.05;
+    ctx.drawImage(fireGlowCv, GAME_W / 2 - 300, 120 - 130, 600, 240);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
     ctx.save();
     ctx.translate(GAME_W / 2, 120);
     ctx.scale(ts, ts);
@@ -1019,13 +1058,20 @@ const titleState = {
 // v4：標題按鈕繪製＋註冊點擊區
 function titleBtn(x, y, w, h, label, size, cb, c1, c2) {
   uiButtons.push({ x, y, w, h, cb });
+  // v7：柔和落影＋內光高光，按鈕更立體
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  roundRect(x + 2, y + 4, w, h, 14); ctx.fill();
   const g = ctx.createLinearGradient(0, y, 0, y + h);
   g.addColorStop(0, c1); g.addColorStop(1, c2);
   ctx.fillStyle = g;
   roundRect(x, y, w, h, 14); ctx.fill();
   ctx.strokeStyle = '#2a0f0c'; ctx.lineWidth = 3; ctx.stroke();
-  ctx.fillStyle = '#f4ece0';
+  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  roundRect(x + 4, y + 3, w - 8, h * 0.42, 10); ctx.fill();
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.font = 'bold ' + size + 'px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(label, x + w / 2, y + h / 2 + 2.5);
+  ctx.fillStyle = '#f4ece0';
   ctx.fillText(label, x + w / 2, y + h / 2 + 1);
   ctx.textBaseline = 'alphabetic';
 }
@@ -1274,12 +1320,25 @@ const playState = {
 
 // ---------- HUD ----------
 const barGrads = new Map();
+// v7：玻璃質感面板（垂直微漸層＋頂端內光），HUD 統一質感
+const panelGrads = new Map();
+function panel(x, y, w, h, r) {
+  const key = y + 'x' + h;
+  let g = panelGrads.get(key);
+  if (!g) {
+    g = ctx.createLinearGradient(0, y, 0, y + h);
+    g.addColorStop(0, 'rgba(20,34,24,0.9)'); g.addColorStop(1, 'rgba(7,13,9,0.87)');
+    panelGrads.set(key, g);
+  }
+  ctx.fillStyle = g;
+  roundRect(x, y, w, h, r); ctx.fill();
+  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + r, y + 1.5); ctx.lineTo(x + w - r, y + 1.5); ctx.stroke();
+}
 function drawHUD(st) {
   // DAY 徽章
-  ctx.fillStyle = 'rgba(10,18,12,0.85)';
-  roundRect(14, 12, 92, 52, 4);
-  ctx.fill();
-  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+  panel(14, 12, 92, 52, 6);
   ctx.fillStyle = PAL.amber;
   ctx.font = 'bold 11px monospace'; ctx.textAlign = 'center';
   ctx.fillText('D A Y', 60, 30);
@@ -1294,6 +1353,10 @@ function drawHUD(st) {
     ctx.save();
     ctx.translate(hx, hy);
     if (player.hurtT > 1 && on) ctx.translate(rnd(-2, 2), rnd(-2, 2));
+    if (on && player.hp === 1) { // v7：僅剩 1 HP 時愛心心跳脈動（純視覺提示）
+      const hb = 1 + Math.max(0, Math.sin(bgTime * 6)) * 0.14;
+      ctx.translate(10, 10); ctx.scale(hb, hb); ctx.translate(-10, -10);
+    }
     ctx.fillStyle = on ? PAL.bad : 'rgba(60,60,60,0.7)';
     ctx.beginPath();
     ctx.moveTo(10, 22);
@@ -1306,10 +1369,7 @@ function drawHUD(st) {
   }
   // 體力 / 飢餓條
   const bx = GAME_W - 218, bw = 160;
-  ctx.fillStyle = 'rgba(10,18,12,0.85)';
-  roundRect(bx - 12, 12, bw + 68, 58, 4);
-  ctx.fill();
-  ctx.strokeStyle = PAL.hudLine; ctx.stroke();
+  panel(bx - 12, 12, bw + 68, 58, 6);
   const bar = (y, label, v, c1, c2, warn) => {
     ctx.fillStyle = PAL.dim;
     ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
@@ -1334,10 +1394,7 @@ function drawHUD(st) {
   ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
   ctx.fillText(mode === 'endless' ? ('無盡 · 第 ' + (nights + 1) + ' 晚') : ('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚'), 122, 58);
   // Lv. / 經驗值 / 金幣 / 武器
-  ctx.fillStyle = 'rgba(10,18,12,0.85)';
-  roundRect(14, 68, 196, 40, 4);
-  ctx.fill();
-  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+  panel(14, 68, 196, 40, 6);
   ctx.fillStyle = PAL.good;
   ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
   ctx.fillText('Lv.' + level, 20, 85);
@@ -1358,11 +1415,11 @@ function drawHUD(st) {
   let obj = '潛入據點：繞到信徒背後' + atkWord + '偷襲（剩餘 ' + alive + ' 名）';
   if (phase === 'loot') obj = '據點清空！到中央祭壇' + atkWord + '搶奪戰利品';
   if (phase === 'retreat') obj = '戰利品到手！衝出虛線圈撤回森林！';
-  ctx.fillStyle = 'rgba(10,18,12,0.85)';
-  const ow = ctx.measureText(obj).width;
-  roundRect(GAME_W / 2 - 250, GAME_H - 40, 500, 30, 4);
-  ctx.fill();
-  ctx.strokeStyle = phase === 'raid' ? PAL.hudLine : PAL.amber; ctx.lineWidth = 1.5; ctx.stroke();
+  panel(GAME_W / 2 - 250, GAME_H - 40, 500, 30, 6);
+  if (phase !== 'raid') { // 非潛入階段以琥珀邊框強調目標
+    ctx.strokeStyle = PAL.amber; ctx.lineWidth = 1.5;
+    roundRect(GAME_W / 2 - 250, GAME_H - 40, 500, 30, 6); ctx.stroke();
+  }
   ctx.fillStyle = PAL.ink;
   ctx.font = 'bold 14px sans-serif'; ctx.textAlign = 'center';
   ctx.fillText(obj, GAME_W / 2, GAME_H - 20);
@@ -1389,6 +1446,12 @@ function drawHUD(st) {
     ctx.fillStyle = '#f4ece0';
     ctx.font = 'bold 20px sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('攻擊', ATK_BTN.x, ATK_BTN.y + 7);
+    // v7：冷卻進度環（純視覺回饋，顯示現有 atkCd 剩餘比例）
+    if (player.atkCd > 0) {
+      const cdP = clamp(player.atkCd / curWeapon().cd, 0, 1);
+      ctx.strokeStyle = 'rgba(255,220,150,0.85)'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.arc(ATK_BTN.x, ATK_BTN.y, ATK_BTN.r - 5, -Math.PI / 2, -Math.PI / 2 + (1 - cdP) * 6.2832); ctx.stroke();
+    }
     ctx.globalAlpha = 1;
   }
   muteButton();
@@ -1444,6 +1507,11 @@ const overState = {
     const gr = endless ? endlessGrade(nights) : grade;
     const shownBest = endless ? endlessBest : best;
     ctx.strokeStyle = (won || newBest || endless) ? PAL.amber : PAL.hudLine; ctx.lineWidth = 2.5; ctx.stroke();
+    // v7：面板頂端內光＋分隔細線，結算卡片更有質感
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(GAME_W / 2 - 210, 94); ctx.lineTo(GAME_W / 2 + 210, 94); ctx.stroke();
+    ctx.strokeStyle = 'rgba(201,161,90,0.25)';
+    ctx.beginPath(); ctx.moveTo(GAME_W / 2 - 170, 224); ctx.lineTo(GAME_W / 2 + 170, 224); ctx.stroke();
     ctx.textAlign = 'center';
     ctx.fillStyle = (won || endless) ? PAL.fireHot : PAL.bone;
     ctx.font = 'bold 34px serif';

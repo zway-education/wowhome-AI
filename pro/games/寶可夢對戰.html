@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v6：道館主題環境光塵粒子(隨道館換色)、烘焙陽光光束+暗角vignette、出戰者屬性色腳底光暈、每次命中屬性色衝擊波圓環；程序化殘響ConvolverNode、體育館觀眾低語氛圍層+絕招/勝利歡呼聲浪+ducking -->
+<!-- 專業AI升級 v7：僅介面/畫質/質感再優化——繁中字體堆疊、發光圓形粒子、漸層HP條+光澤、按鈕立體陰影漸層、狀態切換淡入過場、飄字彈出縮放；玩法/數值/文本一字未動 -->
+<!-- v6：道館主題環境光塵粒子(隨道館換色)、烘焙陽光光束+暗角vignette、出戰者屬性色腳底光暈、每次命中屬性色衝擊波圓環；程序化殘響ConvolverNode、體育館觀眾低語氛圍層+絕招/勝利歡呼聲浪+ducking -->
 <!-- v5：觸控返回鍵、誤觸提示回饋、直向提示、難度平滑化、低血量脈動、表情系統 -->
 <html lang="zh-Hant">
 <head>
@@ -102,6 +103,8 @@ function resize(){
 }
 addEventListener('resize', resize); resize();
 const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
+/* v7：繁中系統字體堆疊——比預設 sans-serif 更精緻的字形層次（零外連） */
+const FONT='"PingFang TC","Heiti TC","Microsoft JhengHei","Noto Sans TC","Noto Sans CJK TC",sans-serif';
 
 /* ===== 音效：壓縮器母線＋隨機音高 ===== */
 let AC=null, master=null, muted=false, revSend=null, ambGain=null;
@@ -112,7 +115,10 @@ function audio(){
     const comp = AC.createDynamicsCompressor();
     comp.threshold.value=-16; comp.knee.value=24; comp.ratio.value=8;
     master = AC.createGain(); master.gain.value=muted?0:0.9;
-    master.connect(comp).connect(AC.destination);
+    // v7：音色潤飾——高頻棚架微衰減，square/sawtooth 少一點刺耳感（不改任何觸發時機）
+    const tone=AC.createBiquadFilter(); tone.type='highshelf';
+    tone.frequency.value=3200; tone.gain.value=-5;
+    master.connect(tone); tone.connect(comp); comp.connect(AC.destination);
     // v6：程序化殘響（generated impulse 體育館空間感）
     const conv=AC.createConvolver();
     const n=Math.floor(AC.sampleRate*1.5), buf=AC.createBuffer(2,n,AC.sampleRate);
@@ -257,10 +263,20 @@ function updateParts(dt){
   }
 }
 function drawParts(){
+  /* v7：方塊粒子升級為「發光暈＋圓形核心」雙層粒子，additive 疊加更有能量感 */
+  ctx.globalCompositeOperation='lighter';
   for(const p of parts){
-    ctx.globalAlpha=Math.max(0,p.life*2);
+    const a=Math.max(0,p.life/p.max);
+    const spr=spotOf(p.color), k=13*a+4;
+    ctx.globalAlpha=a*0.55;
+    ctx.drawImage(spr,p.x-k/2,p.y-k/2,k,k);
+  }
+  ctx.globalCompositeOperation='source-over';
+  for(const p of parts){
+    const a=Math.max(0,p.life/p.max);
+    ctx.globalAlpha=Math.min(1,a*1.6);
     ctx.fillStyle=p.color;
-    ctx.fillRect(p.x-3,p.y-3,6,6);
+    ctx.beginPath(); ctx.arc(p.x,p.y,2.2+2*a,0,7); ctx.fill();
   }
   ctx.globalAlpha=1;
 }
@@ -275,11 +291,17 @@ function updateFloats(dt){
 function drawFloats(){
   ctx.textAlign='center';
   for(const f of floaters){
+    /* v7：飄字彈出縮放（overshoot pop）＋柔和陰影，回饋更有打擊感 */
+    const born=0.95-f.life, pop=born<0.16?0.7+(born/0.16)*0.42:1.12-Math.min(0.12,(born-0.16)*0.6);
+    ctx.save(); ctx.translate(f.x,f.y); ctx.scale(pop,pop);
     ctx.globalAlpha=Math.max(0,Math.min(1,f.life*1.5));
-    ctx.font=(f.big?'bold 30px':'bold 24px')+' sans-serif';
+    ctx.font=(f.big?'bold 30px':'bold 24px')+' '+FONT;
+    ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=6; ctx.shadowOffsetY=2;
     ctx.strokeStyle='rgba(0,0,0,.6)'; ctx.lineWidth=4; ctx.lineJoin='round';
-    ctx.strokeText(f.text,f.x,f.y);
-    ctx.fillStyle=f.color; ctx.fillText(f.text,f.x,f.y);
+    ctx.strokeText(f.text,0,0);
+    ctx.shadowBlur=0; ctx.shadowOffsetY=0;
+    ctx.fillStyle=f.color; ctx.fillText(f.text,0,0);
+    ctx.restore();
   }
   ctx.globalAlpha=1;
 }
@@ -805,9 +827,10 @@ function doItem(f,onDone){
 }
 
 /* ===== 狀態機 ===== */
-let state=null;
+let state=null, fadeT=0;   // v7：畫面切換淡入過場（純視覺，不延遲輸入）
 function setState(s){
   state=s;
+  fadeT=0.32;
   const bb=document.getElementById('backBtn');
   if(bb) bb.style.display=(s===titleState)?'none':'flex';   // v5：標題畫面無「上一頁」可返回
   if(s.enter) s.enter();
@@ -825,7 +848,7 @@ function roundRect(x,y,w,h,r){
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
 function drawFooter(){
-  ctx.textAlign='center'; ctx.font='12px sans-serif';
+  ctx.textAlign='center'; ctx.font='12px '+FONT;
   drawTextOutline('AI未來創作營隊',GAME_W/2,GAME_H-10,'rgba(38,50,74,0.7)','rgba(255,255,255,0.6)',3);
 }
 
@@ -846,20 +869,20 @@ const titleState={
     drawLucario(240,380+bob*0.5,1.15,1.15,1,false,'happy');
     drawArceus(720,380-bob*0.5,1.1,1.1,-1,false,'happy');
     ctx.textAlign='center';
-    ctx.font='bold 48px sans-serif';
+    ctx.font='bold 48px '+FONT;
     drawTextOutline('寶可夢對戰：路卡利歐大亂鬥',GAME_W/2,90,'#1f5fae','rgba(255,255,255,0.9)',7);
-    ctx.font='bold 22px sans-serif';
+    ctx.font='bold 22px '+FONT;
     drawTextOutline('★ 全新五大道館聯賽 × 屬性相剋 × 星星評分 ★',GAME_W/2,132,'#b3720a','rgba(255,255,255,0.9)',4);
-    ctx.font='16px sans-serif';
+    ctx.font='16px '+FONT;
     drawTextOutline('💻 電腦：滑鼠點選招式／數字鍵 1-4 快速選招',GAME_W/2,168,PALETTE.ink,'rgba(255,255,255,0.85)',4);
     drawTextOutline('📱 平板・手機：直接點觸招式按鈕即可出招',GAME_W/2,192,PALETTE.ink,'rgba(255,255,255,0.85)',4);
-    ctx.font='15px sans-serif';
+    ctx.font='15px '+FONT;
     drawTextOutline('屬性相剋：波導 ➤ 鋼 ➤ 大地 ➤ 神聖 ➤ 波導（剋制傷害 ×1.5）',GAME_W/2,216,PALETTE.ink,'rgba(255,255,255,0.85)',4);
-    ctx.font='bold 26px sans-serif';
+    ctx.font='bold 26px '+FONT;
     drawTextOutline('▶ 點擊 / 空白鍵 進入道館挑戰 ◀',GAME_W/2,258+Math.sin(this.t*3)*5,'#c22a60','rgba(255,255,255,0.9)',5);
     const total=save.stars.reduce((a,b)=>a+b,0);
     if(total>0){
-      ctx.font='bold 19px sans-serif';
+      ctx.font='bold 19px '+FONT;
       drawTextOutline('已收集 '+total+' / 15 顆星'+(save.stars.every(s=>s>0)?'　🏆 聯盟冠軍！':''),GAME_W/2,292,'#b3720a','rgba(255,255,255,0.9)',4);
     }
     drawFooter();
@@ -888,9 +911,9 @@ const gymState={
     ctx.drawImage(skyCv,0,0);
     drawMotes(1/60);
     ctx.textAlign='center';
-    ctx.font='bold 38px sans-serif';
+    ctx.font='bold 38px '+FONT;
     drawTextOutline('挑戰五大道館',GAME_W/2,64,'#1f5fae','rgba(255,255,255,0.9)',6);
-    ctx.font='bold 18px sans-serif';
+    ctx.font='bold 18px '+FONT;
     drawTextOutline('★ '+save.stars.reduce((a,b)=>a+b,0)+' / 15　拿星：勝利 ★｜剩血 ≥50% ★｜不用蔥油冰 ★',GAME_W/2,100,'#b3720a','rgba(255,255,255,0.9)',4);
     this.cards=[];
     const cw=172, ch=224, gap=16, x0=(GAME_W-(cw*5+gap*4))/2;
@@ -902,29 +925,29 @@ const gymState={
       roundRect(x,y,cw,ch,14); ctx.fill();
       ctx.strokeStyle=un?'#1f5fae':'rgba(38,50,74,0.3)'; ctx.lineWidth=2.5;
       roundRect(x,y,cw,ch,14); ctx.stroke();
-      ctx.font='bold 19px sans-serif';
+      ctx.font='bold 19px '+FONT;
       drawTextOutline('第'+(i+1)+'館 '+gym.name,x+cw/2,y+28,un?PALETTE.ink:'rgba(38,50,74,0.45)','rgba(255,255,255,0.8)',3);
       if(un){
         ctx.save();
         ctx.translate(x+cw/2,y+120);
         drawers[foe.id](0,0,0.62,0.62,-1,gym.ex,'calm');
         ctx.restore();
-        ctx.font='bold 14px sans-serif';
+        ctx.font='bold 14px '+FONT;
         const tc=TYPES[foe.type].color;
         ctx.fillStyle=tc; roundRect(x+cw/2-34,y+156,68,22,10); ctx.fill();
-        ctx.fillStyle='#fff'; ctx.font='bold 13px sans-serif';
+        ctx.fillStyle='#fff'; ctx.font='bold 13px '+FONT;
         ctx.fillText(foe.type+'屬性',x+cw/2,y+172);
         for(let s2=0;s2<3;s2++)
           drawStar(x+cw/2+(s2-1)*30,y+200,11,s2<save.stars[i]?'#f4c531':'rgba(38,50,74,0.2)');
       } else {
-        ctx.font='34px sans-serif'; ctx.fillText('🔒',x+cw/2,y+120);
-        ctx.font='13px sans-serif';
+        ctx.font='34px '+FONT; ctx.fillText('🔒',x+cw/2,y+120);
+        ctx.font='13px '+FONT;
         drawTextOutline('通過前一館解鎖',x+cw/2,y+160,'rgba(38,50,74,0.55)','rgba(255,255,255,0.7)',3);
       }
     }
-    ctx.font='16px sans-serif';
+    ctx.font='16px '+FONT;
     drawTextOutline('💻 數字鍵 1-5 選道館　📱 點擊卡片',GAME_W/2,404,PALETTE.ink,'rgba(255,255,255,0.85)',3);
-    ctx.font='bold 17px sans-serif';
+    ctx.font='bold 17px '+FONT;
     drawTextOutline('提示：選擇剋制對手屬性的寶可夢，傷害 ×1.5！',GAME_W/2,438+Math.sin(this.t*3)*3,'#c22a60','rgba(255,255,255,0.9)',4);
     drawFooter();
   }
@@ -949,9 +972,9 @@ const pickState={
     drawMotes(1/60);
     const gym=GYMS[curGym], foe=FIGHTERS[gym.foe];
     ctx.textAlign='center';
-    ctx.font='bold 32px sans-serif';
+    ctx.font='bold 32px '+FONT;
     drawTextOutline('第'+(curGym+1)+'館 '+gym.name+'　對手：'+(gym.ex?'冠軍・':'')+foe.name+'（'+foe.type+'）',GAME_W/2,56,'#1f5fae','rgba(255,255,255,0.9)',5);
-    ctx.font='17px sans-serif';
+    ctx.font='17px '+FONT;
     drawTextOutline('選擇你的出戰寶可夢！　💻 數字鍵 1-4　📱 點擊卡片',GAME_W/2,92,PALETTE.ink,'rgba(255,255,255,0.85)',4);
     this.cards=[];
     const cols=2, bw=300, bh=160, gapx=34, gapy=22;
@@ -966,19 +989,19 @@ const pickState={
       ctx.strokeStyle=hover?'#1f5fae':'rgba(38,50,74,0.35)'; ctx.lineWidth=2;
       roundRect(x-bw/2,y-bh/2,bw,bh,16); ctx.stroke();
       drawers[f.id](x-84,y+30,0.62,0.62,1,false,'happy');
-      ctx.font='bold 19px sans-serif'; ctx.textAlign='left';
+      ctx.font='bold 19px '+FONT; ctx.textAlign='left';
       drawTextOutline(f.name,x-26,y-46,PALETTE.ink,'rgba(255,255,255,0.85)',3);
       ctx.fillStyle=TYPES[f.type].color;
       roundRect(x-26,y-36,58,20,9); ctx.fill();
-      ctx.fillStyle='#fff'; ctx.font='bold 12px sans-serif'; ctx.textAlign='center';
+      ctx.fillStyle='#fff'; ctx.font='bold 12px '+FONT; ctx.textAlign='center';
       ctx.fillText(f.type+'屬性',x+3,y-22);
-      ctx.textAlign='left'; ctx.font='13px sans-serif';
+      ctx.textAlign='left'; ctx.font='13px '+FONT;
       drawTextOutline('HP '+f.maxHp+'　攻擊 '+f.atk,x-26,y-2,PALETTE.ink,'rgba(255,255,255,0.8)',3);
       drawTextOutline('絕招：'+f.special,x-26,y+18,PALETTE.ink,'rgba(255,255,255,0.8)',3);
       const mul=typeMul(f.type,foe.type);
       const tag=mul>1?'效果絕佳 ▲':mul<1?'效果不佳 ▼':'普通 ─';
       const tagC=mul>1?'#00a844':mul<1?'#c0392b':'#6a7a94';
-      ctx.font='bold 15px sans-serif';
+      ctx.font='bold 15px '+FONT;
       drawTextOutline(tag,x-26,y+42,tagC,'rgba(255,255,255,0.85)',3);
       ctx.textAlign='center';
     });
@@ -1175,14 +1198,18 @@ const battleState={
     drawHpBar(player,205,52,300);
     drawHpBar(enemy,GAME_W-205,52,300);
     // log
-    ctx.fillStyle='rgba(0,0,0,0.5)';
+    const lgG=ctx.createLinearGradient(0,104,0,160);   // v7：戰鬥訊息框玻璃質感＋細邊
+    lgG.addColorStop(0,'rgba(20,26,48,0.62)'); lgG.addColorStop(1,'rgba(6,8,18,0.58)');
+    ctx.fillStyle=lgG;
     roundRect(GAME_W/2-380,104,760,56,10); ctx.fill();
-    ctx.fillStyle='#fff'; ctx.font='16px sans-serif'; ctx.textAlign='center';
+    ctx.strokeStyle='rgba(255,255,255,0.16)'; ctx.lineWidth=1;
+    roundRect(GAME_W/2-380,104,760,56,10); ctx.stroke();
+    ctx.fillStyle='#fff'; ctx.font='16px '+FONT; ctx.textAlign='center';
     log.slice(-2).forEach((l,i)=>ctx.fillText(l,GAME_W/2,126+i*22));
     // 入場橫幅
     if(this.introT<1.1){
       ctx.fillStyle='rgba(0,0,0,0.55)'; ctx.fillRect(0,220,GAME_W,90);
-      ctx.textAlign='center'; ctx.font='bold 40px sans-serif';
+      ctx.textAlign='center'; ctx.font='bold 40px '+FONT;
       drawTextOutline('第'+(curGym+1)+'館　'+GYMS[curGym].name,GAME_W/2,278,'#fff','rgba(31,95,174,0.9)',6);
       return;
     }
@@ -1194,23 +1221,33 @@ const battleState={
         const disabled=(b.key==='item'&&itemUses.player<=0)||!this.playerTurn||turnBusy;
         const hover=!disabled&&Math.abs(mouseX-bx)<bw/2&&Math.abs(mouseY-by)<bh/2;
         ctx.save(); ctx.translate(bx,by);
-        ctx.fillStyle=disabled?'rgba(255,255,255,0.18)':(hover?'rgba(255,255,255,0.62)':'rgba(255,255,255,0.4)');
+        /* v7：按鈕立體感——投影＋玻璃漸層＋hover 微放大，命中範圍不變 */
+        if(hover) ctx.scale(1.04,1.04);
+        if(!disabled){ ctx.shadowColor='rgba(10,16,36,0.4)'; ctx.shadowBlur=10; ctx.shadowOffsetY=4; }
+        const btnG=ctx.createLinearGradient(0,-bh/2,0,bh/2);
+        if(disabled){ btnG.addColorStop(0,'rgba(255,255,255,0.2)'); btnG.addColorStop(1,'rgba(255,255,255,0.12)'); }
+        else if(hover){ btnG.addColorStop(0,'rgba(255,255,255,0.78)'); btnG.addColorStop(1,'rgba(255,255,255,0.5)'); }
+        else { btnG.addColorStop(0,'rgba(255,255,255,0.55)'); btnG.addColorStop(1,'rgba(255,255,255,0.3)'); }
+        ctx.fillStyle=btnG;
         roundRect(-bw/2,-bh/2,bw,bh,12); ctx.fill();
+        ctx.shadowBlur=0; ctx.shadowOffsetY=0;
         ctx.strokeStyle=disabled?'rgba(38,50,74,0.2)':(hover?'#1f5fae':'rgba(38,50,74,0.4)');
         ctx.lineWidth=2; roundRect(-bw/2,-bh/2,bw,bh,12); ctx.stroke();
-        ctx.font='bold 19px sans-serif'; ctx.textAlign='center';
+        ctx.strokeStyle='rgba(255,255,255,0.55)'; ctx.lineWidth=1;   // 頂部內光
+        roundRect(-bw/2+2,-bh/2+2,bw-4,bh-4,10); ctx.stroke();
+        ctx.font='bold 19px '+FONT; ctx.textAlign='center';
         let label=b.label;
         if(b.key==='special') label='② '+player.def.special;
         const tc=disabled?'rgba(38,50,74,0.4)':PALETTE.ink;
         drawTextOutline(label,0,-8,tc,'rgba(255,255,255,0.7)',2);
-        ctx.font='12px sans-serif';
+        ctx.font='12px '+FONT;
         drawTextOutline(b.sub||player.def.specialDesc,0,16,tc,'rgba(255,255,255,0.7)',2);
         if(b.key==='item') drawItem(-bw/2+22,4,0.6);
         ctx.restore();
       });
       if(!this.playerTurn||turnBusy){
         const urgent=this.waitPulse>0;   // v5：誤觸時文字閃色，讓玩家確認「輸入有被收到，只是還沒輪到你」
-        ctx.font=(urgent?'bold 17px':'16px')+' sans-serif'; ctx.textAlign='center';
+        ctx.font=(urgent?'bold 17px':'16px')+' '+FONT; ctx.textAlign='center';
         drawTextOutline(turnBusy?'…':'對手行動中…',GAME_W/2,432,urgent?'#ff2975':PALETTE.ink,'rgba(255,255,255,0.8)',3);
       }
     } else {
@@ -1218,9 +1255,9 @@ const battleState={
       ctx.textAlign='center';
       const allClear=save.stars.every(s=>s>0);
       ctx.fillStyle=this.won?PALETTE.yellow:'#ff2975';
-      ctx.font='bold 46px sans-serif';
+      ctx.font='bold 46px '+FONT;
       ctx.fillText(this.won?(curGym===4&&allClear?'聯盟冠軍誕生！':'道館攻略成功！'):'再挑戰一次！',GAME_W/2,150);
-      ctx.fillStyle='#fff'; ctx.font='20px sans-serif';
+      ctx.fillStyle='#fff'; ctx.font='20px '+FONT;
       ctx.fillText(this.won?player.def.name+' 擊敗了 '+(enemy.ex?'冠軍・':'')+enemy.def.name+'！':player.def.name+' 被擊敗了……換個屬性試試？',GAME_W/2,190);
       if(this.won){
         for(let s2=0;s2<3;s2++){
@@ -1228,9 +1265,9 @@ const battleState={
           const pop=lit&&this.endTimer-(0.5+s2*0.45)<0.25?1.5-(this.endTimer-(0.5+s2*0.45))*2:1;
           drawStar(GAME_W/2+(s2-1)*70,236,26*Math.max(1,pop),lit?'#f4c531':'rgba(255,255,255,0.15)');
         }
-        ctx.font='15px sans-serif'; ctx.fillStyle='rgba(255,255,255,0.85)';
+        ctx.font='15px '+FONT; ctx.fillStyle='rgba(255,255,255,0.85)';
         ctx.fillText('剩餘 HP '+Math.ceil(player.hp)+'/'+player.maxHp+'　蔥油冰 '+(usedItem?'已使用':'未使用'),GAME_W/2,296);
-        if(this.newBest&&this.endTimer>1.4){ ctx.fillStyle='#f4c531'; ctx.font='bold 19px sans-serif'; ctx.fillText('★ 新紀錄！ ★',GAME_W/2,326); }
+        if(this.newBest&&this.endTimer>1.4){ ctx.fillStyle='#f4c531'; ctx.font='bold 19px '+FONT; ctx.fillText('★ 新紀錄！ ★',GAME_W/2,326); }
       }
       // 按鈕
       this.btns2=[];
@@ -1242,14 +1279,20 @@ const battleState={
       defs.forEach((d,i)=>{
         const x=x0+i*(bw+gap), y=366;
         this.btns2.push({x,y,w:bw,h:bh,fn:d[1]});
-        ctx.fillStyle='rgba(20,26,44,0.85)';
+        const hov2=mouseX>=x&&mouseX<=x+bw&&mouseY>=y&&mouseY<=y+bh;   // v7：結算按鈕 hover 提亮＋投影（僅視覺）
+        ctx.shadowColor='rgba(0,0,0,0.5)'; ctx.shadowBlur=12; ctx.shadowOffsetY=4;
+        const bg2=ctx.createLinearGradient(0,y,0,y+bh);
+        bg2.addColorStop(0,hov2?'rgba(44,54,86,0.95)':'rgba(30,38,64,0.9)');
+        bg2.addColorStop(1,hov2?'rgba(26,32,56,0.95)':'rgba(14,18,34,0.9)');
+        ctx.fillStyle=bg2;
         roundRect(x,y,bw,bh,12); ctx.fill();
+        ctx.shadowBlur=0; ctx.shadowOffsetY=0;
         ctx.strokeStyle=d[2]; ctx.lineWidth=2.5;
         roundRect(x,y,bw,bh,12); ctx.stroke();
-        ctx.fillStyle=d[2]; ctx.font='bold 20px sans-serif';
+        ctx.fillStyle=d[2]; ctx.font='bold 20px '+FONT;
         ctx.fillText(d[0],x+bw/2,y+36);
       });
-      ctx.font='15px sans-serif'; ctx.fillStyle='rgba(255,255,255,0.7)';
+      ctx.font='15px '+FONT; ctx.fillStyle='rgba(255,255,255,0.7)';
       ctx.fillText('💻 空白鍵＝'+(this.won?(curGym<4?'下一道館':'道館選單'):'再戰一次'),GAME_W/2,458);
     }
     drawFooter();
@@ -1265,7 +1308,10 @@ function upFighter(f,dt){
 }
 function drawHpBar(f,cx,cy,w){
   const pct=Math.max(0,f.hp/f.maxHp), dPct=Math.max(0,f.dispHp/f.maxHp);
-  ctx.fillStyle='rgba(0,0,0,0.5)'; roundRect(cx-w/2-6,cy-24,w+12,46,10); ctx.fill();
+  const pnG=ctx.createLinearGradient(0,cy-24,0,cy+22);   // v7：面板玻璃感漸層＋細邊
+  pnG.addColorStop(0,'rgba(24,30,52,0.62)'); pnG.addColorStop(1,'rgba(8,10,22,0.58)');
+  ctx.fillStyle=pnG; roundRect(cx-w/2-6,cy-24,w+12,46,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=1; roundRect(cx-w/2-6,cy-24,w+12,46,10); ctx.stroke();
   if(pct>0&&pct<=0.2){   // v5：低血量脈動警示外框，讓「快輸了」的緊張感看得到而不用一直盯數字
     ctx.save();
     ctx.globalAlpha=0.4+Math.sin(performance.now()*0.012)*0.28;
@@ -1273,16 +1319,22 @@ function drawHpBar(f,cx,cy,w){
     roundRect(cx-w/2-6,cy-24,w+12,46,10); ctx.stroke();
     ctx.restore();
   }
-  ctx.fillStyle='#333'; ctx.fillRect(cx-w/2,cy,w,12);
+  /* v7：HP條質感升級——圓角凹槽＋主色漸層＋頂部光澤，數值邏輯不變 */
+  ctx.fillStyle='#22242e'; roundRect(cx-w/2,cy,w,12,6); ctx.fill();
+  ctx.save(); roundRect(cx-w/2,cy,w,12,6); ctx.clip();
   ctx.fillStyle='rgba(255,255,255,0.45)'; ctx.fillRect(cx-w/2,cy,w*dPct,12);   // 殘影
-  ctx.fillStyle=pct>0.5?'#00a844':pct>0.2?'#ffcf5c':'#b13e53';
-  ctx.fillRect(cx-w/2,cy,w*pct,12);
-  ctx.strokeStyle='#fff'; ctx.lineWidth=1.5; ctx.strokeRect(cx-w/2,cy,w,12);
-  ctx.fillStyle='#fff'; ctx.font='bold 14px sans-serif'; ctx.textAlign='center';
+  const hpC=pct>0.5?['#3fd97a','#00a844']:pct>0.2?['#ffe09a','#f2a93b']:['#ff6b8f','#b13e53'];
+  const hpG=ctx.createLinearGradient(0,cy,0,cy+12);
+  hpG.addColorStop(0,hpC[0]); hpG.addColorStop(1,hpC[1]);
+  ctx.fillStyle=hpG; ctx.fillRect(cx-w/2,cy,w*pct,12);
+  ctx.fillStyle='rgba(255,255,255,0.3)'; ctx.fillRect(cx-w/2,cy+1,w*pct,4);    // 光澤
+  ctx.restore();
+  ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth=1.5; roundRect(cx-w/2,cy,w,12,6); ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.font='bold 14px '+FONT; ctx.textAlign='center';
   ctx.fillText((f.ex?'冠軍・':'')+f.def.name+'  '+Math.max(0,Math.ceil(f.hp))+'/'+f.maxHp,cx,cy-8);
   ctx.fillStyle=TYPES[f.def.type].color;
   roundRect(cx-w/2-2,cy+16,52,17,8); ctx.fill();
-  ctx.fillStyle='#fff'; ctx.font='bold 11px sans-serif';
+  ctx.fillStyle='#fff'; ctx.font='bold 11px '+FONT;
   ctx.fillText(f.def.type,cx-w/2+24,cy+28.5);
 }
 
@@ -1295,9 +1347,14 @@ function frame(now){
   last=now;
   while(acc>=STEP){
     state.update(STEP);
+    if(fadeT>0) fadeT=Math.max(0,fadeT-STEP);
     acc-=STEP;
   }
   state.draw();
+  if(fadeT>0){   // v7：狀態切換淡入
+    ctx.fillStyle='rgba(10,12,26,'+(fadeT/0.32).toFixed(3)+')';
+    ctx.fillRect(0,0,GAME_W,GAME_H);
+  }
 }
 setState(titleState);
 requestAnimationFrame(frame);

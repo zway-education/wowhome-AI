@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v6：飄落桃花瓣環境粒子、命中/必殺/KO衝擊波圓環、KO鏡頭推近慢演出、烘焙夕陽霞光光束+暗角、低血量血條脈動；程序化殘響ConvolverNode、山風蟲鳴氛圍層+ducking、靜音鈕同步關氛圍 -->
+<!-- 專業AI升級 v7：僅介面/畫質/質感再優化——HUD血條光澤+刻度、按鈕漸層立體質感、面板漸層描邊、暮色螢火蟲光點、電影式上下黑幕過場、觸控鈕漸層、畫布金色柔光、UI音潤飾（不改故事文本/玩法/數值/操作） -->
+<!-- v6：飄落桃花瓣環境粒子、命中/必殺/KO衝擊波圓環、KO鏡頭推近慢演出、烘焙夕陽霞光光束+暗角、低血量血條脈動；程序化殘響ConvolverNode、山風蟲鳴氛圍層+ducking、靜音鈕同步關氛圍 -->
 <!-- v4：無盡模式、五回合挑戰、必殺氣力系統、雙人對戰 -->
 <html lang="zh-Hant">
 <head>
@@ -17,7 +18,7 @@
   canvas{
     position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);
     border:3px solid #ffcf4d;border-radius:10px;
-    box-shadow:0 0 40px rgba(0,0,0,.7);
+    box-shadow:0 0 40px rgba(0,0,0,.7),0 0 28px rgba(255,207,77,.16),inset 0 0 60px rgba(0,0,0,.25);
   }
 </style>
 </head>
@@ -152,7 +153,7 @@ const sfx = {
   hit(){ noise(0.1, 0.16); beep(170, 0.12, 'square', 0.13, -70); },
   hurt(){ beep(150, 0.22, 'sawtooth', 0.12, -90); },
   ko(){ duckAmb(); noise(0.4, 0.22); beep(90, 0.5, 'sawtooth', 0.16, -40); },
-  ui(){ beep(660, 0.06, 'square', 0.08); },
+  ui(){ beep(660, 0.06, 'square', 0.08); beep(990, 0.05, 'sine', 0.035); }, /* v7：加一絲高頻泛音更清脆 */
   round(){
     duckAmb();
     beep(523, 0.1, 'square', 0.1);
@@ -321,6 +322,47 @@ function drawPetals(){
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+}
+/* ===== v7：暮色螢火蟲光點（純視覺氛圍層） ===== */
+const fireflies = [];
+for(let i = 0; i < 10; i++) fireflies.push({ x: Math.random() * GAME_W, y: 180 + Math.random() * (GROUND_Y - 200), ph: Math.random() * 9, sp: 6 + Math.random() * 10 });
+function updateFireflies(dt){
+  for(const f of fireflies){
+    f.ph += dt;
+    f.x += Math.sin(f.ph * 0.7) * f.sp * dt;
+    f.y += Math.cos(f.ph * 0.5) * f.sp * 0.6 * dt;
+    if(f.x < -10) f.x = GAME_W + 10;
+    if(f.x > GAME_W + 10) f.x = -10;
+    f.y = clamp(f.y, 150, GROUND_Y - 6);
+  }
+}
+function drawFireflies(){
+  for(const f of fireflies){
+    const a = 0.2 + 0.5 * (0.5 + 0.5 * Math.sin(f.ph * 2.3));
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#ffe9a0';
+    ctx.beginPath(); ctx.arc(f.x, f.y, 1.6, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = a * 0.35;
+    ctx.beginPath(); ctx.arc(f.x, f.y, 4.2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+/* ===== v7：電影式上下黑幕過場（intro/KO 儀式感） ===== */
+function drawCineBars(){
+  let k = 0;
+  if(stateName === 'play'){
+    if(phase === 'intro') k = Math.min(1, phaseT / 0.45);
+    else if(phase === 'ko') k = Math.min(1, phaseT / 0.3);
+    else if(phase === 'fight' && phaseT < 0.4) k = 1 - phaseT / 0.4;
+  }
+  if(k <= 0) return;
+  const h = 30 * easeOutCubic(k);
+  ctx.fillStyle = 'rgba(8,4,20,.82)';
+  ctx.fillRect(0, 0, GAME_W, h);
+  ctx.fillRect(0, GAME_H - h, GAME_W, h);
+  ctx.fillStyle = 'rgba(255,207,77,.35)';
+  ctx.fillRect(0, h - 1.5, GAME_W, 1.5);
+  ctx.fillRect(0, GAME_H - h, GAME_W, 1.5);
 }
 /* ===== v6：衝擊波圓環（命中/必殺/KO） ===== */
 const rings = [];
@@ -1219,6 +1261,12 @@ function drawHpBar(x, y, w, h, f, cTop, cBot, label, alignRight){
   ctx.fillStyle = g;
   if(alignRight) ctx.fillRect(x + w - realW, y, realW, h);
   else ctx.fillRect(x, y, realW, h);
+  /* v7：頂部光澤帶＋25% 刻度線（純視覺） */
+  ctx.fillStyle = 'rgba(255,255,255,.22)';
+  if(alignRight) ctx.fillRect(x + w - realW, y + 1.5, realW, h * 0.34);
+  else ctx.fillRect(x, y + 1.5, realW, h * 0.34);
+  ctx.fillStyle = 'rgba(0,0,0,.3)';
+  for(let i = 1; i < 4; i++) ctx.fillRect(x + w * i / 4 - 0.5, y + 2, 1, h - 4);
   ctx.restore();
   rr(x, y, w, h, 6);
   /* v6：低血量邊框脈動警示 */
@@ -1233,10 +1281,18 @@ function drawButton(x, y, w, h, label, cb, primary){
   ctx.save();
   ctx.translate(x + w / 2, y + h / 2);
   ctx.scale(pulse, pulse);
+  /* v7：按鈕立體質感——柔影＋漸層＋頂部光澤 */
+  ctx.fillStyle = 'rgba(10,4,26,.45)';
+  rr(-w / 2 + 2, -h / 2 + 4, w, h, 12); ctx.fill();
   rr(-w / 2, -h / 2, w, h, 12);
-  ctx.fillStyle = primary ? '#ffcf4d' : 'rgba(255,255,255,.14)'; ctx.fill();
+  const bg = ctx.createLinearGradient(0, -h / 2, 0, h / 2);
+  if(primary){ bg.addColorStop(0, '#ffe082'); bg.addColorStop(1, '#f0ac2a'); }
+  else{ bg.addColorStop(0, 'rgba(255,255,255,.2)'); bg.addColorStop(1, 'rgba(255,255,255,.08)'); }
+  ctx.fillStyle = bg; ctx.fill();
   ctx.strokeStyle = primary ? '#fff2c4' : '#ffcf4d'; ctx.lineWidth = 2.5;
   ctx.stroke();
+  ctx.fillStyle = primary ? 'rgba(255,255,255,.35)' : 'rgba(255,255,255,.12)';
+  rr(-w / 2 + 5, -h / 2 + 4, w - 10, h * 0.3, 8); ctx.fill();
   ctx.fillStyle = primary ? '#3a2408' : '#ffe9ad';
   ctx.font = 'bold ' + Math.round(h * 0.44) + 'px ' + FONT;
   ctx.textAlign = 'center';
@@ -1314,8 +1370,12 @@ function drawTouchUI(){
     { x: GAME_W - 78,  y: GAME_H - 88, label: '打', on: touchIn.atk }
   ];
   for(const b of btns){
-    ctx.fillStyle = b.on ? 'rgba(255,207,77,.5)' : 'rgba(255,255,255,.16)'; ctx.beginPath(); ctx.arc(b.x, b.y, 44, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
+    /* v7：觸控鈕漸層＋按下高亮 */
+    const tg = ctx.createRadialGradient(b.x, b.y - 12, 6, b.x, b.y, 44);
+    if(b.on){ tg.addColorStop(0, 'rgba(255,230,150,.65)'); tg.addColorStop(1, 'rgba(255,190,60,.4)'); }
+    else{ tg.addColorStop(0, 'rgba(255,255,255,.24)'); tg.addColorStop(1, 'rgba(255,255,255,.1)'); }
+    ctx.fillStyle = tg; ctx.beginPath(); ctx.arc(b.x, b.y, 44, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = b.on ? 'rgba(255,240,190,.85)' : 'rgba(255,255,255,.5)'; ctx.lineWidth = 2;
     ctx.stroke();
     ctx.fillStyle = '#fff';
     ctx.fillText(b.label, b.x, b.y + 2);
@@ -1346,6 +1406,7 @@ function drawWorld(){
     ctx.translate(-koZoomX, -koZoomY);
   }
   drawBG();
+  drawFireflies();                                 // v7：暮色螢火蟲
   drawFighter(p2);
   drawFighter(p1);
   drawParts();
@@ -1402,9 +1463,14 @@ function titleDraw(){
       ctx.textBaseline = 'alphabetic';
     }
   }
+  /* v7：說明面板漸層＋雙層描邊 */
   rr(GAME_W / 2 - 335, 336, 670, 104, 10);
-  ctx.fillStyle = 'rgba(12,6,30,.6)'; ctx.fill();
+  const pg = ctx.createLinearGradient(0, 336, 0, 440);
+  pg.addColorStop(0, 'rgba(24,12,52,.72)'); pg.addColorStop(1, 'rgba(10,5,26,.72)');
+  ctx.fillStyle = pg; ctx.fill();
   ctx.strokeStyle = 'rgba(255,207,77,.5)'; ctx.lineWidth = 1.5; ctx.stroke();
+  rr(GAME_W / 2 - 331, 340, 662, 96, 8);
+  ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1; ctx.stroke();
   ctx.font = 'bold 15px ' + FONT;
   ctx.fillStyle = '#ffe9ad';
   ctx.textAlign = 'center';
@@ -1419,6 +1485,7 @@ function titleDraw(){
 }
 function playDraw(){
   drawWorld();
+  drawCineBars();                                  // v7：電影黑幕過場
   drawHUD();
   if(touchMode) drawTouchUI();
   if(phase === 'intro'){
@@ -1461,10 +1528,17 @@ function overDraw(){
   ctx.save();
   ctx.translate(GAME_W / 2, GAME_H / 2 - 10);
   ctx.scale(k, k);
+  /* v7：結算面板柔影＋漸層＋內層細框 */
+  ctx.fillStyle = 'rgba(5,2,16,.5)';
+  rr(-246, -152, 500, 316, 20); ctx.fill();
   rr(-250, -158, 500, 316, 20);
-  ctx.fillStyle = 'rgba(30,18,64,.94)'; ctx.fill();
+  const og = ctx.createLinearGradient(0, -158, 0, 158);
+  og.addColorStop(0, 'rgba(44,28,88,.96)'); og.addColorStop(1, 'rgba(24,14,52,.96)');
+  ctx.fillStyle = og; ctx.fill();
   ctx.strokeStyle = '#ffcf4d'; ctx.lineWidth = 3;
   ctx.stroke();
+  rr(-243, -151, 486, 302, 15);
+  ctx.strokeStyle = 'rgba(255,233,173,.18)'; ctx.lineWidth = 1.5; ctx.stroke();
   ctx.textAlign = 'center';
   if(mode === 'endless'){
     const nr = wins1 >= bestEndless && wins1 > 0;
@@ -1544,6 +1618,7 @@ function frame(now){
     updateParts(STEP);
     updateFloaters(STEP);
     updatePetals(STEP);                            // v6：花瓣/圓環/鏡頭/蟲鳴
+    updateFireflies(STEP);                         // v7：螢火蟲
     updateRings(STEP);
     koZoom = Math.max(0, koZoom - STEP * 0.8);
     updateCrickets(STEP);
