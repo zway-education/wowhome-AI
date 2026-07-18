@@ -414,21 +414,23 @@ const countCache = {};
 const countCacheAt = {};
 const PROVIDERS = [
   {
-    // 同源代理（Vercel 轉發到 Abacus）：學校閘道擋外部網域時仍然通
+    // 直連優先：每台裝置各自的速率額度（30請求/10秒），不互相排擠
+    read: n => fetch('https://abacus.jasoncameron.dev/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(4000) }),
+    bump: n => fetch('https://abacus.jasoncameron.dev/hit/' + COUNTER_NS + '/' + n),
+  },
+  {
+    // 同源代理備援（Vercel 轉發）：學校閘道擋外部網域時仍然通（全站共用額度，僅備援）
     read: n => fetch('/abacus/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
     bump: n => fetch('/abacus/hit/' + COUNTER_NS + '/' + n),
   },
-  {
-    // 直連備援（GitHub Pages 等非 Vercel 網域；404 = 計數器還沒建立，視為 0）
-    read: n => fetch('https://abacus.jasoncameron.dev/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
-    bump: n => fetch('https://abacus.jasoncameron.dev/hit/' + COUNTER_NS + '/' + n),
-  },
 ];
+// 自適應：哪個來源成功就記住優先用它（被擋網路第一次直連失敗後，之後直接走代理不再等逾時）
+let PROVIDER_PREF = 0;
 
 // 請求排隊＋節流：整頁一次載入會爆出上百個計數查詢，超過服務的速率限制就會被拒，
 // 導致某些卡片沒數字。限制同時最多 4 個、每 130ms 才放行一個（約每秒 8 個），
 // 被拒(429)或失敗自動重試最多 2 次——每張卡最終都拿得到數字。
-const _cq = []; let _cqActive = 0; const _CQ_MAX = 4; let _cqLast = 0; const _CQ_GAP = 130;
+const _cq = []; let _cqActive = 0; const _CQ_MAX = 3; let _cqLast = 0; const _CQ_GAP = 400;
 function queuedFetch(fn, prio) {
   return new Promise((resolve, reject) => {
     const job = { fn, resolve, reject };
@@ -456,9 +458,11 @@ async function readCount(name, prio) {
   _inflight[name] = (async () => {
     for (let attempt = 0; attempt < 3; attempt++) {
       if (attempt > 0) await new Promise(res => setTimeout(res, 1500 * attempt)); // 被拒後退避重試
-      for (const p of PROVIDERS) {
+      const order = PROVIDER_PREF === 0 ? PROVIDERS : [PROVIDERS[PROVIDER_PREF], ...PROVIDERS.filter((x, i) => i !== PROVIDER_PREF)];
+      for (const p of order) {
         try {
           const r = await queuedFetch(() => p.read(name), prio);
+          if (r.ok || r.status === 404) PROVIDER_PREF = PROVIDERS.indexOf(p);
           // 404 只在最後一個來源才視為「計數器還沒建立=0」（同源代理在非 Vercel 網域會 404，需換下一個來源）
           if (r.status === 404) {
             if (p === PROVIDERS[PROVIDERS.length - 1]) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; }
