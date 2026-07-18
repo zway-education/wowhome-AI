@@ -626,9 +626,19 @@ drawCat(W*0.5, H*0.82-20, 2.0*Math.min(W,H)/420, 1, 0, 'idle', CAT_A);
 (function(){
   try{ if(window.top!==window.self) return; }catch(e){ return; } /* 在作品館內由作品館計數與投票 */
   var NS="ai-future-camp", K="x-91f5ed76";
-  var API="//abacus.jasoncameron.dev/";
-  function ping(n){ try{ var p=fetch(API+"hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(p&&p.catch) p.catch(function(){}); }catch(e){} }
-  function read(n,cb){ try{ fetch(API+"get/"+NS+"/"+n).then(function(r){ return r.status===404?{value:0}:r.json(); }).then(function(j){ cb(j.value||j.count||0); }).catch(function(){ cb(null); }); }catch(e){ cb(null); } }
+  var ABS="//abacus.jasoncameron.dev/"; /* 直連備援 */
+  var REL="/abacus/"; /* 同源代理（Vercel 轉發）：學校閘道擋外部網域時仍然通 */
+  function ping(n){
+    try{
+      fetch(REL+"hit/"+NS+"/"+n).then(function(r){
+        if(!r||!r.ok){ var q=fetch(ABS+"hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(q&&q.catch) q.catch(function(){}); }
+      }).catch(function(){ var q=fetch(ABS+"hit/"+NS+"/"+n,{mode:"no-cors",keepalive:true}); if(q&&q.catch) q.catch(function(){}); });
+    }catch(e){}
+  }
+  function read(n,cb){
+    function via(base,next){ try{ fetch(base+"get/"+NS+"/"+n).then(function(r){ if(r.status===404&&base===ABS) return {value:0}; if(!r.ok) throw 0; return r.json(); }).then(function(j){ cb(j.value||j.count||0); }).catch(next); }catch(e){ next(); } }
+    via(REL, function(){ via(ABS, function(){ cb(null); }); });
+  }
   ping(K+"-v");
   ping(K+"-p"); ping("site-total-plays");
   /* 投票鈕：非常好玩/好玩——與作品館同一計數器，任何網頁打開都同步 */

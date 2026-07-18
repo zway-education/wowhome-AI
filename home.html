@@ -389,7 +389,12 @@ const countCache = {};
 const countCacheAt = {};
 const PROVIDERS = [
   {
-    // Abacus：實測讀寫皆可、CORS 全開（404 = 計數器還沒建立，視為 0）
+    // 同源代理（Vercel 轉發到 Abacus）：學校閘道擋外部網域時仍然通
+    read: n => fetch('/abacus/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
+    bump: n => fetch('/abacus/hit/' + COUNTER_NS + '/' + n),
+  },
+  {
+    // 直連備援（GitHub Pages 等非 Vercel 網域；404 = 計數器還沒建立，視為 0）
     read: n => fetch('https://abacus.jasoncameron.dev/get/' + COUNTER_NS + '/' + n, { signal: AbortSignal.timeout(5000) }),
     bump: n => fetch('https://abacus.jasoncameron.dev/hit/' + COUNTER_NS + '/' + n),
   },
@@ -429,7 +434,11 @@ async function readCount(name, prio) {
       for (const p of PROVIDERS) {
         try {
           const r = await queuedFetch(() => p.read(name), prio);
-          if (r.status === 404) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; } // 尚未有人計數
+          // 404 只在最後一個來源才視為「計數器還沒建立=0」（同源代理在非 Vercel 網域會 404，需換下一個來源）
+          if (r.status === 404) {
+            if (p === PROVIDERS[PROVIDERS.length - 1]) { countCache[name] = 0; countCacheAt[name] = Date.now(); return 0; }
+            continue;
+          }
           if (r.ok) {
             const j = await r.json();
             const n = j.value ?? j.count ?? 0;
