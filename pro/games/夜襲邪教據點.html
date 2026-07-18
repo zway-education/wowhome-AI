@@ -574,6 +574,46 @@ try { cleared = localStorage.getItem('夜襲邪教據點.cleared') === '1'; } ca
 try { endlessBest = parseInt(localStorage.getItem('夜襲邪教據點.endless_best') || '0', 10) || 0; } catch (err) { endlessBest = 0; }
 function endlessGrade(n) { return n >= 8 ? 'S' : n >= 6 ? 'A' : n >= 4 ? 'B' : 'C'; }
 const ATK_RANGE = 52, ATK_COST = 20, ATK_CD = 0.5;
+// ---------- 武器商店：金幣可永久解鎖新武器（跨場次保存）----------
+const WEAPONS = [
+  { name: '柴刀', desc: '標準均衡，新手最穩', rangeAdd: 0, dmg: 1, bdmg: 2, cd: 0.5, cost: 0, color: '#c8c2ac' },
+  { name: '雙短刀', desc: '攻速快、距離較短', rangeAdd: -10, dmg: 1, bdmg: 2, cd: 0.3, cost: 60, color: '#8fd0c8' },
+  { name: '戰斧', desc: '範圍廣、傷害重，攻速較慢', rangeAdd: 22, dmg: 2, bdmg: 3, cd: 0.85, cost: 120, color: '#e2493f' },
+  { name: '獵魂長矛', desc: '極長觸及，偷襲一擊必殺', rangeAdd: 34, dmg: 1, bdmg: 3, cd: 0.62, cost: 180, color: '#f2d98a' }
+];
+let gold = 0, weaponIdx = 0, ownedWeapons = [true, false, false, false];
+try { gold = parseInt(localStorage.getItem('夜襲邪教據點.gold') || '0', 10) || 0; } catch (err) { gold = 0; }
+try {
+  const saved = JSON.parse(localStorage.getItem('夜襲邪教據點.owned') || '[true,false,false,false]');
+  if (Array.isArray(saved) && saved.length === WEAPONS.length) ownedWeapons = saved;
+} catch (err) {}
+try { weaponIdx = clamp(parseInt(localStorage.getItem('夜襲邪教據點.weapon') || '0', 10) || 0, 0, WEAPONS.length - 1); } catch (err) { weaponIdx = 0; }
+if (!ownedWeapons[weaponIdx]) weaponIdx = 0;
+function curWeapon() { return WEAPONS[weaponIdx]; }
+function saveGold() { try { localStorage.setItem('夜襲邪教據點.gold', String(gold)); } catch (err) {} }
+function saveOwned() { try { localStorage.setItem('夜襲邪教據點.owned', JSON.stringify(ownedWeapons)); } catch (err) {} }
+function saveWeapon() { try { localStorage.setItem('夜襲邪教據點.weapon', String(weaponIdx)); } catch (err) {} }
+function addGold(n) { gold += n; saveGold(); }
+// ---------- 經驗值等級系統：擊倒/偷襲/過夜累積經驗，升級提升上限與傷害（跨場次保存）----------
+let level = 1, xp = 0;
+try { level = clamp(parseInt(localStorage.getItem('夜襲邪教據點.level') || '1', 10) || 1, 1, 99); } catch (err) { level = 1; }
+try { xp = parseInt(localStorage.getItem('夜襲邪教據點.xp') || '0', 10) || 0; } catch (err) { xp = 0; }
+function xpNeed(lv) { return 60 + (lv - 1) * 45; }
+function maxHP() { return clamp(3 + Math.floor((level - 1) / 2), 3, 6); }
+function lvDmgBonus() { return Math.floor(level / 4); }
+function saveLevel() { try { localStorage.setItem('夜襲邪教據點.level', String(level)); localStorage.setItem('夜襲邪教據點.xp', String(xp)); } catch (err) {} }
+function addXp(n) {
+  xp += n;
+  let leveled = false;
+  while (xp >= xpNeed(level) && level < 99) {
+    xp -= xpNeed(level); level++; leveled = true;
+    sfx.night();
+    addFloat(player.x, player.y - 66, '升級！Lv.' + level, PAL.fireHot, true);
+    if (player.hp > 0) player.hp = Math.min(maxHP(), player.hp + 1);
+  }
+  if (leveled) { burst(player.x, player.y - 10, PAL.fireHot, 18, 200, 100); shake = Math.max(shake, 5); }
+  saveLevel();
+}
 function spawnNight() {
   // v4：無盡模式信徒更多、上限更高
   const n = Math.min((mode === 'endless' ? 4 : 3) + nights, mode === 'endless' ? 9 : 7);
@@ -691,12 +731,13 @@ function tryAttack() {
     addFloat(player.x, player.y - 34, '體力不足！', PAL.bad, false);
     return;
   }
-  player.atkCd = ATK_CD;
+  const w = curWeapon();
+  player.atkCd = w.cd;
   player.atkT = 0.28;
   player.stam -= ATK_COST;
   sfx.swing();
   // 瞄準輔助：錐內沒目標時，自動轉向最近的敵人（觸控友善）
-  const REACH = ATK_RANGE + 12;
+  const REACH = ATK_RANGE + w.rangeAdd + 12;
   let inConeAny = false, nearest = null, nd = 1e9;
   for (const c of cultists) {
     if (c.dead) continue;
@@ -714,12 +755,13 @@ function tryAttack() {
       hitAny = true;
       // 背後偷襲：信徒沒發現你 → 一擊放倒
       const backstab = c.alert <= 0 && Math.abs(angDiff(c.face, dirTo)) < 1.5;
-      c.hp -= backstab ? 2 : 1;
+      c.hp -= (backstab ? w.bdmg : w.dmg) + lvDmgBonus();
       c.flash = 0.5;
       burst(c.x, c.y - 8, '#d8cfb8', 8, 160, 60);
       if (backstab && c.hp <= 0) {
         takedowns++;
         addFloat(c.x, c.y - 36, '偷襲成功！', PAL.amber, true);
+        addGold(3); addXp(8);
         // 無聲連殺：整晚沒被發現的連續偷襲，加分越滾越多
         if (!spotted) {
           chain++;
@@ -739,9 +781,11 @@ function tryAttack() {
       if (c.hp <= 0) {
         c.dead = true; kills++;
         burst(c.x, c.y, '#7a6a52', 14, 190, 60);
+        addXp(10);
         if (c.leader) {
           bonus += 75;
-          if (player.hp < 3) {
+          addGold(25); addXp(30);
+          if (player.hp < maxHP()) {
             player.hp++;
             addFloat(player.x, player.y - 54, '擊殺頭目！回復 1 HP（+75）', PAL.good, true);
           } else {
@@ -759,7 +803,7 @@ function tryAttack() {
     }
   }
   // 搶奪祭壇
-  if (phase === 'loot' && Math.hypot(TOTEM.x - player.x, TOTEM.y - player.y) < ATK_RANGE + 14) {
+  if (phase === 'loot' && Math.hypot(TOTEM.x - player.x, TOTEM.y - player.y) < ATK_RANGE + w.rangeAdd + 14) {
     phase = 'retreat';
     player.loot = true;
     burst(TOTEM.x, TOTEM.y - 20, PAL.fireHot, 22, 220, 120);
@@ -899,6 +943,7 @@ const titleState = {
   onKey(code) {
     if (code === 'Space' || code === 'Enter' || code === 'KeyE') startGame('story');
     else if (code === 'KeyN' && cleared) startGame('endless');
+    else if (code === 'KeyB') setState(shopState);
   },
   draw() {
     uiButtons.length = 0;
@@ -962,6 +1007,11 @@ const titleState = {
       ctx.fillStyle = PAL.dim; ctx.font = '14px sans-serif';
       ctx.fillText('通關三晚後解鎖【無盡夜襲】挑戰模式', GAME_W / 2, 340);
     }
+    // 武器商店入口
+    titleBtn(GAME_W / 2 - 90, 355, 180, 40, '⚔ 武器商店（B）', 15, () => setState(shopState), '#5a4a2e', '#2e2416');
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.amber; ctx.font = 'bold 13px monospace';
+    ctx.fillText('Lv.' + level + ' · 金幣 ' + gold + ' · 目前武器：' + curWeapon().name, GAME_W / 2, 412);
     muteButton();
   }
 };
@@ -982,7 +1032,7 @@ function startGame(m) {
   mode = (m === 'endless' && cleared) ? 'endless' : 'story';   // v4：選擇模式
   sfx.click();
   day = 47; kills = 0; takedowns = 0; nights = 0; bonus = 0; won = false;
-  player.hp = 3; player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
+  player.hp = maxHP(); player.stam = 100; player.hunger = 80; player.hurtT = 0; player.atkT = 0; player.atkCd = 0;
   parts.length = 0; floaters.length = 0; dangerLvl = 0;
   setAmbience('night');
   spawnNight();
@@ -1049,8 +1099,9 @@ const playState = {
       if (Math.hypot(tr.x - player.x, tr.y - player.y) < 26) {
         treasures.splice(i, 1);
         bonus += 25;
+        addGold(8); addXp(6);
         player.stam = Math.min(100, player.stam + 15);
-        addFloat(tr.x, tr.y - 20, '祭品 +25 分', PAL.amber, false);
+        addFloat(tr.x, tr.y - 20, '祭品 +25 分 +8 金幣', PAL.amber, false);
         sfx.loot();
         burst(tr.x, tr.y, PAL.amber, 10, 150, 60);
       }
@@ -1110,11 +1161,13 @@ const playState = {
       nights++; day++;
       sfx.night();
       addFloat(player.x, player.y - 50, '夜襲成功！第 ' + day + ' 天', PAL.fireHot, true);
+      addGold(20); addXp(35);
       if (!spotted) {
         bonus += 150;
+        addGold(15);
         addFloat(player.x, player.y - 76, '完美夜襲！全程未被發現 +150', PAL.amber, true);
       }
-      if (player.hp < 3) {
+      if (player.hp < maxHP()) {
         player.hp++;
         addFloat(player.x, player.y - 100, '夜晚休整 +1 HP', PAL.good, false);
       }
@@ -1233,8 +1286,9 @@ function drawHUD(st) {
   ctx.font = 'bold 24px monospace';
   ctx.fillText(String(day), 60, 56);
   // 生命（骷髏頭代表信徒剩餘？愛心較直覺）
-  for (let i = 0; i < 3; i++) {
-    const hx = 124 + i * 30, hy = 20;
+  const mhp = maxHP();
+  for (let i = 0; i < mhp; i++) {
+    const hx = 124 + i * 26, hy = 20;
     const on = player.hp > i;
     ctx.save();
     ctx.translate(hx, hy);
@@ -1278,6 +1332,25 @@ function drawHUD(st) {
   ctx.fillStyle = PAL.amber;
   ctx.font = 'bold 12px monospace'; ctx.textAlign = 'left';
   ctx.fillText(mode === 'endless' ? ('無盡 · 第 ' + (nights + 1) + ' 晚') : ('夜襲 ' + Math.min(nights + 1, NIGHTS_GOAL) + '/' + NIGHTS_GOAL + ' 晚'), 122, 58);
+  // Lv. / 經驗值 / 金幣 / 武器
+  ctx.fillStyle = 'rgba(10,18,12,0.85)';
+  roundRect(14, 68, 196, 40, 4);
+  ctx.fill();
+  ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+  ctx.fillStyle = PAL.good;
+  ctx.font = 'bold 11px monospace'; ctx.textAlign = 'left';
+  ctx.fillText('Lv.' + level, 20, 85);
+  ctx.fillStyle = '#050a06';
+  ctx.fillRect(56, 78, 74, 7);
+  ctx.fillStyle = PAL.good;
+  ctx.fillRect(56, 78, 74 * clamp(xp / xpNeed(level), 0, 1), 7);
+  ctx.strokeStyle = '#000'; ctx.lineWidth = 1; ctx.strokeRect(56, 78, 74, 7);
+  ctx.fillStyle = PAL.amber;
+  ctx.font = 'bold 11px monospace';
+  ctx.fillText('金 ' + gold, 138, 85);
+  ctx.fillStyle = PAL.dim;
+  ctx.font = '10px sans-serif';
+  ctx.fillText('武器：' + curWeapon().name, 20, 102);
   // 目標列
   const alive = cultists.filter(c => !c.dead).length;
   const atkWord = TOUCH ? '點「攻擊」鈕' : '按 E';
@@ -1363,7 +1436,7 @@ const overState = {
     ctx.scale(ps, ps);
     ctx.translate(-GAME_W / 2, -GAME_H / 2);
     ctx.fillStyle = 'rgba(12,23,16,0.95)';
-    roundRect(GAME_W / 2 - 220, 92, 440, 330, 8);
+    roundRect(GAME_W / 2 - 220, 92, 440, 366, 8);
     ctx.fill();
     const endless = mode === 'endless';
     const showGrade = won || endless;
@@ -1414,8 +1487,108 @@ const overState = {
       ctx.fillStyle = '#f4ece0';
       ctx.font = 'bold 24px sans-serif';
       ctx.fillText(endless ? '再襲一次' : '再玩一次', GAME_W / 2, 382);
+      uiButtons.push({ x: GAME_W / 2 - 90, y: 406, w: 180, h: 34, cb: () => setState(shopState) });
+      ctx.fillStyle = 'rgba(10,18,12,0.85)';
+      roundRect(GAME_W / 2 - 90, 406, 180, 34, 8);
+      ctx.fill();
+      ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.fillStyle = PAL.amber;
+      ctx.font = 'bold 14px sans-serif';
+      ctx.fillText('⚔ 武器商店 · 金 ' + gold, GAME_W / 2, 428);
     }
     ctx.restore();
+    muteButton();
+  }
+};
+
+// ===== 武器商店 =====
+const shopState = {
+  enter() { this.t = 0; this.from = state; },
+  update(dt) { this.t += dt; fogUpdate(dt); },
+  onKey(code) { if (code === 'Escape' || code === 'KeyB') setState(titleState); },
+  draw() {
+    uiButtons.length = 0;
+    drawScene(false);
+    drawFire();
+    drawAtmosphere();
+    ctx.fillStyle = 'rgba(3,6,4,0.72)';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.textAlign = 'center';
+    ctx.fillStyle = PAL.fireHot;
+    ctx.font = 'bold 30px serif';
+    ctx.fillText('武器商店', GAME_W / 2, 58);
+    ctx.fillStyle = PAL.amber;
+    ctx.font = 'bold 16px monospace';
+    ctx.fillText('金幣 ' + gold + ' · Lv.' + level, GAME_W / 2, 84);
+    const cardW = 210, cardH = 300, gap = 18;
+    const startX = GAME_W / 2 - (cardW * WEAPONS.length + gap * (WEAPONS.length - 1)) / 2;
+    WEAPONS.forEach((w, i) => {
+      const cx = startX + i * (cardW + gap), cy = 106;
+      const owned = ownedWeapons[i], equipped = weaponIdx === i;
+      ctx.fillStyle = equipped ? 'rgba(40,60,32,0.95)' : 'rgba(12,20,14,0.92)';
+      roundRect(cx, cy, cardW, cardH, 10);
+      ctx.fill();
+      ctx.strokeStyle = equipped ? PAL.fireHot : PAL.hudLine; ctx.lineWidth = equipped ? 3 : 1.5; ctx.stroke();
+      // 武器圖示
+      ctx.save();
+      ctx.translate(cx + cardW / 2, cy + 62);
+      ctx.rotate(-0.5);
+      ctx.strokeStyle = '#c8a080'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(-18, 14); ctx.lineTo(6, -6); ctx.stroke();
+      ctx.strokeStyle = w.color; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(6, -6); ctx.lineTo(34, -30); ctx.stroke();
+      ctx.restore();
+      ctx.fillStyle = PAL.bone;
+      ctx.font = 'bold 19px sans-serif'; ctx.textAlign = 'center';
+      ctx.fillText(w.name, cx + cardW / 2, cy + 128);
+      ctx.fillStyle = PAL.dim;
+      ctx.font = '12px sans-serif';
+      ctx.fillText(w.desc, cx + cardW / 2, cy + 150);
+      ctx.fillStyle = PAL.ink;
+      ctx.font = '12px monospace';
+      ctx.fillText('觸及 ' + (ATK_RANGE + w.rangeAdd) + ' · 傷害 ' + w.dmg + '/' + w.bdmg + ' · 攻速 ' + w.cd.toFixed(2) + 's', cx + cardW / 2, cy + 176);
+      const by = cy + cardH - 54, bh = 40, bx2 = cx + 16, bw2 = cardW - 32;
+      if (equipped) {
+        ctx.fillStyle = 'rgba(255,210,122,0.25)';
+        roundRect(bx2, by, bw2, bh, 8); ctx.fill();
+        ctx.strokeStyle = PAL.fireHot; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = PAL.fireHot; ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('裝備中', cx + cardW / 2, by + 26);
+      } else if (owned) {
+        uiButtons.push({ x: bx2, y: by, w: bw2, h: bh, cb: () => { weaponIdx = i; saveWeapon(); sfx.click(); } });
+        const g = ctx.createLinearGradient(0, by, 0, by + bh);
+        g.addColorStop(0, '#3a5a8f'); g.addColorStop(1, '#1f2d55');
+        ctx.fillStyle = g;
+        roundRect(bx2, by, bw2, bh, 8); ctx.fill();
+        ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = '#f4ece0'; ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('裝備', cx + cardW / 2, by + 26);
+      } else {
+        const canBuy = gold >= w.cost;
+        uiButtons.push({ x: bx2, y: by, w: bw2, h: bh, cb: () => {
+          if (gold < w.cost) { addFloat(GAME_W / 2, cy + 200, '金幣不足！', PAL.bad, false); sfx.hurt(); return; }
+          gold -= w.cost; saveGold();
+          ownedWeapons[i] = true; saveOwned();
+          weaponIdx = i; saveWeapon();
+          sfx.loot();
+          addFloat(cx + cardW / 2, cy - 10, '購入 ' + w.name + '！', PAL.amber, true);
+        } });
+        const g = ctx.createLinearGradient(0, by, 0, by + bh);
+        if (canBuy) { g.addColorStop(0, '#b5432f'); g.addColorStop(1, '#6d1f1a'); } else { g.addColorStop(0, '#3a3a34'); g.addColorStop(1, '#1c1c18'); }
+        ctx.fillStyle = g;
+        roundRect(bx2, by, bw2, bh, 8); ctx.fill();
+        ctx.strokeStyle = '#111'; ctx.lineWidth = 2; ctx.stroke();
+        ctx.fillStyle = canBuy ? '#f4ece0' : PAL.dim; ctx.font = 'bold 16px sans-serif';
+        ctx.fillText('購買 · 金 ' + w.cost, cx + cardW / 2, by + 26);
+      }
+    });
+    uiButtons.push({ x: GAME_W / 2 - 90, y: 424, w: 180, h: 44, cb: () => setState(titleState) });
+    ctx.fillStyle = 'rgba(10,18,12,0.85)';
+    roundRect(GAME_W / 2 - 90, 424, 180, 44, 10);
+    ctx.fill();
+    ctx.strokeStyle = PAL.hudLine; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = PAL.ink; ctx.font = 'bold 16px sans-serif';
+    ctx.fillText('返回（B）', GAME_W / 2, 452);
     muteButton();
   }
 };
