@@ -469,7 +469,17 @@ async function readCount(name, prio) {
 
 async function bumpCount(name) {
   for (const p of PROVIDERS) {
-    try { const r = await p.bump(name); if (r.ok) return; } catch (e) {}
+    try {
+      const r = await p.bump(name);
+      if (r.ok) {
+        try { // Abacus 的 hit 會回傳最新值：直接寫進快取，數字立刻精準
+          const j = await r.json();
+          const n = j.value ?? j.count;
+          if (typeof n === 'number') { countCache[name] = n; countCacheAt[name] = Date.now(); }
+        } catch (e) {}
+        return;
+      }
+    } catch (e) {}
   }
 }
 
@@ -567,12 +577,12 @@ setInterval(() => {
   });
 }, 30000);
 
-// 評價即時更新：每 12 秒刷新可見卡片的投票數（只查 4 個評價計數器，負擔小）
+// 評價即時更新：每 7 秒刷新可見卡片的投票數（只查 4 個評價計數器，負擔小）
 setInterval(() => {
   if (document.hidden) return;
   for (const el of visibleNums) if (el.isConnected) fillNums(el, 'votes');
   if (document.getElementById('player').classList.contains('open')) refreshVoteButtons(); // 播放器投票鈕票數同步
-}, 12000);
+}, 7000);
 
 /* ===== 播放器（含自動縮放與複製按鈕） ===== */
 function resetFrame() { document.getElementById('pframe').style.cssText = ''; }
