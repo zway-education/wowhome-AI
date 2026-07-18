@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v6：三主題天空離屏烘焙(星空/夕陽光暈/光帶)＋主題環境粒子(落葉/風絲/熔岩火星)＋金幣與終點旗加法光暈＋奔跑揚塵＋暗角vignette；音效新增程序化殘響ConvolverNode與主題環境音循環(草原風/高空氣流/熔岩隆隆，死亡時ducking)；全部漸層快取、主迴圈零createGradient -->
+<!-- 專業AI升級 v7：僅介面/畫質/質感再優化（不動故事文本與玩法數值）——狀態切換淡入過場、HUD面板描邊高光、按鈕漸層+陰影質感、標題柔光暈、選關卡片投影、金幣高光點、音效攻擊緩衝去爆音 -->
+<!-- v6：三主題天空離屏烘焙(星空/夕陽光暈/光帶)＋主題環境粒子(落葉/風絲/熔岩火星)＋金幣與終點旗加法光暈＋奔跑揚塵＋暗角vignette；音效新增程序化殘響ConvolverNode與主題環境音循環(草原風/高空氣流/熔岩隆隆，死亡時ducking)；全部漸層快取、主迴圈零createGradient -->
 <!-- v5：觸控暫停/返回選單、移除UI表情符號改SVG圖示、直向裝置轉橫提示、死亡白閃強化打擊感 -->
 <!-- +補強：角色精細化（跨步循環/分層陰影/輪廓線/雙表情）、大螢幕提醒浮層（手機一次性） -->
 <html lang="zh-Hant">
@@ -309,7 +310,9 @@ function beep(freq = 440, dur = 0.1, type = 'square', vol = 0.15, slide = 0){
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type; o.frequency.setValueAtTime(freq, ac.currentTime);
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
-  g.gain.setValueAtTime(vol, ac.currentTime);
+  // v7：6ms 線性攻擊緩衝，去除方波起音爆裂聲，音色更圓潤（不改觸發時機）
+  g.gain.setValueAtTime(0.0001, ac.currentTime);
+  g.gain.linearRampToValueAtTime(vol, ac.currentTime + 0.006);
   g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
   o.connect(g).connect(BUS);
   o.start(); o.stop(ac.currentTime + dur);
@@ -410,6 +413,7 @@ function makeGlowC(color, r){
   return c;
 }
 const coinGlow = makeGlowC('rgba(255,205,117,.55)', 22);
+const titleGlow = makeGlowC('rgba(79,124,255,.4)', 120);   // v7：主選單標題柔光
 const emberGlow = makeGlowC('rgba(255,150,60,.8)', 8);
 const goalGlow = makeGlowC('rgba(255,207,92,.5)', 64);
 const mushroomGlow = makeGlowC('rgba(255,90,60,.5)', 26);
@@ -747,6 +751,8 @@ function drawCoin(x,y,t){
   });
   ctx.beginPath(); ctx.arc(0,0,13,0,Math.PI*2); ctx.fill();
   ctx.strokeStyle='#b06a10'; ctx.lineWidth=2.5; ctx.stroke();
+  ctx.fillStyle='rgba(255,255,255,.85)';                        // v7：金幣高光點
+  ctx.beginPath(); ctx.arc(-4.5,-5.5,2.4,0,Math.PI*2); ctx.fill();
   ctx.fillStyle='#b06a10'; ctx.font='bold 14px sans-serif';
   ctx.textAlign='center'; ctx.textBaseline='middle';
   ctx.fillText('$',0,1); ctx.textBaseline='alphabetic';
@@ -1069,6 +1075,8 @@ function drawHUD(){
   // 資訊列
   ctx.fillStyle='rgba(0,0,0,.42)';
   roundRect(10,10,300,42,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.lineWidth=1.5;  // v7：HUD 面板描邊高光
+  roundRect(10,10,300,42,10); ctx.stroke();
   ctx.fillStyle='#fcfcfc'; ctx.font='bold 19px sans-serif'; ctx.textAlign='left';
   ctx.fillText('第'+(curLevel+1)+'關 '+lv.name, 22, 37);
   drawCoin(212, 31, worldT);
@@ -1076,6 +1084,8 @@ function drawHUD(){
   ctx.fillText(coinCount+'/'+totalCoins, 230, 37);
   ctx.fillStyle='rgba(0,0,0,.42)';
   roundRect(320,10,96,42,10); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.18)'; ctx.lineWidth=1.5;  // v7
+  roundRect(320,10,96,42,10); ctx.stroke();
   ctx.fillStyle='#fcfcfc'; ctx.textAlign='center';
   ctx.fillText(elapsed.toFixed(1)+'s', 368, 37);
   if(player.shield){
@@ -1117,6 +1127,21 @@ function roundRect(x,y,w,h,r){
   ctx.moveTo(x+r,y); ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
+// v7：質感按鈕（落影＋垂直漸層＋描邊＋頂部高光條），純視覺、命中範圍不變
+function drawBtn(b){
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  roundRect(b.x+3, b.y+4, b.w, b.h, 14); ctx.fill();
+  ctx.fillStyle = cg('btnv7_'+b.y+'_'+b.h, () => {
+    const g = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
+    g.addColorStop(0,'#6a97ff'); g.addColorStop(0.5,'#4f7cff'); g.addColorStop(1,'#3757c9');
+    return g;
+  });
+  roundRect(b.x, b.y, b.w, b.h, 14); ctx.fill();
+  ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 3;
+  roundRect(b.x, b.y, b.w, b.h, 14); ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.25)';
+  roundRect(b.x+5, b.y+4, b.w-10, 7, 4); ctx.fill();
+}
 function drawStar(x,y,r,fill){
   ctx.beginPath();
   for(let i=0;i<10;i++){
@@ -1157,7 +1182,10 @@ function drawIconLine(iconFn, text, cx, y, font){
 
 // ===== 狀態機 =====
 let state;
+let fadeT = 0;               // v7：狀態切換淡入過場（純視覺，不影響邏輯）
+const FADE_DUR = 0.28;
 function setState(s){
+  if(state) fadeT = FADE_DUR;
   state = s; if(s.enter) s.enter();
   // 暫停鈕只在遊玩中顯示（平板玩家的暫停/重來/回選關入口）
   pauseBtn.style.display = (s === playState) ? 'flex' : 'none';
@@ -1193,6 +1221,12 @@ const menuState = {
     // 主角展示
     drawBot(GAME_W/2, 470, 1+Math.sin(worldT*4)*0.02, 1-Math.sin(worldT*4)*0.02, 1, 0, false);
     ctx.textAlign = 'center';
+    // v7：標題後方柔光暈（加法疊印、微呼吸）
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.55 + 0.2*Math.sin(worldT*1.8);
+    ctx.drawImage(titleGlow, GAME_W/2-300, 130-95, 600, 190);
+    ctx.restore(); ctx.globalAlpha = 1;
     ctx.font = 'bold 58px sans-serif';
     ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(20,20,50,.55)';
     ctx.strokeText('機器磚塊障礙賽', GAME_W/2, 150);
@@ -1276,8 +1310,12 @@ const selectState = {
       const lift = sel ? Math.sin(worldT*4)*4-6 : 0;
       ctx.save();
       ctx.translate(0, lift);
+      ctx.fillStyle = 'rgba(0,0,0,.3)';                       // v7：卡片落影
+      roundRect(r.x+4, r.y+6, r.w, r.h, 16); ctx.fill();
       ctx.fillStyle = un ? 'rgba(10,20,40,.55)' : 'rgba(10,10,15,.7)';
       roundRect(r.x, r.y, r.w, r.h, 16); ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1.5;  // v7：卡片描邊
+      roundRect(r.x, r.y, r.w, r.h, 16); ctx.stroke();
       if(sel){ ctx.strokeStyle='#38e1ff'; ctx.lineWidth=4; roundRect(r.x, r.y, r.w, r.h, 16); ctx.stroke(); }
       // 主題縮圖
       const th = THEMES[LEVELS[i].theme];
@@ -1382,8 +1420,12 @@ const shopState = {
       const s = SKINS[i], r = this.cardRect(i);
       const owned = progress.ownedSkins.includes(i);
       const equipped = savedSkin === i;
+      ctx.fillStyle = 'rgba(0,0,0,.3)';                       // v7：商店卡片落影
+      roundRect(r.x+3,r.y+5,r.w,r.h,14); ctx.fill();
       ctx.fillStyle = 'rgba(10,20,40,.55)';
       roundRect(r.x,r.y,r.w,r.h,14); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.14)'; ctx.lineWidth=1.5;  // v7
+      roundRect(r.x,r.y,r.w,r.h,14); ctx.stroke();
       if(equipped){ ctx.strokeStyle='#38e1ff'; ctx.lineWidth=4; roundRect(r.x,r.y,r.w,r.h,14); ctx.stroke(); }
       progress.skin = i;
       drawBot(r.x+r.w/2, r.y+130, 1, 1, 1, worldT*4, false);
@@ -1659,10 +1701,7 @@ const pauseState = {
     ctx.strokeText('遊戲暫停', GAME_W/2, 165);
     ctx.fillText('遊戲暫停', GAME_W/2, 165);
     for(const b of this.btnRects()){
-      ctx.fillStyle = 'rgba(79,124,255,.85)';
-      roundRect(b.x,b.y,b.w,b.h,14); ctx.fill();
-      ctx.strokeStyle = '#38e1ff'; ctx.lineWidth = 3;
-      roundRect(b.x,b.y,b.w,b.h,14); ctx.stroke();
+      drawBtn(b);
       ctx.fillStyle = '#fff'; ctx.font = 'bold 22px sans-serif';
       ctx.fillText(b.label, b.x+b.w/2, b.y+36);
     }
@@ -1759,10 +1798,7 @@ const winState = {
     ctx.fillText('金幣已存入商店，目前存款 '+progress.bank, GAME_W/2, 372);
     if(this.t > 0.6){
       for(const b of this.btnRects()){
-        ctx.fillStyle='rgba(79,124,255,.85)';
-        roundRect(b.x,b.y,b.w,b.h,14); ctx.fill();
-        ctx.strokeStyle='#38e1ff'; ctx.lineWidth=3;
-        roundRect(b.x,b.y,b.w,b.h,14); ctx.stroke();
+        drawBtn(b);
         ctx.fillStyle='#fff'; ctx.font='bold 24px sans-serif';
         ctx.fillText(b.label, b.x+b.w/2, b.y+37);
       }
@@ -1776,6 +1812,7 @@ const winState = {
 const STEP = 1/60;
 let last = performance.now(), acc = 0;
 function stepOnce(){
+  fadeT = Math.max(0, fadeT - STEP);   // v7：過場淡入計時
   if(freeze > 0){ freeze -= STEP; return; }
   input.actionBuffer = Math.max(0, input.actionBuffer - STEP);
   state.update(STEP);
@@ -1787,6 +1824,10 @@ function frame(now){
   while(acc >= STEP){ stepOnce(); acc -= STEP; }
   state.draw();
   ctx.drawImage(vignetteC, 0, 0, GAME_W, GAME_H);  // v6：暗角後製
+  if(fadeT > 0){                                   // v7：切換畫面時的暗幕淡入
+    ctx.fillStyle = 'rgba(7,11,20,' + (fadeT/FADE_DUR*0.8).toFixed(3) + ')';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+  }
 }
 setState(menuState);
 requestAnimationFrame(frame);

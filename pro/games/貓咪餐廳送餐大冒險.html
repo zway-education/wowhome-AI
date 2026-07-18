@@ -1,5 +1,6 @@
 <!doctype html>
-<!-- 專業AI升級 v6：暖色餐廳氛圍升級——空氣中漂浮暖塵埃＋送餐成功桌面金色光暈(加法bloom)＋奔跑腳下揚塵＋地板木紋質地烘焙＋暖色vignette；音效新增程序化小空間殘響ConvolverNode與廚房氛圍循環(爐火嘶嘶+隨機鍋碗輕響、失敗/結算ducking)；機器人與標題漸層快取零createGradient -->
+<!-- 專業AI升級 v7：僅介面/畫質/質感再優化——HUD面板漸層+金色描邊質感、按鈕立體陰影+呼吸光邊+動態光澤、選關卡片漸層+游標光暈、粒子改圓形雙層光暈、星星金色輝光、對話泡泡柔和落影、轉場緩動曲線、音色打磨(高頻柔化shelf+beep起音軟化)；文本/玩法/數值一字未動 -->
+<!-- v6：暖色餐廳氛圍升級——空氣中漂浮暖塵埃＋送餐成功桌面金色光暈(加法bloom)＋奔跑腳下揚塵＋地板木紋質地烘焙＋暖色vignette；音效新增程序化小空間殘響ConvolverNode與廚房氛圍循環(爐火嘶嘶+隨機鍋碗輕響、失敗/結算ducking)；機器人與標題漸層快取零createGradient -->
 <!-- v5：新增hit-stop打擊停頓／貓咪壓扁伸展／機器人空手撞擊回饋對稱化／畫面淡入轉場／選關鍵盤游標／飄字陣列防爆量 -->
 <!-- +補強：角色精細化(漸層陰影/高光/腮紅/前掌/表情兩態＋離屏sprite快取)／觸控稽核確認／大螢幕提醒浮層 -->
 <!-- 部分圖示：OpenMoji (CC BY-SA 4.0) openmoji.org -->
@@ -135,7 +136,10 @@ function audio(){
     comp.threshold.value = -18; comp.knee.value = 24; comp.ratio.value = 6;
     comp.attack.value = 0.003; comp.release.value = 0.2;
     master = AC.createGain(); master.gain.value = 0.9;
-    master.connect(comp); comp.connect(AC.destination);
+    /* v7：音色打磨——高頻柔化 shelf，讓方波不刺耳、整體更溫潤 */
+    const shelf = AC.createBiquadFilter();
+    shelf.type = 'highshelf'; shelf.frequency.value = 5200; shelf.gain.value = -4.5;
+    master.connect(shelf); shelf.connect(comp); comp.connect(AC.destination);
     /* v6：程序化小空間殘響——generated impulse ConvolverNode（溫暖室內尾音） */
     try{
       const sr = AC.sampleRate, len = Math.floor(sr*1.2);
@@ -200,7 +204,9 @@ function beep(freq=440, dur=0.1, type='square', vol=0.14, slide=0){
   const o = AC.createOscillator(), g = AC.createGain();
   o.type = type; o.frequency.setValueAtTime(f, AC.currentTime);
   if(slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, f+slide), AC.currentTime+dur);
-  g.gain.setValueAtTime(vol, AC.currentTime);
+  /* v7：起音軟化——3ms 微淡入去除爆音喀噠聲，音色更圓潤（觸發時機不變） */
+  g.gain.setValueAtTime(0.0001, AC.currentTime);
+  g.gain.linearRampToValueAtTime(vol, AC.currentTime+0.003);
   g.gain.exponentialRampToValueAtTime(0.001, AC.currentTime+dur);
   o.connect(g).connect(master);
   o.start(); o.stop(AC.currentTime+dur);
@@ -443,10 +449,14 @@ function updateParts(dt){
   }
 }
 function drawParts(){
+  /* v7：粒子改圓形雙層（外層柔光暈＋內層亮核），質感更精緻 */
   for(const p of parts){
-    ctx.globalAlpha = Math.max(0,p.life*1.8);
+    const a = Math.max(0,p.life*1.8);
     ctx.fillStyle = p.color;
-    ctx.fillRect(p.x-3,p.y-3,6,6);
+    ctx.globalAlpha = a*0.4;
+    ctx.beginPath(); ctx.arc(p.x,p.y,5.2,0,Math.PI*2); ctx.fill();
+    ctx.globalAlpha = a;
+    ctx.beginPath(); ctx.arc(p.x,p.y,2.7,0,Math.PI*2); ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
@@ -612,12 +622,25 @@ const menuState = {
   }
 };
 function drawBigBtn(b, label, color){
-  ctx.fillStyle='rgba(255,255,255,0.1)';
+  /* v7：按鈕立體化——落影＋上亮下暗漸層＋呼吸光邊＋文字描影 */
+  const pulse = 0.5+0.5*Math.sin(performance.now()/430);
+  ctx.save();
+  ctx.shadowColor='rgba(0,0,0,.5)'; ctx.shadowBlur=16; ctx.shadowOffsetY=5;
+  ctx.fillStyle='rgba(52,28,12,0.92)';
   rr(ctx,b.x,b.y,b.w,b.h,16); ctx.fill();
+  ctx.restore();
+  const bgr = ctx.createLinearGradient(0,b.y,0,b.y+b.h);
+  bgr.addColorStop(0,'rgba(255,255,255,0.18)'); bgr.addColorStop(1,'rgba(255,255,255,0.03)');
+  ctx.fillStyle=bgr; rr(ctx,b.x,b.y,b.w,b.h,16); ctx.fill();
+  ctx.globalAlpha = 0.7+0.3*pulse;
   ctx.strokeStyle=color; ctx.lineWidth=3;
   rr(ctx,b.x,b.y,b.w,b.h,16); ctx.stroke();
-  ctx.fillStyle='#fff'; ctx.font='bold 24px sans-serif'; ctx.textAlign='center';
-  ctx.fillText(label, b.x+b.w/2, b.y+b.h/2+9);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle='rgba(255,255,255,.28)'; ctx.lineWidth=1.2;
+  rr(ctx,b.x+3,b.y+3,b.w-6,b.h-6,12); ctx.stroke();
+  ctx.font='bold 24px sans-serif'; ctx.textAlign='center';
+  ctx.fillStyle='rgba(30,14,4,.85)'; ctx.fillText(label, b.x+b.w/2+1.5, b.y+b.h/2+10.5);
+  ctx.fillStyle='#fff'; ctx.fillText(label, b.x+b.w/2, b.y+b.h/2+9);
 }
 
 /* ---------- 選關（營業日） ---------- */
@@ -636,15 +659,31 @@ const selectState = {
     ctx.fillText('拿到 1 顆星就能解鎖下一天（電腦可按 1〜5，或方向鍵＋Enter／空白鍵）', GAME_W/2, 110);
     for(let i=0;i<DAYS.length;i++){
       const c = DAY_CARDS[i], D = DAYS[i], open = unlockedDay(i);
-      ctx.fillStyle = open ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.4)';
+      /* v7：卡片落影＋上亮下暗漸層 */
+      if(open){
+        ctx.save();
+        ctx.shadowColor='rgba(0,0,0,.4)'; ctx.shadowBlur=12; ctx.shadowOffsetY=4;
+        ctx.fillStyle='rgba(46,25,11,0.85)';
+        rr(ctx,c.x,c.y,c.w,c.h,14); ctx.fill();
+        ctx.restore();
+        const cgr = ctx.createLinearGradient(0,c.y,0,c.y+c.h);
+        cgr.addColorStop(0,'rgba(255,255,255,0.14)'); cgr.addColorStop(1,'rgba(255,255,255,0.03)');
+        ctx.fillStyle = cgr;
+      } else {
+        ctx.fillStyle = 'rgba(0,0,0,0.4)';
+      }
       rr(ctx,c.x,c.y,c.w,c.h,14); ctx.fill();
       ctx.strokeStyle = open ? '#ffcf5c' : 'rgba(255,255,255,0.15)'; ctx.lineWidth=2.5;
       rr(ctx,c.x,c.y,c.w,c.h,14); ctx.stroke();
       if(i===selCursor){
+        /* v7：游標高亮外加柔和金色光暈 */
+        ctx.save();
+        ctx.shadowColor='rgba(255,207,92,.85)'; ctx.shadowBlur=16;
         ctx.strokeStyle='rgba(255,255,255,0.9)'; ctx.lineWidth=3;
         ctx.setLineDash([7,5]);
         rr(ctx,c.x-6,c.y-6,c.w+12,c.h+12,18); ctx.stroke();
         ctx.setLineDash([]);
+        ctx.restore();
       }
       ctx.fillStyle = open ? '#fff' : '#8a7a68';
       ctx.font='bold 30px sans-serif';
@@ -912,8 +951,12 @@ const resultState = {
 };
 function drawStarBig(cx,cy,r,color){
   ctx.save();
+  /* v7：點亮的星星帶金色輝光 */
+  if(color==='#ffcf5c'){ ctx.shadowColor='rgba(255,207,92,.9)'; ctx.shadowBlur=18; }
   drawStarPath(cx,cy,r);
   ctx.fillStyle=color; ctx.fill();
+  ctx.shadowBlur=0;
+  drawStarPath(cx,cy,r);
   ctx.strokeStyle='rgba(42,18,6,0.7)'; ctx.lineWidth=2; ctx.stroke();
   ctx.restore();
 }
@@ -926,12 +969,29 @@ function drawStarPath(cx,cy,r){
   ctx.closePath();
 }
 function drawResBtn(b,label,color,on){
-  ctx.fillStyle = on?'rgba(255,255,255,0.12)':'rgba(255,255,255,0.04)';
-  rr(ctx,b.x,b.y,b.w,b.h,14); ctx.fill();
+  /* v7：結算按鈕同步立體質感（落影＋漸層＋內緣高光） */
+  if(on){
+    ctx.save();
+    ctx.shadowColor='rgba(0,0,0,.45)'; ctx.shadowBlur=12; ctx.shadowOffsetY=4;
+    ctx.fillStyle='rgba(48,26,11,0.9)';
+    rr(ctx,b.x,b.y,b.w,b.h,14); ctx.fill();
+    ctx.restore();
+    const bgr = ctx.createLinearGradient(0,b.y,0,b.y+b.h);
+    bgr.addColorStop(0,'rgba(255,255,255,0.16)'); bgr.addColorStop(1,'rgba(255,255,255,0.03)');
+    ctx.fillStyle=bgr; rr(ctx,b.x,b.y,b.w,b.h,14); ctx.fill();
+  } else {
+    ctx.fillStyle='rgba(255,255,255,0.04)';
+    rr(ctx,b.x,b.y,b.w,b.h,14); ctx.fill();
+  }
   ctx.strokeStyle = on?color:'rgba(255,255,255,0.15)'; ctx.lineWidth=2.5;
   rr(ctx,b.x,b.y,b.w,b.h,14); ctx.stroke();
-  ctx.fillStyle = on?'#fff':'rgba(255,255,255,0.35)';
+  if(on){
+    ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=1;
+    rr(ctx,b.x+3,b.y+3,b.w-6,b.h-6,10); ctx.stroke();
+  }
   ctx.font='bold 20px sans-serif'; ctx.textAlign='center';
+  if(on){ ctx.fillStyle='rgba(30,14,4,.8)'; ctx.fillText(label, b.x+b.w/2+1.2, b.y+b.h/2+8.2); }
+  ctx.fillStyle = on?'#fff':'rgba(255,255,255,0.35)';
   ctx.fillText(label, b.x+b.w/2, b.y+b.h/2+7);
 }
 
@@ -1131,7 +1191,12 @@ function drawOrderBubble(t, sx, sy){
   ctx.translate(sx, sy-84);
   ctx.fillStyle = t.servedFlash>0 ? '#ffe98a' : (t.vip ? '#fff3cf' : '#fff');
   ctx.strokeStyle = t.vip ? '#d9a520' : '#3a2214'; ctx.lineWidth=2;
-  rr(ctx,-22,-22,44,34,9); ctx.fill(); ctx.stroke();
+  /* v7：泡泡柔和落影，浮空感更好 */
+  ctx.save();
+  ctx.shadowColor='rgba(20,8,2,.4)'; ctx.shadowBlur=7; ctx.shadowOffsetY=3;
+  rr(ctx,-22,-22,44,34,9); ctx.fill();
+  ctx.restore();
+  rr(ctx,-22,-22,44,34,9); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(-4,12); ctx.lineTo(4,12); ctx.lineTo(0,20); ctx.closePath();
   ctx.fillStyle = t.servedFlash>0 ? '#ffe98a' : (t.vip ? '#fff3cf' : '#fff'); ctx.fill(); ctx.stroke();
   drawFoodIcon(t.order, 0, -5, 30);
@@ -1275,11 +1340,22 @@ function drawPlay(){
   if(state===playState) drawPlayHUD();
 }
 
+/* v7：HUD 玻璃面板——上亮下暗漸層＋金色髮絲描邊＋柔和落影 */
+function hudPanel(x,y,w,h,strokeCol){
+  ctx.save();
+  ctx.shadowColor='rgba(0,0,0,.35)'; ctx.shadowBlur=8; ctx.shadowOffsetY=3;
+  const pg = ctx.createLinearGradient(0,y,0,y+h);
+  pg.addColorStop(0,'rgba(40,20,9,0.82)'); pg.addColorStop(1,'rgba(16,7,3,0.78)');
+  ctx.fillStyle = pg; rr(ctx,x,y,w,h,12); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = strokeCol; ctx.lineWidth=1.5; rr(ctx,x,y,w,h,12); ctx.stroke();
+  ctx.strokeStyle='rgba(255,255,255,.12)'; ctx.lineWidth=1;
+  rr(ctx,x+2,y+2,w-4,h-4,10); ctx.stroke();
+}
 function drawPlayHUD(){
   const D = DAYS[curLevel];
   // 分數（左上）
-  ctx.fillStyle='rgba(20,8,4,0.7)'; rr(ctx,12,10,180,58,12); ctx.fill();
-  ctx.strokeStyle='rgba(255,207,92,0.5)'; ctx.lineWidth=1.5; rr(ctx,12,10,180,58,12); ctx.stroke();
+  hudPanel(12,10,180,58,'rgba(255,207,92,0.5)');
   ctx.textAlign='left';
   ctx.font='bold 22px sans-serif'; ctx.fillStyle='#ffcf5c';
   ctx.fillText('分數 '+score, 24, 36);
@@ -1290,9 +1366,8 @@ function drawPlayHUD(){
   const got = D.targets.filter(t=>score>=t).length;
   for(let s=0;s<3;s++) drawStar(140+s*17, 52, 7, s<got?'#ffcf5c':'rgba(255,255,255,0.2)');
 
-  // 時間（中上）
-  ctx.fillStyle='rgba(20,8,4,0.7)'; rr(ctx,GAME_W/2-105,10,210,40,12); ctx.fill();
-  ctx.strokeStyle = timeLeft<10 ? '#ff6b5c' : 'rgba(255,255,255,0.3)'; rr(ctx,GAME_W/2-105,10,210,40,12); ctx.stroke();
+  // 時間（中上）——v7：剩 10 秒紅框脈動提醒
+  hudPanel(GAME_W/2-105,10,210,40, timeLeft<10 ? 'rgba(255,107,92,'+(0.6+0.4*Math.sin(performance.now()/140))+')' : 'rgba(255,255,255,0.3)');
   ctx.textAlign='center'; ctx.font='bold 18px sans-serif';
   ctx.fillStyle = timeLeft<10 ? '#ff8b7c' : '#fff';
   ctx.fillText(D.name+'　'+Math.ceil(timeLeft)+'s', GAME_W/2, 36);
@@ -1306,6 +1381,12 @@ function drawPlayHUD(){
     ctx.bezierCurveTo(hx-12,hy-2,hx-8,hy-12,hx,hy-5);
     ctx.bezierCurveTo(hx+8,hy-12,hx+12,hy-2,hx,hy+9);
     ctx.fill();
+    if(i<hearts){
+      /* v7：愛心描邊＋左上高光點，更立體 */
+      ctx.strokeStyle='rgba(120,20,50,.5)'; ctx.lineWidth=1.5; ctx.stroke();
+      ctx.fillStyle='rgba(255,255,255,.55)';
+      ctx.beginPath(); ctx.ellipse(hx-4,hy-5,2.4,1.8,-0.6,0,Math.PI*2); ctx.fill();
+    }
   }
   if(comboCount>1){
     ctx.textAlign='center'; ctx.fillStyle='#8fffb0'; ctx.font='bold 22px sans-serif';
@@ -1411,7 +1492,8 @@ function frame(now){
   const te = (now - transitionStart) / 1000;
   if(te < 0.22){
     ctx.save();
-    ctx.globalAlpha = Math.max(0, 1 - te/0.22);
+    /* v7：轉場淡入改緩出曲線（ease-out），起始更沉、收尾更柔 */
+    ctx.globalAlpha = Math.pow(Math.max(0, 1 - te/0.22), 1.6);
     ctx.fillStyle = '#0c0602';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
     ctx.restore();
