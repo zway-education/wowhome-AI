@@ -188,6 +188,7 @@
     header { padding-top: 16px; }
     .backlink { margin-left: 0; }
   }
+.pstats{color:#9fb0d8;font-size:13px;white-space:nowrap;letter-spacing:.02em}
 </style>
 </head>
 <body>
@@ -236,7 +237,7 @@
     <a class="stat" href="#sec-games">遊戲<b id="gcount">–</b></a>
     <span class="stat" id="tplaysWrap" style="display:none">總遊玩<b id="tplays">–</b></span>
     <span class="dchips"><button class="dchip on" onclick="setDateFilter('', this)">全部</button><button class="dchip" onclick="setDateFilter('7/17', this)">7/17</button><button class="dchip" onclick="setDateFilter('7/15', this)">7/15</button><button class="dchip" onclick="setDateFilter('7/10', this)">7/10</button><button class="dchip" onclick="setDateFilter('7/8', this)">7/8</button></span>
-    <input class="search" id="search" type="search" placeholder="搜尋作品名稱…">
+    <input class="search" id="search" type="search" placeholder="搜尋作品或作者…">
   </div>
 </header>
 
@@ -261,6 +262,7 @@
       <button id="ptabGame" class="on" onclick="setPlayerTab('game')">遊戲</button>
       <button id="ptabTrailer" onclick="setPlayerTab('trailer')">預告片</button>
     </span>
+    <span id="pstats" class="pstats"></span>
     <button class="vote" id="pvote2">非常好玩</button>
     <button class="vote" id="pvote1">好玩</button>
     <button id="pcopy">複製程式碼</button>
@@ -354,7 +356,7 @@ function render(filter) {
       const t = it.title || it.file;
       if (c.id === 'videos' && trailers.hidden.has(it.file)) return false; // 已併入遊戲卡片
       if (DATEFILTER && dateGroup(it.created) !== DATEFILTER) return false;
-      return !q || t.toLowerCase().includes(q);
+      return !q || t.toLowerCase().includes(q) || (it.author || '').toLowerCase().includes(q);
     });
     if (!list.length) {
       grid.innerHTML = '<div class="empty">' + (q ? '沒有符合的作品' : '專業版製作中，稍後就會出現') + '</div>';
@@ -626,7 +628,7 @@ setInterval(() => {
 setInterval(() => {
   if (document.hidden) return;
   for (const el of visibleNums) if (el.isConnected) fillNums(el, 'votes');
-  if (document.getElementById('player').classList.contains('open')) refreshVoteButtons(); // 播放器投票鈕票數同步
+  if (document.getElementById('player').classList.contains('open')) { refreshVoteButtons(); refreshPStats(); } // 播放器投票鈕與統計同步
 }, 7000);
 
 /* ===== 播放器（含自動縮放與複製按鈕） ===== */
@@ -675,6 +677,26 @@ function scheduleFit() {
 
 /* ===== 好玩投票（可取消、可改投；每裝置每作品一票） ===== */
 let voteKey = '';
+function refreshPStats() {
+  const el = document.getElementById('pstats');
+  if (!voteKey) { el.textContent = ''; return; }
+  el.dataset.key = voteKey;
+  const parts = [['-v', '👁'], ['-p', '🎮'], ['-love', '❤️'], ['-like', '👍']];
+  // 先用快取立即顯示，再非同步校正
+  {
+    const cv = countCache[voteKey + '-love-c'] || 0, cp = countCache[voteKey + '-like-c'] || 0;
+    const sn = [countCache[voteKey + '-v'], countCache[voteKey + '-p'],
+      Math.max(0, (countCache[voteKey + '-love'] || 0) - cv), Math.max(0, (countCache[voteKey + '-like'] || 0) - cp)];
+    if (sn[0] !== undefined || sn[1] !== undefined)
+      el.textContent = parts.map(([s, ic], i) => ic + ' ' + (sn[i] || 0)).join('  ');
+  }
+  Promise.all(parts.map(([s]) => readCount(voteKey + s))).then(async vals => {
+    if (el.dataset.key !== voteKey) return;
+    const [cv, cp] = await Promise.all([readCount(voteKey + '-love-c'), readCount(voteKey + '-like-c')]);
+    const nums = [vals[0] || 0, vals[1] || 0, Math.max(0, (vals[2] || 0) - (cv || 0)), Math.max(0, (vals[3] || 0) - (cp || 0))];
+    el.textContent = parts.map(([s, ic], i) => ic + ' ' + nums[i]).join('  ');
+  });
+}
 function refreshVoteButtons() {
   const b2 = document.getElementById('pvote2');
   const b1 = document.getElementById('pvote1');
@@ -685,11 +707,14 @@ function refreshVoteButtons() {
     btn.dataset.key = voteKey;
     if (!voteKey) { btn.textContent = label; continue; }
     const base = voted === suffix ? label + '（取消）' : label;
-    btn.textContent = base;
+    // 先用快取立即顯示數字（開啟就有），再非同步校正
+    const sv = countCache[voteKey + suffix], sc = countCache[voteKey + suffix + '-c'];
+    const snet = Math.max(0, (sv || 0) - (sc || 0));
+    btn.textContent = (sv !== undefined && snet > 0) ? base + ' ' + snet : base;
     Promise.all([readCount(voteKey + suffix), readCount(voteKey + suffix + '-c')]).then(([n, c]) => {
       if (btn.dataset.key !== voteKey) return;
       const net = Math.max(0, (n || 0) - (c || 0));
-      if (net > 0) btn.textContent = base + ' ' + net;
+      btn.textContent = net > 0 ? base + ' ' + net : base;
     });
   }
 }
@@ -701,7 +726,7 @@ function bumpCache(name) {
   countCache[name] = (countCache[name] || 0) + 1;
   countCacheAt[name] = Date.now();
 }
-function setupVotes(key) { voteKey = key || ''; refreshVoteButtons(); }
+function setupVotes(key) { voteKey = key || ''; refreshVoteButtons(); refreshPStats(); }
 function castVote(suffix) {
   if (!voteKey) return;
   const lsKey = 'voted-' + voteKey;

