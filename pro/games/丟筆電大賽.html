@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- 專業AI升級 v7：僅介面/畫質/質感——按鈕頂部光澤與底緣陰影、HUD計分/時間板玻璃質感與時間條光澤、結算面板漸層+雙框+角落飾線、三段式暗角+頂部暖光氛圍、場景切換淡入（玩法/文本零更動） -->
+<!-- 專業AI升級 v8 大升級：僅介面/畫質/質感——標題輝光漸層流光+裝飾線、背景氛圍光暈+電影感色調分級(暖/冷/夜)、HUD玻璃面板(漸層+高光+落影)、按鈕立體漸層+懸停回饋、粒子改圓形雙層發光+亮核、金色筆電/金環改離屏烘焙柔光、飄字彈跳入場、達標事件閃光、音效起音緩衝+泛音層（玩法/數值/文本/操作零更動） -->
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
@@ -71,6 +71,9 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const rnd = (a, b) => a + Math.random() * (b - a);
 const easeOutCubic = t => 1 - Math.pow(1 - t, 3);
 const easeOutBack = t => 1 + 2.7 * Math.pow(t - 1, 3) + 1.7 * Math.pow(t - 1, 2);
+// v8：hex 顏色明暗調整（按鈕立體漸層用，結果全部一次性快取，主迴圈不重算）
+function _hex(c) { c = c.replace('#', ''); if (c.length === 3) c = c[0] + c[0] + c[1] + c[1] + c[2] + c[2]; return [parseInt(c.slice(0, 2), 16), parseInt(c.slice(2, 4), 16), parseInt(c.slice(4, 6), 16)]; }
+function shade(c, f) { if (typeof c !== 'string' || c[0] !== '#') return c; const rgb = _hex(c); const m = v => f >= 0 ? Math.round(v + (255 - v) * f) : Math.round(v * (1 + f)); return 'rgb(' + m(rgb[0]) + ',' + m(rgb[1]) + ',' + m(rgb[2]) + ')'; }
 
 function roundRect(x, y, w, h, r) {
   r = Math.min(r, w / 2, h / 2);
@@ -153,14 +156,28 @@ function beep(freq, dur, type, vol, slide) {
   type = type || 'square'; vol = vol || 0.15; slide = slide || 0;
   if (vol >= 0.11) duckAmb();   // v6：主音效壓低氛圍層
   freq *= 0.975 + Math.random() * 0.05;   // v3：±2.5% 隨機音高，聽感不機械
+  const t0 = ac.currentTime;
   const o = ac.createOscillator(), g = ac.createGain();
   o.type = type;
-  o.frequency.setValueAtTime(freq, ac.currentTime);
-  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), ac.currentTime + dur);
-  g.gain.setValueAtTime(vol, ac.currentTime);
-  g.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + dur);
+  o.frequency.setValueAtTime(freq, t0);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(vol, t0 + 0.006);   // v8：~6ms 起音緩衝，消方波爆裂
+  g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
   o.connect(g).connect(master);
-  o.start(); o.stop(ac.currentTime + dur);
+  o.start(t0); o.stop(t0 + dur);
+  // v8：泛音層——中低頻加一層八度上三角波 partial，音色更厚實（觸發時機/語意不變）
+  if ((type === 'square' || type === 'triangle') && freq < 1400) {
+    const o2 = ac.createOscillator(), g2 = ac.createGain();
+    o2.type = 'triangle';
+    o2.frequency.setValueAtTime(freq * 2, t0);
+    if (slide) o2.frequency.exponentialRampToValueAtTime(Math.max(30, freq * 2 + slide * 2), t0 + dur);
+    g2.gain.setValueAtTime(0.0001, t0);
+    g2.gain.exponentialRampToValueAtTime(vol * 0.22, t0 + 0.006);
+    g2.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    o2.connect(g2).connect(master);
+    o2.start(t0); o2.stop(t0 + dur);
+  }
 }
 function noise(dur, vol) {
   const ac = audio(); if (!ac || muted) return;
@@ -194,7 +211,7 @@ const sfx = {
 };
 
 // ---------- FX：震動 / hit-stop / 粒子 / 飄字 ----------
-let shake = 0, freeze = 0;
+let shake = 0, freeze = 0, flash = 0;   // v8：flash＝達標事件閃光
 const parts = [];
 function burst(x, y, color, n, speed, up) {
   n = n || 12; speed = speed || 220;
@@ -220,36 +237,60 @@ function updateParts(dt) {
     if (p.life <= 0) { parts[i] = parts[parts.length - 1]; parts.pop(); }  // v3：swap-pop
   }
 }
+// v8：粒子改圓形雙層發光——additive 外柔光＋實心色心＋亮核高光，尾段縮小淡出
 function drawParts() {
+  if (!parts.length) return;
+  // 第一層：additive 外柔光（無漸層無 shadowBlur，僅圓填充，效能安全）
+  ctx.globalCompositeOperation = 'lighter';
   for (const p of parts) {
-    ctx.save();
-    ctx.globalAlpha = clamp(p.life * 2.2, 0, 1);
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.rot);
+    const a = clamp(p.life * 2.2, 0, 1);
+    const k = clamp(p.life / (p.max || 0.65), 0, 1);
+    const sz = p.size * (0.45 + 0.55 * k);
+    ctx.globalAlpha = a * 0.42;
     ctx.fillStyle = p.color;
-    ctx.fillRect(-p.size / 2, -p.size / 2, p.size, p.size);
-    ctx.restore();
+    ctx.beginPath(); ctx.arc(p.x, p.y, sz * 2.1, 0, 6.29); ctx.fill();
+  }
+  // 第二層：實心色心＋白色亮核（保留色相不過曝）
+  ctx.globalCompositeOperation = 'source-over';
+  for (const p of parts) {
+    const a = clamp(p.life * 2.2, 0, 1);
+    const k = clamp(p.life / (p.max || 0.65), 0, 1);
+    const sz = p.size * (0.45 + 0.55 * k);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, 6.29); ctx.fill();
+    ctx.globalAlpha = a * 0.85;
+    ctx.fillStyle = 'rgba(255,255,255,0.92)';
+    ctx.beginPath(); ctx.arc(p.x - sz * 0.28, p.y - sz * 0.28, sz * 0.36, 0, 6.29); ctx.fill();
   }
   ctx.globalAlpha = 1;
 }
 const floaters = [];
 function addFloat(x, y, text, color, big) {
-  floaters.push({ x, y, text, color, life: 0.9, big: !!big });
+  floaters.push({ x, y, text, color, life: 0.9, big: !!big, age: 0 });   // v8：age 供彈跳入場
 }
 function updateFloaters(dt) {
   for (let i = floaters.length - 1; i >= 0; i--) {
     const f = floaters[i];
-    f.y -= 55 * dt; f.life -= dt;
+    f.y -= 55 * dt; f.life -= dt; f.age += dt;
     if (f.life <= 0) floaters.splice(i, 1);
   }
 }
+// v8：飄字彈跳入場（easeOutBack）＋落影，讀感更清楚
 function drawFloaters() {
   for (const f of floaters) {
+    const pop = easeOutBack(clamp(f.age / 0.22, 0, 1));
+    ctx.save();
     ctx.globalAlpha = clamp(f.life * 1.6, 0, 1);
-    ctx.fillStyle = f.color;
+    ctx.translate(f.x, f.y);
+    ctx.scale(pop, pop);
     ctx.font = (f.big ? 'bold 30px' : 'bold 22px') + ' sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(f.text, f.x, f.y);
+    ctx.fillStyle = 'rgba(0,0,0,0.42)';
+    ctx.fillText(f.text, 1.5, 2.5);
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.text, 0, 0);
+    ctx.restore();
   }
   ctx.globalAlpha = 1;
 }
@@ -365,6 +406,124 @@ const BG_OFFICE = bakeCv(GAME_W, GAME_H, g => {
 // v6：窗邊光塵微粒
 const dust = [];
 for (let i = 0; i < 12; i++) dust.push({ x: rnd(240, 560), y: rnd(120, FLOOR_Y - 30), ph: rnd(0, 7), sp: rnd(4, 10) });
+
+/* ========== v8：離屏烘焙的氛圍與發光資產（全部建立一次，主迴圈零 createGradient / 零 shadowBlur） ========== */
+// 氛圍光暈：柔和的中心暖輝，讓平面背景有深度（additive 疊）
+const AMBIENT_BLOOM = bakeCv(GAME_W, GAME_H, g => {
+  const rg = g.createRadialGradient(GAME_W * 0.5, 150, 30, GAME_W * 0.5, 170, 540);
+  rg.addColorStop(0, 'rgba(255,226,170,0.15)');
+  rg.addColorStop(0.5, 'rgba(255,208,150,0.05)');
+  rg.addColorStop(1, 'rgba(255,208,150,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, GAME_W, GAME_H);
+});
+// 夜間關卡加強暗角（電影感）
+const NIGHT_VIG = (() => {
+  const g = ctx.createRadialGradient(GAME_W / 2, GAME_H * 0.46, GAME_H * 0.34, GAME_W / 2, GAME_H / 2, GAME_H * 1.02);
+  g.addColorStop(0, 'rgba(6,10,26,0)'); g.addColorStop(0.55, 'rgba(6,10,26,0.22)'); g.addColorStop(1, 'rgba(6,10,26,0.6)');
+  return g;
+})();
+// 通用徑向柔光精靈（中心亮 → 邊緣透明），用 additive 疊出關鍵物件受光
+function bakeRadialGlow(size, cInner, cMid) {
+  return bakeCv(size, size, g => {
+    const R = size / 2, rg = g.createRadialGradient(R, R, 0, R, R, R);
+    rg.addColorStop(0, cInner); rg.addColorStop(0.5, cMid); rg.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = rg; g.fillRect(0, 0, size, size);
+  });
+}
+const GOLD_GLOW = bakeRadialGlow(180, 'rgba(255,228,140,0.9)', 'rgba(255,190,70,0.24)');
+// 金環柔光（環狀）
+const RING_GLOW = bakeCv(160, 160, g => {
+  const R = 80, rg = g.createRadialGradient(R, R, R * 0.34, R, R, R * 0.56);
+  rg.addColorStop(0, 'rgba(255,205,117,0)'); rg.addColorStop(0.5, 'rgba(255,205,117,0.6)'); rg.addColorStop(1, 'rgba(255,205,117,0)');
+  g.fillStyle = rg; g.fillRect(0, 0, 160, 160);
+});
+// HUD 玻璃面板漸層（垂直，對應 y 12..70 的面板；快取共用）
+const HUD_PANEL_G = (() => { const g = ctx.createLinearGradient(0, 12, 0, 70); g.addColorStop(0, 'rgba(54,60,98,0.9)'); g.addColorStop(1, 'rgba(19,21,36,0.92)'); return g; })();
+const HUD_HI_G = (() => { const g = ctx.createLinearGradient(0, 12, 0, 42); g.addColorStop(0, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)'); return g; })();
+// v8：玻璃面板（半透明漸層＋頂部高光＋柔和落影＋雙描邊）
+function glassPanel(x, y, w, h, borderColor) {
+  ctx.fillStyle = 'rgba(0,0,0,0.32)';
+  roundRect(x, y + 4, w, h, 12); ctx.fill();
+  ctx.fillStyle = HUD_PANEL_G;
+  roundRect(x, y, w, h, 12); ctx.fill();
+  ctx.fillStyle = HUD_HI_G;
+  roundRect(x + 2, y + 2, w - 4, h * 0.5, 10); ctx.fill();
+  ctx.strokeStyle = borderColor; ctx.lineWidth = 2; roundRect(x, y, w, h, 12); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; roundRect(x + 1.5, y + 1.5, w - 3, h - 3, 10); ctx.stroke();
+}
+// v8：電影感色調分級——依關卡/情境套暖/冷/夜色溫（純視覺 overlay，不影響玩法）
+function getTone() {
+  let idx = -2;
+  if ((state === playState || state === overState) && curLevel >= 0) idx = curLevel;
+  if (idx === 2) return { css: 'rgba(96,152,255,0.13)', night: false };  // 辦公室陣風 → 冷
+  if (idx === 5) return { css: 'rgba(30,46,96,0.24)', night: true };     // 狂風亂桶·大師 → 夜
+  if (idx === 4) return { css: 'rgba(255,152,64,0.12)', night: false };  // 吊燈橫梁 → 暖
+  if (idx >= 0) return { css: 'rgba(255,192,112,0.08)', night: false };  // 一般關 → 微暖
+  return { css: 'rgba(255,202,142,0.06)', night: false };               // 選單/經典 → 微暖
+}
+
+/* ---------- v8：主視覺標題（離屏烘焙 漸層+沿描邊+光澤，另做遮罩流光） ---------- */
+const TITLE_TEXT = '丟筆電大賽', TITLE_FONT = 'bold 64px sans-serif';
+let TITLE_W = 320, TITLE_SPRITE, TITLE_SIL, TITLE_GLOW, TITLE_SHINE, TITLE_BAND_G, TITLE_LINE_G;
+(function bakeTitle() {
+  ctx.font = TITLE_FONT;
+  TITLE_W = Math.ceil(ctx.measureText(TITLE_TEXT).width);
+  const S = 2, pad = 26, cw = TITLE_W + pad * 2, ch = 100, cx = cw / 2, cy = ch / 2;
+  // 主標題精靈（2x 超取樣求銳利）
+  TITLE_SPRITE = document.createElement('canvas'); TITLE_SPRITE.width = cw * S; TITLE_SPRITE.height = ch * S;
+  TITLE_SPRITE._w = cw; TITLE_SPRITE._h = ch;
+  const g = TITLE_SPRITE.getContext('2d'); g.scale(S, S);
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.font = TITLE_FONT; g.lineJoin = 'round';
+  g.strokeStyle = '#5a3410'; g.lineWidth = 7; g.strokeText(TITLE_TEXT, cx, cy);
+  const tg = g.createLinearGradient(0, cy - 38, 0, cy + 38);
+  tg.addColorStop(0, '#fff3cf'); tg.addColorStop(0.48, '#ffcd75'); tg.addColorStop(0.74, '#f2a24e'); tg.addColorStop(1, '#e07d3c');
+  g.fillStyle = tg; g.fillText(TITLE_TEXT, cx, cy);
+  g.save(); g.globalCompositeOperation = 'source-atop';   // 頂部光澤（限於字形內）
+  const sg = g.createLinearGradient(0, cy - 40, 0, cy + 4);
+  sg.addColorStop(0, 'rgba(255,255,255,0.85)'); sg.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = sg; g.fillRect(cx - TITLE_W / 2 - 12, cy - 40, TITLE_W + 24, 44);
+  const bg2 = g.createLinearGradient(0, cy + 6, 0, cy + 34);   // 下緣暖反光
+  bg2.addColorStop(0, 'rgba(255,255,255,0)'); bg2.addColorStop(1, 'rgba(255,240,200,0.28)');
+  g.fillStyle = bg2; g.fillRect(cx - TITLE_W / 2 - 12, cy + 6, TITLE_W + 24, 30);
+  g.restore();
+  // 白色剪影（流光遮罩用）
+  TITLE_SIL = document.createElement('canvas'); TITLE_SIL.width = cw * S; TITLE_SIL.height = ch * S;
+  const gs = TITLE_SIL.getContext('2d'); gs.scale(S, S);
+  gs.textAlign = 'center'; gs.textBaseline = 'middle'; gs.font = TITLE_FONT; gs.fillStyle = '#fff'; gs.fillText(TITLE_TEXT, cx, cy);
+  // 呼吸輝光精靈（模糊金字，一次性 shadowBlur）
+  const gp = 40;
+  TITLE_GLOW = document.createElement('canvas'); TITLE_GLOW.width = cw + gp * 2; TITLE_GLOW.height = ch + gp * 2;
+  const gg = TITLE_GLOW.getContext('2d');
+  gg.textAlign = 'center'; gg.textBaseline = 'middle'; gg.font = TITLE_FONT;
+  gg.shadowColor = 'rgba(255,190,90,0.95)'; gg.shadowBlur = 30; gg.fillStyle = 'rgba(255,190,90,0.85)';
+  gg.fillText(TITLE_TEXT, (cw + gp * 2) / 2, (ch + gp * 2) / 2);
+  gg.fillText(TITLE_TEXT, (cw + gp * 2) / 2, (ch + gp * 2) / 2);
+  // 流光工作畫布 + 掃光帶漸層（以本畫布 context 建立）
+  TITLE_SHINE = document.createElement('canvas'); TITLE_SHINE.width = cw * S; TITLE_SHINE.height = ch * S;
+  TITLE_SHINE._cw = cw; TITLE_SHINE._ch = ch; TITLE_SHINE._S = S;
+  const gsh = TITLE_SHINE.getContext('2d');
+  TITLE_BAND_G = gsh.createLinearGradient(-30, 0, 30, 0);
+  TITLE_BAND_G.addColorStop(0, 'rgba(255,255,255,0)'); TITLE_BAND_G.addColorStop(0.5, 'rgba(255,255,255,0.9)'); TITLE_BAND_G.addColorStop(1, 'rgba(255,255,255,0)');
+  // 裝飾線漸層（左右淡出）
+  TITLE_LINE_G = ctx.createLinearGradient(0, 0, GAME_W, 0);
+  TITLE_LINE_G.addColorStop(0, 'rgba(255,205,117,0)'); TITLE_LINE_G.addColorStop(0.5, 'rgba(255,205,117,0.9)'); TITLE_LINE_G.addColorStop(1, 'rgba(255,205,117,0)');
+})();
+// 每幀更新流光：斜向白帶掃過，用剪影遮罩僅留字形內光澤
+function updateTitleShine() {
+  const cw = TITLE_SHINE._cw, ch = TITLE_SHINE._ch, S = TITLE_SHINE._S, gsh = TITLE_SHINE.getContext('2d');
+  gsh.setTransform(1, 0, 0, 1, 0, 0);
+  gsh.clearRect(0, 0, TITLE_SHINE.width, TITLE_SHINE.height);
+  const sweep = (bgTime * 0.28) % 1.7, bx = (-0.15 + sweep) * cw;   // 掃過後留間隔再來
+  gsh.save(); gsh.scale(S, S);
+  gsh.translate(bx, ch / 2); gsh.rotate(-0.32);
+  gsh.fillStyle = TITLE_BAND_G; gsh.fillRect(-30, -ch, 60, ch * 2);
+  gsh.restore();
+  gsh.globalCompositeOperation = 'destination-in';
+  gsh.setTransform(1, 0, 0, 1, 0, 0);
+  gsh.drawImage(TITLE_SIL, 0, 0);
+  gsh.globalCompositeOperation = 'source-over';
+}
+
 function drawBG() {
   // 窗景（先畫，被烘焙層的透明窗孔露出）
   const wx = 60, wy = 60, ww = 300, wh = 180;
@@ -441,9 +600,20 @@ function drawBG() {
     ctx.fillRect(dx, dy, 2.4, 2.4);
   }
   ctx.globalAlpha = 1;
+  // v8：氛圍光暈（離屏烘焙徑向暖輝，additive 疊，主迴圈零成本）
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.55;
+  ctx.drawImage(AMBIENT_BLOOM, 0, 0);
+  ctx.restore();
+  // v8：電影感色調分級（依關卡套暖/冷/夜色溫，純視覺 overlay）
+  const tone = getTone();
+  ctx.fillStyle = tone.css;
+  ctx.fillRect(0, 0, GAME_W, GAME_H);
   // 全場氛圍暗角（v7：加頂部暖光層）
   ctx.fillStyle = VIG_G;
   ctx.fillRect(0, 0, GAME_W, GAME_H);
+  if (tone.night) { ctx.fillStyle = NIGHT_VIG; ctx.fillRect(0, 0, GAME_W, GAME_H); }
   ctx.fillStyle = TOPGLOW_G;
   ctx.fillRect(0, 0, GAME_W, 110);
 }
@@ -456,6 +626,9 @@ const bin = {
 bin.y = FLOOR_Y - bin.h;
 const BIN_FRONT_G = (() => { const g = ctx.createLinearGradient(0, 0, bin.w, 0);
   g.addColorStop(0, PAL.binDark); g.addColorStop(0.35, PAL.binBody); g.addColorStop(1, PAL.binDark); return g; })();
+// v8：桶身柔和高光（立體光澤，快取漸層）
+const BIN_HL_G = (() => { const g = ctx.createLinearGradient(0, 0, bin.w * 0.5, 0);
+  g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.32)'); g.addColorStop(1, 'rgba(255,255,255,0)'); return g; })();
 function mouthY() { return bin.y + bin.h * 0.12; }
 function updateBin(dt, hits) {
   if (curLevel >= 0 && state === playState) {
@@ -506,6 +679,12 @@ function drawBinFront() {
   ctx.beginPath();
   ctx.moveTo(w * 0.06, y + h * 0.17); ctx.lineTo(w * 0.94, y + h * 0.17);
   ctx.lineTo(w * 0.82, y + h); ctx.lineTo(w * 0.18, y + h);
+  ctx.closePath(); ctx.fill();
+  // v8：左偏柔和高光帶（圓柱受光更立體）
+  ctx.fillStyle = BIN_HL_G;
+  ctx.beginPath();
+  ctx.moveTo(w * 0.2, y + h * 0.19); ctx.lineTo(w * 0.4, y + h * 0.19);
+  ctx.lineTo(w * 0.33, y + h * 0.96); ctx.lineTo(w * 0.17, y + h * 0.96);
   ctx.closePath(); ctx.fill();
   ctx.restore();
   // 橫紋
@@ -583,12 +762,12 @@ function drawLaptop(l) {
   ctx.scale(l.sx * l.w / 76, l.sy * l.h / 48);   // v3：正規化到 76×48，共用預計算漸層
   const w = 76, h = 48, gold = l.gold;
   const G = gold ? LAP_GRADS_GOLD : LAP_GRADS;
-  if (gold) {   // v3：金色光暈改色暈底（取代每幀 shadowBlur 18）
-    ctx.globalAlpha = 0.3 + 0.1 * Math.sin(bgTime * 6);
-    ctx.fillStyle = '#ffd447';
-    roundRect(-w * 0.56, -h * 0.62, w * 1.12, h * 1.18, 14);
-    ctx.fill();
-    ctx.globalAlpha = 1;
+  if (gold) {   // v8：金色光暈改離屏烘焙徑向柔光（additive，取代方塊色暈，受光更自然）
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.5 + 0.2 * Math.sin(bgTime * 6);
+    ctx.drawImage(GOLD_GLOW, -90, -92, 180, 180);
+    ctx.restore();
   }
   // 底座（鍵盤面）：金屬漸層 + 外框線
   ctx.fillStyle = G.base;
@@ -668,25 +847,40 @@ function drawLaptop(l) {
 
 // ---------- 輸入 ----------
 const uiButtons = [];
+let pointerL = { x: -999, y: -999 };          // v8：最新指標邏輯座標（供按鈕懸停）
+const _HAS_TOUCH = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+const _btnG = {};                             // v8：按鈕立體漸層快取（依 顏色|高度）
+function btnGrad(color, h) {
+  const key = color + '|' + Math.round(h);
+  if (_btnG[key]) return _btnG[key];
+  const g = ctx.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, shade(color, 0.26)); g.addColorStop(0.5, color); g.addColorStop(1, shade(color, -0.2));
+  return (_btnG[key] = g);
+}
+// v8：按鈕立體化——漸層底＋內光＋落影＋內描邊亮線＋懸停回饋
 function button(x, y, w, h, label, cb, opts) {
   opts = opts || {};
   uiButtons.push({ x, y, w, h, cb });
+  const base = opts.bg || PAL.accent;
+  const hov = !_HAS_TOUCH && pointerL.x >= x && pointerL.x <= x + w && pointerL.y >= y && pointerL.y <= y + h;
   ctx.save();
-  ctx.fillStyle = opts.bg || PAL.accent;
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.lineWidth = 3;
-  roundRect(x, y, w, h, 12);
-  ctx.fill();
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.28)';   // v7：頂部光澤
-  roundRect(x + 3, y + 2.5, w - 6, h * 0.42, 9); ctx.fill();
-  ctx.fillStyle = 'rgba(0,0,0,0.16)';         // v7：底緣暗沿
-  roundRect(x + 4, y + h - 6.5, w - 8, 4, 2); ctx.fill();
-  ctx.fillStyle = opts.fg || '#1a1400';
+  ctx.fillStyle = 'rgba(0,0,0,0.28)';         // 落影（浮起感）
+  roundRect(x + 2, y + 5, w, h, 13); ctx.fill();
+  ctx.translate(x, y);
+  ctx.fillStyle = btnGrad(base, h);           // 立體漸層底
+  roundRect(0, 0, w, h, 12); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.38)'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,0.34)';   // 頂部內光
+  roundRect(3, 2.5, w - 6, h * 0.42, 9); ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.16)'; ctx.lineWidth = 1;   // 內描邊亮線
+  roundRect(2.5, 2, w - 5, h - 4, 11); ctx.stroke();
+  ctx.fillStyle = 'rgba(0,0,0,0.18)';         // 底緣暗沿
+  roundRect(4, h - 6.5, w - 8, 4, 2); ctx.fill();
+  if (hov) { ctx.fillStyle = 'rgba(255,255,255,0.14)'; roundRect(0, 0, w, h, 12); ctx.fill(); }
   ctx.font = 'bold ' + (opts.size || 24) + 'px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, x + w / 2, y + h / 2 + 1);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(0,0,0,0.22)'; ctx.fillText(label, w / 2 + 1, h / 2 + 2);
+  ctx.fillStyle = opts.fg || '#1a1400'; ctx.fillText(label, w / 2, h / 2 + 1);
   ctx.restore();
   ctx.textBaseline = 'alphabetic';
 }
@@ -731,6 +925,7 @@ canvas.addEventListener('pointerdown', e => {
   e.preventDefault();
   audio();
   const p = toLogical(e);
+  pointerL = p;
   for (const b of uiButtons) {
     if (p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h) {
       b.cb();
@@ -741,6 +936,7 @@ canvas.addEventListener('pointerdown', e => {
 }, { passive: false });
 addEventListener('pointermove', e => {
   const p = toLogical(e);
+  pointerL = p;
   if (state.onMove) state.onMove(p);
 }, { passive: false });
 addEventListener('pointerup', e => {
@@ -834,19 +1030,38 @@ const titleState = {
     drawBinFront();
     drawParts();
 
-    // 標題（彈跳進場）
+    // 標題（彈跳進場）：v8 烘焙金字精靈＋呼吸輝光＋流光掃過＋裝飾線
     const tt = clamp(this.t / 0.6, 0, 1);
     const ts = easeOutBack(tt);
+    const bob = Math.sin(bgTime * 2) * 4;
+    // 背後呼吸輝光（不隨彈跳縮放，柔和穩定）
     ctx.save();
-    ctx.translate(GAME_W / 2, 150);
-    ctx.scale(ts, ts);
-    ctx.textAlign = 'center';
-    ctx.fillStyle = 'rgba(0,0,0,0.4)';
-    ctx.font = 'bold 64px sans-serif';
-    ctx.fillText('丟筆電大賽', 4, 4 + Math.sin(bgTime * 2) * 4);
-    ctx.fillStyle = PAL.accent;
-    ctx.fillText('丟筆電大賽', 0, Math.sin(bgTime * 2) * 4);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.42 + 0.12 * Math.sin(bgTime * 2.2);
+    ctx.drawImage(TITLE_GLOW, GAME_W / 2 - TITLE_GLOW.width / 2, 150 + bob - TITLE_GLOW.height / 2 + 6);
     ctx.restore();
+    // 金字精靈 + 流光
+    ctx.save();
+    ctx.translate(GAME_W / 2, 150 + bob);
+    ctx.scale(ts, ts);
+    ctx.drawImage(TITLE_SPRITE, -TITLE_SPRITE._w / 2, -TITLE_SPRITE._h / 2, TITLE_SPRITE._w, TITLE_SPRITE._h);
+    updateTitleShine();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.7;
+    ctx.drawImage(TITLE_SHINE, -TITLE_SPRITE._w / 2, -TITLE_SPRITE._h / 2, TITLE_SPRITE._w, TITLE_SPRITE._h);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    // 裝飾線＋菱形飾點
+    const ly = 150 + bob + 46, half = TITLE_W * 0.5 * ts;
+    ctx.save();
+    ctx.strokeStyle = TITLE_LINE_G; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(GAME_W / 2 - half - 6, ly); ctx.lineTo(GAME_W / 2 - 26, ly); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(GAME_W / 2 + 26, ly); ctx.lineTo(GAME_W / 2 + half + 6, ly); ctx.stroke();
+    ctx.fillStyle = PAL.accent;
+    for (const sgn of [-1, 1]) { ctx.save(); ctx.translate(GAME_W / 2 + sgn * (half + 14), ly); ctx.rotate(Math.PI / 4); ctx.fillRect(-3.5, -3.5, 7, 7); ctx.restore(); }
+    ctx.restore();
+    ctx.textAlign = 'center';
     ctx.textAlign = 'center';
     ctx.fillStyle = PAL.ink;
     ctx.font = '20px sans-serif';
@@ -1316,6 +1531,7 @@ function scoreHit() {
   bin.squash = 1.25;
   freeze = perfect ? 0.09 : 0.05;
   shake = Math.max(shake, perfect ? 8 : 5);
+  flash = Math.max(flash, perfect ? 0.5 : 0.32);   // v8：達標事件閃光（快速淡出、不晃畫面）
   const cx = bin.x + bin.w / 2, cy = mouthY();
   burst(cx, cy, PAL.accent, perfect ? 26 : 14, 260, 180);
   burst(cx, cy, PAL.good, 8, 200, 150);
@@ -1366,6 +1582,12 @@ function drawRing() {   // v2：空中加分環（旋轉虛線金環＋星星）
   const blink = ring.life < 2.5 ? 0.35 + 0.65 * Math.abs(Math.sin(ring.life * 6)) : 1;
   ctx.save();
   ctx.translate(ring.x, ring.y);
+  // v8：離屏烘焙環狀柔光（additive），金環受光更明顯
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = blink * 0.9;
+  ctx.drawImage(RING_GLOW, -ring.r * 2, -ring.r * 2, ring.r * 4, ring.r * 4);
+  ctx.restore();
   ctx.globalAlpha = blink;
   ctx.rotate(ring.t * 1.2);
   // v3：光暈改雙筆畫（原 shadowBlur 14 每幀成本高）
@@ -1437,14 +1659,9 @@ function drawAim() {
 }
 
 function drawHUD(st) {
-  // 分數板（v7：玻璃質感——頂部光澤）
+  // 分數板（v8：玻璃面板——漸層底＋頂部高光＋柔和落影＋雙描邊）
   ctx.save();
-  ctx.fillStyle = 'rgba(26,28,44,0.78)';
-  roundRect(14, 12, 150, 58, 12);
-  ctx.fill();
-  ctx.strokeStyle = PAL.line; ctx.lineWidth = 2; ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.055)';
-  roundRect(16, 14, 146, 24, 10); ctx.fill();
+  glassPanel(14, 12, 150, 58, PAL.line);
   ctx.fillStyle = PAL.dim;
   ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'left';
@@ -1466,14 +1683,7 @@ function drawHUD(st) {
   }
   // 時間
   const urgent = timeLeft <= 5.2;
-  ctx.fillStyle = 'rgba(26,28,44,0.78)';
-  roundRect(GAME_W / 2 - 75, 12, 150, 58, 12);
-  ctx.fill();
-  ctx.strokeStyle = urgent ? PAL.bad : PAL.line;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = 'rgba(255,255,255,0.055)';   // v7：頂部光澤
-  roundRect(GAME_W / 2 - 73, 14, 146, 24, 10); ctx.fill();
+  glassPanel(GAME_W / 2 - 75, 12, 150, 58, urgent ? PAL.bad : PAL.line);   // v8：玻璃面板
   ctx.fillStyle = PAL.dim;
   ctx.font = 'bold 12px sans-serif';
   ctx.textAlign = 'center';
@@ -1653,11 +1863,19 @@ function frame(now) {
     if (freeze > 0) { freeze -= STEP; continue; }
     shake *= Math.pow(0.001, STEP);
     if (shake < 0.1) shake = 0;
+    if (flash > 0) { flash -= STEP * 3.4; if (flash < 0) flash = 0; }   // v8：閃光快速淡出
     state.update(STEP);
     updateParts(STEP);
     updateFloaters(STEP);
   }
   state.draw();
+  if (flash > 0) {   // v8：達標事件閃光（additive 暖金，快速淡出，不造成頭暈）
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.fillStyle = 'rgba(255,226,168,' + (flash * 0.5).toFixed(3) + ')';
+    ctx.fillRect(0, 0, GAME_W, GAME_H);
+    ctx.restore();
+  }
   if (sceneFade7 > 0) {   // v7：0.3 秒淡入轉場
     sceneFade7 = Math.max(0, sceneFade7 - STEP * 3.4);
     ctx.fillStyle = 'rgba(20,24,28,' + (sceneFade7 * sceneFade7 * 0.9).toFixed(3) + ')';
