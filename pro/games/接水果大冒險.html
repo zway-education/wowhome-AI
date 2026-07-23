@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- 專業AI升級 v8 3D版：以 Canvas 2D 軟體透視投影重寫成真 3D——水果從遠方天空往鏡頭掉落(近大遠小)，籃子在前景左右移動接；含透視相機＋畫家演算法深度排序、逐面受光 3D 籃子與接地陰影、漸層天空＋霧＋暗角、additive 發光粒子、玻璃 HUD、devicePixelRatio 高清。玩法/分數/連擊/關卡數值與作者標記不變。 -->
 <!-- 專業AI升級 v7 -->
 <!-- v7 升級摘要（僅介面/畫質/質感，不改故事文本與玩法）：畫質——背景大氣透視薄霧、樹冠受光/陰影分層、樹幹側影、地面光斑；介面——按鈕落影+頂部光澤+高亮發光、進度條描邊、飄字彈跳入場、標題柔光；質感——狀態切換淡入過場、粒子改圓形柔和、接取/UI音色加高頻泛音層 -->
 <!-- v6 升級摘要：畫質——烘焙日月bloom＋vignette後製、視差雲層/飄葉隨風向飄動/夜空流星、幸運星金粉尾跡與炸彈引信火花尾跡、接到水果衝擊波光圈、進度條流光；音效——程序化戶外殘響（ConvolverNode）、風聲氛圍層＋晝鳥鳴/夜蟋蟀、受擊事件自動ducking -->
@@ -328,33 +329,89 @@ canvas.addEventListener('mousemove', e => {
   input.pointerX = p.x;
 });
 
-/* ===== 粒子（swap-pop）與飄字 ===== */
-const MAX_PARTS = 300;
+/* =====================================================================
+   3D 引擎（Canvas 2D 軟體透視投影，沿用 跑酷火人3D 的作法）
+   世界座標：X=左右（籃子移動）、Y=高度（0 為地面）、Z=深度（近小遠大反向：越近 s 越大）
+   ===================================================================== */
+const CX = GAME_W/2, CY = 250;
+const FOV = 560;
+const TILT = 0.26, cosA = Math.cos(TILT), sinA = Math.sin(TILT);
+const cam = { x:0, y:150, z:-240 };
+function project(x,y,z){
+  const dx=x-cam.x, dy=y-cam.y, dz=z-cam.z;
+  const ry = dy*cosA + dz*sinA;
+  const rz = dz*cosA - dy*sinA;
+  if(rz < 14) return null;
+  const s = FOV/rz;
+  return { x:CX+dx*s, y:CY-ry*s, s };
+}
+function quad(a,b,c,d,color){
+  if(!a||!b||!c||!d) return false;
+  ctx.fillStyle=color; ctx.beginPath();
+  ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y);
+  ctx.closePath(); ctx.fill(); return true;
+}
+function quadStroke(a,b,c,d,color,w){
+  if(!a||!b||!c||!d) return;
+  ctx.strokeStyle=color; ctx.lineWidth=w; ctx.beginPath();
+  ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.lineTo(c.x,c.y); ctx.lineTo(d.x,d.y);
+  ctx.closePath(); ctx.stroke();
+}
+/* 世界佈局 */
+const LANE = 210;        // 籃子 X 移動範圍 ±
+const FLOORW = 320;      // 地板半寬
+const CATCH_Z = 40;      // 接取平面（籃子深度）
+const SPAWN_Z = 900;     // 水果生成深度（遠方）
+const SKY_Y = 360;       // 水果生成高度（天空）
+const CATCH_Y = 66;      // 水果抵達籃口的高度
+const CATCH_HALF = 70;   // 接取寬容度（世界單位）
+/* 螢幕像素 → 世界 X（用接取平面的投影比例反推） */
+const SCX = FOV / ((CATCH_Z-cam.z)*cosA - (CATCH_Y-cam.y)*sinA);
+function screenToWorldX(px){ return (px - CX)/SCX; }
+
+/* ===== 快取發光貼圖 ===== */
+function makeGlow(color, r){
+  const c = document.createElement('canvas'); c.width = c.height = r*2;
+  const g = c.getContext('2d');
+  const gr = g.createRadialGradient(r,r,1, r,r,r);
+  gr.addColorStop(0,color); gr.addColorStop(1,'rgba(0,0,0,0)');
+  g.fillStyle = gr; g.fillRect(0,0,r*2,r*2);
+  return c;
+}
+const glowGold = makeGlow('rgba(255,207,92,.75)', 40);
+const glowRed  = makeGlow('rgba(255,90,74,.6)', 34);
+const glowSoft = makeGlow('rgba(255,244,200,.5)', 30);
+
+/* ===== 粒子（additive 發光）與飄字 ===== */
+const MAX_PARTS = 320;
 let parts = [];
 function burst(x,y,color,n,speed){
   for(let i=0;i<n && parts.length<MAX_PARTS;i++){
     const a = Math.random()*TAU, s = (speed||220)*(0.3+Math.random()*0.7);
-    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0.55,max:0.55,color,s:rnd(3,6)});
+    parts.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s-80,life:0.6,max:0.6,color,s:rnd(3,6)});
   }
 }
 function updateParts(dt){
   for(let i=parts.length-1;i>=0;i--){
     const p = parts[i];
-    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 640*dt; p.life -= dt;
+    p.x += p.vx*dt; p.y += p.vy*dt; p.vy += 620*dt; p.life -= dt;
     if(p.life<=0){ parts[i]=parts[parts.length-1]; parts.pop(); }
   }
 }
 function drawParts(){
+  ctx.globalCompositeOperation = 'lighter';
   for(const p of parts){
-    ctx.globalAlpha = Math.max(0, p.life/p.max);
-    ctx.fillStyle = p.color;
-    /* v7：粒子改圓形，收尾隨壽命縮小更柔和 */
-    ctx.beginPath(); ctx.arc(p.x, p.y, Math.max(0.6, p.s*0.62*(0.4+0.6*p.life/p.max)), 0, TAU); ctx.fill();
+    const a = clamp(p.life/p.max,0,1);
+    const r = Math.max(0.8, p.s*(0.5+0.7*a));
+    ctx.globalAlpha = a*0.42; ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, r*2.4, 0, TAU); ctx.fill();
+    ctx.globalAlpha = a*0.95; ctx.fillStyle = '#fff8e6';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r*0.72, 0, TAU); ctx.fill();
   }
-  ctx.globalAlpha = 1;
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
 }
 let floats = [];
-function floatText(x,y,text,color,big){ floats.push({x,y,text,color,life:0.8,max:0.8,big:big||22}); }
+function floatText(x,y,text,color,big){ floats.push({x,y,text,color,life:0.85,max:0.85,big:big||22}); }
 function updateFloats(dt){
   for(let i=floats.length-1;i>=0;i--){
     const f = floats[i]; f.y -= 46*dt; f.life -= dt;
@@ -364,17 +421,35 @@ function updateFloats(dt){
 function drawFloats(){
   ctx.textAlign='center';
   for(const f of floats){
-    /* v7：飄字彈跳入場（easeOutBack 縮放），更有手感 */
     const sc = easeOutBack(clamp((f.max - f.life)*5, 0, 1));
     ctx.save();
     ctx.translate(f.x, f.y); ctx.scale(sc, sc);
     ctx.font='900 '+f.big+'px '+FONT;
     ctx.globalAlpha = clamp(f.life/f.max,0,1);
-    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.45)';
+    ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.5)';
     ctx.strokeText(f.text, 0, 0); ctx.fillStyle=f.color; ctx.fillText(f.text, 0, 0);
     ctx.restore();
   }
   ctx.globalAlpha = 1;
+}
+let rings = [];
+function addRing(x, y, color){ if(rings.length < 20) rings.push({x, y, t:0, color}); }
+function updateRings(dt){
+  for(let i=rings.length-1;i>=0;i--){
+    rings[i].t += dt;
+    if(rings[i].t > 0.34){ rings[i] = rings[rings.length-1]; rings.pop(); }
+  }
+}
+function drawRings(){
+  ctx.globalCompositeOperation = 'lighter';
+  for(const r of rings){
+    const k = r.t/0.34;
+    ctx.globalAlpha = (1-k)*0.6;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 4*(1-k)+1;
+    ctx.beginPath(); ctx.arc(r.x, r.y, 16 + k*54, 0, TAU); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
 }
 
 /* ===== 物品定義 ===== */
@@ -390,7 +465,7 @@ const DEFS = {
   bomb:   { img:'bomb',   kind:'bad',  score:0,  speed:1.05 },
   skunk:  { img:'skunk',  kind:'bad',  score:0,  speed:0.92 }
 };
-/* ===== 關卡定義（v4：5 關＋星星） ===== */
+/* ===== 關卡定義（5 關＋星星，數值沿用原版） ===== */
 const LEVELS = [
   { name:'蘋果樹下',   theme:'day',   time:45, target:120, spawn:1.1,  fall:1.0,  pool:['apple','apple','banana','banana','grapes'], badRate:0,    starRate:0.05, wind:0,   desc:'新手果園，只有水果' },
   { name:'炸彈出沒',   theme:'day',   time:50, target:200, spawn:0.95, fall:1.12, pool:['apple','banana','grapes','melon','berry'],  badRate:0.16, starRate:0.05, wind:0,   desc:'小心！別接到炸彈' },
@@ -401,10 +476,10 @@ const LEVELS = [
 function L(){ return LEVELS[curLevel]; }
 function starThresholds(){ const t = L().target; return [t, Math.round(t*1.4), Math.round(t*1.8)]; }
 
-/* ===== 玩家（籃子） ===== */
-const GROUND_Y = 460;
-const basket = { x:GAME_W/2, y:486, w:100, h:54, sx:1, sy:1, vx:0, wobble:0, blink:0, mouth:0, hurt:0 };
-function resetBasket(){ basket.x = GAME_W/2; basket.vx = 0; basket.sx=1; basket.sy=1; basket.wobble=0; basket.mouth=0; basket.hurt=0; }
+/* ===== 玩家（3D 籃子） ===== */
+const basket = { x:0, sx:1, sy:1, vx:0, wobble:0, blink:0, mouth:0, hurt:0 };
+function resetBasket(){ basket.x = 0; basket.vx = 0; basket.sx=1; basket.sy=1; basket.wobble=0; basket.mouth=0; basket.hurt=0; }
+function basketScreen(){ return project(basket.x, CATCH_Y, CATCH_Z) || {x:CX,y:360,s:1.8}; }
 
 /* ===== 遊戲狀態 ===== */
 let curLevel = 0, score = 0, lives = 3, combo = 0, comboTimer = 0;
@@ -413,18 +488,18 @@ let elapsed = 0, spawnTimer = 0.6;
 let shake = 0, freeze = 0, flashT = 0, worldT = 0, hintT = 0;
 let wind = 0, windTarget = 0, windTimer = 0;
 let frenzyT = 0, frenzyCooldown = 15, lastTickSec = -1;
-let wasBreather = false;                            // v5：喘息波邊緣偵測（觸發提示）
+let wasBreather = false;
+let curTheme = 'day';
 
-/* ===== v5：難度鋸齒喘息波 —— 每 13 秒一輪、開頭 2.6 秒沒有炸彈臭鼬、幸運星機率提高，
-   讓長關卡有「難段→喘息段（風景/獎勵）→更難段」的鋸齒節奏，避免玩家持續緊繃 ===== */
 const BREATHER_CYCLE = 13, BREATHER_LEN = 2.6;
 function inBreather(elapsed){
-  if(elapsed < 6) return false;                     // 與開場學習期錯開，避免重疊
+  if(elapsed < 6) return false;
   return (elapsed % BREATHER_CYCLE) < BREATHER_LEN;
 }
+const BASE_VZ = 300;
 function spawnItem(forceGood){
   const lv = L();
-  const learning = elapsed < 6;                     // 開場安全學習期：無炸彈
+  const learning = elapsed < 6;
   const breather = inBreather(elapsed);
   let key;
   const r = Math.random();
@@ -432,22 +507,23 @@ function spawnItem(forceGood){
   else if(r > 1 - (breather ? Math.min(0.24, lv.starRate*2.4) : lv.starRate)) key = 'star';
   else key = lv.pool[Math.floor(Math.random()*lv.pool.length)];
   const def = DEFS[key];
-  const diffMul = 1 + ss(elapsed, 0, lv.time)*0.3;  // 關卡內緩升
+  const diffMul = 1 + ss(elapsed, 0, lv.time)*0.3;
   entities.push({
-    def, key, x: rnd(60, GAME_W-60), y: -34,
-    vy: 150 * lv.fall * def.speed * diffMul,
+    def, key, x: rnd(-190, 190), y: SKY_Y, z: SPAWN_Z,
+    vz: BASE_VZ * lv.fall * def.speed * diffMul,
     rot: rnd(-0.3,0.3), spin: rnd(-1.6,1.6), wob: rnd(0,TAU), dead:false
   });
 }
 function currentSpawnInterval(){
   const lv = L();
   let s = lv.spawn * (elapsed < 6 ? 1.5 : 1) * lerp(1, 0.72, ss(elapsed, 0, lv.time));
-  if(inBreather(elapsed)) s *= 0.82;                // 喘息波間水果更密集，補足專注閃避時的分數缺口
+  if(inBreather(elapsed)) s *= 0.82;
   if(frenzyT > 0) s /= 3;
   return s;
 }
 function onCatch(e){
-  const bx = basket.x, by = basket.y - basket.h*0.6;
+  const bs = basketScreen();
+  const bx = bs.x, by = bs.y - 34;
   if(e.def.kind === 'good' || e.def.kind === 'star'){
     combo++; comboTimer = 1.3;
     const comboBonus = combo>=3 ? Math.min(combo-2,5)*5 : 0;
@@ -456,7 +532,7 @@ function onCatch(e){
     basket.mouth = 1;
     if(e.def.kind === 'star'){
       sfx.catchStar();
-      burst(bx, by, '#ffcf5c', 20, 260); burst(bx, by, '#fff5d6', 10, 180);
+      burst(bx, by, '#ffcf5c', 22, 280); burst(bx, by, '#fff5d6', 12, 190);
       addRing(bx, by, '#ffcf5c'); addRing(bx, by, '#fff5d6');
       floatText(bx, by-10, '+'+gained+' 幸運星！', '#ffcf5c', 26);
       basket.sx = 1.35; basket.sy = 0.65;
@@ -464,17 +540,16 @@ function onCatch(e){
     } else {
       sfx.catchGood();
       if(comboBonus > 0) sfx.combo(combo);
-      burst(bx, by, '#aee239', 10, 200);
+      burst(bx, by, '#aee239', 12, 220);
       addRing(bx, by, '#aee239');
       floatText(bx, by-10, '+'+gained + (comboBonus>0 ? ' 連擊×'+combo : ''), '#fff5d6');
       basket.sx = 1.25; basket.sy = 0.75;
     }
-    /* v5：連擊里程碑（5/10/15…）給一次「大聲」的加倍回饋，讓連擊成長感更明顯 */
     if(combo > 0 && combo % 5 === 0){
       sfx.milestone(combo);
-      burst(bx, by-6, '#ffcf5c', 26, 320); burst(bx, by-6, '#ff6cc7', 14, 260);
+      burst(bx, by-6, '#ffcf5c', 26, 340); burst(bx, by-6, '#ff6cc7', 14, 280);
       floatText(GAME_W/2, 150, combo+' 連擊大爆發！', '#ffcf5c', 30);
-      shake = Math.max(shake, 7);
+      shake = Math.max(shake, 6);
     }
   } else {
     combo = 0;
@@ -484,7 +559,7 @@ function onCatch(e){
     floatText(bx, by-10, e.key==='bomb' ? '砰！炸彈！' : '好臭呀！', '#ff6b5a', 24);
     basket.sx = 0.65; basket.sy = 1.35;
     basket.hurt = 1;
-    shake = Math.max(shake, 8);
+    shake = Math.max(shake, 7);
     freeze = Math.max(freeze, 0.1);
     flashT = 0.45;
     if(lives <= 0){
@@ -496,327 +571,301 @@ function onCatch(e){
 function onMiss(e){
   combo = 0;
   sfx.miss();
-  floatText(e.x, GAME_H-40, '漏接', '#ffffff77', 18);
+  const p = project(e.x, CATCH_Y, CATCH_Z);
+  if(p) floatText(p.x, p.y+10, '漏接', '#ffffff77', 18);
 }
 
-/* ===== 預先烘焙背景 ===== */
-const THEMES = {
-  day:  { top:'#8ec9e8', mid:'#bfe3f4', bot:'#e8f6d8', hillFar:'#9cc47c', hillNear:'#6aa04a', ground:'#527f39', trunk:'#7a5230', leaf:'#3f7a34', leaf2:'#5c9e4a', sun:true, stars:false, tint:null },
-  dusk: { top:'#4a3a7e', mid:'#b06a9e', bot:'#ffc98a', hillFar:'#7a5a88', hillNear:'#5c4a6a', ground:'#4a5c33', trunk:'#5a3c24', leaf:'#2e5c30', leaf2:'#47804a', sun:'low', stars:false, tint:'rgba(90,50,100,.14)' },
-  night:{ top:'#0a1030', mid:'#1c2a55', bot:'#2e3f6e', hillFar:'#232f4a', hillNear:'#1a2438', ground:'#24402a', trunk:'#3a2c1e', leaf:'#1c3a24', leaf2:'#2c5436', sun:'moon', stars:true, tint:'rgba(20,20,60,.2)' }
+/* ===== 天空烘焙（螢幕空間漸層＋日月 bloom＋遠丘＋地平線霧） ===== */
+const SKY = {
+  day:  { top:'#4f9fd6', mid:'#bfe6f4', fog:'#d3e9f0', floor1:'#66a447', floor2:'#4f8437', grid:'rgba(255,255,255,.16)', sun:'rgba(255,244,180,.6)', sunCore:'#fff3a0', sunPos:[160,72], sunR:30, hillFar:'#8bbf83', hillNear:'#6aa04a', stars:false, tint:null },
+  dusk: { top:'#3a2f6e', mid:'#c9749e', fog:'#eab98e', floor1:'#557a44', floor2:'#3f5c33', grid:'rgba(255,224,184,.14)', sun:'rgba(255,190,110,.6)', sunCore:'#ffcf5c', sunPos:[740,150], sunR:34, hillFar:'#6a5580', hillNear:'#4d3f5e', stars:false, tint:'rgba(90,50,100,.1)' },
+  night:{ top:'#060a26', mid:'#1b2a58', fog:'#26407a', floor1:'#213b2b', floor2:'#182c20', grid:'rgba(120,205,165,.15)', sun:'rgba(220,230,255,.42)', sunCore:'#f4f0d8', sunPos:[780,80], sunR:24, hillFar:'#1e2a45', hillNear:'#151f33', stars:true, tint:'rgba(18,18,58,.16)' }
 };
-let bakedBG = null, glowGold = null, glowRed = null;
-function makeGlow(color, r){
-  const c = document.createElement('canvas'); c.width = c.height = r*2;
-  const g = c.getContext('2d');
-  const gr = g.createRadialGradient(r,r,1, r,r,r);
-  gr.addColorStop(0,color); gr.addColorStop(1,'rgba(0,0,0,0)');
-  g.fillStyle = gr; g.fillRect(0,0,r*2,r*2);
-  return c;
-}
-glowGold = makeGlow('rgba(255,207,92,.7)', 34);
-glowRed = makeGlow('rgba(255,90,74,.55)', 30);
-function bakeBG(themeName){
-  const T = THEMES[themeName];
+const bakedSkies = {};
+let curSky = null;
+function bakeSky(theme){
+  if(bakedSkies[theme]){ curSky = bakedSkies[theme]; return; }
+  const T = SKY[theme];
   const k = Math.min(devicePixelRatio||1, 2);
   const c = document.createElement('canvas');
   c.width = GAME_W*k; c.height = GAME_H*k;
-  const g = c.getContext('2d');
-  g.scale(k,k);
-  const sky = g.createLinearGradient(0,0,0,GAME_H);
-  sky.addColorStop(0,T.top); sky.addColorStop(0.55,T.mid); sky.addColorStop(1,T.bot);
-  g.fillStyle = sky; g.fillRect(0,0,GAME_W,GAME_H);
+  const g = c.getContext('2d'); g.scale(k,k);
+  const HZ = CY + 8;
+  const sky = g.createLinearGradient(0,0,0,HZ+30);
+  sky.addColorStop(0, T.top); sky.addColorStop(1, T.mid);
+  g.fillStyle = sky; g.fillRect(0,0,GAME_W,HZ+30);
   if(T.stars){
     g.fillStyle = '#e8ecff';
-    for(let i=0;i<50;i++){ const x=(i*191)%GAME_W, y=(i*89)%260; g.globalAlpha = 0.3+((i*41)%70)/100; g.fillRect(x,y,2,2); }
+    for(let i=0;i<60;i++){ const x=(i*191)%GAME_W, y=(i*89)%(HZ-30); g.globalAlpha = 0.25+((i*41)%70)/120; g.fillRect(x,y,2,2); }
     g.globalAlpha = 1;
   }
-  /* v6 日／月 bloom：大範圍 additive 光暈（烘焙一次，主迴圈零成本） */
-  const bloomAt = (bx, by, col) => {
-    g.globalCompositeOperation = 'lighter';
-    const bg2 = g.createRadialGradient(bx, by, 16, bx, by, 130);
-    bg2.addColorStop(0, col); bg2.addColorStop(1, 'rgba(255,240,170,0)');
-    g.fillStyle = bg2; g.beginPath(); g.arc(bx, by, 130, 0, TAU); g.fill();
-    g.globalCompositeOperation = 'source-over';
-  };
-  if(T.sun === true){ bloomAt(150,70,'rgba(255,244,180,.5)');
-    g.fillStyle='#fff3a0'; g.beginPath(); g.arc(150,70,30,0,TAU); g.fill();
-    g.globalAlpha=0.3; g.beginPath(); g.arc(150,70,46,0,TAU); g.fill(); g.globalAlpha=1; }
-  else if(T.sun === 'low'){ bloomAt(760,180,'rgba(255,190,110,.55)');
-    g.fillStyle='#ffcf5c'; g.beginPath(); g.arc(760,180,34,0,TAU); g.fill();
-    g.globalAlpha=0.3; g.beginPath(); g.arc(760,180,52,0,TAU); g.fill(); g.globalAlpha=1; }
-  else if(T.sun === 'moon'){ bloomAt(780,80,'rgba(220,230,255,.4)');
-    g.fillStyle='#f4f0d8'; g.beginPath(); g.arc(780,80,24,0,TAU); g.fill();
-    g.fillStyle = T.top; g.beginPath(); g.arc(789,73,19,0,TAU); g.fill(); }
-  /* 遠丘（視差遠層） */
+  /* 日/月 bloom（additive，烘焙一次） */
+  const [sx,sy] = T.sunPos;
+  g.globalCompositeOperation = 'lighter';
+  const bg = g.createRadialGradient(sx,sy,10, sx,sy,150);
+  bg.addColorStop(0, T.sun); bg.addColorStop(1, 'rgba(255,240,170,0)');
+  g.fillStyle = bg; g.beginPath(); g.arc(sx,sy,150,0,TAU); g.fill();
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = T.sunCore; g.beginPath(); g.arc(sx,sy,T.sunR,0,TAU); g.fill();
+  if(theme==='night'){ g.fillStyle = T.top; g.beginPath(); g.arc(sx+9,sy-7,T.sunR*0.8,0,TAU); g.fill(); }
+  /* 遠丘（地平線剪影） */
   g.fillStyle = T.hillFar;
-  g.beginPath(); g.moveTo(0,300);
-  for(let x=0;x<=GAME_W;x+=40) g.lineTo(x, 286 - Math.sin(x*0.008)*30 - Math.cos(x*0.02)*10);
-  g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
-  /* v7 大氣透視：遠丘上緣兩層薄霧，拉開景深 */
-  g.globalAlpha = 0.25; g.fillStyle = T.mid; g.fillRect(0, 262, GAME_W, 58);
-  g.globalAlpha = 0.12; g.fillRect(0, 320, GAME_W, 40);
-  g.globalAlpha = 1;
-  /* 近丘 */
-  g.fillStyle = T.hillNear;
-  g.beginPath(); g.moveTo(0,360);
-  for(let x=0;x<=GAME_W;x+=40) g.lineTo(x, 350 - Math.cos(x*0.01+2)*24);
-  g.lineTo(GAME_W,GAME_H); g.lineTo(0,GAME_H); g.closePath(); g.fill();
-  /* 果樹兩排（中景） */
-  for(const [tx,tscale] of [[80,1.15],[240,0.9],[420,1.05],[600,0.92],[760,1.1],[910,0.88]]){
-    const ty = 400;
-    g.fillStyle = T.trunk;
-    g.fillRect(tx-8*tscale, ty-52*tscale, 16*tscale, 60*tscale);
-    /* v7 樹幹側影：右緣加深立體感 */
-    g.fillStyle = 'rgba(0,0,0,.22)';
-    g.fillRect(tx+2*tscale, ty-52*tscale, 6*tscale, 60*tscale);
-    g.fillStyle = T.leaf;
-    g.beginPath(); g.arc(tx, ty-74*tscale, 40*tscale, 0, TAU); g.fill();
-    g.beginPath(); g.arc(tx-30*tscale, ty-56*tscale, 28*tscale, 0, TAU); g.fill();
-    g.beginPath(); g.arc(tx+30*tscale, ty-56*tscale, 28*tscale, 0, TAU); g.fill();
-    g.fillStyle = T.leaf2;
-    g.beginPath(); g.arc(tx-12*tscale, ty-84*tscale, 20*tscale, 0, TAU); g.fill();
-    g.beginPath(); g.arc(tx+18*tscale, ty-70*tscale, 16*tscale, 0, TAU); g.fill();
-    /* v7 樹冠受光/陰影分層：底部陰影弧＋左上高光點 */
-    g.globalAlpha = 0.18; g.fillStyle = '#000';
-    g.beginPath(); g.arc(tx+6*tscale, ty-60*tscale, 34*tscale, 0.12*Math.PI, 0.88*Math.PI); g.fill();
-    g.globalAlpha = 0.15; g.fillStyle = '#fff';
-    g.beginPath(); g.arc(tx-16*tscale, ty-88*tscale, 13*tscale, 0, TAU); g.fill();
-    g.globalAlpha = 1;
-    /* 樹上小果子 */
-    g.fillStyle = themeName==='night' ? '#c8a03a' : '#e84a3a';
-    for(let f=0;f<5;f++){
-      const fa = f*1.3+tx;
-      g.beginPath(); g.arc(tx + Math.cos(fa)*26*tscale, ty-70*tscale + Math.sin(fa)*18*tscale, 4*tscale, 0, TAU); g.fill();
-    }
-  }
-  /* 地面 */
-  const gg = g.createLinearGradient(0,GROUND_Y,0,GAME_H);
-  gg.addColorStop(0, T.ground); gg.addColorStop(1, '#1e3320');
-  g.fillStyle = gg; g.fillRect(0, GROUND_Y, GAME_W, GAME_H-GROUND_Y);
-  g.fillStyle = 'rgba(0,0,0,.14)'; g.fillRect(0, GROUND_Y, GAME_W, 6);
-  g.strokeStyle = 'rgba(255,255,255,.14)'; g.lineWidth = 1.4;
-  for(let i=0;i<36;i++){
-    const x=(i*167)%GAME_W, y=GROUND_Y+14+(i*53)%58;
-    g.beginPath(); g.moveTo(x,y); g.lineTo(x-3,y-7); g.moveTo(x,y); g.lineTo(x+3,y-8); g.stroke();
-  }
-  /* v7 地面光斑：柔和橢圓亮斑增加材質層次 */
-  g.globalAlpha = 0.07; g.fillStyle = '#fff';
-  for(let i=0;i<8;i++){
-    const x=(i*233)%GAME_W, y=GROUND_Y+26+(i*37)%42;
-    g.beginPath(); g.ellipse(x, y, 46, 9, 0, 0, TAU); g.fill();
-  }
-  g.globalAlpha = 1;
+  g.beginPath(); g.moveTo(0,HZ);
+  for(let x=0;x<=GAME_W;x+=36) g.lineTo(x, HZ-18 - Math.sin(x*0.009)*20 - Math.cos(x*0.02)*8);
+  g.lineTo(GAME_W,HZ+40); g.lineTo(0,HZ+40); g.closePath(); g.fill();
+  /* 地平線霧帶 */
+  const fogG = g.createLinearGradient(0,HZ-40,0,HZ+20);
+  fogG.addColorStop(0,'rgba(0,0,0,0)'); fogG.addColorStop(1, T.fog);
+  g.fillStyle = fogG; g.fillRect(0, HZ-40, GAME_W, 60);
   if(T.tint){ g.fillStyle = T.tint; g.fillRect(0,0,GAME_W,GAME_H); }
-  bakedBG = c;
-  /* v6 vignette 後製（烘焙一次、低解析放大） */
-  if(!vigCanvas){
-    vigCanvas = document.createElement('canvas');
-    vigCanvas.width = 240; vigCanvas.height = 135;
-    const vc = vigCanvas.getContext('2d');
-    const vg = vc.createRadialGradient(120, 62, 78, 120, 68, 165);
-    vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(10,20,8,.30)');
-    vc.fillStyle = vg; vc.fillRect(0, 0, 240, 135);
-  }
+  bakedSkies[theme] = c; curSky = c;
 }
+/* vignette（烘焙一次） */
 let vigCanvas = null;
-/* v6 環境層：視差雲（晝/暮）、飄葉隨風、流星（夜）——全程序化零配置 */
-function drawSkyLayer(){
-  const th = L().theme;
-  if(th !== 'night'){
-    ctx.fillStyle = th==='day' ? 'rgba(255,255,255,.75)' : 'rgba(255,225,235,.4)';
-    for(const [sp, y0, sc] of [[8, 46, 0.7], [16, 96, 1]]){
-      for(let i=0;i<3;i++){
-        const cx = ((i*360 + worldT*sp) % (GAME_W+240)) - 120;
-        const cy = y0 + (i*37)%40;
-        ctx.beginPath();
-        ctx.ellipse(cx, cy, 54*sc, 15*sc, 0, 0, TAU);
-        ctx.ellipse(cx+36*sc, cy-8, 34*sc, 12*sc, 0, 0, TAU);
-        ctx.fill();
-      }
-    }
-  } else {
-    const met = worldT % 8;
-    if(met < 1.1){
-      const mk = met/1.1;
-      ctx.globalAlpha = Math.sin(mk*Math.PI)*0.8;
-      ctx.strokeStyle = '#eaf2ff'; ctx.lineWidth = 2; ctx.lineCap='round';
-      const mx = GAME_W*0.3 + mk*300, my = 40 + mk*90;
-      ctx.beginPath(); ctx.moveTo(mx, my); ctx.lineTo(mx-46, my-18); ctx.stroke();
-      ctx.globalAlpha = 1;
-    }
-  }
-  /* 飄葉：隨風向偏移（第4關風關卡會明顯被吹） */
-  for(let i=0;i<9;i++){
-    const sp = 26 + (i%4)*9;
-    const x = ((i*211) + worldT*(sp + wind*0.7) % (GAME_W+40) + (GAME_W+40)*8) % (GAME_W+40) - 20;
-    const y = ((i*127) + worldT*(30+(i%3)*12)) % (GAME_H-60) + 20;
-    ctx.save();
-    ctx.translate(x, y);
-    ctx.rotate(worldT*2 + i);
-    ctx.fillStyle = L().theme==='night' ? 'rgba(120,160,110,.4)' : 'rgba(110,170,80,.55)';
-    ctx.beginPath(); ctx.ellipse(0, 0, 5, 2.6, 0, 0, TAU); ctx.fill();
-    ctx.restore();
-  }
+function makeVignette(){
+  vigCanvas = document.createElement('canvas');
+  vigCanvas.width = 240; vigCanvas.height = 135;
+  const vc = vigCanvas.getContext('2d');
+  const vg = vc.createRadialGradient(120, 60, 74, 120, 70, 168);
+  vg.addColorStop(0, 'rgba(0,0,0,0)'); vg.addColorStop(1, 'rgba(6,12,16,.36)');
+  vc.fillStyle = vg; vc.fillRect(0, 0, 240, 135);
 }
-/* v6 接取衝擊波光圈 */
-let rings = [];
-function addRing(x, y, color){ if(rings.length < 20) rings.push({x, y, t:0, color}); }
-function updateRings(dt){
-  for(let i=rings.length-1;i>=0;i--){
-    rings[i].t += dt;
-    if(rings[i].t > 0.32){ rings[i] = rings[rings.length-1]; rings.pop(); }
+makeVignette();
+
+/* ===== 地板（透視網格＋霧化） ===== */
+function drawFloor(){
+  const T = SKY[curTheme];
+  const nFL=project(-FLOORW,0,CATCH_Z-140), nFR=project(FLOORW,0,CATCH_Z-140),
+        fFL=project(-FLOORW,0,SPAWN_Z+220), fFR=project(FLOORW,0,SPAWN_Z+220);
+  quad(nFL,nFR,fFR,fFL, T.floor1);
+  /* 中央跑道稍亮，暗示接取軸線 */
+  const rnFL=project(-LANE-30,0,CATCH_Z-140), rnFR=project(LANE+30,0,CATCH_Z-140),
+        rfFL=project(-LANE-30,0,SPAWN_Z+80), rfFR=project(LANE+30,0,SPAWN_Z+80);
+  ctx.globalAlpha = 0.35; quad(rnFL,rnFR,rfFR,rfFL, T.floor2); ctx.globalAlpha = 1;
+  /* 橫向格線（近→遠淡出） */
+  ctx.strokeStyle = T.grid; ctx.lineCap='round';
+  for(let z=CATCH_Z; z<=SPAWN_Z; z+=70){
+    const a=project(-FLOORW,0,z), b=project(FLOORW,0,z);
+    if(!a||!b) continue;
+    ctx.globalAlpha = clamp(1 - (z-CATCH_Z)/(SPAWN_Z-CATCH_Z), 0.06, 0.7);
+    ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
   }
-}
-function drawRings(){
-  for(const r of rings){
-    const k = r.t/0.32;
-    ctx.globalAlpha = (1-k)*0.7;
-    ctx.strokeStyle = r.color;
-    ctx.lineWidth = 3.5*(1-k)+1;
-    ctx.beginPath(); ctx.arc(r.x, r.y, 16 + k*46, 0, TAU); ctx.stroke();
+  /* 縱向格線 */
+  for(let x=-FLOORW;x<=FLOORW;x+=64){
+    const a=project(x,0,CATCH_Z), b=project(x,0,SPAWN_Z);
+    if(!a||!b) continue;
+    ctx.globalAlpha = 0.28;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
   }
   ctx.globalAlpha = 1;
 }
 
-/* ===== 繪圖 ===== */
+/* ===== 夜間螢火蟲（3D 世界點，billboard） ===== */
+let motes = [];
+function initMotes(n){ motes = []; for(let i=0;i<n;i++) motes.push({x:rnd(-260,260), y:rnd(40,300), z:rnd(120,700), p:rnd(0,TAU), v:rnd(6,16)}); }
+function drawMotes(){
+  if(curTheme !== 'night') return;
+  ctx.globalCompositeOperation = 'lighter';
+  for(const m of motes){
+    const p = project(m.x + Math.sin(worldT*m.v*0.1+m.p)*20, m.y + Math.cos(worldT*0.6+m.p)*12, m.z);
+    if(!p) continue;
+    const a = 0.3 + 0.7*Math.abs(Math.sin(worldT*1.4 + m.p));
+    ctx.globalAlpha = a*0.8;
+    ctx.fillStyle = '#ffe98a';
+    ctx.beginPath(); ctx.arc(p.x, p.y, 2.4*p.s, 0, TAU); ctx.fill();
+  }
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+}
+
+/* ===== 風（吹葉視覺） ===== */
+function drawWind(){
+  if(Math.abs(wind) < 12) return;
+  ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 2; ctx.lineCap='round';
+  const d = Math.sign(wind);
+  for(let i=0;i<5;i++){
+    const y = 96 + i*54 + Math.sin(worldT*3+i)*10;
+    const x = ((worldT*Math.abs(wind)*3 + i*220) % (GAME_W+160)) - 80;
+    const px = d>0 ? x : GAME_W-x;
+    ctx.beginPath(); ctx.moveTo(px, y);
+    ctx.quadraticCurveTo(px+30*d, y-6, px+58*d, y); ctx.stroke();
+  }
+}
+
+/* ===== 3D 籃子（逐面受光 + 接地陰影 + 表情） ===== */
+const BPAL = { rim:'#eabd7f', front:'#c98a4f', side:'#9a6438', sideDark:'#7c4b2e', back:'#5c3a22', inner:'#3f2a19', edge:'rgba(60,32,8,.55)' };
+function drawBasketShadow(){
+  const cxz = project(basket.x, 0, CATCH_Z);
+  if(!cxz) return;
+  const rx = 74*cxz.s*basket.sx, ry = rx*0.34;
+  ctx.fillStyle = 'rgba(0,0,0,.32)';
+  ctx.beginPath(); ctx.ellipse(cxz.x, cxz.y, rx, ry, 0, 0, TAU); ctx.fill();
+}
+function drawBasket3D(){
+  const bx = basket.x;
+  const hw = 58*basket.sx, hd = 40, h = 62*basket.sy;
+  const cn = (dx,dy,dz)=> project(bx+dx, dy, CATCH_Z+dz);
+  const tFL=cn(-hw,h,-hd), tFR=cn(hw,h,-hd), tBL=cn(-hw,h,hd), tBR=cn(hw,h,hd);
+  const bFL=cn(-hw,0,-hd), bFR=cn(hw,0,-hd), bBL=cn(-hw,0,hd), bBR=cn(hw,0,hd);
+  /* 內裡（後壁＋底，最暗，先畫） */
+  quad(tBL,tBR,bBR,bBL, BPAL.back);
+  quad(bFL,bFR,bBR,bBL, BPAL.inner);
+  /* 可見外側壁（依籃子位置選朝相機那一側） */
+  if(bx > 8){ quad(tFL,tBL,bBL,bFL, BPAL.sideDark); quadStroke(tFL,tBL,bBL,bFL,BPAL.edge,1); }
+  else if(bx < -8){ quad(tFR,tBR,bBR,bFR, BPAL.side); quadStroke(tFR,tBR,bBR,bFR,BPAL.edge,1); }
+  /* 外前壁（中亮）＋ AO 暗帶 ＋ 編織線 */
+  if(quad(tFL,tFR,bFR,bFL, BPAL.front)){
+    const mFL={x:tFL.x+(bFL.x-tFL.x)*0.5, y:tFL.y+(bFL.y-tFL.y)*0.5};
+    const mFR={x:tFR.x+(bFR.x-tFR.x)*0.5, y:tFR.y+(bFR.y-tFR.y)*0.5};
+    quad(mFL,mFR,bFR,bFL,'rgba(20,10,2,0.26)');
+    ctx.strokeStyle='rgba(70,40,12,.4)'; ctx.lineWidth=1.4;
+    for(let i=1;i<=3;i++){
+      const t=i/4;
+      const a={x:tFL.x+(bFL.x-tFL.x)*t, y:tFL.y+(bFL.y-tFL.y)*t};
+      const b={x:tFR.x+(bFR.x-tFR.x)*t, y:tFR.y+(bFR.y-tFR.y)*t};
+      ctx.beginPath(); ctx.moveTo(a.x,a.y); ctx.lineTo(b.x,b.y); ctx.stroke();
+    }
+    quadStroke(tFL,tFR,bFR,bFL,BPAL.edge,1.4);
+  }
+  /* 頂鑲邊（最亮，環狀高光） */
+  quadStroke(tFL,tFR,tBR,tBL, BPAL.rim, Math.max(3, 7*(tFR.s||1)/1.8));
+  quadStroke(tFL,tFR,tBR,tBL, 'rgba(255,244,214,.5)', Math.max(1.5, 3*(tFR.s||1)/1.8));
+  /* 表情（畫在前壁上） */
+  drawBasketFace(tFL,tFR,bFL,bFR);
+}
+function drawBasketFace(tFL,tFR,bFL,bFR){
+  if(!tFL||!tFR||!bFL||!bFR) return;
+  const ftc={x:(tFL.x+tFR.x)/2, y:(tFL.y+tFR.y)/2};
+  const fbc={x:(bFL.x+bFR.x)/2, y:(bFL.y+bFR.y)/2};
+  const fw=Math.hypot(tFR.x-tFL.x,tFR.y-tFL.y);
+  const fc={x:ftc.x+(fbc.x-ftc.x)*0.42, y:ftc.y+(fbc.y-ftc.y)*0.42};
+  const u = fw*0.01;
+  const eyeDX = fw*0.2, eyeY = fc.y - fw*0.02;
+  const hurt = basket.hurt > 0.3;
+  const blink = !hurt && basket.blink < 0.1;
+  ctx.save();
+  ctx.translate(basket.wobble*fw*0.02, 0);
+  for(const side of [-1,1]){
+    const ex = fc.x + side*eyeDX;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex, eyeY, u*7.4, 0, TAU); ctx.fill();
+    ctx.strokeStyle='rgba(40,30,20,.4)'; ctx.lineWidth=u*1.4; ctx.stroke();
+    if(hurt){
+      ctx.strokeStyle='#c23b2e'; ctx.lineWidth=u*2.6; ctx.lineCap='round';
+      ctx.beginPath();
+      ctx.moveTo(ex-u*3.6, eyeY-u*3.6); ctx.lineTo(ex+u*3.6, eyeY+u*3.6);
+      ctx.moveTo(ex+u*3.6, eyeY-u*3.6); ctx.lineTo(ex-u*3.6, eyeY+u*3.6);
+      ctx.stroke();
+    } else if(blink){
+      ctx.strokeStyle='#2a2016'; ctx.lineWidth=u*2;
+      ctx.beginPath(); ctx.moveTo(ex-u*3.4, eyeY); ctx.lineTo(ex+u*3.4, eyeY); ctx.stroke();
+    } else {
+      ctx.fillStyle='#2a2016';
+      ctx.beginPath(); ctx.arc(ex+basket.wobble*u*3, eyeY+u, u*3.6, 0, TAU); ctx.fill();
+      ctx.fillStyle='#fff'; ctx.beginPath(); ctx.arc(ex+basket.wobble*u*3+u*1.2, eyeY-u*0.4, u*1.2, 0, TAU); ctx.fill();
+    }
+  }
+  ctx.strokeStyle='#2a2016'; ctx.lineWidth=u*2.2; ctx.lineCap='round';
+  ctx.beginPath();
+  const my = fc.y + fw*0.1;
+  if(hurt){ ctx.fillStyle='#5c2f22'; ctx.arc(fc.x, my, u*5, 0, TAU); ctx.fill(); }
+  else if(basket.mouth > 0.3){ ctx.fillStyle='#5c2f22'; ctx.arc(fc.x, my, u*(5+basket.mouth*3), 0, Math.PI); ctx.fill(); ctx.stroke(); }
+  else { ctx.arc(fc.x, my, u*8, 0.15*Math.PI, 0.85*Math.PI); ctx.stroke(); }
+  ctx.restore();
+}
+
+/* ===== 3D 水果（billboard SVG + 透視縮放 + 接地陰影 + 霧化 + 受光高光） ===== */
+function fruitShadow(e){
+  const p = project(e.x, 0, e.z);
+  if(!p) return;
+  const base = (e.key==='melon'||e.key==='pine') ? 30 : 26;
+  const heightFade = clamp(1 - (e.y-CATCH_Y)/300, 0.25, 1);
+  const rx = base*p.s*(0.7+0.5*heightFade), ry = rx*0.36;
+  ctx.globalAlpha = 0.3*heightFade;
+  ctx.fillStyle = '#000';
+  ctx.beginPath(); ctx.ellipse(p.x, p.y, rx, ry, 0, 0, TAU); ctx.fill();
+  ctx.globalAlpha = 1;
+}
+function drawFruit3D(e){
+  const p = project(e.x, e.y, e.z);
+  if(!p) return;
+  const img = IMG[e.def.img];
+  const base = (e.key==='melon'||e.key==='pine') ? 50 : 44;
+  const size = base * p.s;
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  if(e.def.kind === 'star'){ ctx.globalCompositeOperation='lighter'; ctx.drawImage(glowGold, -size*0.9, -size*0.9, size*1.8, size*1.8); ctx.globalCompositeOperation='source-over'; }
+  else if(e.def.kind === 'bad'){ ctx.globalCompositeOperation='lighter'; ctx.drawImage(glowRed, -size*0.85, -size*0.85, size*1.7, size*1.7); ctx.globalCompositeOperation='source-over'; }
+  ctx.rotate(e.rot);
+  if(img.complete && img.naturalWidth) ctx.drawImage(img, -size/2, -size/2, size, size);
+  ctx.restore();
+  /* 左上受光高光（additive，讓球體有立體感） */
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.globalAlpha = 0.5;
+  const hr = size*0.5;
+  ctx.drawImage(glowSoft, p.x - size*0.24 - hr*0.5, p.y - size*0.26 - hr*0.5, hr, hr);
+  ctx.restore();
+  ctx.globalCompositeOperation = 'source-over'; ctx.globalAlpha = 1;
+  /* 遠方霧化 */
+  const fog = clamp((e.z - 320)/600, 0, 1) * 0.55;
+  if(fog > 0.02){
+    const T = SKY[curTheme];
+    ctx.globalAlpha = fog; ctx.fillStyle = T.fog;
+    ctx.beginPath(); ctx.arc(p.x, p.y, size*0.52, 0, TAU); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+/* ===== 場景繪製 ===== */
+function drawBackdrop(){
+  if(curSky) ctx.drawImage(curSky, 0, 0, GAME_W, GAME_H);
+  drawFloor();
+  drawMotes();
+}
+function drawScene(showFruits){
+  drawBackdrop();
+  drawWind();
+  /* 接地陰影（全部先畫在地板上） */
+  if(showFruits){ for(const e of entities) fruitShadow(e); }
+  drawBasketShadow();
+  ctx.save();
+  ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
+  if(showFruits){
+    const sorted = entities.slice().sort((a,b)=> b.z - a.z);
+    for(const e of sorted) drawFruit3D(e);
+  }
+  drawBasket3D();
+  drawRings();
+  drawParts();
+  ctx.restore();
+  if(vigCanvas) ctx.drawImage(vigCanvas, 0, 0, GAME_W, GAME_H);
+  drawFloats();
+}
+
+/* ===== HUD（玻璃質感） ===== */
+function glassPanel(x,y,w,h,r){
+  ctx.save();
+  const g = ctx.createLinearGradient(0,y,0,y+h);
+  g.addColorStop(0,'rgba(30,44,60,.55)'); g.addColorStop(1,'rgba(12,20,30,.62)');
+  ctx.fillStyle = g; rrp(x,y,w,h,r); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.22)'; ctx.lineWidth=1.4; rrp(x,y,w,h,r); ctx.stroke();
+  ctx.save(); rrp(x,y,w,h,r); ctx.clip();
+  ctx.fillStyle='rgba(255,255,255,.12)'; rrp(x+2,y+2,w-4,h*0.4,r*0.7); ctx.fill();
+  ctx.restore();
+  ctx.restore();
+}
 function rrp(x,y,w,h,r){
   ctx.beginPath(); ctx.moveTo(x+r,y);
   ctx.arcTo(x+w,y,x+w,y+h,r); ctx.arcTo(x+w,y+h,x,y+h,r);
   ctx.arcTo(x,y+h,x,y,r); ctx.arcTo(x,y,x+w,y,r); ctx.closePath();
 }
-/* v5.1：角色精細化——籃身（輪廓＋漸層陰影＋高光點＋環境遮蔽）離屏預烘焙成 sprite，
-   每幀只 drawImage 貼圖；手臂／表情等動態部件才即時重繪，避免每幀重算複雜路徑拖慢效能 */
-const BSPR_W = 148, BSPR_H = 84, BSPR_OY = 30;
-let basketSprite = null;
-function bakeBasketSprite(){
-  const k = Math.min(devicePixelRatio||1, 2);
-  const c = document.createElement('canvas');
-  c.width = BSPR_W*k; c.height = BSPR_H*k;
-  const g = c.getContext('2d');
-  g.scale(k,k);
-  g.translate(BSPR_W/2, BSPR_OY);
-  const bw = basket.w, bh = basket.h*0.64;
-  const bodyPath = () => {
-    g.beginPath();
-    g.moveTo(-bw/2, -bh/2); g.lineTo(bw/2, -bh/2);
-    g.lineTo(bw*0.42, bh/2); g.lineTo(-bw*0.42, bh/2);
-    g.closePath();
-  };
-  /* 地面陰影 */
-  g.fillStyle = 'rgba(0,0,0,.25)';
-  g.beginPath(); g.ellipse(0, basket.h*0.55, bw*0.52, 8, 0, 0, TAU); g.fill();
-  /* 籃身主體：受光面（左上偏亮）→背光面（右下偏暗）漸層 */
-  const grad = g.createLinearGradient(-bw*0.32,-bh/2, bw*0.32,bh/2);
-  grad.addColorStop(0,'#e2a765'); grad.addColorStop(0.5,'#c98a4f'); grad.addColorStop(1,'#7c4b2e');
-  g.fillStyle = grad; bodyPath(); g.fill();
-  g.strokeStyle = 'rgba(60,32,8,.55)'; g.lineWidth=3; g.stroke();
-  /* 編織紋 */
-  g.strokeStyle = 'rgba(70,40,10,.35)'; g.lineWidth=1.6;
-  for(let i=-2;i<=2;i++){
-    g.beginPath(); g.moveTo(i*bw*0.16, -bh/2+2); g.lineTo(i*bw*0.13, bh/2-2); g.stroke();
-  }
-  g.beginPath(); g.moveTo(-bw*0.46, -bh*0.12); g.lineTo(bw*0.46, -bh*0.12); g.stroke();
-  g.beginPath(); g.moveTo(-bw*0.44, bh*0.2); g.lineTo(bw*0.44, bh*0.2); g.stroke();
-  /* 高光點（左上柔和光澤）＋環境遮蔽（右下加深立體感），皆裁切在籃身輪廓內 */
-  g.save(); bodyPath(); g.clip();
-  const hi = g.createRadialGradient(-bw*0.2,-bh*0.34,1, -bw*0.2,-bh*0.34, bw*0.36);
-  hi.addColorStop(0,'rgba(255,244,214,.55)'); hi.addColorStop(1,'rgba(255,244,214,0)');
-  g.fillStyle = hi; g.fillRect(-bw/2,-bh/2,bw,bh);
-  const ao = g.createRadialGradient(bw*0.32,bh*0.32,1, bw*0.32,bh*0.32, bw*0.55);
-  ao.addColorStop(0,'rgba(28,14,4,.32)'); ao.addColorStop(1,'rgba(28,14,4,0)');
-  g.fillStyle = ao; g.fillRect(-bw/2,-bh/2,bw,bh);
-  g.restore();
-  /* 籃口＋口緣高光 */
-  g.fillStyle = '#e8b878';
-  g.beginPath(); g.ellipse(0, -bh/2, bw/2, 9, 0, 0, TAU); g.fill();
-  g.strokeStyle = 'rgba(70,40,10,.5)'; g.lineWidth=2.4; g.stroke();
-  g.fillStyle = 'rgba(255,255,255,.4)';
-  g.beginPath(); g.ellipse(-bw*0.14, -bh/2-1.6, bw*0.2, 2.6, 0, 0, TAU); g.fill();
-  basketSprite = c;
-}
-bakeBasketSprite();
-function drawBasket(x, y, sx, sy, wobble){
-  wobble = wobble || 0;
-  /* 移動速度換算成彈跳循環：走位時肢體有起伏，純視覺位移不影響碰撞判定 */
-  const moveAmt = clamp(Math.abs(basket.vx)/460, 0, 1);
-  const bounceY = Math.sin(worldT*11) * moveAmt * 3;
-  ctx.save();
-  ctx.translate(x, y + basket.h*0.5 - bounceY);
-  ctx.scale(sx, sy);
-  ctx.rotate(wobble*0.12);
-  if(basketSprite) ctx.drawImage(basketSprite, -BSPR_W/2, -BSPR_OY, BSPR_W, BSPR_H);
-  const bw = basket.w, bh = basket.h*0.64;
-  /* 小手臂：接到時舉起／移動時輕微擺動 */
-  const arm = basket.mouth;
-  for(const side of [-1,1]){
-    ctx.save();
-    ctx.translate(side*bw*0.5, -bh*0.1);
-    ctx.rotate(side*(0.5 - arm*1.1) + Math.sin(worldT*7 + side*2.4)*0.06*moveAmt);
-    ctx.strokeStyle = '#8c5a3c'; ctx.lineWidth = 5; ctx.lineCap='round';
-    ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(side*14, -10); ctx.stroke();
-    ctx.fillStyle = '#e8b878'; ctx.beginPath(); ctx.arc(side*15, -11, 4.4, 0, TAU); ctx.fill();
-    ctx.restore();
-  }
-  /* 臉：平常眨眼／接到開心／受擊驚呼——三態表情 */
-  const eyeY = -bh/2 - 3;
-  const hurt = basket.hurt > 0.3;
-  const blink = !hurt && basket.blink < 0.1;
-  for(const side of [-1,1]){
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(side*15, eyeY, 7.4, 0, TAU); ctx.fill();
-    ctx.strokeStyle = 'rgba(40,30,20,.4)'; ctx.lineWidth=1.4; ctx.stroke();
-    if(hurt){
-      ctx.strokeStyle = '#c23b2e'; ctx.lineWidth = 2.6; ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.moveTo(side*15-3.6, eyeY-3.6); ctx.lineTo(side*15+3.6, eyeY+3.6);
-      ctx.moveTo(side*15+3.6, eyeY-3.6); ctx.lineTo(side*15-3.6, eyeY+3.6);
-      ctx.stroke();
-    } else if(blink){
-      ctx.strokeStyle = '#2a2016'; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(side*15-3.4, eyeY); ctx.lineTo(side*15+3.4, eyeY); ctx.stroke();
-    } else {
-      ctx.fillStyle = '#2a2016';
-      ctx.beginPath(); ctx.arc(side*15 + wobble*3.4, eyeY+1, 3.8, 0, TAU); ctx.fill();
-      ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(side*15 + wobble*3.4+1.2, eyeY-0.4, 1.2, 0, TAU); ctx.fill();
-    }
-  }
-  ctx.strokeStyle = '#2a2016'; ctx.lineWidth = 2.2; ctx.lineCap='round';
-  ctx.beginPath();
-  if(hurt){
-    ctx.fillStyle = '#5c2f22';
-    ctx.arc(0, eyeY+8, 5.2, 0, TAU); ctx.fill();
-  } else if(basket.mouth > 0.3){
-    ctx.fillStyle = '#5c2f22';
-    ctx.arc(0, eyeY+7, 5+basket.mouth*3, 0, Math.PI); ctx.fill();
-  } else {
-    ctx.arc(0, eyeY+6, 8, 0.15*Math.PI, 0.85*Math.PI);
-  }
-  ctx.stroke();
-  ctx.restore();
-}
-function drawItem(e){
-  const img = IMG[e.def.img];
-  const size = e.key==='melon' || e.key==='pine' ? 52 : 44;
-  /* 地面預測陰影（公平輔助） */
-  ctx.fillStyle = 'rgba(0,0,0,.18)';
-  const shScale = clamp(1 - (GROUND_Y - e.y)/GROUND_Y, 0.25, 1);
-  ctx.beginPath(); ctx.ellipse(e.x, GROUND_Y+6, 16*shScale+6, 4.4*shScale+1.5, 0, 0, TAU); ctx.fill();
-  ctx.save();
-  ctx.translate(e.x, e.y + Math.sin(e.wob)*3);
-  if(e.def.kind === 'star') ctx.drawImage(glowGold, -34, -34);
-  else if(e.def.kind === 'bad') ctx.drawImage(glowRed, -30, -30);
-  ctx.rotate(e.rot);
-  if(img.complete && img.naturalWidth) ctx.drawImage(img, -size/2, -size/2, size, size);
-  ctx.restore();
-}
 function drawHeart(x,y,s,fill){
   ctx.save(); ctx.translate(x,y); ctx.scale(s,s);
-  ctx.beginPath();
-  ctx.moveTo(0,3);
+  ctx.beginPath(); ctx.moveTo(0,3);
   ctx.bezierCurveTo(-8,-6,-2,-11,0,-6);
-  ctx.bezierCurveTo(2,-11,8,-6,0,3);
-  ctx.closePath();
+  ctx.bezierCurveTo(2,-11,8,-6,0,3); ctx.closePath();
   ctx.fillStyle = fill; ctx.fill();
   ctx.lineWidth = 1.4; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.stroke();
   ctx.restore();
@@ -829,31 +878,26 @@ function drawStarShape(x,y,r,fill,rot){
     const a = -Math.PI/2 + i*Math.PI/5;
     ctx.lineTo(Math.cos(a)*rr, Math.sin(a)*rr);
   }
-  ctx.closePath();
-  ctx.fillStyle = fill; ctx.fill();
+  ctx.closePath(); ctx.fillStyle = fill; ctx.fill();
   ctx.lineWidth = r*0.14; ctx.strokeStyle = 'rgba(90,60,0,.5)'; ctx.stroke();
   ctx.restore();
 }
 function drawButton(b, hot){
-  /* v7 按鈕質感：落影＋頂部光澤＋高亮發光描邊 */
   ctx.save();
   const g = ctx.createLinearGradient(0, b.y, 0, b.y+b.h);
-  if(b.disabled){ g.addColorStop(0,'rgba(70,80,75,.85)'); g.addColorStop(1,'rgba(40,48,44,.85)'); }
+  if(b.disabled){ g.addColorStop(0,'rgba(70,80,75,.7)'); g.addColorStop(1,'rgba(40,48,44,.7)'); }
   else if(b.gold){ g.addColorStop(0,'#ffcf5c'); g.addColorStop(1,'#ff7e3d'); }
-  else { g.addColorStop(0,'rgba(110,170,80,.95)'); g.addColorStop(1,'rgba(46,86,44,.95)'); }
+  else { g.addColorStop(0,'rgba(70,150,210,.92)'); g.addColorStop(1,'rgba(36,74,120,.92)'); }
   if(!b.disabled){ ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4; }
-  ctx.fillStyle = g;
-  rrp(b.x, b.y, b.w, b.h, 14); ctx.fill();
+  ctx.fillStyle = g; rrp(b.x, b.y, b.w, b.h, 14); ctx.fill();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
-  /* 頂部光澤帶 */
-  ctx.save();
-  rrp(b.x, b.y, b.w, b.h, 14); ctx.clip();
-  ctx.fillStyle = b.disabled ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.22)';
+  ctx.save(); rrp(b.x, b.y, b.w, b.h, 14); ctx.clip();
+  ctx.fillStyle = b.disabled ? 'rgba(255,255,255,.07)' : 'rgba(255,255,255,.24)';
   rrp(b.x+3, b.y+3, b.w-6, b.h*0.42, 10); ctx.fill();
   ctx.restore();
-  ctx.lineWidth = hot ? 4 : 2.6;
-  if(hot){ ctx.shadowColor = b.gold ? 'rgba(255,207,92,.9)' : 'rgba(174,226,57,.8)'; ctx.shadowBlur = 14; }
-  ctx.strokeStyle = hot ? '#fff' : 'rgba(240,250,220,.8)';
+  ctx.lineWidth = hot ? 4 : 2.4;
+  if(hot){ ctx.shadowColor = b.gold ? 'rgba(255,207,92,.9)' : 'rgba(120,200,255,.85)'; ctx.shadowBlur = 14; }
+  ctx.strokeStyle = hot ? '#fff' : 'rgba(240,250,255,.8)';
   rrp(b.x, b.y, b.w, b.h, 14); ctx.stroke();
   ctx.shadowColor = 'transparent'; ctx.shadowBlur = 0;
   ctx.font = '900 '+(b.fs||22)+'px '+FONT; ctx.textAlign='center';
@@ -861,79 +905,29 @@ function drawButton(b, hot){
   ctx.fillText(b.label, b.x+b.w/2, b.y+b.h/2+(b.fs||22)*0.36);
   ctx.restore();
 }
-/* 螢火蟲（夜關）與風葉 */
-let motes = [];
-function initMotes(n){ motes = []; for(let i=0;i<n;i++) motes.push({x:rnd(0,GAME_W), y:rnd(80,440), p:rnd(0,TAU), v:rnd(6,16)}); }
-function drawMotes(){
-  if(L().theme !== 'night') return;
-  ctx.fillStyle = '#ffe98a';
-  for(const m of motes){
-    const a = 0.3 + 0.7*Math.abs(Math.sin(worldT*1.4 + m.p));
-    ctx.globalAlpha = a*0.8;
-    ctx.beginPath(); ctx.arc(m.x + Math.sin(worldT*m.v*0.1+m.p)*20, m.y + Math.cos(worldT*0.6+m.p)*12, 2.2, 0, TAU); ctx.fill();
-  }
-  ctx.globalAlpha = 1;
-}
-function drawWind(){
-  if(Math.abs(wind) < 12) return;
-  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 2; ctx.lineCap='round';
-  const d = Math.sign(wind);
-  for(let i=0;i<5;i++){
-    const y = 90 + i*70 + Math.sin(worldT*3+i)*10;
-    const x = ((worldT*Math.abs(wind)*3 + i*220) % (GAME_W+160)) - 80;
-    const px = d>0 ? x : GAME_W-x;
-    ctx.beginPath();
-    ctx.moveTo(px, y);
-    ctx.quadraticCurveTo(px+30*d, y-6, px+58*d, y);
-    ctx.stroke();
-  }
-}
-function drawScene(){
-  if(bakedBG) ctx.drawImage(bakedBG, 0, 0, GAME_W, GAME_H);
-  drawSkyLayer();
-  drawMotes();
-  ctx.save();
-  ctx.translate((Math.random()*2-1)*shake, (Math.random()*2-1)*shake);
-  for(const e of entities) drawItem(e);
-  drawRings();
-  drawBasket(basket.x, basket.y, basket.sx, basket.sy, basket.wobble);
-  drawParts();
-  ctx.restore();
-  drawWind();
-  if(vigCanvas) ctx.drawImage(vigCanvas, 0, 0, GAME_W, GAME_H);
-  drawFloats();
-}
 function drawHUD(){
   const lv = L();
   const [t1,t2,t3] = starThresholds();
-  /* 分數進度條 */
-  const bx = 20, bw2 = 320, by = 20, bh2 = 22;
-  ctx.fillStyle = 'rgba(0,0,0,.4)'; rrp(bx,by,bw2,bh2,11); ctx.fill();
+  glassPanel(14,12,332,60,14);
+  const bx = 24, bw2 = 312, by = 24, bh2 = 20;
+  ctx.fillStyle = 'rgba(0,0,0,.4)'; rrp(bx,by,bw2,bh2,10); ctx.fill();
   const prog = clamp(score/t3, 0, 1);
   if(prog > 0){
     const g = ctx.createLinearGradient(bx,0,bx+bw2,0);
     g.addColorStop(0,'#aee239'); g.addColorStop(1,'#ffcf5c');
-    ctx.fillStyle = g;
-    rrp(bx,by,Math.max(bw2*prog, bh2),bh2,11); ctx.fill();
-    /* v6：進度條流光掃過 */
-    ctx.save();
-    rrp(bx,by,Math.max(bw2*prog, bh2),bh2,11); ctx.clip();
+    ctx.fillStyle = g; rrp(bx,by,Math.max(bw2*prog, bh2),bh2,10); ctx.fill();
+    ctx.save(); rrp(bx,by,Math.max(bw2*prog, bh2),bh2,10); ctx.clip();
     ctx.globalAlpha = 0.35; ctx.fillStyle = '#fff';
     ctx.fillRect(bx + ((worldT*140) % (bw2+40)) - 20, by+2, 9, bh2-4);
-    ctx.restore();
-    ctx.globalAlpha = 1;
+    ctx.restore(); ctx.globalAlpha = 1;
   }
-  /* v7：進度條外框亮描邊，提升 HUD 精緻度 */
-  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.6;
-  rrp(bx,by,bw2,bh2,11); ctx.stroke();
+  ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1.4; rrp(bx,by,bw2,bh2,10); ctx.stroke();
   for(const [t,i] of [[t1,1],[t2,2],[t3,3]]){
     const mx = bx + bw2 * t/t3;
     drawStarShape(mx-2, by+bh2/2, 8, score>=t ? '#ffcf5c' : 'rgba(255,255,255,.4)');
   }
-  ctx.textAlign='left'; ctx.font='900 18px '+FONT;
-  ctx.lineWidth=4; ctx.strokeStyle='rgba(0,0,0,.45)';
-  ctx.strokeText('分數 '+score+' / 目標 '+t1, bx+4, by+bh2+22);
-  ctx.fillStyle='#fff5d6'; ctx.fillText('分數 '+score+' / 目標 '+t1, bx+4, by+bh2+22);
+  ctx.textAlign='left'; ctx.font='900 17px '+FONT;
+  ctx.fillStyle='#fff5d6'; ctx.fillText('分數 '+score+' / 目標 '+t1, bx+2, by+bh2+20);
   /* 倒數計時 */
   const remain = Math.max(0, lv.time - elapsed);
   ctx.textAlign='center'; ctx.font='900 30px '+FONT;
@@ -942,28 +936,27 @@ function drawHUD(){
   ctx.strokeText(Math.ceil(remain)+'', GAME_W/2, 44);
   ctx.fillStyle = urgent ? (Math.sin(worldT*10)>0?'#ff6b5a':'#fff') : '#fff';
   ctx.fillText(Math.ceil(remain)+'', GAME_W/2, 44);
-  ctx.font='700 14px '+FONT; ctx.fillStyle='#ffffffbb';
-  ctx.fillText('第'+(curLevel+1)+'關 '+lv.name, GAME_W/2, 66);
+  ctx.font='700 14px '+FONT; ctx.fillStyle='#ffffffcc';
+  ctx.fillText('第'+(curLevel+1)+'關 '+lv.name, GAME_W/2, 64);
   /* 生命 */
-  for(let i=0;i<3;i++) drawHeart(GAME_W-150+i*28, 30, 2.2, i<lives ? '#ff5a6e' : 'rgba(255,255,255,.25)');
+  glassPanel(GAME_W-176,14,162,44,12);
+  for(let i=0;i<3;i++) drawHeart(GAME_W-150+i*28, 36, 2.2, i<lives ? '#ff5a6e' : 'rgba(255,255,255,.25)');
   if(combo >= 3){
-    ctx.font='900 20px '+FONT; ctx.fillStyle='#aee239';
+    ctx.font='900 20px '+FONT; ctx.fillStyle='#aee239'; ctx.textAlign='center';
     ctx.globalAlpha = clamp(comboTimer/1.3,0,1);
     ctx.fillText(combo+' 連擊！', GAME_W/2, 96);
     ctx.globalAlpha = 1;
   }
   if(frenzyT > 0){
-    ctx.font='900 26px '+FONT;
-    ctx.fillStyle = '#ffcf5c';
+    ctx.font='900 26px '+FONT; ctx.fillStyle = '#ffcf5c'; ctx.textAlign='center';
     ctx.globalAlpha = 0.7+0.3*Math.sin(worldT*8);
-    ctx.fillText('黃金果雨！', GAME_W/2, 130);
+    ctx.fillText('黃金果雨！', GAME_W/2, 128);
     ctx.globalAlpha = 1;
   }
 }
 
 /* ===== 狀態機 ===== */
 let state = null;
-/* v7 過場：狀態切換時 0.3 秒淡入（純視覺覆蓋，不影響操作與邏輯） */
 let fadeT = 0;
 const FADE_LEN = 0.3;
 function setState(s){ state = s; fadeT = FADE_LEN; if(s.enter) s.enter(); }
@@ -971,51 +964,45 @@ const hintEl = document.getElementById('hint');
 
 const titleState = {
   name:'title', t:0,
-  enter(){ this.t = 0;
-    curLevel = 0;
-    bakeBG('day'); initMotes(0);
+  enter(){ this.t = 0; curLevel = 0; curTheme = 'day';
+    bakeSky('day'); initMotes(0);
     entities = []; resetBasket();
-    this._btn = [{ x:GAME_W/2-140, y:400, w:280, h:64, label:'開始冒險', gold:true, fs:26, cb:()=> setState(selectState) }];
+    this._btn = [{ x:GAME_W/2-140, y:404, w:280, h:64, label:'開始冒險', gold:true, fs:26, cb:()=> setState(selectState) }];
   },
   buttons(){ return this._btn; },
   update(dt){
     this.t += dt; worldT += dt;
     basket.blink -= dt; if(basket.blink < -0.12) basket.blink = rnd(1.6,3.4);
+    /* 標題示範水果緩緩飄落 */
+    if(this._demoT === undefined) this._demoT = 0;
+    this._demoT -= dt;
+    if(this._demoT <= 0){ this._demoT = 0.7; spawnDemoFruit(); }
+    updateDemoFruits(dt);
     if(input.confirm){ input.confirm = false; sfx.ui(); setState(selectState); }
   },
   draw(){
-    drawScene();
-    ctx.fillStyle = 'rgba(10,20,12,.4)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawDemoScene();
+    ctx.fillStyle = 'rgba(6,14,22,.32)'; ctx.fillRect(0,0,GAME_W,GAME_H);
     ctx.textAlign='center';
     const bob = Math.sin(this.t*2)*6;
     ctx.save();
-    ctx.translate(GAME_W/2, 120+bob);
+    ctx.translate(GAME_W/2, 118+bob);
     ctx.font='900 58px '+FONT;
-    /* v7：標題柔光光暈 */
-    ctx.shadowColor='rgba(174,226,57,.55)'; ctx.shadowBlur=26;
-    ctx.lineWidth=10; ctx.strokeStyle='#204631';
+    ctx.shadowColor='rgba(120,200,255,.55)'; ctx.shadowBlur=26;
+    ctx.lineWidth=10; ctx.strokeStyle='#16324a';
     ctx.strokeText('接水果大冒險', 0, 0);
     const g = ctx.createLinearGradient(0,-34,0,20);
-    g.addColorStop(0,'#fff5d6'); g.addColorStop(1,'#aee239');
+    g.addColorStop(0,'#fff5d6'); g.addColorStop(1,'#8fd0ff');
     ctx.fillStyle = g; ctx.fillText('接水果大冒險', 0, 0);
     ctx.shadowColor='transparent'; ctx.shadowBlur=0;
     ctx.font='900 22px '+FONT; ctx.fillStyle='#ffcf5c';
-    ctx.fillText('PRO 版　5 大果園關卡 × 星星評分 × 黃金果雨', 0, 42);
+    ctx.fillText('3D 版　水果從遠方天空落下，看準深度接住！', 0, 42);
     ctx.restore();
-    /* 掉落預覽 */
-    const previews = ['apple','banana','grapes','star'];
-    previews.forEach((k,i)=>{
-      const img = IMG[k];
-      const x = GAME_W/2 - 150 + i*100;
-      const y = 262 + Math.sin(this.t*2.4 + i)*10;
-      if(k==='star') ctx.drawImage(glowGold, x-34, y-34);
-      if(img.complete && img.naturalWidth) ctx.drawImage(img, x-24, y-24, 48, 48);
-    });
     ctx.font='700 20px '+FONT; ctx.fillStyle='#f4ffe8';
-    ctx.fillText('💻 電腦：← → 移動籃子', GAME_W/2, 324);
-    ctx.fillText('📱 平板：手指左右拖曳', GAME_W/2, 352);
+    ctx.fillText('💻 電腦：← → 移動籃子', GAME_W/2, 322);
+    ctx.fillText('📱 平板：手指左右拖曳', GAME_W/2, 350);
     ctx.font='700 16px '+FONT; ctx.fillStyle='#ffe9b0';
-    ctx.fillText('接水果得分、接幸運星大加分；炸彈和臭鼬千萬別接！', GAME_W/2, 384);
+    ctx.fillText('接水果得分、接幸運星大加分；炸彈和臭鼬千萬別接！', GAME_W/2, 382);
     const total = stars.reduce((a,b)=>a+b,0);
     if(total > 0 || best > 0){
       ctx.fillStyle='#ffcd75';
@@ -1026,6 +1013,34 @@ const titleState = {
     ctx.fillText('按 M 或右上角按鈕切換音效', GAME_W/2, GAME_H-14);
   }
 };
+
+/* 標題/選單背景的裝飾用飄落水果（不計分） */
+let demoFruits = [];
+function spawnDemoFruit(){
+  if(demoFruits.length > 10) return;
+  const keys = ['apple','banana','grapes','melon','berry','peach','star'];
+  const key = keys[Math.floor(Math.random()*keys.length)];
+  demoFruits.push({ def:DEFS[key], key, x:rnd(-190,190), y:SKY_Y, z:SPAWN_Z, vz:rnd(150,240), rot:rnd(-0.3,0.3), spin:rnd(-1.2,1.2) });
+}
+function updateDemoFruits(dt){
+  for(let i=demoFruits.length-1;i>=0;i--){
+    const e = demoFruits[i];
+    e.z -= e.vz*dt;
+    const p = clamp((SPAWN_Z - e.z)/(SPAWN_Z - CATCH_Z), 0, 1);
+    e.y = SKY_Y + (CATCH_Y - SKY_Y)*(p*p);
+    e.rot += e.spin*dt;
+    if(e.z <= CATCH_Z-40){ demoFruits[i]=demoFruits[demoFruits.length-1]; demoFruits.pop(); }
+  }
+}
+function drawDemoScene(){
+  drawBackdrop();
+  for(const e of demoFruits) fruitShadow(e);
+  drawBasketShadow();
+  const sorted = demoFruits.slice().sort((a,b)=> b.z - a.z);
+  for(const e of sorted) drawFruit3D(e);
+  drawBasket3D();
+  if(vigCanvas) ctx.drawImage(vigCanvas, 0, 0, GAME_W, GAME_H);
+}
 
 const selectState = {
   name:'select', t:0, sel:0,
@@ -1043,6 +1058,9 @@ const selectState = {
   buttons(){ return this._btn; },
   update(dt){
     this.t += dt; worldT += dt;
+    updateDemoFruits(dt);
+    if(this._demoT === undefined) this._demoT = 0;
+    this._demoT -= dt; if(this._demoT <= 0){ this._demoT = 1.1; spawnDemoFruit(); }
     if(input.navL){ input.navL = false; do{ this.sel = (this.sel+4)%5; }while(!unlocked(this.sel)); sfx.ui(); }
     if(input.navR){ input.navR = false;
       let n = this.sel;
@@ -1051,11 +1069,11 @@ const selectState = {
     if(input.confirm){ input.confirm = false; if(unlocked(this.sel)){ sfx.ui(); startLevel(this.sel); } }
   },
   draw(){
-    drawScene();
-    ctx.fillStyle = 'rgba(10,20,12,.55)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawDemoScene();
+    ctx.fillStyle = 'rgba(6,14,22,.55)'; ctx.fillRect(0,0,GAME_W,GAME_H);
     ctx.textAlign='center';
     ctx.font='900 40px '+FONT;
-    ctx.lineWidth=8; ctx.strokeStyle='#204631';
+    ctx.lineWidth=8; ctx.strokeStyle='#16324a';
     ctx.strokeText('選擇果園', GAME_W/2, 92);
     ctx.fillStyle='#f4ffe8'; ctx.fillText('選擇果園', GAME_W/2, 92);
     ctx.font='700 17px '+FONT; ctx.fillStyle='#ffe9b0';
@@ -1092,8 +1110,10 @@ const selectState = {
 function unlocked(i){ return i===0 || stars[i-1] > 0; }
 function startLevel(i){
   curLevel = clamp(i,0,4);
-  bakeBG(L().theme);
-  initMotes(L().theme==='night' ? 18 : 0);
+  curTheme = L().theme;
+  bakeSky(curTheme);
+  initMotes(curTheme==='night' ? 22 : 0);
+  demoFruits = [];
   setState(playState);
 }
 
@@ -1109,7 +1129,7 @@ const playState = {
     frenzyT = 0; frenzyCooldown = 15; lastTickSec = -1;
     wasBreather = false;
     resetBasket();
-    hintEl.textContent = '💻 ← → 移動　📱 手指拖曳｜接水果、避開炸彈臭鼬！';
+    hintEl.textContent = '💻 ← → 移動　📱 手指拖曳｜水果從遠方落下、看準深度接住！';
     hintEl.classList.add('show');
   },
   buttons(){ return []; },
@@ -1120,7 +1140,6 @@ const playState = {
     const lv = L();
     elapsed += dt;
 
-    /* v5：喘息波開始時輕聲提示（只在真的有炸彈威脅的關卡才提示，避免第1關洗版） */
     const breatherNow = lv.badRate > 0 && inBreather(elapsed);
     if(breatherNow && !wasBreather){
       sfx.breather();
@@ -1128,14 +1147,12 @@ const playState = {
     }
     wasBreather = breatherNow;
 
-    /* 風（第4關起） */
     if(lv.wind){
       windTimer -= dt;
       if(windTimer <= 0){ windTimer = rnd(3.5,6); windTarget = rnd(-1,1) > 0 ? rnd(30,80)*lv.wind : -rnd(30,80)*lv.wind; }
       wind += (windTarget - wind) * (1 - Math.pow(0.05, dt));
     } else wind = 0;
 
-    /* 黃金果雨（第5關）：每 15 秒關卡時間觸發一波 */
     if(lv.frenzy){
       if(frenzyT > 0){ frenzyT -= dt; }
       else if(elapsed >= frenzyCooldown){
@@ -1145,21 +1162,23 @@ const playState = {
       }
     }
 
-    /* 移動：鍵盤 */
-    const ACC = 2600, MAXV = 460, DEC = 3200;
+    /* 籃子移動：鍵盤（世界座標） */
+    const ACC = 1500, MAXV = 320, DEC = 2000;
+    const usingPointer = input.pointerHeld && input.pointerX !== null && !input.left && !input.right;
     if(input.left && !input.right) basket.vx -= ACC*dt;
     else if(input.right && !input.left) basket.vx += ACC*dt;
-    else if(!(input.pointerHeld && input.pointerX !== null)){
+    else if(!usingPointer){
       const s = Math.sign(basket.vx);
       basket.vx -= s*Math.min(Math.abs(basket.vx), DEC*dt);
     }
-    /* 移動：拖曳跟隨 */
-    if(input.pointerHeld && input.pointerX !== null && !input.left && !input.right){
-      const target = clamp(input.pointerX, basket.w/2, GAME_W-basket.w/2);
-      basket.vx = clamp((target - basket.x) * 14, -900, 900);
+    /* 拖曳跟隨：螢幕 X → 世界 X */
+    if(usingPointer){
+      const target = clamp(screenToWorldX(input.pointerX), -LANE, LANE);
+      basket.vx = clamp((target - basket.x) * 12, -640, 640);
+    } else {
+      basket.vx = clamp(basket.vx, -MAXV, MAXV);
     }
-    if(!(input.pointerHeld && input.pointerX !== null)) basket.vx = clamp(basket.vx, -MAXV, MAXV);
-    basket.x = clamp(basket.x + basket.vx*dt, basket.w/2, GAME_W-basket.w/2);
+    basket.x = clamp(basket.x + basket.vx*dt, -LANE, LANE);
     basket.wobble = clamp(basket.vx/MAXV, -1.4, 1.4);
     basket.sx += (1-basket.sx)*10*dt; basket.sy += (1-basket.sy)*10*dt;
     basket.blink -= dt; if(basket.blink < -0.12) basket.blink = rnd(1.6,3.4);
@@ -1174,27 +1193,28 @@ const playState = {
     }
     if(comboTimer > 0){ comboTimer -= dt; if(comboTimer <= 0) combo = 0; }
 
-    /* 物件更新與接取（v5：接取寬容度加大——判定範圍略比籃子視覺寬，符合「寬容設計」原則） */
-    const catchY = basket.y - basket.h*0.3;
-    const catchHalfW = basket.w*0.55;
+    /* 水果更新與接取 */
     for(const e of entities){
       if(e.dead) continue;
-      e.y += e.vy*dt;
-      e.x = clamp(e.x + wind*dt*(e.def.kind==='star'?0.6:1), 20, GAME_W-20);
+      e.z -= e.vz*dt;
+      const p = clamp((SPAWN_Z - e.z)/(SPAWN_Z - CATCH_Z), 0, 1);
+      e.y = SKY_Y + (CATCH_Y - SKY_Y)*(p*p);
+      e.x = clamp(e.x + wind*dt*(e.def.kind==='star'?0.6:1), -(LANE+40), LANE+40);
       e.rot += e.spin*dt; e.wob += dt*3;
-      /* v6：幸運星金粉尾跡／炸彈引信火花尾跡（限量粒子池內） */
-      if(e.def.kind === 'star' && Math.random() < dt*22 && parts.length < MAX_PARTS)
-        parts.push({x:e.x+rnd(-8,8), y:e.y-14, vx:rnd(-24,24), vy:rnd(-40,-8), life:0.4, max:0.4, color:'#ffe28a', s:rnd(2,3.6)});
-      else if(e.key === 'bomb' && Math.random() < dt*16 && parts.length < MAX_PARTS)
-        parts.push({x:e.x+10, y:e.y-16, vx:rnd(-20,20), vy:rnd(-30,0), life:0.3, max:0.3, color:Math.random()<0.5?'#ffd23f':'#ff6b35', s:rnd(1.8,3)});
-      if(e.y > catchY-16 && e.y < catchY+42 && Math.abs(e.x - basket.x) < catchHalfW){
-        e.dead = true; onCatch(e);
-        if(state !== playState) return;
-        continue;
+      /* 尾跡粒子（螢幕空間，additive） */
+      if(e.def.kind === 'star' && Math.random() < dt*22 && parts.length < MAX_PARTS){
+        const sp = project(e.x, e.y, e.z);
+        if(sp) parts.push({x:sp.x+rnd(-8,8), y:sp.y-10, vx:rnd(-24,24), vy:rnd(-40,-8), life:0.4, max:0.4, color:'#ffe28a', s:rnd(2,3.6)});
+      } else if(e.key === 'bomb' && Math.random() < dt*16 && parts.length < MAX_PARTS){
+        const sp = project(e.x, e.y, e.z);
+        if(sp) parts.push({x:sp.x+8, y:sp.y-12, vx:rnd(-20,20), vy:rnd(-30,0), life:0.3, max:0.3, color:Math.random()<0.5?'#ffd23f':'#ff6b35', s:rnd(1.8,3)});
       }
-      if(e.y > GAME_H+40){
+      /* 抵達接取平面 */
+      if(e.z <= CATCH_Z){
         e.dead = true;
-        if(e.def.kind !== 'bad') onMiss(e);
+        if(Math.abs(e.x - basket.x) < CATCH_HALF){ onCatch(e); }
+        else if(e.def.kind !== 'bad'){ onMiss(e); }
+        if(state !== playState) return;
       }
     }
     entities = entities.filter(e => !e.dead);
@@ -1203,13 +1223,11 @@ const playState = {
     shake *= Math.pow(0.001, dt);
     flashT = Math.max(0, flashT - dt*3);
 
-    /* 最後 5 秒滴答 */
     const remain = lv.time - elapsed;
     if(remain <= 5 && remain > 0){
       const sec = Math.ceil(remain);
       if(sec !== lastTickSec){ lastTickSec = sec; sfx.tick(); }
     }
-    /* 時間到：結算 */
     if(elapsed >= lv.time){
       if(score >= lv.target){ setState(resultState); }
       else { sfx.fail(); setState(failState); }
@@ -1217,7 +1235,7 @@ const playState = {
     input.confirm = false;
   },
   draw(){
-    drawScene();
+    drawScene(true);
     drawHUD();
     if(flashT > 0){
       ctx.globalAlpha = flashT; ctx.fillStyle = '#ff5a4a';
@@ -1237,7 +1255,7 @@ const resultState = {
     this.t = 0;
     const [t1,t2,t3] = starThresholds();
     this.starGot = score >= t3 ? 3 : score >= t2 ? 2 : 1;
-    sfx.clear(this.starGot);                        // v5：音效規模依星級分級
+    sfx.clear(this.starGot);
     this._played = 0;
     if(this.starGot > stars[curLevel]){ stars[curLevel] = this.starGot; saveStars(); }
     if(score > best){ best = score; LS.set('fruitpro_best', String(best)); }
@@ -1248,7 +1266,6 @@ const resultState = {
     bts.push({ x:GAME_W/2-70, y:400, w:140, h:58, label:'選關畫面', fs:20, cb:()=> setState(selectState) });
     if(hasNext) bts.push({ x:GAME_W/2+90, y:400, w:160, h:58, label:'下一關 ▶', gold:true, fs:20, cb:()=> startLevel(curLevel+1) });
     this._btn = bts;
-    /* v5：慶祝彩帶依星級分級——星星越多，彩帶越盛大（1星精簡、3星滿版金雨） */
     for(let i=0;i<this.starGot;i++) burst(rnd(200,760), rnd(110,260), ['#aee239','#ffcf5c','#ff6cc7'][i], 16 + this.starGot*4, 260);
     if(this.starGot === 3) for(let i=0;i<3;i++) burst(rnd(150,810), rnd(70,180), '#fff5d6', 14, 300);
   },
@@ -1265,14 +1282,14 @@ const resultState = {
     }
   },
   draw(){
-    drawScene();
-    ctx.fillStyle = 'rgba(10,22,12,.62)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawScene(false);
+    ctx.fillStyle = 'rgba(6,16,22,.62)'; ctx.fillRect(0,0,GAME_W,GAME_H);
     ctx.textAlign='center';
     const pop = easeOutBack(clamp(this.t*2.2,0,1));
     ctx.save();
     ctx.translate(GAME_W/2, 150); ctx.scale(pop,pop);
     ctx.font='900 46px '+FONT;
-    ctx.lineWidth=9; ctx.strokeStyle='#204631';
+    ctx.lineWidth=9; ctx.strokeStyle='#16324a';
     const msg = curLevel===4 ? '全部通關！豐收大師！' : '第'+(curLevel+1)+'關 豐收成功！';
     ctx.strokeText(msg, 0, 0);
     ctx.fillStyle='#fff5d6'; ctx.fillText(msg, 0, 0);
@@ -1315,14 +1332,14 @@ const failState = {
     if(this.t > 0.5 && input.confirm){ input.confirm = false; startLevel(curLevel); }
   },
   draw(){
-    drawScene();
-    ctx.fillStyle = 'rgba(12,20,12,.62)'; ctx.fillRect(0,0,GAME_W,GAME_H);
+    drawScene(false);
+    ctx.fillStyle = 'rgba(8,16,20,.62)'; ctx.fillRect(0,0,GAME_W,GAME_H);
     ctx.textAlign='center';
     const pop = easeOutBack(clamp(this.t*2.2,0,1));
     ctx.save();
     ctx.translate(GAME_W/2, 196); ctx.scale(pop,pop);
     ctx.font='900 44px '+FONT;
-    ctx.lineWidth=8; ctx.strokeStyle='#204631';
+    ctx.lineWidth=8; ctx.strokeStyle='#16324a';
     ctx.strokeText('再挑戰一次！', 0, 0);
     ctx.fillStyle='#fff5d6'; ctx.fillText('再挑戰一次！', 0, 0);
     ctx.restore();
@@ -1336,7 +1353,7 @@ const failState = {
   }
 };
 
-/* ===== 主迴圈 ===== */
+/* ===== 主迴圈（固定時間步進） ===== */
 const STEP = 1/60;
 let last = performance.now(), acc = 0;
 function frame(now){
@@ -1345,15 +1362,15 @@ function frame(now){
   last = now;
   while(acc >= STEP){
     state.update(STEP);
-    updateAmbient(STEP);   /* v6：氛圍層 */
-    updateRings(STEP);     /* v6：衝擊波 */
-    fadeT = Math.max(0, fadeT - STEP); /* v7：過場淡入 */
+    updateAmbient(STEP);
+    updateRings(STEP);
+    fadeT = Math.max(0, fadeT - STEP);
     acc -= STEP;
   }
   state.draw();
   if(fadeT > 0){
     ctx.globalAlpha = clamp(fadeT/FADE_LEN, 0, 1)*0.85;
-    ctx.fillStyle = '#0a140c';
+    ctx.fillStyle = '#06121a';
     ctx.fillRect(0, 0, GAME_W, GAME_H);
     ctx.globalAlpha = 1;
   }
@@ -1377,11 +1394,12 @@ window.__test = {
   startLevel(i){ startLevel(i); },
   goSelect(){ setState(selectState); },
   addScore(n){ score += n; },
-  dropItem(key, x){ const def = DEFS[key]; entities.push({ def, key, x:x!==undefined?x:basket.x, y:basket.y-basket.h*0.3-40, vy:200, rot:0, spin:0, wob:0, dead:false }); },
+  dropItem(key, x){ const def = DEFS[key]; entities.push({ def, key, x:x!==undefined?x:basket.x, y:CATCH_Y+40, z:CATCH_Z+80, vz:200, rot:0, spin:0, wob:0, dead:false }); },
   setTime(t){ elapsed = t; },
   tick(s){ const n = Math.round((s||1)*60); for(let i=0;i<n;i++) state.update(STEP); }
 };
 </script>
+
 
 
 <script>/* AI-CAMP-STATS-BEACON */
